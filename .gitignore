@@ -1,0 +1,20 @@
+# Sauvegarde de la carte SD (5,3 Go) — jamais suivie par git
+SDCARD Deluge/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Application
+*.log
+*.sqlite3
+*.bak
+_backups/
+
+# Système
+Thumbs.db
+.DS_Store
+._*

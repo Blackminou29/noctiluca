@@ -1,0 +1,13 @@
+Créer une application python permettant d'accompagner l'utilisation d'un Synthstrom Déluge.
+
+Celui-ci doit être capable de gérer tout le contenu de la carte SD de la groovebox, que ce soit en lisant la carte via un lecteur de carte ou bien par le branchement en usb de l'appareil au PC/Mac.
+
+Le contenu de la sauvegarde de la carte SD se situe pour l'instant ici: C:\Users\sebas\Desktop\Informatique\Deluge app\SDCARD Deluge , dans l'application ce chemin devra être modifiable. 
+
+Le logiciel doit accompagner au mieux un producteur de musique dans la gestion de ses samples, presets, chansons... en permettant de les organiser au mieux et le plus logiquement possible.
+
+Le logiciel doit aussi permettre de créer de nouveaux presets de synthé, directement dans l'application, au besoin automatiquement selon le style de musique visé ou bien aléatoirement. Et y intégrer tous les outils permettant a un artiste de composer de la musique électronique.
+
+Tu y ajoutera toutes les fonctionnalités que tu jugera utiles pour un producteur de musique électronique et que tu as la capacité d'intégrer.
+
+Le thème et le design de l'application doit s'inspirer de ce qui a déjà été fait pour le guide du deluge: C:\Users\sebas\Desktop\Informatique\Guide deluge.
