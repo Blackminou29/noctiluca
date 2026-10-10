@@ -1,0 +1,21 @@
+# Deluge Companion — dépendances
+#
+# Installation :
+#     pip install -r requirements.txt
+#
+# Python 3.11 ou plus récent est nécessaire (le code utilise la syntaxe
+# `X | None` des annotations et `tomllib`). Développé et testé sur 3.13.
+
+# --- Obligatoire ---------------------------------------------------------
+# L'interface entière. Qt 6.5+ suffit ; testé avec Qt 6.11.
+PyQt6>=6.5
+
+# Calcul sur les échantillons : lecture WAV, analyse acoustique, moteur de
+# rendu hors-ligne, tracés de forme d'onde et de filtre.
+numpy>=1.24
+
+# --- Optionnel -----------------------------------------------------------
+# Écoute des échantillons et des presets générés. Sans ce paquet,
+# l'application démarre et fonctionne, mais les boutons d'écoute restent
+# inactifs (`delugeapp.core.audio_out` le détecte seul).
+sounddevice>=0.4 ; python_version >= "3.8"

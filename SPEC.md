@@ -74,7 +74,24 @@ Deux familles :
 - **unipolaire** (volume, résonance, attaque, reverbAmount…) : l'écran du Deluge affiche **0 à 50**.
   `affichage = round((v + 2147483648) / 4294967295 * 50)`
 - **bipolaire** (pan, patchCable amount, equalizer bass/treble…) : affichage **−25 à +25**
-  (pan) ou **−50 à +50** (patch cables). `amount` de patchCable : `0x7FFFFFFF` = +50.
+  (pan) ou **−50 à +50** (patch cables). `amount` de patchCable : **`0x40000000` = +50**
+  (corrigé le 10/10/2026, cf. encadré ci-dessous).
+
+> **Correction mesurée (10/10/2026) — l'échelle des câbles de modulation.**
+> La rédaction initiale annonçait `0x7FFFFFFF` = +50 pour l'`amount` d'un `patchCable`,
+> comme pour les autres paramètres. C'est le **double** de la réalité.
+> Mesure sur les **7 025 câbles** des presets, kits et morceaux de la carte :
+> * aucune valeur ne dépasse `0x40000000` (ni en positif, ni en négatif) ;
+> * **1 925 valent exactement `0x3FFFFFE8` ≈ `0x40000000`** — c'est la valeur la plus
+>   fréquente, cinq fois plus que la suivante, signature du maximum de l'interface ;
+> * avec l'échelle `0x40000000` → 50, les profondeurs tombent exactement dans [−50, +50].
+>
+> L'échelle pleine est donc `model.PATCH_CABLE_FULL = 0x40000000`, soit **la moitié** de
+> celle des paramètres ordinaires. Utiliser `to_display(..., scale=100)` sur l'échelle
+> int32 complète divisait toutes les profondeurs affichées par deux, et faisait écrire au
+> générateur des modulations deux fois trop faibles.
+> Passer par `PatchCable.display()` / `PatchCable.amount_from_display()`, jamais par
+> `fixedpoint.to_display` directement. Couvert par `TestPatchCableScale`.
 
 Champs entiers bruts (pas hex) : `transpose`, `cents`, `num`, `detune`, `spread`, `syncLevel`,
 `numOctaves`, `retrigPhase`, `attack`/`release` du compresseur, `rangeTopNote`,
@@ -113,11 +130,24 @@ patchCable destination : volume pitch lpfFrequency lpfResonance hpfFrequency hpf
 `<noteRow y="81" noteDataWithLift="0x…" />` ou `noteData="0x…"`.
 Blob hexadécimal, **une note par groupe fixe de caractères** :
 - `noteData` → **20 caractères** : `pos(8) length(8) velocity(2) condition(2)`
-- `noteDataWithLift` → **22 caractères** : `pos(8) length(8) velocity(2) condition(2) lift(2)`
+- `noteDataWithLift` → **22 caractères** : `pos(8) length(8) velocity(2) lift(2) condition(2)`
+  — **le lift précède la condition** (corrigé le 10/10/2026, cf. encadré ci-dessous).
 Valeurs signées 32 bits pour `pos` et `length`. Résolution : **une noire = 24 ticks**,
 donc une mesure 4/4 = 96 ticks ; `length="1536"` d'un clip = 16 mesures.
 `y` = numéro de ligne (note MIDI pour un clip mélodique, index de rangée pour un kit).
 `condition` : 0x14 (20) = toujours ; valeurs < 20 = probabilité (×5 %) ; ≥ 0x80 = itération.
+Des valeurs 21 à 26 existent aussi sur la carte (conditions spéciales du firmware) :
+les traiter comme « toujours » plutôt que comme une probabilité.
+
+> **Correction mesurée (10/10/2026) — ordre des champs de `noteDataWithLift`.**
+> La version initiale de ce paragraphe annonçait `… condition(2) lift(2)`. C'est l'inverse.
+> Mesure sur les 403 notes de la carte qui portent un lift :
+> l'octet en position 18–20 vaut `0x40` pour **100 %** d'entre elles — c'est le `lift`,
+> dont la valeur par défaut est 64 ; l'octet en position 20–22 vaut `0x14` pour **92,8 %**
+> — c'est la `condition` « toujours », le reste étant des probabilités (2 à 16) et une
+> itération (134). L'ordre retenu dans `core/model.py` est donc
+> `pos(8) length(8) velocity(2) lift(2) condition(2)`, couvert par le test
+> `TestNotes.test_blob_22_caracteres`.
 
 ### 1.7 Chemins d'échantillons
 `fileName` est relatif à la racine SD, séparateur `/`, **casse non fiable**
@@ -449,12 +479,23 @@ def tempo_from_song_attrs(time_per_timer_tick: int, timer_tick_fraction: int,
     """BPM = 60 / ((timePerTimerTick + fraction/2^32) * 2^inputTickMagnitude / 44100 * 48)
        — utiliser la formule du firmware : voir implémentation de référence ci-dessous."""
 ```
-> **Formule tempo Deluge** (à implémenter telle quelle) :
-> `ticks = time_per_timer_tick + timer_tick_fraction / 4294967296`
+> **Formule tempo Deluge** — *corrigée le 10/10/2026 sur les 46 morceaux de la carte* :
+> `ticks = time_per_timer_tick + (timer_tick_fraction & 0xFFFFFFFF) / 4294967296`
 > `samples_per_tick = ticks * (2 ** input_tick_magnitude)`
-> `bpm = 44100.0 * 60.0 / (samples_per_tick * 48.0)`
+> `bpm = 44100.0 * 60.0 / (samples_per_tick * 24.0)`
+>
+> Deux points que la rédaction initiale avait manqués :
+> 1. **`timer_tick_fraction` est une fraction NON SIGNÉE**, alors que l'attribut XML est écrit
+>    en entier 32 bits signé (`timerTickFraction="-1342177280"`). Sans le `& 0xFFFFFFFF`,
+>    8 morceaux sur 46 tombent à ~0,3 BPM de la bonne valeur.
+> 2. **Le diviseur est 24, pas 48** — 24 ticks par noire, conformément au §1.6 de ce même
+>    document. Preuves : `DEFAULT.XML` donne alors exactement **120 BPM** (défaut d'usine du
+>    Deluge) au lieu de 60, et les 46 morceaux donnent **tous** un BPM entier, dans une plage
+>    de 69 à 124 BPM. Avec 48, la plage était 34–62 BPM, invraisemblable pour ce répertoire.
+>
 > Un clip de `length=1536` à 96 ticks/mesure fait 16 mesures. Si le calcul donne une valeur hors
-> de [20, 400], retourner 120.0 et le signaler dans `Song.firmware`-adjacent log.
+> de [20, 400], retourner 120.0 et journaliser le rejet.
+> Couvert par les tests `TestTempo.*`.
 
 ### 4.6 `delugeapp/core/wav.py` — audio sans dépendance externe
 ```python
@@ -520,6 +561,24 @@ item_tags(kind TEXT, rel TEXT, tag_id INT)
 ratings(kind TEXT, rel TEXT, stars INT, favorite INT, notes TEXT, PRIMARY KEY(kind, rel))
 ```
 Index : `links(dst_norm)`, `samples(hash)`, `samples(folder)`, `presets(kind, folder)`.
+
+Colonnes ajoutées après la rédaction initiale, car les contrôles de santé du §4.13 les
+exigent : `samples.rel_norm`, `samples.hash_full`, `samples.dc_offset`, `samples.clipped`,
+`presets.rel_norm`, `presets.repaired`, `songs.rel_norm`, `songs.repaired`.
+
+> **Règle de migration (établie le 10/10/2026).** `CREATE TABLE IF NOT EXISTS` ne modifie
+> **pas** une table déjà présente : une base écrite par une version antérieure garde ses
+> anciennes colonnes, et toute insertion citant une colonne neuve échoue. Monter
+> `SCHEMA_VERSION` ne suffit donc pas. `Library` procède en trois temps, dans cet ordre :
+> 1. créer les tables manquantes ;
+> 2. `ALTER TABLE … ADD COLUMN` pour chaque colonne absente (`Library._ADDED_COLUMNS`) —
+>    les données de l'utilisateur (tags, notes, favoris) sont **conservées** ;
+> 3. **créer les index seulement ensuite** — un index portant sur une colonne encore absente
+>    fait échouer tout le script, ce qui s'est produit avec `idx_samples_hashf`.
+>
+> Après une montée de version, `Library.needs_rescan` vaut vrai : les colonnes neuves sont
+> vides jusqu'à la prochaine analyse. Couvert par `TestLibraryAndScan` et vérifié sur une
+> base v1 réelle.
 ```python
 class Library:
     def __init__(self, db_path: Path)
@@ -566,8 +625,30 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
     """Indexe toute la carte. `full=False` = incrémental (mtime/size inchangés -> ignoré).
        Doit rester interruptible et ne jamais lever : toute erreur va dans ScanResult.errors."""
 def file_hash(path: Path, quick: bool = True) -> str
-    """quick=True : SHA-1 sur taille + 64 Kio de tête + 64 Kio de queue. Sinon SHA-1 complet."""
+    """quick=True : SHA-1 sur taille + 64 Kio de tête + 64 Kio de MILIEU + 64 Kio de queue.
+       Sinon SHA-1 complet."""
+def confirm_duplicates(sd, lib, progress=None, should_stop=None) -> list[list[str]]
+    """Confirme par empreinte COMPLÈTE les seuls groupes soupçonnés. Obligatoire."""
 ```
+
+> **Correction mesurée (10/10/2026) — l'empreinte rapide ne prouve pas un doublon.**
+> La rédaction initiale ne prenait que la tête et la queue du fichier. Sur cette carte, les
+> fichiers `SAMPLES/Artists/Danny Taurus/MoDrama/Upper{01,14,20}.wav` ont **la même taille**
+> et **les mêmes 64 Kio de tête et de queue** (du silence), alors qu'ils diffèrent sur
+> **1 407 blocs de 1 Kio sur 1 722**. L'empreinte initiale les déclarait donc doublons :
+> proposés à la suppression, l'utilisateur perdait trois échantillons bien réels.
+>
+> Deux corrections, les deux nécessaires :
+> 1. l'empreinte rapide intègre désormais **un bloc du milieu** — ce qui suffit à écarter ce
+>    cas précis (la carte ne contient en réalité **aucun** doublon) ;
+> 2. mais un bloc de plus ne démontre rien, donc **`Library.duplicates()` ne renvoie que des
+>    groupes confirmés octet pour octet**. `Library.duplicate_candidates()` donne les
+>    soupçons, `scan.confirm_duplicates()` les vérifie en lisant les fichiers en entier — ce
+>    qui reste peu coûteux, puisque seuls les candidats sont relus.
+>
+> **Règle à maintenir : jamais de suppression proposée sur la foi d'une empreinte partielle.**
+> Couvert par `TestLibraryAndScan.test_empreinte_rapide_ne_suffit_pas` et
+> `test_doublon_reel_est_confirme`.
 
 ### 4.10 `delugeapp/core/analysis.py` (numpy seul)
 ```python

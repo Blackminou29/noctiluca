@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "PARAM_KEYS", "PARAM_BIPOLAR", "DEFAULT_PARAMS", "DEFAULT_MOD_KNOBS",
     "EQ_KEYS", "ENV_KEYS", "TICKS_PER_BAR", "TICKS_PER_QUARTER",
+    "PATCH_CABLE_FULL",
     "Zone", "SampleRange", "Osc", "Envelope", "LFO", "PatchCable",
     "Arpeggiator", "ModKnob", "Sound", "SynthPreset", "KitRow", "Kit",
     "Note", "NoteRow", "Clip", "Song", "tempo_from_song_attrs",
@@ -43,6 +44,11 @@ __all__ = [
 #: Résolution rythmique du Deluge : une noire = 24 ticks, une mesure 4/4 = 96.
 TICKS_PER_QUARTER = 24
 TICKS_PER_BAR = 96
+
+#: Échelle pleine d'un câble de modulation : ``0x40000000``, soit la moitié
+#: de l'échelle des autres paramètres. Mesuré sur les 7 025 câbles de la
+#: carte : aucune valeur ne la dépasse, et 1 925 s'y arrêtent exactement.
+PATCH_CABLE_FULL = 0x40000000
 
 #: Tous les noms de paramètres « hexadécimaux » connus, dans l'ordre d'écriture
 #: du firmware (les fichiers réels de la carte suivent cet ordre).
@@ -578,8 +584,31 @@ class PatchCable:
             _set(inner, "amount", format_fixed(self.range_amount), dialect)
 
     def display(self) -> int:
-        """Profondeur affichée par le Deluge : -50..+50."""
-        return to_display(self.amount, bipolar=True, scale=100)
+        """Profondeur affichée par le Deluge : -50..+50.
+
+        L'échelle pleine d'un câble de modulation est
+        :data:`PATCH_CABLE_FULL` = ``0x40000000``, et **non** ``0x7FFFFFFF``
+        comme pour les autres paramètres — mesuré sur les 7 025 câbles de la
+        carte : aucun ne dépasse cette valeur, et 1 925 s'y arrêtent
+        exactement, ce qui est la signature du maximum de l'interface.
+        Passer par l'échelle des paramètres ordinaires divisait toutes les
+        profondeurs par deux.
+        """
+        return max(-50, min(50, int(round(
+            self.amount / float(PATCH_CABLE_FULL) * 50.0))))
+
+    @staticmethod
+    def amount_from_display(depth: int) -> int:
+        """Entier 32 bits correspondant à une profondeur affichée -50..+50."""
+        try:
+            value = max(-50, min(50, int(depth)))
+        except (TypeError, ValueError):
+            value = 0
+        return int(round(value / 50.0 * PATCH_CABLE_FULL))
+
+    def set_display(self, depth: int) -> None:
+        """Règle la profondeur depuis la valeur affichée par le Deluge."""
+        self.amount = self.amount_from_display(depth)
 
 
 @dataclass
@@ -1379,3 +1408,484 @@ class Kit:
         row = KitRow(name=name, sound=snd)
         self.rows.append(row)
         return row
+
+
+# --------------------------------------------------------------------------
+# Notes, rangées, clips
+# --------------------------------------------------------------------------
+
+def _s32(value: int) -> int:
+    """Interprète un entier 32 bits non signé en complément à deux."""
+    value &= 0xFFFFFFFF
+    return value - 0x100000000 if value >= 0x80000000 else value
+
+
+@dataclass
+class Note:
+    """Une note d'un clip. ``pos``/``length`` sont en ticks (96 par mesure)."""
+
+    pos: int = 0
+    length: int = 24
+    velocity: int = 64
+    condition: int = 20
+    lift: int = 64
+
+    @property
+    def probability(self) -> float:
+        """Probabilité de déclenchement (1.0 = toujours)."""
+        if self.condition >= 20:
+            return 1.0
+        return max(0.0, min(1.0, self.condition * 0.05))
+
+    @property
+    def is_iteration(self) -> bool:
+        """Vrai si la condition est une règle d'itération (>= 0x80)."""
+        return self.condition >= 0x80
+
+
+def decode_notes(blob: str | None, with_lift: bool = False) -> list[Note]:
+    """Décode un blob ``noteData`` (20 car./note) ou ``noteDataWithLift`` (22).
+
+    Disposition vérifiée sur la carte réelle :
+    ``pos(8) length(8) velocity(2) [lift(2)] condition(2)``.
+    ``pos`` et ``length`` sont des entiers 32 bits signés.
+    """
+    if not blob:
+        return []
+    text = blob.strip()
+    if text[:2].lower() == "0x":
+        text = text[2:]
+    step = 22 if with_lift else 20
+    notes: list[Note] = []
+    for i in range(0, len(text) - step + 1, step):
+        chunk = text[i:i + step]
+        try:
+            pos = _s32(int(chunk[0:8], 16))
+            length = _s32(int(chunk[8:16], 16))
+            velocity = int(chunk[16:18], 16)
+            if with_lift:
+                lift = int(chunk[18:20], 16)
+                condition = int(chunk[20:22], 16)
+            else:
+                lift = 64
+                condition = int(chunk[18:20], 16)
+        except ValueError:
+            log.debug("Groupe de note illisible : %r", chunk)
+            continue
+        notes.append(Note(pos=pos, length=length, velocity=velocity,
+                          condition=condition, lift=lift))
+    return notes
+
+
+def encode_notes(notes: Iterable[Note], with_lift: bool = True) -> str:
+    """Encode une liste de notes en blob hexadécimal Deluge (préfixe ``0x``)."""
+    parts = ["0x"]
+    for note in notes:
+        parts.append("%08X" % (int(note.pos) & 0xFFFFFFFF))
+        parts.append("%08X" % (int(note.length) & 0xFFFFFFFF))
+        parts.append("%02X" % (int(note.velocity) & 0xFF))
+        if with_lift:
+            parts.append("%02X" % (int(note.lift or 64) & 0xFF))
+        parts.append("%02X" % (int(note.condition) & 0xFF))
+    return "".join(parts)
+
+
+@dataclass
+class NoteRow:
+    """Une ligne de notes d'un clip (note MIDI ou rangée de kit)."""
+
+    y: int = 0
+    notes: list[Note] = field(default_factory=list)
+    muted: bool = False
+    colour_offset: int = 0
+
+    @classmethod
+    def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "NoteRow":
+        """Lit un <noteRow> et décode son blob de notes."""
+        raw_lift = dxml.get(el, "noteDataWithLift")
+        raw = dxml.get(el, "noteData")
+        if raw_lift is not None:
+            notes = decode_notes(raw_lift, with_lift=True)
+        else:
+            notes = decode_notes(raw, with_lift=False)
+        return cls(
+            y=_int(el, "y", 0),
+            notes=notes,
+            muted=_txt(el, "muted", "0") in ("1", "true"),
+            colour_offset=_int(el, "colourOffset", 0),
+        )
+
+    def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
+        """Écrit la rangée (toujours au format ``noteDataWithLift``)."""
+        _set(el, "y", self.y, dialect)
+        if self.colour_offset:
+            _set(el, "colourOffset", self.colour_offset, dialect)
+        if self.muted:
+            _set(el, "muted", 1, dialect)
+        _drop(el, "noteData")
+        _set(el, "noteDataWithLift", encode_notes(self.notes, True), dialect)
+
+    @property
+    def note_count(self) -> int:
+        """Nombre de notes de la rangée."""
+        return len(self.notes)
+
+
+@dataclass
+class Clip:
+    """Un clip de morceau (session ou arrangement)."""
+
+    name: str = ""
+    length: int = TICKS_PER_BAR
+    section: int = 0
+    colour_offset: int = 0
+    preset_name: str = ""
+    preset_folder: str = ""
+    is_kit: bool = False
+    note_rows: list[NoteRow] = field(default_factory=list)
+
+    @property
+    def bars(self) -> float:
+        """Longueur en mesures 4/4 (96 ticks)."""
+        return self.length / float(TICKS_PER_BAR)
+
+    @property
+    def note_count(self) -> int:
+        """Nombre total de notes du clip."""
+        return sum(len(r.notes) for r in self.note_rows)
+
+    @classmethod
+    def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "Clip":
+        """Lit un <instrumentClip> ou un <audioClip>."""
+        kit_el = dxml.get_child(el, "kit")
+        folder = _txt(el, "instrumentPresetFolder", "") or _txt(el, "presetFolder", "")
+        clip = cls(
+            name=_txt(el, "clipName", ""),
+            length=_int(el, "length", TICKS_PER_BAR),
+            section=_int(el, "section", 0),
+            colour_offset=_int(el, "colourOffset", 0),
+            preset_name=_txt(el, "instrumentPresetName", "") or _txt(el, "presetName", ""),
+            preset_folder=folder,
+            is_kit=(kit_el is not None
+                    or dxml.get_child(el, "kitParams") is not None
+                    or folder.upper().startswith("KITS")),
+        )
+        rows = dxml.get_child(el, "noteRows")
+        if rows is not None:
+            clip.note_rows = [NoteRow.from_xml(r, dialect)
+                              for r in dxml.iter_children(rows, "noteRow")]
+        return clip
+
+    def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
+        """Écrit le clip dans l'élément fourni."""
+        if self.name:
+            _set(el, "clipName", self.name, dialect)
+        _set(el, "length", self.length, dialect)
+        _set(el, "section", self.section, dialect)
+        _set(el, "colourOffset", self.colour_offset, dialect)
+        if self.preset_name:
+            _set(el, "instrumentPresetName", self.preset_name, dialect)
+        if self.preset_folder:
+            _set(el, "instrumentPresetFolder", self.preset_folder, dialect)
+        holder = dxml.ensure_child(el, "noteRows")
+        for old in list(holder):
+            holder.remove(old)
+        for row in self.note_rows:
+            row.to_xml(ET.SubElement(holder, "noteRow"), dialect)
+
+    def notes_flat(self) -> list[tuple[int, Note]]:
+        """Toutes les notes du clip sous la forme (y, note), triées par temps."""
+        out = [(r.y, n) for r in self.note_rows for n in r.notes]
+        out.sort(key=lambda item: (item[1].pos, item[0]))
+        return out
+
+    def density(self) -> float:
+        """Notes par mesure."""
+        bars = self.bars
+        return (self.note_count / bars) if bars > 0 else 0.0
+
+
+# --------------------------------------------------------------------------
+# Morceaux
+# --------------------------------------------------------------------------
+
+#: Noms de notes en français, par demi-ton depuis Do.
+NOTE_NAMES_FR = ("Do", "Do#", "Ré", "Ré#", "Mi", "Fa", "Fa#",
+                 "Sol", "Sol#", "La", "La#", "Si")
+
+#: Gammes reconnues, par intervalles depuis la tonique (cf. écran du Deluge).
+SCALE_MODES: dict[tuple[int, ...], str] = {
+    (0, 2, 4, 5, 7, 9, 11): "majeur",
+    (0, 2, 3, 5, 7, 8, 10): "mineur",
+    (0, 2, 3, 5, 7, 9, 10): "dorien",
+    (0, 1, 3, 5, 7, 8, 10): "phrygien",
+    (0, 2, 4, 6, 7, 9, 11): "lydien",
+    (0, 2, 4, 5, 7, 9, 10): "mixolydien",
+    (0, 1, 3, 5, 6, 8, 10): "locrien",
+    (0, 2, 3, 5, 7, 8, 11): "mineur harmonique",
+    (0, 2, 3, 5, 7, 9, 11): "mineur mélodique",
+    (0, 1, 4, 5, 7, 8, 11): "hongrois mineur",
+    (0, 2, 4, 7, 9): "pentatonique majeure",
+    (0, 3, 5, 7, 10): "pentatonique mineure",
+    (0, 3, 5, 6, 7, 10): "blues",
+    (0, 2, 4, 6, 8, 10): "par tons",
+    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11): "chromatique",
+}
+
+#: Tags XML pouvant contenir les instruments d'un morceau (fw 2.x : ``tracks``).
+_INSTRUMENT_HOLDERS = ("instruments", "tracks")
+
+#: Tags XML pouvant contenir les clips de session (fw 2.x : ``tracks``).
+_SESSION_HOLDERS = ("sessionClips", "tracks")
+
+#: Tags XML des clips d'arrangement selon le firmware.
+_ARRANGEMENT_HOLDERS = ("arrangementOnlyClips", "arrangementOnlyTracks")
+
+#: Correspondance tag d'instrument -> nature.
+_INSTRUMENT_KINDS = {
+    "sound": "sound",
+    "kit": "kit",
+    "midiChannel": "midi",
+    "cvChannel": "cv",
+    "audioOutput": "audio",
+    "track": "sound",
+}
+
+#: Tags de clips rencontrés dans les conteneurs de clips.
+_CLIP_TAGS = ("instrumentClip", "audioClip", "clip", "track")
+
+#: Bornes de tempo plausibles ; hors de cet intervalle, le calcul est rejeté.
+TEMPO_MIN, TEMPO_MAX = 20.0, 400.0
+TEMPO_FALLBACK = 120.0
+
+
+def tempo_from_song_attrs(time_per_timer_tick: int, timer_tick_fraction: int,
+                          input_tick_magnitude: int) -> float:
+    """Tempo en BPM à partir des attributs d'horloge d'un ``<song>``.
+
+    Le Deluge ne stocke pas le tempo mais la durée d'un tick en échantillons :
+
+    * ``ticks = timePerTimerTick + timerTickFraction / 2**32`` ;
+    * ``timerTickFraction`` est une **fraction non signée** — l'attribut XML est
+      écrit en entier 32 bits signé, il faut donc le ramener en non signé, sinon
+      8 morceaux sur 46 de la carte tombent à ~0,3 BPM près de la bonne valeur ;
+    * ``samples_par_tick = ticks * 2**inputTickMagnitude`` ;
+    * ``BPM = 44100 * 60 / (samples_par_tick * 24)`` — 24 ticks par noire,
+      conformément à :data:`TICKS_PER_QUARTER`.
+
+    Vérifié sur les 46 morceaux de la carte : 45 donnent un BPM entier et
+    ``DEFAULT.XML`` donne exactement 120 BPM (défaut d'usine du Deluge).
+
+    Retourne :data:`TEMPO_FALLBACK` si le résultat sort de
+    ``[TEMPO_MIN, TEMPO_MAX]``.
+    """
+    try:
+        tptt = int(time_per_timer_tick)
+        frac = int(timer_tick_fraction) & 0xFFFFFFFF
+        mag = int(input_tick_magnitude)
+    except (TypeError, ValueError):
+        return TEMPO_FALLBACK
+    if tptt <= 0 or not -32 <= mag <= 32:
+        return TEMPO_FALLBACK
+
+    ticks = tptt + frac / 4294967296.0
+    samples_per_tick = ticks * (2.0 ** mag)
+    if samples_per_tick <= 0:
+        return TEMPO_FALLBACK
+    bpm = 44100.0 * 60.0 / (samples_per_tick * TICKS_PER_QUARTER)
+    if not TEMPO_MIN <= bpm <= TEMPO_MAX:
+        log.debug("tempo hors bornes (%.3f BPM) : repli sur %.1f",
+                  bpm, TEMPO_FALLBACK)
+        return TEMPO_FALLBACK
+    # Le firmware vise des valeurs au demi-BPM : on arrondit le bruit de calcul.
+    return round(bpm, 3)
+
+
+def _first_child(el: ET.Element, names: Iterable[str]) -> ET.Element | None:
+    """Premier enfant dont le tag figure dans ``names``."""
+    for name in names:
+        found = dxml.get_child(el, name)
+        if found is not None:
+            return found
+    return None
+
+
+@dataclass
+class Song:
+    """Un fichier ``SONGS/*.XML``.
+
+    La classe est **en lecture seule** : l'application n'écrit jamais un
+    morceau, pour ne pas risquer d'abîmer le travail de l'utilisateur
+    (cf. SPEC §0.2). Le document d'origine reste disponible via ``doc``.
+    """
+
+    path: Path | None = None
+    name: str = ""
+    tempo_bpm: float = TEMPO_FALLBACK
+    root_note: int = 0
+    mode_notes: list[int] = field(default_factory=list)
+    swing_amount: int = 0
+    swing_interval: int = 7
+    clips: list[Clip] = field(default_factory=list)
+    arrangement_clips: list[Clip] = field(default_factory=list)
+    instruments: list[dict] = field(default_factory=list)
+    preview: str = ""
+    firmware: str = ""
+    doc: DelugeDoc | None = None
+
+    # -- lecture ---------------------------------------------------------- #
+
+    @classmethod
+    def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "Song":
+        """Lit un élément ``<song>``."""
+        song = cls(
+            tempo_bpm=tempo_from_song_attrs(
+                _int(el, "timePerTimerTick", 1),
+                _int(el, "timerTickFraction", 0),
+                _int(el, "inputTickMagnitude", 0),
+            ),
+            root_note=_int(el, "rootNote", 0),
+            swing_amount=_int(el, "swingAmount", 0),
+            swing_interval=_int(el, "swingInterval", 7),
+            preview=_txt(el, "preview", ""),
+        )
+
+        modes = dxml.get_child(el, "modeNotes")
+        if modes is not None:
+            for note_el in dxml.iter_children(modes, "modeNote"):
+                raw = (note_el.text or "").strip()
+                if raw:
+                    song.mode_notes.append(parse_int(raw, 0))
+
+        holder = _first_child(el, _INSTRUMENT_HOLDERS)
+        if holder is not None:
+            for child in list(holder):
+                kind = _INSTRUMENT_KINDS.get(child.tag)
+                if kind is None:
+                    continue
+                song.instruments.append({
+                    "kind": kind,
+                    "name": _txt(child, "presetName", "") or _txt(child, "name", ""),
+                    "folder": _txt(child, "presetFolder", ""),
+                })
+
+        song.clips = cls._read_clips(el, _SESSION_HOLDERS, dialect)
+        song.arrangement_clips = cls._read_clips(el, _ARRANGEMENT_HOLDERS, dialect)
+        return song
+
+    @staticmethod
+    def _read_clips(el: ET.Element, holders: Iterable[str],
+                    dialect: str) -> list[Clip]:
+        """Clips contenus dans le premier conteneur trouvé parmi ``holders``."""
+        holder = _first_child(el, holders)
+        if holder is None:
+            return []
+        out: list[Clip] = []
+        for child in list(holder):
+            if child.tag not in _CLIP_TAGS:
+                continue
+            try:
+                out.append(Clip.from_xml(child, dialect))
+            except (ValueError, TypeError, AttributeError) as exc:
+                log.debug("clip illisible (%s) : %s", child.tag, exc)
+        return out
+
+    @classmethod
+    def load(cls, path: Path) -> "Song":
+        """Charge un morceau depuis la carte SD."""
+        path = Path(path)
+        doc = dxml.load(path)
+        root = _root_of(doc, "song")
+        song = cls.from_xml(root, doc.dialect)
+        song.path = path
+        song.name = path.stem
+        song.firmware = doc.firmware
+        song.doc = doc
+        return song
+
+    # -- dépendances ------------------------------------------------------- #
+
+    def sample_paths(self) -> list[str]:
+        """Tous les ``fileName`` d'échantillons référencés par le morceau.
+
+        Les instruments du morceau embarquent leur propre définition de son :
+        on parcourt donc le XML d'origine, qui est la source complète.
+        """
+        if self.doc is None:
+            return []
+        seen: dict[str, None] = {}
+        for el in self.doc.root.iter():
+            value = dxml.get(el, "fileName")
+            if value:
+                seen.setdefault(value.replace("\\", "/").strip("/"), None)
+        return list(seen)
+
+    def preset_refs(self) -> list[tuple[str, str, str]]:
+        """Presets utilisés : ``(nature, nom, dossier)`` sans doublon."""
+        seen: dict[tuple[str, str, str], None] = {}
+        for inst in self.instruments:
+            key = (inst.get("kind", ""), inst.get("name", ""),
+                   inst.get("folder", ""))
+            if key[1]:
+                seen.setdefault(key, None)
+        for clip in self.clips + self.arrangement_clips:
+            if clip.preset_name:
+                kind = "kit" if clip.is_kit else "sound"
+                seen.setdefault((kind, clip.preset_name, clip.preset_folder), None)
+        return list(seen)
+
+    # -- lecture musicale -------------------------------------------------- #
+
+    def scale_name(self) -> str:
+        """Nom français de la gamme : ``Do majeur``, ``La mineur``, ``Ré dorien``."""
+        tonic = NOTE_NAMES_FR[self.root_note % 12]
+        if not self.mode_notes:
+            return tonic
+        intervals = tuple(sorted({n % 12 for n in self.mode_notes}))
+        mode = SCALE_MODES.get(intervals)
+        if mode is None:
+            return f"{tonic} (gamme libre, {len(intervals)} notes)"
+        return f"{tonic} {mode}"
+
+    def stats(self) -> dict:
+        """Chiffres de synthèse du morceau."""
+        all_clips = self.clips + self.arrangement_clips
+        notes = sum(c.note_count for c in all_clips)
+        bars = max((c.bars for c in all_clips), default=0.0)
+        sections = len({c.section for c in self.clips})
+        total_bars = sum(c.bars for c in all_clips)
+        return {
+            "clips": len(self.clips),
+            "arrangement_clips": len(self.arrangement_clips),
+            "notes": notes,
+            "bars": bars,
+            "sections": sections,
+            "instruments": len(self.instruments),
+            "density": (notes / total_bars) if total_bars > 0 else 0.0,
+        }
+
+    def preview_colors(self) -> list[list[str]]:
+        """Vignette du morceau en matrice 8x18 de couleurs ``#RRGGBB``.
+
+        Le Deluge écrit ``previewNumPads="144"`` pads de 3 octets (6 caractères
+        hexadécimaux), rangée par rangée : 8 rangées de 16 pads plus les
+        2 colonnes de la barre latérale.
+        """
+        rows, cols = 8, 18
+        blank = "#000000"
+        grid = [[blank] * cols for _ in range(rows)]
+        blob = (self.preview or "").strip()
+        if blob.lower().startswith("0x"):
+            blob = blob[2:]
+        if len(blob) < rows * cols * 6:
+            return grid
+        for r in range(rows):
+            for c in range(cols):
+                off = (r * cols + c) * 6
+                chunk = blob[off:off + 6]
+                try:
+                    int(chunk, 16)
+                except ValueError:
+                    continue
+                grid[r][c] = "#" + chunk.upper()
+        return grid

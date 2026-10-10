@@ -80,6 +80,33 @@ ROOT_TAGS = frozenset(
 #: Racine de synthèse utilisée pour envelopper les documents multi-racines.
 WRAPPER_TAG = "delugeFile"
 
+#: Balises « collection » : quand elles sont vides, le firmware 2.x les écrit sur deux
+#: lignes (``<midiKnobs>`` / ``</midiKnobs>``) alors qu'une balise de valeur vide tient
+#: sur une seule (``<fileName></fileName>``). Vérifié sur la carte réelle.
+CONTAINER_TAGS = frozenset(
+    {
+        "arrangementOnlyClips",
+        "clips",
+        "columnControls",
+        "defaultParams",
+        "instruments",
+        "kitParams",
+        "midiDevices",
+        "midiKnobs",
+        "modeNotes",
+        "modKnobs",
+        "noteRows",
+        "patchCables",
+        "sampleRanges",
+        "sections",
+        "sessionClips",
+        "songParams",
+        "soundParams",
+        "soundSources",
+        "tracks",
+    }
+)
+
 _XML_DECL_RE = re.compile(r"^\s*<\?xml[^>]*\?>\s*", re.I)
 # Caractères interdits par XML 1.0 (on conserve \t \n \r et U+FFFD qui est licite).
 _INVALID_XML_RE = re.compile(
@@ -552,8 +579,12 @@ def _write_element(out: list[str], el: ET.Element, depth: int, dialect: str) -> 
 
     if not children and not has_text:
         if not attrs and dialect == "elem":
-            # Le firmware 2.x écrit <fileName></fileName> et jamais <fileName />.
-            out.append("%s<%s></%s>\n" % (ind, tag, tag))
+            # Le firmware 2.x écrit <fileName></fileName> et jamais <fileName />,
+            # mais une collection vide occupe deux lignes.
+            if tag in CONTAINER_TAGS:
+                out.append("%s<%s>\n%s</%s>\n" % (ind, tag, ind, tag))
+            else:
+                out.append("%s<%s></%s>\n" % (ind, tag, tag))
         else:
             out.append(head + " />\n")
         return
