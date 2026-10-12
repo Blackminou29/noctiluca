@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from pathlib import Path
 from string import Template
 
 from PyQt6.QtCore import Qt
@@ -33,12 +32,25 @@ INK = "#15181E"
 INK_SOFT = "#3B424E"
 GREY = "#7A828F"
 GREY_LIGHT = "#C3C9D2"
+
+#: Gris des **textes** secondaires, distinct de celui du décor.
+#:
+#: ``GREY`` tombait à 3,78 de contraste sur une surface relevée, là où la
+#: norme demande 4,5 pour un texte courant — et c'est précisément la couleur
+#: des sous-titres et des phrases d'explication. Quinze pour cent de clarté
+#: en plus suffisent : 4,85 dans le pire cas. Les traits, bordures et icônes
+#: gardent ``GREY`` : eux ont le droit d'être discrets.
+TEXT_SOFT = "#8E95A0"
 PAPER = "#FFFFFF"
 PAPER_WARM = "#FAF8F4"
 
-PANEL = "#1C1F26"
-PANEL_HI = "#2A2E37"
-PANEL_LO = "#101319"
+#: Trois niveaux de surface, **nettement distincts**. L'ancienne palette
+#: les séparait de 12 points de luminance : panneaux et fond se confondaient,
+#: et l'écran entier paraissait d'un seul gris. Le fond descend, les
+#: panneaux montent.
+PANEL_LO = "#0A0D12"        # fond de fenêtre, presque noir
+PANEL = "#171C25"           # surface d'un panneau
+PANEL_HI = "#222934"        # surface survolée ou surélevée
 
 GOLD = "#C79A22"
 GOLD_HI = "#EBC65C"
@@ -63,18 +75,34 @@ PAD_WHITE = "#F2F4F8"
 PAD_CYCLE = [PAD_RED, PAD_ORANGE, PAD_AMBER, PAD_YELLOW, PAD_GREEN, PAD_MINT,
              PAD_CYAN, PAD_BLUE, PAD_INDIGO, PAD_PURPLE, PAD_MAGENTA, PAD_PINK]
 
+#: **Une couleur par page**, pour qu'on sache d'un coup d'œil où l'on est.
+#: Les teintes viennent des pads du Deluge : l'application emprunte à la
+#: machine son vocabulaire visuel au lieu d'un camaïeu de gris. La clé est
+#: celle de la navigation (``DashboardPage`` -> ``Dashboard``).
+PAGE_COLORS = {
+    "Dashboard": PAD_AMBER,
+    "Samples": PAD_CYAN,
+    "Synths": PAD_PURPLE,
+    "Kits": PAD_GREEN,
+    "Songs": PAD_BLUE,
+    "Generator": PAD_MAGENTA,
+    "Toolbox": PAD_MINT,
+    "Health": PAD_ORANGE,
+    "Settings": PAD_INDIGO,
+}
+
 ACCENT = "#1F7A8C"
 ACCENT_2 = "#C4543C"
 WASH = "#EEF1F5"
 WASH_2 = "#F6EEE4"
 
 # Teintes dérivées, propres à l'interface
-BORDER = "#2F343E"          # bordure standard
-BORDER_SOFT = "#242833"     # bordure discrète (panneaux)
-BORDER_HI = "#3A404C"       # bordure survolée
-ALT_ROW = "#191D24"         # ligne alternée des tables
-INPUT_BG = "#171A21"        # fond des champs de saisie
-INPUT_FOCUS = "#1B1F27"
+BORDER = "#333B48"          # bordure standard
+BORDER_SOFT = "#2A3240"     # bordure discrète (panneaux) — visible, elle
+BORDER_HI = "#444E5F"       # bordure survolée
+ALT_ROW = "#1C222C"         # ligne alternée des tables
+INPUT_BG = "#111620"        # fond des champs de saisie
+INPUT_FOCUS = "#19202B"
 TEXT = PAD_WHITE
 TEXT_DIM = GREY_LIGHT
 TEXT_MUTED = "#5A6270"
@@ -91,11 +119,14 @@ PAD = 12
 ASSET_DIR = CONFIG_DIR / "cache" / "theme"
 
 __all__ = [
-    "INK", "INK_SOFT", "GREY", "GREY_LIGHT", "PAPER", "PAPER_WARM",
+    "INK", "INK_SOFT", "GREY", "GREY_LIGHT", "TEXT_SOFT",
+    "PAPER", "PAPER_WARM",
     "PANEL", "PANEL_HI", "PANEL_LO", "GOLD", "GOLD_HI", "GOLD_LO",
     "PAD_RED", "PAD_ORANGE", "PAD_AMBER", "PAD_YELLOW", "PAD_GREEN", "PAD_MINT",
     "PAD_CYAN", "PAD_BLUE", "PAD_INDIGO", "PAD_PURPLE", "PAD_MAGENTA", "PAD_PINK",
     "PAD_OFF", "PAD_DIM", "PAD_WHITE", "PAD_CYCLE",
+    "luminance", "contrast", "readable",
+    "PAGE_COLORS", "page_color",
     "ACCENT", "ACCENT_2", "WASH", "WASH_2",
     "FONT_UI", "FONT_MONO", "RADIUS", "PAD",
     "qss", "apply_theme", "pad_color", "category_color", "severity_color",
@@ -160,9 +191,63 @@ def luminance(c: str) -> float:
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
 
 
+def luminance(color: str) -> float:
+    """Luminance relative, au sens de la norme WCAG."""
+    composantes = []
+    for valeur in _rgb(color):
+        v = valeur / 255.0
+        composantes.append(v / 12.92 if v <= 0.04045
+                           else ((v + 0.055) / 1.055) ** 2.4)
+    return (0.2126 * composantes[0] + 0.7152 * composantes[1]
+            + 0.0722 * composantes[2])
+
+
+def contrast(first: str, second: str) -> float:
+    """Rapport de contraste entre deux couleurs, de 1 à 21.
+
+    La norme demande **4,5** pour un texte courant et 3 pour un grand texte.
+    En dessous de 3, beaucoup de gens ne lisent plus.
+    """
+    a, b = luminance(first), luminance(second)
+    haut, bas = (a, b) if a >= b else (b, a)
+    return (haut + 0.05) / (bas + 0.05)
+
+
+def readable(color: str, on: str = "", minimum: float = 4.5) -> str:
+    """Éclaircit ``color`` jusqu'à ce qu'elle se lise sur ``on``.
+
+    Deux couleurs de page — le violet des presets (4,26) et l'indigo des
+    réglages (3,51) — passaient sous le seuil quand elles servaient de
+    couleur de texte. Plutôt que de corriger ces deux-là à la main, on
+    corrige la règle : une couleur destinée à un texte est éclaircie juste
+    ce qu'il faut, et celles qui vont déjà bien ne bougent pas.
+
+    Le fond par défaut est celui d'un panneau, là où se posent les titres de
+    section.
+    """
+    fond = on or PANEL
+    try:
+        actuel = contrast(color, fond)
+    except Exception:              # noqa: BLE001 - couleur illisible
+        return color
+    if actuel >= minimum:
+        return color
+    # Vers le blanc, par pas de 2 % : trente essais suffisent largement.
+    for pas in range(1, 31):
+        candidat = mix(color, "#FFFFFF", pas * 0.02)
+        if contrast(candidat, fond) >= minimum:
+            return candidat
+    return "#FFFFFF"
+
+
 def text_on(bg: str) -> str:
     """Couleur de texte lisible sur le fond donné (encre ou blanc de pad)."""
     return INK if luminance(bg) > 0.58 else PAD_WHITE
+
+
+def page_color(key: str) -> str:
+    """Couleur d'une page, ou l'or par défaut pour une page inconnue."""
+    return PAGE_COLORS.get(str(key or ""), GOLD)
 
 
 def pad_color(i: int) -> str:
@@ -313,12 +398,15 @@ QScrollArea > QWidget > QWidget { background: transparent; }
 QLabel:disabled { color: ${TEXT_MUTED}; }
 
 /* --- Typographie applicative ---------------------------------------- */
-QLabel[role="h1"]        { font-size: 17pt; font-weight: 600; color: ${TEXT}; }
-QLabel[role="title"]     { font-size: 13pt; font-weight: 600; color: ${TEXT}; }
-QLabel[role="section"]   { font-size: 11pt; font-weight: 600; color: ${TEXT};
-                           letter-spacing: 1px; text-transform: uppercase; }
-QLabel[role="subtitle"], QLabel[role="hint"] { font-size: 9pt; color: ${GREY}; }
-QLabel[role="value"]     { font-size: 22pt; font-weight: 600; color: ${TEXT}; }
+QLabel[role="h1"]        { font-size: 23pt; font-weight: 700; color: ${TEXT};
+                           letter-spacing: -0.5px; }
+QLabel[role="title"]     { font-size: 14pt; font-weight: 600; color: ${TEXT}; }
+QLabel[role="section"]   { font-size: 10pt; font-weight: 700; color: ${ACC_HI};
+                           letter-spacing: 1.4px; text-transform: uppercase; }
+QLabel[role="subtitle"], QLabel[role="hint"] { font-size: 9pt;
+                                              color: ${TEXT_SOFT}; }
+QLabel[role="value"]     { font-size: 30pt; font-weight: 700; color: ${TEXT};
+                           letter-spacing: -1px; }
 QLabel[role="accent"]    { color: ${ACC_HI}; font-weight: 600; }
 QLabel[role="mono"], QLabel#Mono, QTextEdit#Mono, QPlainTextEdit#Mono {
     font-family: "${FONT_MONO}", "${FONT_MONO_FALLBACK}", monospace; font-size: 9pt;
@@ -387,6 +475,14 @@ QPushButton:disabled  { background-color: ${PANEL}; color: ${TEXT_MUTED}; border
 QPushButton:flat      { background: transparent; border-color: transparent; }
 QPushButton:flat:hover { background-color: ${SEL_SOFT}; }
 
+/* Action principale : pleine, plus grande, impossible à confondre avec
+   les actions secondaires. C'est le défaut qui manquait — six boutons de
+   poids identique ne guident personne. */
+QPushButton#Primary, QPushButton[accent="true"] {
+    font-size: 10.5pt;
+    min-height: 32px;
+    padding: 7px 18px;
+}
 QPushButton#Primary, QPushButton[accent="true"] {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                       stop:0 ${ACC_HI}, stop:1 ${ACC});
@@ -792,6 +888,7 @@ def _theme_values(accent: str) -> dict[str, str]:
     return {
         # palette de base
         "INK": INK, "GREY": GREY, "GREY_LIGHT": GREY_LIGHT,
+        "TEXT_SOFT": TEXT_SOFT,
         "PANEL": PANEL, "PANEL_HI": PANEL_HI, "PANEL_LO": PANEL_LO,
         "PAD_WHITE": PAD_WHITE, "PAD_RED": PAD_RED,
         "TEXT": TEXT, "TEXT_MUTED": TEXT_MUTED,

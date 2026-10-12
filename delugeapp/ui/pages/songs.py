@@ -21,6 +21,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -33,7 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import PAD, PAD_GREEN, PAD_RED
+from ..theme import PAD
 from ..widgets.common import (
     Card,
     ElidedLabel,
@@ -41,19 +42,52 @@ from ..widgets.common import (
     RowTableModel,
     SearchBar,
     configure_table,
-    human_size,
     sorted_proxy,
 )
 from ..widgets.padgrid import SongPreview
-from .base import Page, page_header, tool_button
+from .base import Page, tool_button
+
+#: Saut de ligne, nommé pour que les messages en format % restent lisibles.
+_NL = chr(10)
 
 log = logging.getLogger(__name__)
+
+
+class _PackPlan:
+    """Enveloppe un ``SongPack`` pour ``PlanDialog``.
+
+    Le dialogue n'exige de son plan que ``summary()``, ``counts()`` et
+    ``to_text()`` — c'est ce qui lui permet de montrer aussi bien un plan de
+    rangement qu'une correction audio. Un rassemblement s'y plie sans qu'il
+    faille un second dialogue.
+    """
+
+    def __init__(self, pack) -> None:
+        self._pack = pack
+
+    def summary(self) -> str:
+        return self._pack.summary()
+
+    def to_text(self) -> str:
+        return self._pack.to_text()
+
+    def counts(self) -> dict:
+        return {"copie": len(self._pack.files())}
+
+    def __bool__(self) -> bool:
+        return bool(self._pack)
+
+    def __len__(self) -> int:
+        return len(self._pack)
 
 
 class SongsPage(Page):
     """Morceaux de la carte."""
 
     TITLE = "Morceaux"
+    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
+                    "Chaque morceau montrera alors ses pistes, son tempo "
+                    "et tout ce dont il dépend.")
     ICON = "song"
 
     def __init__(self, ctx, parent=None) -> None:
@@ -70,15 +104,28 @@ class SongsPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(8)
 
-        header, actions = page_header(
+        header, actions = self.header(
             "Morceaux", "Contenu, dépendances et ce qui manque")
         outer.addWidget(header)
 
         export = tool_button("Clip en MIDI", "export",
-                             "Exporter le clip sélectionné en fichier MIDI",
-                             primary=True)
+                             "Exporter le clip sélectionné en fichier MIDI")
         export.clicked.connect(self.guard(self._export_clip))
         actions.addWidget(export)
+
+        self._song_midi = tool_button(
+            "Morceau en MIDI", "midi",
+            "Exporter tout le morceau : une piste MIDI par clip",
+            primary=True)
+        self._song_midi.clicked.connect(self.guard(self._export_song_midi))
+        actions.addWidget(self._song_midi)
+
+        self._pack = tool_button(
+            "Rassembler…", "save",
+            "Copier le morceau, ses presets et ses échantillons dans un "
+            "dossier")
+        self._pack.clicked.connect(self.guard(self._export_pack))
+        actions.addWidget(self._pack)
 
         report = tool_button("Rapport HTML", "info",
                              "Enregistrer une fiche du morceau")
@@ -96,6 +143,12 @@ class SongsPage(Page):
         splitter = QSplitter(Qt.Orientation.Horizontal, self.content())
         splitter.addWidget(self._build_table())
         splitter.addWidget(self._build_detail())
+        # ``setSizes`` est une **proportion** : Qt normalise les deux
+        # nombres à la largeur disponible. Donner [620, 820] sur une
+        # zone de 1 210 px rendait 521 px, pas 620 — d'où des colonnes
+        # écrasées. Les nombres ci-dessous valent pour une zone de
+        # 1 210 px (fenêtre de 1 440).
+        splitter.setSizes([520, 690])
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
         outer.addWidget(splitter, 1)
@@ -184,17 +237,18 @@ class SongsPage(Page):
         def get(key, default=None):
             return lambda row: (row[key] if key in row.keys() else default)
 
+        # Pas de colonne « Gamme » : le panneau de droite la donne pour le
+        # morceau choisi, et sa largeur poussait les six colonnes hors du
+        # panneau — une barre de défilement horizontale pour cacher ce qui
+        # était déjà affiché à côté.
         return [
-            ("Nom", get("name"), 170, left),
-            ("Tempo", get("tempo"), 75, right,
+            ("Nom", get("name"), 180, left),
+            ("Tempo", get("tempo"), 80, right,
              lambda v: f"{v:.0f} BPM" if v else "—"),
-            ("Gamme", get("scale"), 130, left),
             ("Clips", get("clips"), 60, right),
             ("Notes", get("notes"), 65, right),
             ("Mesures", get("bars"), 75, right,
              lambda v: f"{v:.0f}" if v else "—"),
-            ("Firmware", get("firmware"), 80, left),
-            ("Taille", get("size"), 80, right, human_size),
         ]
 
     # -- chargement --------------------------------------------------------- #
@@ -385,6 +439,112 @@ class SongsPage(Page):
             return
         self.say(f"Clip exporté : {Path(chosen).name} "
                  f"({clip.note_count} notes)")
+
+    def _export_song_midi(self) -> None:
+        """Exporte le morceau entier : une piste MIDI par clip."""
+        if self._song is None:
+            self.say("Aucun morceau sélectionné.")
+            return
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        from ...core import midifile
+
+        total = sum(c.note_count for c in self._song.clips
+                    + self._song.arrangement_clips)
+        if total == 0:
+            self.say("Ce morceau ne contient aucune note.")
+            return
+
+        default = "%s.mid" % Path(self._current).stem
+        chosen, _f = QFileDialog.getSaveFileName(
+            self, "Exporter le morceau en MIDI", default,
+            "Fichier MIDI (*.mid)")
+        if not chosen:
+            return
+        try:
+            pistes = midifile.song_to_midi(Path(chosen), self._song)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("export MIDI du morceau impossible")
+            self.say("Export impossible : %s" % exc)
+            return
+        if not pistes:
+            self.say("Aucun clip à exporter.")
+            return
+        self.say("%d piste(s) exportées dans %s — les clips du Deluge étant "
+                 "des boucles, toutes démarrent au début."
+                 % (pistes, Path(chosen).name))
+
+    def _export_pack(self) -> None:
+        """Rassemble le morceau et ses dépendances dans un dossier."""
+        card = self.card_or_warn()
+        if card is None or self._song is None or not self._current:
+            self.say("Aucun morceau sélectionné.")
+            return
+
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+        from ...core import songpack
+        from ..widgets.common import PlanDialog
+
+        pack = songpack.collect(card, self._current)
+        if not pack:
+            self.say("Morceau illisible.")
+            return
+
+        dialog = PlanDialog(_PackPlan(pack), self,
+                            "Rassembler « %s »" % pack.name)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self.say("Opération annulée.")
+            return
+
+        dossier = QFileDialog.getExistingDirectory(
+            self, "Où rassembler le morceau ?", str(Path.home()))
+        if not dossier:
+            return
+
+        cible = Path(dossier) / songpack.safe_folder_name(pack.name)
+        if cible.exists() and any(cible.iterdir()):
+            if QMessageBox.question(
+                    self, "Dossier déjà utilisé",
+                    "%s n'est pas vide.\n\nLes fichiers de même nom seront "
+                    "remplacés. Continuer ?" % cible.name,
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) \
+                    != QMessageBox.StandardButton.Yes:
+                return
+
+        self.say("Copie de %d fichier(s)…" % len(pack))
+        self.run(self._do_pack, card, pack, cible,
+                 on_result=self.guard(self._pack_done),
+                 on_error=self.guard(lambda m: self.say("Échec : %s" % m)),
+                 title="Rassemblement")
+
+    def _do_pack(self, card, pack, cible, progress=None, should_stop=None):
+        from ...core import songpack
+
+        copies, erreurs = songpack.write_pack(
+            card, pack, cible, apply=True, progress=progress,
+            should_stop=should_stop)
+        return (copies, erreurs, cible)
+
+    def _pack_done(self, result) -> None:
+        if result is None:
+            return
+        copies, erreurs, cible = result
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        if erreurs:
+            QMessageBox.warning(
+                self, "Rassemblement partiel",
+                "%d fichier(s) copiés, %d en échec :%s%s"
+                % (len(copies), len(erreurs), _NL + _NL,
+                   _NL.join(erreurs[:12])))
+        self.say("%d fichier(s) copiés dans %s. Le dossier a la forme d'une "
+                 "carte : le recopier à la racine d'une autre suffit."
+                 % (len(copies), cible))
 
     def _export_report(self) -> None:
         """Enregistre une fiche HTML du morceau."""

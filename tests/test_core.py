@@ -10,16 +10,43 @@ ce qui permet de les lancer sur une machine sans affichage :
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 import numpy as np
 
+# --------------------------------------------------------------------------- #
+# Bac à sable — avant tout import de ``delugeapp``
+# --------------------------------------------------------------------------- #
+# Rien ici ne doit toucher aux réglages réels de l'utilisateur. Ce n'est pas
+# une précaution théorique : c'est arrivé trois fois, et la dernière a éteint
+# ``confirm_writes`` et ``always_backup_before_write`` — les deux filets qui
+# protègent une carte contenant des mois de travail.
+#
+# Ces quatre lignes doivent rester **au-dessus** de l'import de ``delugeapp``,
+# qui calcule ses chemins au moment de l'import. Elles sont répétées dans
+# chaque module de test, et non dans ``tests/__init__.py`` : ``unittest
+# discover`` charge les modules à plat, sans importer le paquet.
+#
+# ``TestDossierDeConfiguration.test_la_suite_n_ecrit_pas_chez_l_utilisateur``
+# échoue si on les retire.
+import os as _os                                             # noqa: E402
+import tempfile as _tempfile                                 # noqa: E402
+
+BAC_A_SABLE = Path(_tempfile.gettempdir()) / "deluge-companion-tests"
+BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
+_os.environ["DELUGE_COMPANION_CONFIG"] = str(BAC_A_SABLE)
+
+
 from delugeapp.core import (analysis, backup, db, deps, dxml, genres, health,
-                            kitgen, midifile, organize, render, rhythm, scan,
-                            sdcard, synthgen, theory, wav)
+                            kitgen, midifile, organize, render, rhythm,
+                            samplefix, scan, sdcard, similarity, slicer,
+                            songpack, synthgen, theory, units, wav)
+from delugeapp.core import fixedpoint
 from delugeapp.core.fixedpoint import (
     INT32_MAX,
     INT32_MIN,
@@ -1583,6 +1610,247 @@ class TestHealth(unittest.TestCase):
 # Sauvegardes
 # --------------------------------------------------------------------------- #
 
+class TestIndexEntreFils(unittest.TestCase):
+    """Une seule connexion SQLite, plusieurs fils : il faut un verrou.
+
+    ``check_same_thread=False`` ne rend pas une connexion sûre, il désactive
+    seulement la vérification de Python. Sans verrou, quatre fils qui
+    interrogent l'index en même temps donnent « bad parameter or other API
+    misuse » et des lignes tronquées — et le diagnostic de santé, dont
+    chaque contrôle avale ses erreurs, rend alors un **rapport amputé sans
+    rien signaler**. C'est ce que faisait l'application dès que le
+    diagnostic partait dans un fil pendant que le tableau de bord lisait.
+    """
+
+    def _carte(self, racine: Path):
+        for nom in ("SONGS", "SYNTHS", "KITS", "SAMPLES"):
+            (racine / nom).mkdir(parents=True, exist_ok=True)
+        return sdcard.SDCard(racine)
+
+    def test_lectures_concurrentes_justes_et_silencieuses(self):
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            racine = Path(tmp) / "carte"
+            carte = self._carte(racine)
+            lib = db.Library(Path(tmp) / "index.sqlite3")
+            try:
+                for index in range(60):
+                    lib.upsert_sample({
+                        "rel": "SAMPLES/son%02d.wav" % index,
+                        "name": "son%02d" % index, "size": 1000 + index})
+                lib.commit()
+
+                erreurs: list = []
+                resultats: list = []
+
+                def travail():
+                    try:
+                        for _ in range(12):
+                            lignes = lib.search_samples(limit=100)
+                            resultats.append(len(lignes))
+                            for ligne in lignes:
+                                # Une ligne tronquée lève ici.
+                                _ = ligne["rel"]
+                    except Exception as exc:        # noqa: BLE001
+                        erreurs.append("%s: %s" % (type(exc).__name__, exc))
+
+                fils = [threading.Thread(target=travail) for _ in range(5)]
+                for f in fils:
+                    f.start()
+                for f in fils:
+                    f.join(30)
+
+                self.assertEqual(erreurs, [], "lecture concurrente en échec")
+                self.assertEqual(set(resultats), {60},
+                                 "résultats incomplets : %s"
+                                 % sorted(set(resultats)))
+            finally:
+                lib.close()
+
+    def test_ecriture_pendant_lecture(self):
+        """Le cas réel : l'analyse écrit pendant que l'interface lit."""
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = db.Library(Path(tmp) / "index.sqlite3")
+            try:
+                erreurs: list = []
+                fini = threading.Event()
+
+                def ecrire():
+                    try:
+                        for index in range(200):
+                            lib.upsert_sample({
+                                "rel": "SAMPLES/a%03d.wav" % index,
+                                "name": "a%03d" % index, "size": index})
+                        lib.commit()
+                    except Exception as exc:        # noqa: BLE001
+                        erreurs.append("écriture : %s" % exc)
+                    finally:
+                        fini.set()
+
+                def lire():
+                    try:
+                        while not fini.is_set():
+                            lib.stats()
+                            lib.search_samples(limit=50)
+                    except Exception as exc:        # noqa: BLE001
+                        erreurs.append("lecture : %s" % exc)
+
+                fils = [threading.Thread(target=ecrire),
+                        threading.Thread(target=lire)]
+                for f in fils:
+                    f.start()
+                for f in fils:
+                    f.join(30)
+                self.assertEqual(erreurs, [])
+                self.assertEqual(lib.stats().get("samples"), 200)
+            finally:
+                lib.close()
+
+    def test_jamais_deux_requetes_en_meme_temps(self):
+        """La propriété elle-même, plutôt que l'espoir d'un symptôme.
+
+        Un premier test guettait le dégât — lignes tronquées, notes
+        divergentes — et passait **aussi bien sans le verrou** : sur une
+        carte factice, la fenêtre de course est trop étroite. Il ne prouvait
+        donc rien.
+
+        Celui-ci espionne la vraie connexion et compte combien de requêtes
+        s'y trouvent **en même temps**. Avec le verrou : une, toujours. Sans
+        lui : plusieurs, et c'est exactement ce qui a rendu « bad parameter
+        or other API misuse » et deux notes de santé différentes pour la
+        même carte.
+        """
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = db.Library(Path(tmp) / "index.sqlite3")
+            try:
+                for index in range(40):
+                    lib.upsert_sample({"rel": "SAMPLES/s%02d.wav" % index,
+                                       "name": "s%02d" % index})
+                lib.commit()
+
+                vraie = lib.con.raw
+                compte = {"actives": 0, "maximum": 0}
+                garde = threading.Lock()
+
+                class _Espion:
+                    """Compte les requêtes simultanées sur la connexion."""
+
+                    def __getattr__(self, nom):
+                        return getattr(vraie, nom)
+
+                    def execute(self, sql, parameters=()):
+                        with garde:
+                            compte["actives"] += 1
+                            compte["maximum"] = max(compte["maximum"],
+                                                    compte["actives"])
+                        try:
+                            # La pause élargit la fenêtre : sous verrou, elle
+                            # ne laisse entrer personne ; sans verrou, si.
+                            time.sleep(0.002)
+                            return vraie.execute(sql, parameters)
+                        finally:
+                            with garde:
+                                compte["actives"] -= 1
+
+                lib.con._con = _Espion()
+
+                def travail():
+                    for _ in range(10):
+                        lib.search_samples(limit=100)
+                        lib.stats()
+
+                fils = [threading.Thread(target=travail) for _ in range(4)]
+                for f in fils:
+                    f.start()
+                for f in fils:
+                    f.join(60)
+
+                self.assertGreater(compte["maximum"], 0, "rien n'a été exécuté")
+                self.assertEqual(
+                    compte["maximum"], 1,
+                    "%d requêtes en même temps sur une seule connexion"
+                    % compte["maximum"])
+            finally:
+                # ``close`` passe par l'espion, qui délègue à la vraie
+                # connexion : rien à remettre en place.
+                lib.close()
+
+    def test_un_resultat_est_deja_lu(self):
+        """Le proxy matérialise : plus de curseur paresseux à travers les fils.
+
+        C'est la seconde moitié de la correction. Un curseur lu plus tard,
+        pendant qu'un autre fil interroge la même connexion, entrelace les
+        appels à SQLite — d'où les lignes tronquées.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = db.Library(Path(tmp) / "index.sqlite3")
+            try:
+                lib.upsert_sample({"rel": "SAMPLES/a.wav", "name": "a"})
+                lib.commit()
+                resultat = lib.con.execute("SELECT rel FROM samples")
+                self.assertIsInstance(resultat, db._Resultat)
+                # Lisible deux fois : la preuve qu'il ne reste rien à tirer
+                # de la base.
+                self.assertEqual(len(resultat.fetchall()), 1)
+                self.assertEqual(len(resultat.fetchall()), 1)
+            finally:
+                lib.close()
+
+    def test_le_verrou_est_reentrant(self):
+        """Une requête qui en contient une autre ne doit pas se bloquer."""
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = db.Library(Path(tmp) / "index.sqlite3")
+            try:
+                with lib.lock:
+                    with lib.lock:
+                        self.assertEqual(
+                            lib.con.execute("SELECT 1").fetchone()[0], 1)
+            finally:
+                lib.close()
+
+
+class TestCodesDAnomalie(unittest.TestCase):
+    """``health.ISSUE_CODES`` est le vocabulaire stable des anomalies.
+
+    L'interface s'en sert pour mener chaque anomalie vers l'onglet qui la
+    répare. Si un code disparaît du module sans disparaître de la table des
+    destinations, le raccourci vise un code mort — et personne ne s'en
+    aperçoit, puisque rien ne lève.
+    """
+
+    def test_les_codes_emis_sont_tous_declares(self):
+        """Ce que ``check_card`` produit vraiment, sur une carte factice."""
+        with tempfile.TemporaryDirectory() as tmp:
+            racine = Path(tmp) / "carte"
+            for nom in ("SONGS", "SYNTHS", "KITS", "SAMPLES"):
+                (racine / nom).mkdir(parents=True)
+            (racine / "SAMPLES" / "._parasite.wav").write_bytes(b"x")
+            (racine / "SAMPLES" / "notes.txt").write_text("bonjour")
+            carte = sdcard.SDCard(racine)
+            lib = db.Library(Path(tmp) / "index.sqlite3")
+            try:
+                rapport = health.check_card(carte, lib)
+            finally:
+                lib.close()
+            emis = {i.code for i in rapport.issues}
+            self.assertTrue(emis, "aucune anomalie : le test ne prouve rien")
+            self.assertTrue(
+                emis <= health.ISSUE_CODES,
+                "codes émis mais non déclarés : %s"
+                % sorted(emis - health.ISSUE_CODES))
+
+    def test_aucun_code_declare_n_est_invente(self):
+        """Dans l'autre sens : chaque code déclaré existe dans le module."""
+        source = Path("delugeapp/core/health.py").read_text(encoding="utf-8")
+        for code in sorted(health.ISSUE_CODES):
+            self.assertIn('"%s"' % code, source, code)
+
+
 class TestBackup(unittest.TestCase):
     """Sauvegarde, comparaison et restauration."""
 
@@ -2870,6 +3138,54 @@ class TestRender(unittest.TestCase):
                     self.assertGreater(peak, 0.005, "rendu muet")
                     self.assertLessEqual(peak, 1.0, "rendu saturé")
 
+    def test_la_graine_du_bruit_est_stable(self):
+        """Le même preset doit rendre le même son d'une session à l'autre.
+
+        La graine du bruit et des phases de LFO venait de ``hash(nom)``, que
+        Python randomise à chaque démarrage. Le générateur promet pourtant
+        qu'une graine redonne le même son — et la promesse ne tenait pas
+        au-delà de la session.
+
+        Le défaut s'est manifesté en grand : la même basse « lo-fi », rendue
+        dans deux processus, allait de 0,003 à 0,42 de crête, soit plus de
+        40 dB d'écart. Un test de rendu muet est tombé dessus un jour sur
+        plusieurs, ce qui en faisait une alerte qu'on finit par ignorer.
+        """
+        self.assertEqual(render._graine("AURORE GRAVE 3"), 1271953888)
+        self.assertEqual(render._graine("Mon son"), 1509621092)
+        self.assertEqual(render._graine(""), 0)
+        self.assertEqual(render._graine(None), 0)
+
+    def test_deux_rendus_du_meme_son_sont_identiques(self):
+        """Au bit près : c'est la forme forte de la reproductibilité."""
+        preset = synthgen.generate(synthgen.GenOptions(
+            genre="lofi", role="bass", seed=2))
+        premier = render.render_sound(preset.sound, seconds=0.5, sr=self.SR)
+        second = render.render_sound(preset.sound, seconds=0.5, sr=self.SR)
+        self.assertTrue(bool(np.array_equal(premier, second)),
+                        "deux rendus du même son diffèrent")
+
+    def test_un_son_renomme_change_de_bruit_mais_pas_de_niveau(self):
+        """Le nom sert de graine : il ne doit pas décider du volume.
+
+        Mesuré sur quarante graines : la crête allait de 0,007 à 0,42. Le
+        bruit change, c'est voulu ; que le niveau varie de quarante fois
+        l'est beaucoup moins, et ce contrôle garde la mesure sous les yeux.
+        """
+        import copy
+
+        preset = synthgen.generate(synthgen.GenOptions(
+            genre="lofi", role="bass", seed=2))
+        cretes = []
+        for nom in ("ESSAI A", "ESSAI B", "ESSAI C", "ESSAI D", "ESSAI E"):
+            autre = copy.deepcopy(preset.sound)
+            autre.name = nom
+            audio = render.render_sound(autre, seconds=0.8, sr=self.SR)
+            cretes.append(float(np.max(np.abs(audio))))
+        for crete in cretes:
+            self.assertGreater(crete, 0.005,
+                               "un simple changement de nom rend le son muet")
+
     def test_hierarchie_spectrale(self):
         """Une basse doit sonner plus grave qu'un lead ou qu'une nappe.
 
@@ -3101,6 +3417,2087 @@ class TestRender(unittest.TestCase):
                                        delta=0.01)
                 self.assertAlmostEqual(float(table[0]), float(table[-1]),
                                        places=5)
+
+
+class TestSampleFix(unittest.TestCase):
+    """Correction des défauts audio : mono, continu, écrêtage, fréquence.
+
+    Tous les tests travaillent sur une carte jetable, et plusieurs comparent
+    les fichiers **à l'octet** avant et après : c'est la seule façon de
+    prouver qu'une simulation ne touche à rien et qu'une restauration rend
+    bien l'original.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.root = base / "carte"
+        for sub in ("SONGS", "SYNTHS", "KITS", "SAMPLES/DRUMS/Kick",
+                    "SAMPLES/DRUMS/Snare", "SAMPLES/MULTISAMPLES"):
+            (self.root / sub).mkdir(parents=True)
+
+        t = np.linspace(0, 0.4, 17640, endpoint=False, dtype=np.float32)
+
+        # Une percussion stéréo : deux canaux légèrement désaccordés.
+        stereo = np.stack(
+            [0.6 * np.sin(2 * np.pi * 70 * t) * np.exp(-t * 9),
+             0.6 * np.sin(2 * np.pi * 71 * t) * np.exp(-t * 9)], axis=1)
+        wav.write(self.root / "SAMPLES/DRUMS/Kick/stereo.wav",
+                  stereo.astype(np.float32), 44100)
+
+        # Un fichier à 32 kHz, hors des fréquences lues directement.
+        wav.write(self.root / "SAMPLES/DRUMS/Snare/32k.wav",
+                  (0.4 * np.random.default_rng(3).standard_normal(12800)
+                   ).astype(np.float32), 32000)
+
+        # Une composante continue franche.
+        wav.write(self.root / "SAMPLES/DRUMS/Kick/continu.wav",
+                  (0.3 * np.sin(2 * np.pi * 90 * t) + 0.08
+                   ).astype(np.float32), 44100)
+
+        # Un fichier déjà à pleine échelle **et** décalé : recentrer un tel
+        # signal l'écrête, c'est le cas qui a motivé le garde-fou.
+        chaud = 0.92 * np.sin(2 * np.pi * 110 * t) + 0.079
+        wav.write(self.root / "SAMPLES/DRUMS/Kick/chaud.wav",
+                  np.clip(chaud, -1.0, 1.0).astype(np.float32), 44100)
+
+        # Un fichier mono ordinaire, qui ne doit jamais être touché.
+        wav.write(self.root / "SAMPLES/MULTISAMPLES/mono.wav",
+                  (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32),
+                  44100)
+
+        self.sd = sdcard.SDCard(self.root)
+        self.lib = db.Library(base / "index.db")
+        scan.scan_card(self.sd, self.lib, compute_hash=True, analyze=True)
+
+    def tearDown(self):
+        self.lib.close()
+        self._tmp.cleanup()
+
+    # -- utilitaires -------------------------------------------------------- #
+
+    def _sha(self, rel: str) -> str:
+        return hashlib.sha256((self.root / rel).read_bytes()).hexdigest()
+
+    def _empreintes(self) -> dict:
+        return {self.sd.rel(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in self.root.rglob("*")
+                if p.is_file() and p.suffix.lower() == ".wav"}
+
+    def _preset_borne(self, nom: str, rel: str, frames: int,
+                      unit: str = "samples"):
+        """Un preset qui borne ``rel`` en trames (ou en millisecondes)."""
+        from delugeapp.core.model import Zone
+
+        preset = SynthPreset.new(nom)
+        preset.sound.osc1.type = "sample"
+        preset.sound.osc1.file_name = rel
+        preset.sound.osc1.zone = Zone(start=100, end=frames, unit=unit,
+                                      start_loop=200, end_loop=frames - 50)
+        preset.save(self.root / "SYNTHS" / f"{nom}.XML", backup=False)
+        return self.root / "SYNTHS" / f"{nom}.XML"
+
+    def _song(self, nom: str, rel: str) -> None:
+        """Un morceau qui cite un échantillon, bornes en trames."""
+        (self.root / "SONGS" / nom).write_bytes(
+            b'<song firmwareVersion="3.0.4" timePerTimerTick="459"'
+            b' timerTickFraction="1610612736" inputTickMagnitude="1">'
+            b'<instruments><sound presetName="X"><osc1 type="sample"'
+            b' fileName="' + rel.encode("utf-8") +
+            b'"><zone startSamplePos="0" endSamplePos="1000"/>'
+            b'</osc1></sound></instruments></song>')
+
+    # -- sélection ---------------------------------------------------------- #
+
+    def test_plan_mono_ne_vise_que_les_percussions_stereo(self):
+        plan = samplefix.plan_mono(self.sd, self.lib)
+        rels = [e.rel for e in plan.edits]
+        self.assertEqual(len(rels), 1)
+        self.assertTrue(rels[0].endswith("stereo.wav"))
+
+    def test_plan_mono_ignore_la_stereo_hors_de_drums(self):
+        """Le critère est celui du diagnostic : sous ``SAMPLES/DRUMS/`` seul."""
+        t = np.linspace(0, 0.2, 8820, endpoint=False, dtype=np.float32)
+        ailleurs = np.stack([0.4 * np.sin(2 * np.pi * 200 * t)] * 2, axis=1)
+        wav.write(self.root / "SAMPLES/MULTISAMPLES/st.wav",
+                  ailleurs.astype(np.float32), 44100)
+        scan.scan_card(self.sd, self.lib, compute_hash=True)
+
+        plan = samplefix.plan_mono(self.sd, self.lib)
+        self.assertNotIn("SAMPLES/MULTISAMPLES/st.wav",
+                         [e.rel for e in plan.edits])
+        # Explicitement demandé, en revanche, il est traité.
+        force = samplefix.plan_mono(
+            self.sd, self.lib, rels=["SAMPLES/MULTISAMPLES/st.wav"])
+        self.assertEqual(len(force.edits), 1)
+
+    def test_les_seuils_viennent_de_health(self):
+        """Dupliquer les seuils ferait diverger plan et diagnostic."""
+        self.assertEqual(samplefix.DC_THRESHOLD, health.DC_OFFSET_LIMIT)
+        self.assertEqual(samplefix.CLIP_THRESHOLD, health.CLIPPED_RATIO)
+        self.assertEqual(samplefix.STANDARD_RATES, health.GOOD_SAMPLE_RATES)
+
+    def test_le_plan_correspond_au_diagnostic(self):
+        """Autant de fichiers dans le plan que la page Santé en signale."""
+        report = health.check_card(self.sd, self.lib)
+        compte = {i.code: i.count for i in report.issues}
+        for code, builder in (
+                ("STEREO_DRUM", samplefix.plan_mono),
+                ("ODD_SAMPLE_RATE", samplefix.plan_standard_rate),
+                ("DC_OFFSET", samplefix.plan_remove_dc),
+                ("CLIPPED_SAMPLE", samplefix.plan_headroom)):
+            with self.subTest(code=code):
+                plan = builder(self.sd, self.lib)
+                self.assertEqual(len(plan.edits) + len(plan.skipped),
+                                 compte.get(code, 0))
+
+    # -- simulation contre application -------------------------------------- #
+
+    def test_simulate_ne_touche_a_rien(self):
+        avant = self._empreintes()
+        plan = samplefix.plan_from_health(
+            self.sd, self.lib, list(samplefix.HEALTH_CODES))
+        result = plan.simulate(self.sd, self.lib)
+        self.assertFalse(result.applied)
+        self.assertTrue(result.done)
+        self.assertEqual(self._empreintes(), avant)
+        self.assertFalse((self.root / samplefix.BACKUP_ROOT).exists())
+
+    def test_apply_ecrit_vraiment(self):
+        """``apply()`` applique : c'est la différence avec ``simulate()``."""
+        avant = self._sha("SAMPLES/DRUMS/Kick/stereo.wav")
+        plan = samplefix.plan_mono(self.sd, self.lib)
+        result = plan.apply(self.sd, self.lib)
+        self.assertTrue(result.applied)
+        self.assertNotEqual(self._sha("SAMPLES/DRUMS/Kick/stereo.wav"), avant)
+
+    # -- mono --------------------------------------------------------------- #
+
+    def test_mono_conserve_la_longueur_et_divise_la_taille(self):
+        rel = "SAMPLES/DRUMS/Kick/stereo.wav"
+        avant = wav.probe(self.root / rel)
+        taille = (self.root / rel).stat().st_size
+
+        result = samplefix.plan_mono(self.sd, self.lib).apply(self.sd, self.lib)
+        apres = wav.probe(self.root / rel)
+
+        self.assertEqual(apres.channels, 1)
+        self.assertEqual(apres.frames, avant.frames,
+                         "le nombre de trames ne doit pas changer")
+        self.assertLess((self.root / rel).stat().st_size, taille * 0.6)
+        self.assertEqual(result.zones_moved, 0)
+        self.assertGreater(result.bytes_saved, 0)
+
+    def test_mono_met_l_index_a_jour(self):
+        samplefix.plan_mono(self.sd, self.lib).apply(self.sd, self.lib)
+        row = self.lib.get("sample", "SAMPLES/DRUMS/Kick/stereo.wav")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["channels"], 1)
+        report = health.check_card(self.sd, self.lib)
+        self.assertNotIn("STEREO_DRUM", {i.code for i in report.issues})
+
+    # -- sauvegarde et restauration ----------------------------------------- #
+
+    def test_la_sauvegarde_suit_l_arborescence_de_la_carte(self):
+        """Pas de chemin absolu enterré sous ``_BACKUP/``."""
+        empreintes = self._empreintes()
+        result = samplefix.plan_mono(self.sd, self.lib).apply(self.sd, self.lib)
+        base = self.sd.abs(result.backup_dir)
+
+        for rel in result.done:
+            with self.subTest(fichier=rel):
+                copie = base / rel
+                self.assertTrue(copie.is_file(),
+                                f"original attendu en {copie}")
+                self.assertEqual(
+                    hashlib.sha256(copie.read_bytes()).hexdigest(),
+                    empreintes[rel])
+
+        dehors = [p for p in base.rglob("*") if p.is_file()
+                  and not str(p.relative_to(base)).replace("\\", "/")
+                  .upper().startswith("SAMPLES/")]
+        self.assertEqual(dehors, [])
+
+    def test_restore_rend_l_original_a_l_octet(self):
+        empreintes = self._empreintes()
+        result = samplefix.plan_mono(self.sd, self.lib).apply(self.sd, self.lib)
+        modifies = [rel for rel in result.done
+                    if self._sha(rel) != empreintes[rel]]
+        self.assertTrue(modifies)
+
+        nb, erreurs = samplefix.restore(self.sd, result.backup_dir,
+                                        self.lib, apply=False)
+        self.assertEqual(nb, len(result.done))
+        self.assertEqual(
+            [rel for rel in modifies if self._sha(rel) != empreintes[rel]],
+            modifies, "la simulation de restauration a écrit")
+
+        nb, erreurs = samplefix.restore(self.sd, result.backup_dir,
+                                        self.lib, apply=True)
+        self.assertEqual(erreurs, [])
+        for rel in modifies:
+            with self.subTest(fichier=rel):
+                self.assertEqual(self._sha(rel), empreintes[rel])
+
+        # Rien ne doit avoir été créé hors des dossiers de la carte.
+        racines = {p.relative_to(self.root).parts[0].upper()
+                   for p in self.root.rglob("*") if p.is_file()}
+        self.assertTrue(racines <= {"SAMPLES", "SYNTHS", "KITS", "SONGS",
+                                    samplefix.BACKUP_ROOT}, racines)
+
+    def test_deux_executions_ont_deux_sauvegardes(self):
+        r1 = samplefix.plan_mono(self.sd, self.lib).apply(self.sd, self.lib)
+        r2 = samplefix.plan_remove_dc(self.sd, self.lib).apply(self.sd,
+                                                               self.lib)
+        self.assertTrue(r1.backup_dir)
+        self.assertNotEqual(r1.backup_dir, r2.backup_dir)
+
+    def test_restore_d_une_sauvegarde_absente(self):
+        nb, erreurs = samplefix.restore(self.sd, "_BACKUP/inexistant",
+                                        self.lib, apply=True)
+        self.assertEqual(nb, 0)
+        self.assertTrue(erreurs)
+
+    # -- composante continue ------------------------------------------------ #
+
+    def test_retrait_du_continu(self):
+        rel = "SAMPLES/DRUMS/Kick/continu.wav"
+        plan = samplefix.plan_remove_dc(self.sd, self.lib)
+        self.assertIn(rel, [e.rel for e in plan.edits])
+        plan.apply(self.sd, self.lib)
+
+        data, _ = wav.read(self.root / rel)
+        self.assertLess(abs(analysis.loudness(data)["dc_offset"]),
+                        samplefix.DC_THRESHOLD)
+
+    def test_le_retrait_du_continu_ne_cree_pas_d_ecretage(self):
+        """Recentrer un signal déjà à pleine échelle doit l'atténuer.
+
+        Sans garde-fou, ``wav.convert`` rabotait les sommets : le fichier
+        sortait recentré **et** écrêté, et le diagnostic empirait.
+        """
+        rel = "SAMPLES/DRUMS/Kick/chaud.wav"
+        plan = samplefix.plan_remove_dc(self.sd, self.lib, rels=[rel])
+        edit = plan.edits[0]
+        self.assertIn("normalize", edit.actions,
+                      "une baisse de niveau devait accompagner le retrait")
+        plan.apply(self.sd, self.lib)
+
+        data, _ = wav.read(self.root / rel)
+        niveaux = analysis.loudness(data)
+        self.assertLess(abs(niveaux["dc_offset"]), samplefix.DC_THRESHOLD)
+        self.assertLessEqual(niveaux["clipped"], samplefix.CLIP_THRESHOLD)
+
+    def test_marge_rendue_aux_fichiers_ecretes(self):
+        rel = "SAMPLES/DRUMS/Kick/chaud.wav"
+        samplefix.plan_headroom(self.sd, self.lib, rels=[rel],
+                                target_db=-3.0).apply(self.sd, self.lib)
+        data, _ = wav.read(self.root / rel)
+        crete = 20.0 * np.log10(max(float(np.max(np.abs(data))), 1e-9))
+        self.assertAlmostEqual(crete, -3.0, delta=0.2)
+
+    # -- rééchantillonnage et bornes ---------------------------------------- #
+
+    def test_reechantillonnage_recale_les_bornes_en_trames(self):
+        rel = "SAMPLES/DRUMS/Snare/32k.wav"
+        frames = wav.probe(self.root / rel).frames
+        chemin = self._preset_borne("BORNES", rel, frames)
+
+        result = samplefix.plan_standard_rate(
+            self.sd, self.lib, rels=[rel]).apply(self.sd, self.lib)
+        ratio = 44100 / 32000.0
+
+        apres = wav.probe(self.root / rel)
+        self.assertEqual(apres.sample_rate, 44100)
+        self.assertAlmostEqual(apres.frames / frames, ratio, delta=0.01)
+
+        zone = SynthPreset.load(chemin).sound.osc1.zone
+        self.assertEqual(zone.start, round(100 * ratio))
+        self.assertEqual(zone.end, round(frames * ratio))
+        self.assertEqual(zone.start_loop, round(200 * ratio))
+        self.assertEqual(zone.end_loop, round((frames - 50) * ratio))
+        self.assertIn("SYNTHS/BORNES.XML", result.retargeted)
+        self.assertGreaterEqual(result.zones_moved, 4)
+
+    def test_les_bornes_en_millisecondes_ne_bougent_pas(self):
+        """Une durée en millisecondes survit à un rééchantillonnage."""
+        rel = "SAMPLES/DRUMS/Snare/32k.wav"
+        frames = wav.probe(self.root / rel).frames
+        chemin = self._preset_borne("MS", rel, frames, unit="ms")
+
+        samplefix.plan_standard_rate(
+            self.sd, self.lib, rels=[rel]).apply(self.sd, self.lib)
+
+        zone = SynthPreset.load(chemin).sound.osc1.zone
+        self.assertEqual(zone.unit, "ms")
+        self.assertEqual(zone.start, 100)
+        self.assertEqual(zone.end, frames)
+
+    def test_les_kits_sont_recales_aussi(self):
+        rel = "SAMPLES/DRUMS/Snare/32k.wav"
+        frames = wav.probe(self.root / rel).frames
+        from delugeapp.core.model import Zone
+
+        kit = Kit.new("KR")
+        kit.add_row("SNARE", rel)
+        kit.rows[0].sound.osc1.zone = Zone(start=0, end=frames,
+                                           unit="samples")
+        kit.save(self.root / "KITS" / "KR.XML", backup=False)
+
+        result = samplefix.plan_standard_rate(
+            self.sd, self.lib, rels=[rel]).apply(self.sd, self.lib)
+        self.assertIn("KITS/KR.XML", result.retargeted)
+
+        relu = Kit.load(self.root / "KITS" / "KR.XML")
+        self.assertEqual(relu.rows[0].sound.osc1.zone.end,
+                         round(frames * 44100 / 32000.0))
+
+    def test_le_recalage_laisse_un_bak(self):
+        rel = "SAMPLES/DRUMS/Snare/32k.wav"
+        frames = wav.probe(self.root / rel).frames
+        self._preset_borne("BAK", rel, frames)
+        samplefix.plan_standard_rate(
+            self.sd, self.lib, rels=[rel]).apply(self.sd, self.lib)
+        self.assertTrue(list((self.root / "SYNTHS").glob("BAK*.bak")),
+                        "aucune sauvegarde du preset recalé")
+
+    def test_retarget_zones_sans_ratio_ne_fait_rien(self):
+        moved, files = samplefix.retarget_zones(self.sd, {}, apply=True)
+        self.assertEqual((moved, files), (0, []))
+
+    def test_retarget_zones_en_simulation_n_ecrit_pas(self):
+        rel = "SAMPLES/DRUMS/Snare/32k.wav"
+        frames = wav.probe(self.root / rel).frames
+        chemin = self._preset_borne("SIM", rel, frames)
+        avant = chemin.read_bytes()
+
+        moved, files = samplefix.retarget_zones(
+            self.sd, {sdcard.norm_rel(rel): 0.5}, apply=False)
+        self.assertGreater(moved, 0)
+        self.assertEqual(chemin.read_bytes(), avant)
+
+    # -- protection des morceaux -------------------------------------------- #
+
+    def test_un_echantillon_cite_par_un_morceau_est_ecarte(self):
+        """Un morceau borne en trames et n'est jamais réécrit (SPEC §0)."""
+        rel = "SAMPLES/DRUMS/Snare/32k.wav"
+        self._song("M.XML", rel)
+
+        verrous = samplefix.song_locked_samples(self.sd)
+        self.assertIn(sdcard.norm_rel(rel), verrous)
+
+        plan = samplefix.plan_standard_rate(self.sd, self.lib, rels=[rel])
+        self.assertEqual(plan.edits, [])
+        self.assertEqual(len(plan.skipped), 1)
+        self.assertIn("morceau", plan.skipped[0].skipped)
+
+    def test_le_mono_reste_permis_sur_un_echantillon_de_morceau(self):
+        """Le mono garde la longueur : aucune borne ne se décale."""
+        rel = "SAMPLES/DRUMS/Kick/stereo.wav"
+        self._song("M.XML", rel)
+        plan = samplefix.plan_custom(self.sd, self.lib, [rel], mono=True)
+        self.assertEqual(len(plan.edits), 1)
+        self.assertEqual(plan.skipped, [])
+
+    # -- plans composés ----------------------------------------------------- #
+
+    def test_plan_from_health_fusionne_deux_defauts_d_un_fichier(self):
+        """Un fichier à la fois écrêté et décalé n'est réécrit qu'une fois."""
+        plan = samplefix.plan_from_health(
+            self.sd, self.lib, ["DC_OFFSET", "CLIPPED_SAMPLE"])
+        rels = [e.rel for e in plan.edits]
+        self.assertEqual(len(rels), len(set(rels)), "doublon dans le plan")
+        chaud = next((e for e in plan.edits
+                      if e.rel.endswith("chaud.wav")), None)
+        self.assertIsNotNone(chaud)
+        self.assertIn("dc", chaud.actions)
+        self.assertIn("normalize", chaud.actions)
+
+    def test_plan_from_health_ignore_les_codes_inconnus(self):
+        plan = samplefix.plan_from_health(self.sd, self.lib,
+                                          ["PAS_UN_CODE", "MAC_JUNK"])
+        self.assertEqual(len(plan.edits), 0)
+
+    def test_plan_custom_ecarte_ce_qui_est_deja_mono(self):
+        rel = "SAMPLES/MULTISAMPLES/mono.wav"
+        plan = samplefix.plan_custom(self.sd, self.lib, [rel], mono=True)
+        self.assertEqual(plan.edits, [])
+        self.assertEqual(plan.skipped[0].skipped, "déjà en mono")
+
+    def test_plan_custom_sans_traitement_est_vide(self):
+        plan = samplefix.plan_custom(self.sd, self.lib,
+                                     ["SAMPLES/MULTISAMPLES/mono.wav"])
+        self.assertFalse(plan)
+        self.assertEqual(plan.summary(), "Rien à corriger.")
+
+    def test_plan_custom_fondus(self):
+        rel = "SAMPLES/MULTISAMPLES/mono.wav"
+        frames = wav.probe(self.root / rel).frames
+        samplefix.plan_custom(self.sd, self.lib, [rel],
+                              fade_ms=10.0).apply(self.sd, self.lib)
+        data, _ = wav.read(self.root / rel)
+        self.assertEqual(data.shape[0], frames, "le fondu change la longueur")
+        self.assertLess(abs(float(data.flat[0])), 0.01)
+        self.assertLess(abs(float(data.flat[-1])), 0.01)
+
+    def test_coupe_du_silence_change_la_longueur(self):
+        rel = "SAMPLES/MULTISAMPLES/silence.wav"
+        t = np.linspace(0, 0.2, 8820, endpoint=False, dtype=np.float32)
+        signal = np.concatenate([
+            np.zeros(4410, dtype=np.float32),
+            (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32),
+            np.zeros(4410, dtype=np.float32)])
+        wav.write(self.root / rel, signal, 44100)
+        scan.scan_card(self.sd, self.lib, compute_hash=True)
+
+        plan = samplefix.plan_custom(self.sd, self.lib, [rel], trim_db=-60.0)
+        self.assertTrue(plan.changes_length)
+        plan.apply(self.sd, self.lib)
+        self.assertLess(wav.probe(self.root / rel).frames, signal.size)
+
+    # -- rapports ----------------------------------------------------------- #
+
+    def test_le_detail_cite_chaque_fichier(self):
+        plan = samplefix.plan_from_health(
+            self.sd, self.lib, list(samplefix.HEALTH_CODES))
+        texte = plan.to_text()
+        for edit in plan.edits:
+            self.assertIn(edit.rel, texte)
+        self.assertIn("fichier(s)", plan.summary())
+
+    def test_le_libelle_dit_ce_qui_change(self):
+        plan = samplefix.plan_mono(self.sd, self.lib)
+        self.assertIn("mono", plan.edits[0].label)
+        plan = samplefix.plan_standard_rate(self.sd, self.lib)
+        self.assertIn("Hz", plan.edits[0].label)
+
+    def test_plan_vide(self):
+        plan = samplefix.FixPlan()
+        self.assertFalse(plan)
+        self.assertEqual(len(plan), 0)
+        result = plan.apply(self.sd, self.lib)
+        self.assertEqual(result.done, [])
+
+    def test_fichier_disparu_pendant_l_application(self):
+        """Une correction qui échoue n'interrompt pas les autres."""
+        plan = samplefix.plan_from_health(
+            self.sd, self.lib, list(samplefix.HEALTH_CODES))
+        self.assertGreater(len(plan.edits), 1)
+        plan.edits.insert(0, samplefix.Edit(rel="SAMPLES/DRUMS/Kick/parti.wav",
+                                            actions={"mono": True}))
+        result = plan.apply(self.sd, self.lib)
+        self.assertEqual(len(result.failed), 1)
+        self.assertIn("introuvable", result.failed[0][1])
+        self.assertTrue(result.done, "le reste du plan devait s'appliquer")
+
+    def test_interruption(self):
+        """``should_stop`` arrête le plan sans abîmer ce qui reste."""
+        plan = samplefix.plan_from_health(
+            self.sd, self.lib, list(samplefix.HEALTH_CODES))
+        result = plan.apply(self.sd, self.lib, should_stop=lambda: True)
+        self.assertEqual(result.done, [])
+
+    def test_progression(self):
+        vus: list = []
+        samplefix.plan_mono(self.sd, self.lib).apply(
+            self.sd, self.lib, progress=vus.append)
+        self.assertTrue(vus)
+        self.assertEqual(len(vus[0]), 3)
+
+
+class TestWavRemoveDC(unittest.TestCase):
+    """Le retrait de composante continue, ajouté à ``wav.convert``."""
+
+    def test_remove_dc_recentre(self):
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            base = Path(tmp.name)
+            t = np.linspace(0, 0.2, 8820, endpoint=False, dtype=np.float32)
+            signal = (0.4 * np.sin(2 * np.pi * 150 * t) + 0.12
+                      ).astype(np.float32)
+            wav.write(base / "a.wav", signal, 44100)
+
+            info = wav.convert(base / "a.wav", base / "b.wav",
+                               remove_dc=True)
+            self.assertTrue(info.ok)
+            data, _ = wav.read(base / "b.wav")
+            self.assertLess(abs(float(np.mean(data))), 1e-3)
+            self.assertEqual(data.shape[0], signal.size)
+        finally:
+            tmp.cleanup()
+
+    def test_remove_dc_par_canal(self):
+        """Chaque canal est recentré séparément."""
+        a = np.stack([np.full(1000, 0.2, dtype=np.float32),
+                      np.full(1000, -0.3, dtype=np.float32)], axis=1)
+        out = wav._remove_dc(a)
+        self.assertAlmostEqual(float(out[:, 0].mean()), 0.0, places=5)
+        self.assertAlmostEqual(float(out[:, 1].mean()), 0.0, places=5)
+
+    def test_remove_dc_sur_un_tableau_vide(self):
+        vide = np.zeros((0, 1), dtype=np.float32)
+        self.assertEqual(wav._remove_dc(vide).shape, vide.shape)
+
+
+class TestSlicer(unittest.TestCase):
+    """Découpage d'une boucle en kit.
+
+    Le point à ne jamais casser : **toutes les rangées pointent le même
+    fichier**, avec leurs propres bornes en trames. C'est ce qui évite de
+    dupliquer l'audio, et c'est un idiome vérifié sur la carte réelle.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.root = base / "carte"
+        for sub in ("SONGS", "SYNTHS", "KITS", "SAMPLES/LOOPS"):
+            (self.root / sub).mkdir(parents=True)
+
+        # Une boucle de 2 s à 120 BPM : quatre temps, une attaque par temps,
+        # plus deux contretemps. 88 200 trames = 16 doubles-croches.
+        self.sr = 44100
+        self.frames = 88200
+        signal = np.zeros(self.frames, dtype=np.float32)
+        pas = self.sr // 8                     # une croche à 120 BPM
+        for index in range(8):
+            debut = index * pas
+            duree = min(pas // 2, self.frames - debut)
+            t = np.arange(duree, dtype=np.float32) / self.sr
+            amplitude = 0.9 if index % 2 == 0 else 0.4
+            signal[debut:debut + duree] = (
+                amplitude * np.sin(2 * np.pi * 180 * t)
+                * np.exp(-t * 40)).astype(np.float32)
+        self.rel = "SAMPLES/LOOPS/boucle.wav"
+        wav.write(self.root / self.rel, signal, self.sr)
+
+        self.sd = sdcard.SDCard(self.root)
+        self.lib = db.Library(base / "index.db")
+        scan.scan_card(self.sd, self.lib, compute_hash=True, analyze=True)
+
+    def tearDown(self):
+        self.lib.close()
+        self._tmp.cleanup()
+
+    # -- placement des coupes ---------------------------------------------- #
+
+    def test_la_premiere_tranche_part_de_zero(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="transients")
+        self.assertTrue(jeu)
+        self.assertEqual(jeu.slices[0].start, 0)
+
+    def test_les_tranches_couvrent_tout_le_fichier_sans_trou(self):
+        for mode in ("transients", "grid"):
+            with self.subTest(mode=mode):
+                jeu = slicer.slice_sample(self.sd, self.rel, mode=mode)
+                self.assertEqual(jeu.slices[-1].end, jeu.frames)
+                self.assertEqual(jeu.covered, jeu.frames)
+                for index in range(len(jeu) - 1):
+                    self.assertEqual(jeu.slices[index].end,
+                                     jeu.slices[index + 1].start)
+
+    def test_les_bornes_sont_exclusives(self):
+        """Mesuré sur la carte : ``endSamplePos`` vaut le nombre de trames."""
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=4)
+        self.assertEqual(jeu.slices[-1].end, self.frames)
+        self.assertEqual(sum(s.frames for s in jeu.slices), self.frames)
+
+    def test_divisions_egales(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+        self.assertEqual(len(jeu), 8)
+        longueurs = {s.frames for s in jeu.slices}
+        # Au plus deux longueurs : la division exacte, et le reste final.
+        self.assertLessEqual(len(longueurs), 2)
+        self.assertAlmostEqual(min(longueurs), self.frames // 8, delta=2)
+
+    def test_la_grille_ignore_le_tempo(self):
+        """Aligner une division déjà exacte sur un tempo *détecté* la fausse.
+
+        Sur ``Bricky-NoKS-120.wav`` (4,0 s), l'alignement sur 120,2 BPM
+        faisait sortir une tranche à 256 ms au lieu de 250.
+        """
+        sans = slicer.grid_slices(self.frames, self.sr, 16)
+        self.assertEqual(len(sans), 16)
+        self.assertEqual(sans[1] - sans[0], self.frames // 16)
+
+    def test_le_nombre_de_tranches_est_plafonne(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=999)
+        self.assertLessEqual(len(jeu), slicer.MAX_SLICES)
+
+    def test_les_tranches_trop_courtes_sont_fondues(self):
+        """Une tranche de 2 ms ne produit qu'un clic : elle est absorbée."""
+        positions = [0, 10, 20, 30, 44100]
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="manual",
+                                  positions=positions)
+        mini = slicer.MIN_SLICE_MS * self.sr / 1000.0
+        for tranche in jeu.slices:
+            self.assertGreaterEqual(tranche.frames, mini * 0.999)
+        self.assertLess(len(jeu), len(positions))
+
+    def test_positions_manuelles_desordonnees(self):
+        jeu = slicer.slice_sample(
+            self.sd, self.rel, mode="manual",
+            positions=[30000, 0, 10000, 10000, -50, 10 ** 9])
+        starts = [s.start for s in jeu.slices]
+        self.assertEqual(starts, sorted(starts))
+        self.assertEqual(len(starts), len(set(starts)))
+        self.assertEqual(starts[0], 0)
+        self.assertLessEqual(max(s.end for s in jeu.slices), self.frames)
+
+    def test_quantize_aligne_sur_la_grille(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="manual",
+                                  positions=[0, 11000, 22300, 33100])
+        aligne = jeu.quantize(120.0)
+        pas = self.sr * 60.0 / (120.0 * 4.0)      # une double-croche
+        for tranche in aligne.slices:
+            reste = tranche.start % pas
+            self.assertLess(min(reste, pas - reste), 1.0)
+
+    def test_quantize_sans_tempo_ne_change_rien(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+        self.assertIs(jeu.quantize(0.0), jeu)
+
+    def test_le_tempo_vient_de_l_index(self):
+        """Pas besoin de ressaisir le tempo d'une boucle déjà analysée."""
+        row = self.lib.get("sample", self.rel)
+        attendu = float(row["bpm"] or 0.0)
+        jeu = slicer.slice_sample(self.sd, self.rel, lib=self.lib)
+        self.assertAlmostEqual(jeu.bpm, attendu, places=3)
+
+    # -- du découpage au kit ----------------------------------------------- #
+
+    def test_le_kit_ne_cite_qu_un_fichier(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+        kit = slicer.slices_to_kit(jeu, "ESSAI")
+        self.assertEqual(len(kit.rows), 8)
+        self.assertEqual(len({r.file_name for r in kit.rows}), 1,
+                         "un découpage ne doit dupliquer aucun fichier")
+
+    def test_chaque_rangee_porte_ses_bornes(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+        kit = slicer.slices_to_kit(jeu, "ESSAI")
+        for index, (row, tranche) in enumerate(zip(kit.rows, jeu.slices), 1):
+            with self.subTest(rangee=index):
+                zone = row.sound.osc1.zone
+                self.assertIsNotNone(zone)
+                self.assertEqual(zone.unit, "samples")
+                self.assertEqual(zone.start, tranche.start)
+                self.assertEqual(zone.end, tranche.end)
+                self.assertEqual(row.sound.osc1.loop_mode, 0,
+                                 "une tranche ne doit pas boucler")
+
+    def test_les_bornes_survivent_a_l_aller_retour_xml(self):
+        """Le test qui compte : un kit relu doit rejouer les mêmes tranches."""
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=12)
+        rel, _message = slicer.save_sliced_kit(self.sd, jeu, "AR", apply=True)
+        self.assertTrue(rel)
+
+        relu = Kit.load(self.root / rel)
+        self.assertEqual(len(relu.rows), len(jeu))
+        for index, (row, tranche) in enumerate(zip(relu.rows, jeu.slices), 1):
+            with self.subTest(rangee=index):
+                zone = row.sound.osc1.zone
+                self.assertIsNotNone(zone, "bornes perdues à l'écriture")
+                self.assertEqual((zone.start, zone.end),
+                                 (tranche.start, tranche.end))
+
+    def test_la_simulation_n_ecrit_rien(self):
+        avant = {p.relative_to(self.root).as_posix()
+                 for p in self.root.rglob("*") if p.is_file()}
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+        rel, message = slicer.save_sliced_kit(self.sd, jeu, "SIM",
+                                              apply=False)
+        self.assertTrue(rel)
+        self.assertIn("seraient", message)
+        apres = {p.relative_to(self.root).as_posix()
+                 for p in self.root.rglob("*") if p.is_file()}
+        self.assertEqual(avant, apres)
+
+    def test_un_kit_existant_n_est_jamais_ecrase(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=4)
+        premier, _ = slicer.save_sliced_kit(self.sd, jeu, "DOUBLE",
+                                            apply=True)
+        second, _ = slicer.save_sliced_kit(self.sd, jeu, "DOUBLE", apply=True)
+        self.assertNotEqual(premier, second)
+        self.assertTrue((self.root / premier).is_file())
+        self.assertTrue((self.root / second).is_file())
+
+    def test_le_nom_du_kit_est_assaini(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=4)
+        rel, _ = slicer.save_sliced_kit(self.sd, jeu, "nom/avec:interdits?",
+                                        apply=True)
+        self.assertTrue(rel)
+        self.assertTrue((self.root / rel).is_file())
+        nom = Path(rel).stem
+        for interdit in '/\\:?*"<>|':
+            self.assertNotIn(interdit, nom)
+
+    def test_un_decoupage_vide_n_ecrit_pas(self):
+        vide = slicer.SliceSet(rel=self.rel, sr=self.sr, frames=self.frames)
+        rel, message = slicer.save_sliced_kit(self.sd, vide, apply=True)
+        self.assertEqual(rel, "")
+        self.assertIn("Aucune", message)
+
+    # -- écoute et export --------------------------------------------------- #
+
+    def test_render_slice_rend_la_bonne_longueur(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+        for index in (0, 3, len(jeu) - 1):
+            with self.subTest(tranche=index):
+                bloc = slicer.render_slice(self.sd, jeu, index)
+                self.assertEqual(bloc.shape[0], jeu.slices[index].frames)
+
+    def test_render_slice_hors_bornes(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=4)
+        self.assertEqual(slicer.render_slice(self.sd, jeu, -1).size, 0)
+        self.assertEqual(slicer.render_slice(self.sd, jeu, 99).size, 0)
+
+    def test_export_en_fichiers_separes(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=8)
+
+        prevus, erreurs = slicer.export_slices(self.sd, jeu,
+                                               "SAMPLES/TRANCHES")
+        self.assertEqual(len(prevus), 8)
+        self.assertEqual(erreurs, [])
+        self.assertFalse((self.root / "SAMPLES/TRANCHES").exists(),
+                         "la simulation a créé le dossier")
+
+        ecrits, erreurs = slicer.export_slices(self.sd, jeu,
+                                               "SAMPLES/TRANCHES",
+                                               apply=True)
+        self.assertEqual(erreurs, [])
+        self.assertEqual(len(ecrits), 8)
+        total = 0
+        for rel, tranche in zip(ecrits, jeu.slices):
+            info = wav.probe(self.root / rel)
+            self.assertTrue(info.ok)
+            self.assertEqual(info.frames, tranche.frames)
+            total += info.frames
+        self.assertEqual(total, self.frames,
+                         "les tranches exportées doivent reconstituer le tout")
+
+    def test_export_sans_dossier(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=4)
+        fichiers, erreurs = slicer.export_slices(self.sd, jeu, "")
+        self.assertEqual(fichiers, [])
+        self.assertTrue(erreurs)
+
+    # -- cas limites -------------------------------------------------------- #
+
+    def test_fichier_absent(self):
+        jeu = slicer.slice_sample(self.sd, "SAMPLES/pas-la.wav")
+        self.assertEqual(len(jeu), 0)
+        self.assertFalse(jeu)
+        self.assertEqual(jeu.summary(), "Aucune tranche.")
+
+    def test_fichier_trop_court_pour_etre_decoupe(self):
+        rel = "SAMPLES/LOOPS/court.wav"
+        wav.write(self.root / rel, np.zeros(64, dtype=np.float32), 44100)
+        jeu = slicer.slice_sample(self.sd, rel, mode="grid", count=16)
+        self.assertEqual(len(jeu), 1)
+        self.assertEqual(jeu.slices[0].start, 0)
+        self.assertEqual(jeu.slices[0].end, 64)
+
+    def test_detect_slices_sur_du_silence(self):
+        """Sans attaque, une seule tranche : le fichier entier."""
+        silence = np.zeros(44100, dtype=np.float32)
+        starts = slicer.detect_slices(silence, 44100)
+        self.assertEqual(starts, [0])
+
+    def test_grid_slices_sur_un_fichier_vide(self):
+        self.assertEqual(slicer.grid_slices(0, 44100, 16), [0])
+
+    def test_le_resume_annonce_les_extremes(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="transients")
+        texte = jeu.summary()
+        self.assertIn("tranches", texte)
+        self.assertIn("ms", texte)
+        detail = jeu.to_text()
+        self.assertIn(self.rel, detail)
+        self.assertEqual(len(detail.splitlines()), len(jeu) + 2)
+
+    def test_les_etiquettes_sont_numerotees_et_courtes(self):
+        jeu = slicer.slice_sample(self.sd, self.rel, mode="grid", count=12)
+        for index, tranche in enumerate(jeu.slices, 1):
+            self.assertTrue(tranche.label.endswith("%02d" % index),
+                            tranche.label)
+            self.assertLessEqual(len(tranche.label), slicer.MAX_ROW_NAME + 3)
+
+
+class TestSimilarity(unittest.TestCase):
+    """Recherche d'échantillons par ressemblance sonore.
+
+    La carte d'essai contient trois familles franchement distinctes — des
+    graves courts, des bruits aigus, des bourdons tenus — et les tests
+    vérifient que les voisins d'un son appartiennent à sa famille. Comparer
+    des familles si éloignées serait trop facile si les descripteurs étaient
+    mal normalisés : c'est précisément ce que ces tests attrapent.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.root = base / "carte"
+        for sub in ("SONGS", "SYNTHS", "KITS",
+                    "SAMPLES/DRUMS/Kick", "SAMPLES/DRUMS/HatC",
+                    "SAMPLES/PADS"):
+            (self.root / sub).mkdir(parents=True)
+
+        rng = np.random.default_rng(11)
+        sr = 44100
+
+        # Six graves courts : attaque immédiate, énergie sous 200 Hz.
+        for index in range(6):
+            t = np.linspace(0, 0.25, int(0.25 * sr), endpoint=False,
+                            dtype=np.float32)
+            freq = 55.0 + index * 4.0
+            wav.write(self.root / ("SAMPLES/DRUMS/Kick/k%d.wav" % index),
+                      (0.8 * np.sin(2 * np.pi * freq * t)
+                       * np.exp(-t * (18 + index))).astype(np.float32), sr)
+
+        # Six bruits aigus, filtrés en haut : des charlestons.
+        for index in range(6):
+            n = int(0.12 * sr)
+            t = np.linspace(0, 0.12, n, endpoint=False, dtype=np.float32)
+            bruit = rng.standard_normal(n).astype(np.float32)
+            # Différenciation = passe-haut du pauvre.
+            aigu = np.diff(bruit, prepend=np.float32(0.0))
+            wav.write(self.root / ("SAMPLES/DRUMS/HatC/h%d.wav" % index),
+                      (0.5 * aigu * np.exp(-t * (40 + index * 5))
+                       ).astype(np.float32), sr)
+
+        # Six bourdons tenus : attaque lente, spectre médium, pas de crête.
+        for index in range(6):
+            n = int(1.6 * sr)
+            t = np.linspace(0, 1.6, n, endpoint=False, dtype=np.float32)
+            enveloppe = np.clip(t / 0.6, 0.0, 1.0)
+            son = sum(0.25 / (h + 1) * np.sin(2 * np.pi * (220 + index * 10)
+                                              * (h + 1) * t)
+                      for h in range(4))
+            wav.write(self.root / ("SAMPLES/PADS/p%d.wav" % index),
+                      (son * enveloppe).astype(np.float32), sr)
+
+        self.sd = sdcard.SDCard(self.root)
+        self.lib = db.Library(base / "index.db")
+        scan.scan_card(self.sd, self.lib, compute_hash=True, analyze=True)
+
+    def tearDown(self):
+        self.lib.close()
+        self._tmp.cleanup()
+
+    def _famille(self, rel: str) -> str:
+        parts = sdcard.norm_rel(rel).split("/")
+        return parts[-2] if len(parts) >= 2 else ""
+
+    # -- l'index porte bien les descripteurs -------------------------------- #
+
+    def test_le_scan_enregistre_les_descripteurs(self):
+        """Ils étaient calculables mais jamais conservés avant le schéma 4."""
+        for row in self.lib.search_samples(limit=100):
+            with self.subTest(fichier=row["rel"]):
+                for champ in similarity.FEATURES:
+                    self.assertIsNotNone(row[champ],
+                                         "%s manquant" % champ)
+
+    def test_le_schema_est_en_version_4(self):
+        self.assertEqual(self.lib.get_meta("schema_version"), "4")
+
+    def test_une_base_mise_a_niveau_reclame_une_reanalyse(self):
+        """Les colonnes neuves sont vides : il faut y revenir."""
+        import sqlite3
+
+        chemin = Path(self._tmp.name) / "ancienne.db"
+        lib = db.Library(chemin)
+        lib.upsert_sample({"rel": "SAMPLES/x.wav", "size": 1})
+        lib.add_tag("sample", "SAMPLES/x.wav", "garde-moi")
+        lib.commit()
+        lib.close()
+
+        con = sqlite3.connect(chemin)
+        for champ in similarity.FEATURES:
+            con.execute("ALTER TABLE samples DROP COLUMN %s" % champ)
+        con.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+        con.commit()
+        con.close()
+
+        lib = db.Library(chemin)
+        try:
+            cols = {r["name"] for r in
+                    lib.con.execute("PRAGMA table_info(samples)")}
+            self.assertTrue(set(similarity.FEATURES) <= cols,
+                            "les colonnes n'ont pas été ajoutées")
+            self.assertTrue(lib.needs_rescan,
+                            "la réanalyse doit être réclamée")
+            self.assertEqual(lib.tags_of("sample", "SAMPLES/x.wav"),
+                             ["garde-moi"],
+                             "les étiquettes de l'utilisateur sont perdues")
+        finally:
+            lib.close()
+
+    def test_une_analyse_incrementale_est_forcee_apres_mise_a_niveau(self):
+        """Sans cela, les fichiers inchangés seraient sautés et les colonnes
+        resteraient vides — le drapeau ne servait à rien."""
+        self.lib.set_meta("needs_rescan", "1")
+        self.lib.con.execute("UPDATE samples SET centroid = NULL")
+        self.lib.commit()
+
+        scan.scan_card(self.sd, self.lib, compute_hash=False, analyze=True,
+                       full=False)
+        vides = self.lib.con.execute(
+            "SELECT COUNT(*) FROM samples WHERE centroid IS NULL").fetchone()[0]
+        self.assertEqual(vides, 0, "les descripteurs n'ont pas été refaits")
+        self.assertFalse(self.lib.needs_rescan,
+                         "le drapeau doit être levé après l'analyse")
+
+    def test_le_drapeau_reste_pose_sans_analyse_acoustique(self):
+        self.lib.set_meta("needs_rescan", "1")
+        scan.scan_card(self.sd, self.lib, compute_hash=False, analyze=False)
+        self.assertTrue(self.lib.needs_rescan,
+                        "sans analyse acoustique, les colonnes restent vides")
+
+    # -- l'espace de comparaison -------------------------------------------- #
+
+    def test_l_espace_contient_tous_les_echantillons_analyses(self):
+        espace = similarity.build_space(self.lib)
+        self.assertEqual(len(espace), self.lib.stats()["samples"])
+        self.assertEqual(espace.vectors.shape,
+                         (len(espace), len(similarity.FEATURES)))
+
+    def test_un_echantillon_sans_descripteur_est_ecarte(self):
+        """Un vecteur incomplet donnerait des voisins faux sans le dire."""
+        self.lib.con.execute(
+            "UPDATE samples SET attack = NULL WHERE rel LIKE '%k0.wav'")
+        self.lib.commit()
+        espace = similarity.build_space(self.lib)
+        self.assertFalse(espace.has("SAMPLES/DRUMS/Kick/k0.wav"))
+        self.assertEqual(len(espace), self.lib.stats()["samples"] - 1)
+
+    def test_un_espace_vide_ne_casse_rien(self):
+        self.lib.clear()
+        self.lib.commit()
+        espace = similarity.build_space(self.lib)
+        self.assertFalse(espace)
+        self.assertEqual(len(espace), 0)
+        self.assertEqual(similarity.similar(self.lib, "SAMPLES/x.wav"), [])
+
+    def test_l_espace_se_restreint_a_une_categorie(self):
+        espace = similarity.build_space(self.lib, category="Kick")
+        self.assertTrue(espace)
+        for rel in espace.rels:
+            self.assertEqual(self._famille(rel), "kick")
+
+    # -- la ressemblance ---------------------------------------------------- #
+
+    def test_les_voisins_sont_de_la_meme_famille(self):
+        espace = similarity.build_space(self.lib)
+        for rel in espace.rels:
+            famille = self._famille(rel)
+            voisins = similarity.similar(self.lib, rel, limit=3,
+                                         space=espace)
+            with self.subTest(fichier=Path(rel).name):
+                self.assertTrue(voisins)
+                memes = sum(1 for v in voisins
+                            if self._famille(v.rel) == famille)
+                self.assertGreaterEqual(
+                    memes, 2,
+                    "%s : %d / %d voisins de la même famille (%s)"
+                    % (Path(rel).name, memes, len(voisins),
+                       [Path(v.rel).name for v in voisins]))
+
+    def test_un_son_ne_se_retourne_jamais_lui_meme(self):
+        espace = similarity.build_space(self.lib)
+        for rel in espace.rels:
+            voisins = similarity.similar(self.lib, rel, limit=50,
+                                         space=espace)
+            self.assertNotIn(sdcard.norm_rel(rel),
+                             [sdcard.norm_rel(v.rel) for v in voisins])
+
+    def test_les_voisins_sont_tries_du_plus_proche(self):
+        espace = similarity.build_space(self.lib)
+        voisins = similarity.similar(self.lib, espace.rels[0], limit=10,
+                                     space=espace)
+        distances = [v.distance for v in voisins]
+        self.assertEqual(distances, sorted(distances))
+        self.assertGreaterEqual(distances[0], 0.0)
+
+    def test_la_limite_est_respectee(self):
+        espace = similarity.build_space(self.lib)
+        for limite in (1, 3, 5):
+            voisins = similarity.similar(self.lib, espace.rels[0],
+                                         limit=limite, space=espace)
+            self.assertEqual(len(voisins), limite)
+
+    def test_la_distance_maximale_coupe_la_liste(self):
+        espace = similarity.build_space(self.lib)
+        tous = similarity.similar(self.lib, espace.rels[0], limit=50,
+                                  space=espace)
+        seuil = tous[2].distance
+        courts = similarity.similar(self.lib, espace.rels[0], limit=50,
+                                    space=espace, max_distance=seuil)
+        self.assertLessEqual(len(courts), len(tous))
+        for match in courts:
+            self.assertLessEqual(match.distance, seuil)
+
+    def test_un_echantillon_inconnu(self):
+        self.assertEqual(similarity.similar(self.lib, "SAMPLES/pas-la.wav"),
+                         [])
+
+    def test_la_proximite_s_affiche_en_pourcentage(self):
+        proche = similarity.Match(rel="a", distance=0.0)
+        loin = similarity.Match(rel="b", distance=4.0)
+        self.assertEqual(proche.closeness, 100)
+        self.assertLess(loin.closeness, 10)
+        self.assertGreaterEqual(loin.closeness, 0)
+
+    def test_same_category_restreint_la_recherche(self):
+        voisins = similarity.similar(self.lib, "SAMPLES/DRUMS/Kick/k0.wav",
+                                     limit=10, same_category=True)
+        self.assertTrue(voisins)
+        for match in voisins:
+            self.assertEqual(self._famille(match.rel), "kick")
+
+    # -- pas de detection de quasi-doublons : voir similarity.py ----------- #
+
+    def test_il_n_y_a_pas_de_detection_de_quasi_doublons(self):
+        """Mesure faite, fonction retirée : voir l'explication du module.
+
+        Le descripteur est aveugle à la hauteur. Serré à 0,12 avec une durée
+        à 2 % près, il ne trouvait que des notes voisines du même instrument
+        (``Cello B3`` avec ``Cello C4``) ; desserré à 0,45, il regroupait
+        59 % de la bibliothèque. La question du doublon a déjà une réponse
+        juste : ``Library.duplicates()``, octet pour octet.
+        """
+        self.assertFalse(hasattr(similarity, "near_duplicates"))
+        self.assertNotIn("near_duplicates", similarity.__all__)
+        self.assertFalse(hasattr(similarity, "NEAR_DUPLICATE_DISTANCE"))
+
+    # -- explication -------------------------------------------------------- #
+
+    def test_describe_resume_les_descripteurs(self):
+        row = self.lib.get("sample", "SAMPLES/DRUMS/Kick/k0.wav")
+        texte = similarity.describe(row)
+        for mot in ("brillance", "grave", "attaque"):
+            self.assertIn(mot, texte)
+
+    def test_describe_sur_une_ligne_sans_analyse(self):
+        self.assertIn("Aucun", similarity.describe(None))
+
+    def test_les_poids_couvrent_tous_les_descripteurs(self):
+        self.assertEqual(set(similarity.WEIGHTS), set(similarity.FEATURES))
+        self.assertTrue(similarity.LOG_FEATURES <= set(similarity.FEATURES))
+
+
+class TestAttackTime(unittest.TestCase):
+    """``analysis.attack_time`` : la seule mesure temporelle du descripteur."""
+
+    def test_une_percussion_attaque_tout_de_suite(self):
+        sr = 44100
+        t = np.linspace(0, 0.3, int(0.3 * sr), endpoint=False,
+                        dtype=np.float32)
+        kick = (np.sin(2 * np.pi * 60 * t) * np.exp(-t * 20)
+                ).astype(np.float32)
+        self.assertLess(analysis.attack_time(kick, sr), 0.02)
+
+    def test_une_nappe_met_du_temps(self):
+        sr = 44100
+        n = int(1.5 * sr)
+        t = np.linspace(0, 1.5, n, endpoint=False, dtype=np.float32)
+        nappe = (np.sin(2 * np.pi * 220 * t)
+                 * np.clip(t / 0.8, 0.0, 1.0)).astype(np.float32)
+        attaque = analysis.attack_time(nappe, sr)
+        self.assertGreater(attaque, 0.3)
+        self.assertLess(attaque, 1.5)
+
+    def test_sur_du_silence(self):
+        self.assertEqual(analysis.attack_time(np.zeros(1000,
+                                                       dtype=np.float32),
+                                              44100), 0.0)
+
+    def test_sur_un_tableau_minuscule(self):
+        self.assertEqual(analysis.attack_time(np.zeros(3, dtype=np.float32),
+                                              44100), 0.0)
+
+    def test_sans_frequence(self):
+        self.assertEqual(analysis.attack_time(np.ones(100,
+                                                      dtype=np.float32), 0),
+                         0.0)
+
+
+class TestSongPack(unittest.TestCase):
+    """Rassembler un morceau et ses dépendances.
+
+    Le point à ne jamais casser : **la carte n'est pas touchée.** Tout est
+    copié, rien n'est déplacé, et un morceau reste lisible par le Deluge
+    après l'opération.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.root = base / "carte"
+        for sub in ("SONGS", "SYNTHS", "SYNTHS/acid", "KITS",
+                    "SAMPLES/DRUMS/Kick", "SAMPLES/DRUMS/Snare"):
+            (self.root / sub).mkdir(parents=True)
+
+        t = np.linspace(0, 0.3, 13230, endpoint=False, dtype=np.float32)
+        wav.write(self.root / "SAMPLES/DRUMS/Kick/k.wav",
+                  (0.7 * np.sin(2 * np.pi * 60 * t) * np.exp(-t * 14)
+                   ).astype(np.float32), 44100)
+        wav.write(self.root / "SAMPLES/DRUMS/Snare/s.wav",
+                  (0.4 * np.random.default_rng(2).standard_normal(8820)
+                   ).astype(np.float32), 44100)
+        wav.write(self.root / "SAMPLES/DRUMS/Kick/ailleurs.wav",
+                  (0.3 * np.sin(2 * np.pi * 90 * t)).astype(np.float32),
+                  44100)
+
+        preset = SynthPreset.new("BASSE")
+        preset.sound.osc1.type = "sample"
+        preset.sound.osc1.file_name = "SAMPLES/DRUMS/Kick/k.wav"
+        preset.save(self.root / "SYNTHS" / "BASSE.XML", backup=False)
+
+        # Un preset rangé dans un sous-dossier, comme sur une vraie carte.
+        acide = SynthPreset.new("TB01")
+        acide.sound.osc1.type = "saw"
+        acide.save(self.root / "SYNTHS/acid" / "TB01.XML", backup=False)
+
+        kit = Kit.new("KIT")
+        kit.add_row("KICK", "SAMPLES/DRUMS/Kick/k.wav")
+        kit.add_row("SNARE", "SAMPLES/DRUMS/Snare/s.wav")
+        kit.save(self.root / "KITS" / "KIT.XML", backup=False)
+
+        self.sd = sdcard.SDCard(self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # -- fabrique de morceaux ---------------------------------------------- #
+
+    def _song(self, nom: str = "MORCEAU.XML", instruments: str = "",
+              clips: str = "") -> str:
+        """Écrit un morceau et retourne son chemin relatif."""
+        defaut_inst = ('<sound presetName="BASSE" presetFolder="SYNTHS" />'
+                       '<kit presetName="KIT" presetFolder="KITS" />')
+        defaut_clips = (
+            '<instrumentClip length="384" section="0" clipName="Basse"'
+            ' instrumentPresetName="BASSE" instrumentPresetFolder="SYNTHS">'
+            '<noteRows><noteRow y="36" noteDataWithLift="0x'
+            '0000000000000018401400000060000000184014"/></noteRows>'
+            '</instrumentClip>')
+        texte = (
+            '<song firmwareVersion="3.0.4" timePerTimerTick="459"'
+            ' timerTickFraction="1610612736" inputTickMagnitude="1"'
+            ' rootNote="60">'
+            '<modeNotes><modeNote>0</modeNote><modeNote>2</modeNote>'
+            '<modeNote>4</modeNote><modeNote>5</modeNote>'
+            '<modeNote>7</modeNote><modeNote>9</modeNote>'
+            '<modeNote>11</modeNote></modeNotes>'
+            '<instruments>%s</instruments>'
+            '<sessionClips>%s</sessionClips></song>'
+            % (instruments or defaut_inst, clips or defaut_clips))
+        (self.root / "SONGS" / nom).write_text(texte, encoding="utf-8")
+        return "SONGS/%s" % nom
+
+    def _empreintes(self) -> dict:
+        return {p.relative_to(self.root).as_posix():
+                hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in self.root.rglob("*") if p.is_file()}
+
+    # -- inventaire -------------------------------------------------------- #
+
+    def test_inventaire_complet(self):
+        pack = songpack.collect(self.sd, self._song())
+        self.assertTrue(pack)
+        self.assertTrue(pack.complete, (pack.missing_presets,
+                                        pack.missing_samples))
+        self.assertEqual(sorted(pack.presets),
+                         ["KITS/KIT.XML", "SYNTHS/BASSE.XML"])
+        self.assertIn("SAMPLES/DRUMS/Kick/k.wav", pack.samples)
+        self.assertIn("SAMPLES/DRUMS/Snare/s.wav", pack.samples)
+        self.assertEqual(len(pack), 5, pack.files())
+
+    def test_un_echantillon_etranger_n_est_pas_embarque(self):
+        pack = songpack.collect(self.sd, self._song())
+        self.assertNotIn("SAMPLES/DRUMS/Kick/ailleurs.wav", pack.samples)
+
+    def test_un_preset_dans_un_sous_dossier_est_retrouve(self):
+        """Un morceau nomme ses presets, il ne donne pas leur chemin."""
+        pack = songpack.collect(self.sd, self._song(
+            instruments='<sound presetName="TB01" presetFolder="SYNTHS/acid" />',
+            clips='<instrumentClip length="384" section="0"'
+                  ' instrumentPresetName="TB01"'
+                  ' instrumentPresetFolder="SYNTHS/acid" />'))
+        self.assertIn("SYNTHS/acid/TB01.XML", pack.presets)
+        self.assertTrue(pack.complete, pack.missing_presets)
+
+    def test_un_preset_au_dossier_sans_racine(self):
+        """``acid`` plutôt que ``SYNTHS/acid`` : le cas existe sur la carte."""
+        pack = songpack.collect(self.sd, self._song(
+            instruments='<sound presetName="TB01" presetFolder="acid" />',
+            clips='<instrumentClip length="384" instrumentPresetName="TB01"'
+                  ' instrumentPresetFolder="acid" />'))
+        self.assertIn("SYNTHS/acid/TB01.XML", pack.presets)
+
+    def test_un_preset_absent_est_signale_sans_bloquer(self):
+        pack = songpack.collect(self.sd, self._song(
+            instruments='<sound presetName="DISPARU" presetFolder="SYNTHS" />',
+            clips='<instrumentClip length="384"'
+                  ' instrumentPresetName="DISPARU"'
+                  ' instrumentPresetFolder="SYNTHS" />'))
+        self.assertFalse(pack.complete)
+        self.assertTrue(pack.missing_presets)
+        self.assertIn("DISPARU", pack.missing_presets[0])
+        # Le morceau lui-même reste dans la liste à copier.
+        self.assertIn(pack.song_rel, pack.files())
+
+    def test_un_echantillon_absent_est_signale(self):
+        casse = SynthPreset.new("CASSE")
+        casse.sound.osc1.type = "sample"
+        casse.sound.osc1.file_name = "SAMPLES/PARTI/x.wav"
+        casse.save(self.root / "SYNTHS" / "CASSE.XML", backup=False)
+
+        pack = songpack.collect(self.sd, self._song(
+            instruments='<sound presetName="CASSE" presetFolder="SYNTHS" />',
+            clips='<instrumentClip length="384" instrumentPresetName="CASSE"'
+                  ' instrumentPresetFolder="SYNTHS" />'))
+        self.assertFalse(pack.complete)
+        self.assertEqual(pack.missing_samples, ["SAMPLES/PARTI/x.wav"])
+
+    def test_un_morceau_introuvable(self):
+        pack = songpack.collect(self.sd, "SONGS/pas-la.XML")
+        self.assertFalse(pack)
+        self.assertEqual(len(pack), 0)
+        self.assertIn("introuvable", pack.summary())
+
+    def test_le_detail_cite_tout(self):
+        pack = songpack.collect(self.sd, self._song())
+        texte = pack.to_text()
+        for rel in pack.files():
+            self.assertIn(rel, texte)
+        self.assertIn("fichier(s)", pack.summary())
+
+    # -- copie -------------------------------------------------------------- #
+
+    def test_la_simulation_n_ecrit_rien(self):
+        pack = songpack.collect(self.sd, self._song())
+        dest = Path(self._tmp.name) / "ailleurs"
+        prevus, erreurs = songpack.write_pack(self.sd, pack, dest)
+        self.assertEqual(len(prevus), len(pack))
+        self.assertEqual(erreurs, [])
+        self.assertFalse(dest.exists(), "la simulation a créé le dossier")
+
+    def test_le_dossier_produit_est_une_mini_carte(self):
+        pack = songpack.collect(self.sd, self._song())
+        dest = Path(self._tmp.name) / "ailleurs"
+        copies, erreurs = songpack.write_pack(self.sd, pack, dest,
+                                              apply=True)
+        self.assertEqual(erreurs, [])
+        self.assertEqual(len(copies), len(pack))
+
+        racines = {p.relative_to(dest).parts[0]
+                   for p in dest.rglob("*") if p.is_file()}
+        self.assertEqual(racines, {"SONGS", "SYNTHS", "KITS", "SAMPLES"})
+
+        # Le morceau copié se relit, et tout ce qu'il cite est là.
+        copie = dest / pack.song_rel
+        self.assertTrue(copie.is_file())
+        relu = Song.load(copie)
+        copie_sd = sdcard.SDCard(dest)
+        absents = [r for r in relu.sample_paths()
+                   if copie_sd.resolve_sample(r) is None]
+        self.assertEqual(absents, [])
+
+    def test_les_copies_sont_identiques_a_l_octet(self):
+        pack = songpack.collect(self.sd, self._song())
+        dest = Path(self._tmp.name) / "ailleurs"
+        songpack.write_pack(self.sd, pack, dest, apply=True)
+        for rel in pack.files():
+            with self.subTest(fichier=rel):
+                source = self.sd.abs(rel)
+                self.assertEqual(
+                    hashlib.sha256((dest / rel).read_bytes()).hexdigest(),
+                    hashlib.sha256(source.read_bytes()).hexdigest())
+
+    def test_la_carte_n_est_jamais_touchee(self):
+        """Tout est copié : rien ne bouge ni ne change sur la carte."""
+        rel = self._song()          # le morceau d'abord...
+        avant = self._empreintes()  # ...puis l'empreinte de la carte
+        pack = songpack.collect(self.sd, rel)
+        dest = Path(self._tmp.name) / "ailleurs"
+        songpack.write_pack(self.sd, pack, dest, apply=True)
+        self.assertEqual(self._empreintes(), avant)
+
+    def test_la_copie_s_interrompt_proprement(self):
+        pack = songpack.collect(self.sd, self._song())
+        dest = Path(self._tmp.name) / "ailleurs"
+        copies, erreurs = songpack.write_pack(
+            self.sd, pack, dest, apply=True, should_stop=lambda: True)
+        self.assertEqual(copies, [])
+        self.assertEqual(erreurs, [])
+
+    def test_la_progression_est_rapportee(self):
+        pack = songpack.collect(self.sd, self._song())
+        vus: list = []
+        songpack.write_pack(self.sd, pack,
+                            Path(self._tmp.name) / "p", apply=True,
+                            progress=vus.append)
+        self.assertEqual(len(vus), len(pack))
+        self.assertEqual(len(vus[0]), 3)
+
+    def test_un_pack_vide_ne_copie_rien(self):
+        vide = songpack.SongPack()
+        copies, erreurs = songpack.write_pack(
+            self.sd, vide, Path(self._tmp.name) / "x", apply=True)
+        self.assertEqual(copies, [])
+        self.assertTrue(erreurs)
+
+    def test_le_nom_de_dossier_est_assaini(self):
+        # Convention déjà en place dans ``sdcard.safe_deluge_name``.
+        self.assertEqual(songpack.safe_folder_name(""), "SANS NOM")
+        propre = songpack.safe_folder_name("Mon/Morceau: été ?")
+        for interdit in '/\\:?*"<>|':
+            self.assertNotIn(interdit, propre)
+        self.assertLessEqual(len(propre), 40)
+
+
+class TestSongToMidi(unittest.TestCase):
+    """``midifile.song_to_midi`` : une piste par clip."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _song(self, clips: int = 3, notes: int = 4) -> Song:
+        from delugeapp.core.model import Clip, Note, NoteRow
+
+        song = Song(tempo_bpm=124.0)
+        for index in range(clips):
+            clip = Clip(name="Clip %d" % (index + 1), length=384,
+                        is_kit=(index == 0))
+            row = NoteRow(y=36 + index)
+            row.notes = [Note(pos=n * 24, length=12, velocity=100)
+                         for n in range(notes)]
+            clip.note_rows = [row]
+            song.clips.append(clip)
+        return song
+
+    def test_une_piste_par_clip(self):
+        chemin = self.base / "a.mid"
+        self.assertEqual(midifile.song_to_midi(chemin, self._song(3)), 3)
+        donnees = chemin.read_bytes()
+        self.assertEqual(donnees[:4], b"MThd")
+        # Format 1 : les pistes annoncées comprennent celle du tempo.
+        self.assertEqual(int.from_bytes(donnees[10:12], "big"), 4)
+
+    def test_un_clip_sans_note_est_ignore(self):
+        from delugeapp.core.model import Clip
+
+        song = self._song(2)
+        song.clips.append(Clip(name="Muet", length=384))
+        self.assertEqual(midifile.song_to_midi(self.base / "b.mid", song), 2)
+
+    def test_un_morceau_sans_note_n_ecrit_rien(self):
+        chemin = self.base / "c.mid"
+        self.assertEqual(midifile.song_to_midi(chemin, Song()), 0)
+        self.assertFalse(chemin.exists())
+
+    def test_le_nombre_de_pistes_est_plafonne(self):
+        song = self._song(10)
+        self.assertEqual(
+            midifile.song_to_midi(self.base / "d.mid", song, max_clips=4), 4)
+
+    def test_le_tempo_du_morceau_est_repris(self):
+        chemin = self.base / "e.mid"
+        midifile.song_to_midi(chemin, self._song(1))
+        # 124 BPM -> 60 000 000 / 124 microsecondes par noire.
+        attendu = int(round(60_000_000 / 124.0))
+        self.assertIn(attendu.to_bytes(3, "big"), chemin.read_bytes())
+
+    def test_un_clip_de_kit_part_sur_le_canal_des_percussions(self):
+        chemin = self.base / "f.mid"
+        midifile.song_to_midi(chemin, self._song(2))
+        donnees = chemin.read_bytes()
+        # Canal 10 (indice 9) : statut 0x99 pour un note-on.
+        self.assertIn(b"\x99", donnees)
+        self.assertIn(b"\x90", donnees)
+
+
+class TestUnits(unittest.TestCase):
+    """``core/units.py`` : une seule mise en forme pour tout le logiciel.
+
+    Il y en a eu trois — une dans l'interface, deux recopiées dans le noyau —
+    et les copies du noyau écrivaient le séparateur décimal à l'anglaise.
+    Les messages de correction d'échantillons annonçaient « 9.9 Mio » au
+    milieu d'une application en français.
+    """
+
+    def test_octets(self):
+        cas = {
+            0: "0 o",
+            1: "1 o",
+            512: "512 o",
+            1023: "1023 o",
+            1024: "1,0 Kio",
+            1536: "1,5 Kio",
+            1024 ** 2: "1,0 Mio",
+            5 * 1024 ** 2 + 512 * 1024: "5,5 Mio",
+            1024 ** 3: "1,0 Gio",
+        }
+        for octets, attendu in cas.items():
+            with self.subTest(octets=octets):
+                self.assertEqual(units.human_size(octets), attendu)
+
+    def test_le_separateur_decimal_est_la_virgule(self):
+        """Toute l'application est en français : jamais de point décimal."""
+        for octets in (1024, 1536, 10 ** 6, 10 ** 9, 10 ** 12):
+            with self.subTest(octets=octets):
+                texte = units.human_size(octets)
+                self.assertNotIn(".", texte, texte)
+                if "o" != texte.split()[-1]:
+                    self.assertIn(",", texte, texte)
+
+    def test_une_taille_inconnue_n_est_pas_une_taille_nulle(self):
+        self.assertEqual(units.human_size(None), "—")
+        self.assertEqual(units.human_size("pas un nombre"), "—")
+
+    def test_au_dela_du_gibioctet(self):
+        """Pas d'unité au-delà : on reste en Gio plutôt qu'inventer."""
+        self.assertTrue(units.human_size(5000 * 1024 ** 3).endswith("Gio"))
+
+    def test_durees(self):
+        cas = {
+            1.25: "1,25 s",
+            59.99: "59,99 s",
+            60: "1 min 00 s",
+            187: "3 min 07 s",
+            3599: "59 min 59 s",
+        }
+        for secondes, attendu in cas.items():
+            with self.subTest(secondes=secondes):
+                self.assertEqual(units.human_duration(secondes), attendu)
+
+    def test_une_duree_nulle_ou_absente(self):
+        for valeur in (0, None, -1, "x"):
+            with self.subTest(valeur=valeur):
+                self.assertEqual(units.human_duration(valeur), "—")
+
+    def test_pas_de_soixante_secondes(self):
+        """L'arrondi porte sur le total : « 2 min 60 s » n'existe pas."""
+        for secondes in (119.6, 119.9, 179.7, 239.95):
+            with self.subTest(secondes=secondes):
+                self.assertNotIn("60 s", units.human_duration(secondes))
+
+    def test_taille_de_fichier(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            chemin = Path(dossier) / "x.bin"
+            chemin.write_bytes(b"0" * 1234)
+            self.assertEqual(units.file_size(chemin), 1234)
+            self.assertEqual(units.file_size(Path(dossier) / "absent"), 0)
+            self.assertEqual(units.file_size(dossier), 0)
+
+    def test_l_interface_et_le_noyau_partagent_l_implementation(self):
+        """Une seule source : sinon les deux divergent à la retouche."""
+        try:
+            from delugeapp.ui.widgets import common
+        except ImportError:
+            self.skipTest("PyQt6 absent")
+        self.assertIs(common.human_size, units.human_size)
+        self.assertIs(common.human_duration, units.human_duration)
+
+    def test_les_modules_du_noyau_n_ont_plus_de_copie(self):
+        """Garde-fou : le doublon ne doit pas revenir."""
+        from delugeapp.core import samplefix, songpack
+
+        for module in (samplefix, songpack):
+            with self.subTest(module=module.__name__):
+                self.assertFalse(hasattr(module, "_human"))
+                self.assertFalse(hasattr(module, "_size"))
+
+    def test_dates(self):
+        """Une date se lit, elle ne se déchiffre pas.
+
+        La base garde l'ISO, qui se trie bien ; la page Réglages l'affichait
+        tel quel — « 2026-10-10T23:57:06 » au milieu d'une phrase française.
+        """
+        self.assertEqual(units.human_datetime("2026-10-10T23:57:06"),
+                         "10/10/2026 à 23h57")
+        self.assertEqual(units.human_datetime("2026-01-02T05:04"),
+                         "02/01/2026 à 05h04")
+        self.assertEqual(units.human_datetime(""), "—")
+        self.assertEqual(units.human_datetime(None), "—")
+        self.assertEqual(units.human_datetime(None, absent="jamais"),
+                         "jamais")
+        # Une chaîne illisible vaut mieux qu'un tiret : on cherche
+        # justement à savoir quand.
+        self.assertEqual(units.human_datetime("hier soir"), "hier soir")
+
+    def test_les_messages_du_noyau_portent_la_virgule(self):
+        """Le défaut constaté : « libérés 9.9 Mio » dans la barre d'état."""
+        from delugeapp.core import samplefix
+
+        res = samplefix.FixResult(applied=True, done=["a", "b"],
+                                  bytes_before=10_400_000,
+                                  bytes_after=5_200_000)
+        texte = res.summary()
+        self.assertIn("5,0 Mio", texte)
+        self.assertNotIn("5.0", texte)
+
+
+class _SortieFactice:
+    """Une sortie MIDI qui note ce qu'on lui envoie, avec l'instant.
+
+    Elle permet de vérifier le séquenceur **sans aucun matériel** : c'est
+    précisément là que je me suis trompé — une piste de motif n'est pas une
+    suite de 0 et de 1 mais une liste éparse de ``Step``, et le motif sortait
+    deux fois trop vite, les coups dans l'ordre de la liste au lieu de leur
+    position.
+    """
+
+    def __init__(self):
+        self.is_open = True
+        self.events = []          # (instant, type, note, vélocité)
+        self.t0 = time.monotonic()
+
+    def _note(self, genre, note, velocity=0):
+        self.events.append((time.monotonic() - self.t0, genre, int(note),
+                            int(velocity)))
+
+    def note_on(self, note, velocity=100, channel=1):
+        self._note("on", note, velocity)
+        return True
+
+    def note_off(self, note, channel=1):
+        self._note("off", note)
+        return True
+
+    def control_change(self, cc, value, channel=1):
+        self.events.append((time.monotonic() - self.t0, "cc", int(cc),
+                            int(value)))
+        return True
+
+    def realtime(self, status):
+        self.events.append((time.monotonic() - self.t0, "rt", int(status), 0))
+        return True
+
+    def all_notes_off(self, channel=None):
+        self.events.append((time.monotonic() - self.t0, "panic", 0, 0))
+
+    def close(self):
+        self.is_open = False
+
+    def temps_des(self, genre, note=None):
+        return [e[0] for e in self.events
+                if e[1] == genre and (note is None or e[2] == note)]
+
+
+class TestMidiPort(unittest.TestCase):
+    """La couche MIDI, en ctypes sur ``winmm`` : aucune dépendance.
+
+    Ni ``mido`` ni ``python-rtmidi`` ne sont installés sur la machine de
+    l'utilisateur, et le projet n'exige rien de plus que ``numpy`` et PyQt6.
+    """
+
+    def test_encodage_d_un_message(self):
+        from delugeapp.core import midiport
+
+        self.assertEqual(midiport.short_message(0x90, 60, 100), 0x00643C90)
+        self.assertEqual(midiport.short_message(0xB0, 74, 0), 0x00004AB0)
+
+    def test_les_octets_de_donnees_sont_bornes(self):
+        """Un octet MIDI ne dépasse pas 127 : un message illégal bloque le
+        flux de certains appareils."""
+        from delugeapp.core import midiport
+
+        self.assertEqual(midiport.short_message(0x90, 999, -5), 0x00007F90)
+        self.assertEqual(midiport.short_message(0x90, -1, 300), 0x007F0090)
+
+    def test_les_canaux_vont_de_1_a_16(self):
+        from delugeapp.core.midiport import _channel
+
+        self.assertEqual([_channel(v) for v in (1, 16, 0, 99, "x", None)],
+                         [0, 15, 0, 15, 0, 0])
+
+    def test_reconnaitre_un_deluge_a_son_nom(self):
+        from delugeapp.core.midiport import MidiDevice
+
+        for nom in ("Deluge", "2- Deluge", "Synthstrom Deluge",
+                    "DELUGE MIDI 1"):
+            self.assertTrue(MidiDevice(0, nom, "out").is_deluge, nom)
+        for nom in ("Microsoft GS Wavetable Synth", "loopMIDI Port", ""):
+            self.assertFalse(MidiDevice(0, nom, "out").is_deluge, nom)
+
+    def test_enumeration(self):
+        from delugeapp.core import midiport
+
+        if not midiport.available():
+            self.skipTest("pas de MIDI sur cette machine")
+        for appareil in midiport.outputs():
+            self.assertIsInstance(appareil.name, str)
+            self.assertEqual(appareil.kind, "out")
+
+    def test_un_port_ferme_refuse_tout_sans_lever(self):
+        """Rien ne doit lever parce qu'aucun appareil n'est branché."""
+        from delugeapp.core import midiport
+
+        out = midiport.MidiOut()
+        self.assertFalse(out.is_open)
+        self.assertFalse(out.note_on(60))
+        self.assertFalse(out.note_off(60))
+        self.assertFalse(out.control_change(74, 64))
+        self.assertFalse(out.program_change(3))
+        self.assertFalse(out.pitch_bend(0))
+        self.assertFalse(out.realtime(midiport.CLOCK))
+        self.assertFalse(out.open(None))
+        out.all_notes_off()               # ne doit pas lever
+        out.close()                       # ni fermer deux fois
+        out.close()
+
+    def test_ouvrir_et_fermer_un_vrai_port(self):
+        from delugeapp.core import midiport
+
+        ports = midiport.outputs()
+        if not ports:
+            self.skipTest("aucun port de sortie MIDI")
+        out = midiport.MidiOut()
+        self.assertTrue(out.open(ports[0]))
+        try:
+            self.assertTrue(out.is_open)
+            self.assertEqual(out.device.name, ports[0].name)
+            # Vélocité 1 : la chaîne est prouvée sans faire de bruit.
+            self.assertTrue(out.note_on(60, 1))
+            self.assertTrue(out.note_off(60))
+            self.assertTrue(out.control_change(74, 64))
+        finally:
+            out.close()
+        self.assertFalse(out.is_open)
+
+
+class TestMidiFollow(unittest.TestCase):
+    """La carte « paramètre -> contrôleur » du firmware communautaire.
+
+    Relevée sur la carte de l'utilisateur : 56 entrées, dont une sans
+    contrôleur (``stutterRate`` vaut 255, hors de 0..127) et trois sans
+    équivalent dans le modèle. Restent 52 paramètres pilotables.
+    """
+
+    def test_les_defauts_donnent_52_parametres(self):
+        from delugeapp.core import midifollow
+
+        carte = midifollow.load_map()
+        self.assertEqual(len(carte), 52)
+
+    def test_un_controleur_hors_plage_est_ecarte(self):
+        """255 veut dire « non assigné », pas « contrôleur 255 »."""
+        from delugeapp.core import midifollow
+
+        self.assertEqual(midifollow.DEFAULT_CC["stutterRate"], 255)
+        self.assertNotIn("stutterRate", midifollow.load_map())
+
+    def test_les_noms_du_firmware_sont_traduits(self):
+        from delugeapp.core import midifollow
+
+        carte = midifollow.load_map()
+        attendu = {"volume": 7, "pitchAdjust": 3, "oscAPitchAdjust": 12,
+                   "oscAPulseWidth": 23, "bitCrush": 62,
+                   "arpeggiatorGate": 50, "bassFrequency": 84,
+                   "modulator1Amount": 54, "env1.attack": 73,
+                   "env2.release": 80, "lpfFrequency": 74}
+        for cle, cc in attendu.items():
+            self.assertEqual(carte.get(cle), cc, cle)
+
+    def test_les_parametres_sans_equivalent_sont_ecartes(self):
+        from delugeapp.core import midifollow
+
+        carte = midifollow.load_map()
+        for nom in midifollow.SANS_EQUIVALENT:
+            self.assertNotIn(nom, carte)
+
+    def test_conversion_en_valeur_de_controleur(self):
+        from delugeapp.core import midifollow
+
+        self.assertEqual(midifollow.cc_value(INT32_MIN), 0)
+        self.assertEqual(midifollow.cc_value(INT32_MAX), 127)
+        self.assertEqual(midifollow.cc_value(0), 64)
+        # Et rien ne sort de 0..127, même avec une valeur aberrante.
+        for brut in (-(1 << 40), 1 << 40):
+            self.assertIn(midifollow.cc_value(brut), (0, 127))
+
+    def test_lire_le_fichier_de_la_carte(self):
+        """Le fichier de l'utilisateur l'emporte sur les valeurs par défaut."""
+        from delugeapp.core import midifollow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "MIDIFollow.XML"
+            chemin.write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                "<defaults><defaultCCMappings>"
+                "<lpfFrequency>99</lpfFrequency>"
+                "<volumePostFX>8</volumePostFX>"
+                "<stutterRate>255</stutterRate>"
+                "</defaultCCMappings></defaults>", encoding="utf-8")
+            carte = midifollow.load_map(path=chemin)
+            self.assertEqual(carte.get("lpfFrequency"), 99)
+            self.assertEqual(carte.get("volume"), 8)
+            self.assertNotIn("stutterRate", carte)
+
+    def test_un_fichier_abime_retombe_sur_les_defauts(self):
+        from delugeapp.core import midifollow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "MIDIFollow.XML"
+            chemin.write_bytes(b"\x00\x01 pas du XML")
+            self.assertEqual(len(midifollow.load_map(path=chemin)), 52)
+
+    def test_un_son_devient_une_liste_de_controleurs(self):
+        from delugeapp.core import midifollow
+
+        son = Sound()
+        son.set_param("lpfFrequency", INT32_MAX)
+        son.set_param("pan", 0)
+        messages = midifollow.sound_messages(son)
+        self.assertIn((74, 127), messages)
+        self.assertIn((10, 64), messages)
+        # Un paramètre absent du son n'est pas envoyé : l'écrire écraserait
+        # sur la machine un réglage que l'application ne connaît pas.
+        envoyes = {cc for cc, _v in messages}
+        self.assertNotIn(91, envoyes)        # reverbAmount, jamais réglé
+
+    def test_un_seul_parametre_a_la_fois(self):
+        from delugeapp.core import midifollow
+
+        son = Sound()
+        son.set_param("lpfFrequency", INT32_MIN)
+        son.set_param("lpfResonance", INT32_MAX)
+        self.assertEqual(
+            midifollow.sound_messages(son, keys=["lpfResonance"]),
+            [(71, 127)])
+
+
+class TestDelugeLink(unittest.TestCase):
+    """Le lien complet : état, envoi, séquenceur."""
+
+    def test_sans_rien_de_branche_tout_repond_sans_lever(self):
+        from delugeapp.core.delugelink import DelugeLink
+
+        lien = DelugeLink()
+        self.assertFalse(lien.is_connected)
+        self.assertEqual(lien.send_sound(Sound()), 0)
+        self.assertFalse(lien.send_param("lpfFrequency", 0))
+        self.assertFalse(lien.note_on(60))
+        self.assertFalse(lien.play_notes(60))
+        lien.panic()
+        lien.disconnect()
+
+    def test_le_canal_reste_entre_1_et_16(self):
+        from delugeapp.core.delugelink import DelugeLink
+
+        lien = DelugeLink()
+        for donne, attendu in ((1, 1), (16, 16), (0, 1), (99, 16),
+                               ("x", 1), (None, 1)):
+            lien.set_channel(donne)
+            self.assertEqual(lien.channel, attendu, donne)
+
+    def test_l_etat_se_raconte_en_francais(self):
+        from delugeapp.core.delugelink import LinkState
+
+        self.assertIn("indisponible", LinkState().summary())
+        self.assertIn("Branchez", LinkState(supported=True).summary())
+        self.assertIn("pas encore connect\u00e9",
+                      LinkState(supported=True,
+                                ports_out=["Deluge"]).summary())
+        self.assertIn("deux sens",
+                      LinkState(supported=True, out_name="Deluge",
+                                in_name="Deluge", deluge_out=True).summary())
+        self.assertIn("envoi seulement",
+                      LinkState(supported=True, out_name="Deluge",
+                                deluge_out=True).summary())
+
+    def test_notes_accords_et_suites(self):
+        from delugeapp.core.delugelink import _as_steps
+
+        self.assertEqual(_as_steps(60), [[60]])
+        self.assertEqual(_as_steps([60, 64]), [[60], [64]])
+        self.assertEqual(_as_steps([[60, 64, 67]]), [[60, 64, 67]])
+        self.assertEqual(_as_steps(None), [])
+        self.assertEqual(_as_steps([]), [])
+
+    def test_le_sequenceur_pose_les_coups_au_bon_moment(self):
+        """Le test qui aurait attrapé mon erreur de lecture du motif.
+
+        Un motif techno d'une mesure : la grosse caisse tombe sur les pas
+        0, 4, 8 et 12. À 240 BPM, un pas dure 62,5 ms, donc les quatre coups
+        doivent arriver à 0, 250, 500 et 750 ms.
+        """
+        from delugeapp.core import rhythm
+        from delugeapp.core.delugelink import DelugeLink
+
+        motif = rhythm.genre_beat("techno", bars=1, seed=1, fills=False)
+        positions = [st.pos for st in motif.tracks["Kick"]]
+        self.assertEqual(positions, [0, 4, 8, 12], "le motif a changé")
+
+        lien = DelugeLink()
+        fausse = _SortieFactice()
+        lien._out = fausse
+        duree_pas = 60.0 / 240 * motif.ticks_per_step / motif.ppq
+
+        self.assertTrue(lien.play_pattern(motif, bpm=240,
+                                          row_notes={"Kick": 36}))
+        for _ in range(400):
+            if not lien.is_playing:
+                break
+            time.sleep(0.01)
+        self.assertFalse(lien.is_playing, "le motif ne s'arrête pas")
+
+        frappes = fausse.temps_des("on", 36)
+        self.assertEqual(len(frappes), 4, "quatre coups de grosse caisse")
+        for index, (vu, pas) in enumerate(zip(frappes, positions)):
+            attendu = pas * duree_pas
+            self.assertAlmostEqual(
+                vu, attendu, delta=0.05,
+                msg="coup %d : %.3f s au lieu de %.3f s"
+                    % (index, vu, attendu))
+
+    def test_chaque_note_allumee_est_eteinte(self):
+        """Une note qui reste coincée se remarque très vite à l'oreille."""
+        from delugeapp.core import rhythm
+        from delugeapp.core.delugelink import DelugeLink
+
+        motif = rhythm.genre_beat("house", bars=1, seed=3, fills=True)
+        lien = DelugeLink()
+        fausse = _SortieFactice()
+        lien._out = fausse
+        lien.play_pattern(motif, bpm=480)
+        for _ in range(400):
+            if not lien.is_playing:
+                break
+            time.sleep(0.01)
+
+        allumees = [e[2] for e in fausse.events if e[1] == "on"]
+        eteintes = [e[2] for e in fausse.events if e[1] == "off"]
+        for note in set(allumees):
+            self.assertGreaterEqual(
+                eteintes.count(note), allumees.count(note),
+                "la note %d reste allumée" % note)
+
+    def test_l_horloge_bat_24_fois_par_noire(self):
+        from delugeapp.core import rhythm
+        from delugeapp.core.delugelink import DelugeLink
+        from delugeapp.core import midiport
+
+        motif = rhythm.genre_beat("techno", bars=1, seed=1, fills=False)
+        lien = DelugeLink()
+        fausse = _SortieFactice()
+        lien._out = fausse
+        lien.play_pattern(motif, bpm=480, clock=True)
+        for _ in range(400):
+            if not lien.is_playing:
+                break
+            time.sleep(0.01)
+
+        horloges = [e for e in fausse.events
+                    if e[1] == "rt" and e[2] == midiport.CLOCK]
+        noires = motif.length_ticks / motif.ppq
+        self.assertEqual(len(horloges), int(round(24 * noires)))
+        departs = [e for e in fausse.events
+                   if e[1] == "rt" and e[2] == midiport.START]
+        arrets = [e for e in fausse.events
+                  if e[1] == "rt" and e[2] == midiport.STOP]
+        self.assertEqual((len(departs), len(arrets)), (1, 1))
+
+    def test_arreter_coupe_tout_de_suite(self):
+        from delugeapp.core import rhythm
+        from delugeapp.core.delugelink import DelugeLink
+
+        motif = rhythm.genre_beat("techno", bars=4, seed=1, fills=True)
+        lien = DelugeLink()
+        lien._out = _SortieFactice()
+        lien.play_pattern(motif, bpm=30)         # plusieurs secondes
+        time.sleep(0.1)
+        debut = time.monotonic()
+        lien.stop_playing()
+        self.assertLess(time.monotonic() - debut, 0.5, "l'arrêt traîne")
+        self.assertFalse(lien.is_playing)
+
+    def test_envoyer_un_son_compte_les_controleurs(self):
+        from delugeapp.core.delugelink import DelugeLink
+
+        son = Sound()
+        son.set_param("lpfFrequency", INT32_MAX)
+        son.set_param("reverbAmount", 0)
+        lien = DelugeLink()
+        lien._out = _SortieFactice()
+        lien.load_follow_map()
+        # Deux paramètres posés, **plus les huit segments des deux
+        # enveloppes** : celles-ci existent toujours sur un ``Sound``, avec
+        # leurs valeurs par défaut. J'attendais 2 ; le code avait raison.
+        self.assertEqual(lien.send_sound(son), 10)
+        self.assertEqual(lien.send_sound(son, keys=["lpfFrequency"]), 1)
+        self.assertEqual(
+            lien.send_sound(son, keys=["reverbAmount", "env1.attack"]), 2)
+
+
+class TestDossierDeConfiguration(unittest.TestCase):
+    """``DELUGE_COMPANION_CONFIG`` déplace les réglages hors de chez l'utilisateur.
+
+    Ce n'est pas un confort : mes propres scripts d'essai ont deux fois
+    écrasé les réglages réels, et une fois en éteignant la confirmation
+    d'écriture **et** la sauvegarde automatique — les deux filets qui
+    protègent une carte contenant des mois de travail. La variable rend
+    l'isolement possible en une ligne, au lieu de dépendre de ma vigilance.
+    """
+
+    def setUp(self):
+        from delugeapp import config as config_mod
+
+        self.config_mod = config_mod
+        self._avant = os.environ.get(config_mod.CONFIG_ENV)
+
+    def tearDown(self):
+        if self._avant is None:
+            os.environ.pop(self.config_mod.CONFIG_ENV, None)
+        else:
+            os.environ[self.config_mod.CONFIG_ENV] = self._avant
+
+    def _dossier(self, valeur):
+        """Dossier de configuration que donnerait un démarrage avec ``valeur``."""
+        if valeur is None:
+            os.environ.pop(self.config_mod.CONFIG_ENV, None)
+        else:
+            os.environ[self.config_mod.CONFIG_ENV] = valeur
+        return self.config_mod._config_dir()
+
+    def test_la_variable_impose_le_dossier(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self._dossier(tmp), Path(tmp))
+
+    def test_sans_la_variable_on_reste_chez_l_utilisateur(self):
+        self.assertEqual(self._dossier(None).name, self.config_mod.APP_ORG)
+
+    def test_une_valeur_vide_ne_deplace_rien(self):
+        """Une variable posée à vide n'envoie pas les réglages à la racine."""
+        self.assertEqual(self._dossier("   ").name, self.config_mod.APP_ORG)
+
+    def test_le_tilde_est_developpe(self):
+        self.assertFalse(str(self._dossier("~/essai-deluge")).startswith("~"))
+
+    def test_les_reglages_vont_dans_le_dossier_courant_du_module(self):
+        """Déplacer les chemins du module suffit à isoler une écriture.
+
+        C'est le geste que doit faire tout script : sans lui, ``save_settings``
+        écrit chez l'utilisateur.
+        """
+        config_mod = self.config_mod
+        with tempfile.TemporaryDirectory() as tmp:
+            anciens = (config_mod.CONFIG_DIR, config_mod.SETTINGS_PATH)
+            try:
+                config_mod.CONFIG_DIR = Path(tmp)
+                config_mod.SETTINGS_PATH = Path(tmp) / "settings.json"
+                reglages = config_mod.Settings()
+                reglages.confirm_writes = False
+                config_mod.save_settings(reglages)
+
+                ecrit = Path(tmp) / "settings.json"
+                self.assertTrue(ecrit.exists(),
+                                "rien n'a été écrit dans le dossier isolé")
+                self.assertIn('"confirm_writes": false',
+                              ecrit.read_text(encoding="utf-8"))
+            finally:
+                config_mod.CONFIG_DIR, config_mod.SETTINGS_PATH = anciens
+
+    def test_la_suite_n_ecrit_pas_chez_l_utilisateur(self):
+        """L'invariant qui remplace ma vigilance.
+
+        ``tests/__init__.py`` déplace la configuration dans un bac à sable
+        avant tout import de ``delugeapp``. Si ces lignes disparaissent, ce
+        test tombe — au lieu d'un fichier de réglages écrasé chez
+        l'utilisateur, découvert deux heures plus tard.
+        """
+        import tests
+
+        reel = self.config_mod._base_dir() / self.config_mod.APP_ORG
+        self.assertNotEqual(
+            self.config_mod.CONFIG_DIR, reel,
+            "la suite écrirait dans les réglages réels de l'utilisateur")
+        self.assertEqual(self.config_mod.CONFIG_DIR, tests.BAC_A_SABLE)
+        for chemin in (self.config_mod.SETTINGS_PATH,
+                       self.config_mod.LOG_PATH,
+                       self.config_mod.DB_PATH,
+                       self.config_mod.DEFAULT_BACKUP_DIR):
+            self.assertTrue(
+                str(chemin).startswith(str(tests.BAC_A_SABLE)),
+                "%s sort du bac à sable" % chemin)
+
+    def test_les_defauts_protegent_la_carte(self):
+        """Les deux filets sont actifs par défaut (SPEC §0.2).
+
+        Ils ne doivent jamais passer à ``False`` par inadvertance dans la
+        classe : c'est la valeur que reçoit un utilisateur qui n'a pas encore
+        de fichier de réglages.
+        """
+        neuf = self.config_mod.Settings()
+        self.assertTrue(neuf.confirm_writes)
+        self.assertTrue(neuf.always_backup_before_write)
+
+
+class TestApiPubliqueNonAppelee(unittest.TestCase):
+    """Quatre fonctions publiques que rien n'appelait.
+
+    Elles font partie de la surface documentée des modules — parallèles à
+    ``genre_keys()`` ou ``scale_names()`` — mais aucun appelant ne les
+    exerçait. Mortes **et** non testées, elles auraient cédé au premier
+    usage. Les voici couvertes ; elles restent en place.
+    """
+
+    def test_to_bipolar_et_from_bipolar_font_un_aller_retour(self):
+        for valeur in (INT32_MIN, -INT32_MAX // 2, 0, INT32_MAX // 2,
+                       INT32_MAX):
+            with self.subTest(valeur=valeur):
+                flottant = fixedpoint.to_bipolar(valeur)
+                self.assertGreaterEqual(flottant, -1.0)
+                self.assertLessEqual(flottant, 1.0)
+                retour = fixedpoint.from_bipolar(flottant)
+                self.assertAlmostEqual(retour / INT32_MAX,
+                                       valeur / INT32_MAX, places=6)
+
+    def test_to_bipolar_garde_le_zero(self):
+        self.assertEqual(fixedpoint.to_bipolar(0), 0.0)
+        self.assertEqual(fixedpoint.from_bipolar(0.0), 0)
+
+    def test_from_bipolar_sature_au_lieu_de_deborder(self):
+        self.assertEqual(fixedpoint.from_bipolar(5.0), INT32_MAX)
+        self.assertEqual(fixedpoint.from_bipolar(-5.0), -INT32_MAX)
+
+    def test_from_bipolar_absorbe_les_valeurs_absurdes(self):
+        for absurde in (float("nan"), None, "x"):
+            with self.subTest(valeur=absurde):
+                self.assertEqual(fixedpoint.from_bipolar(absurde), 0)
+
+    def test_beat_names_liste_les_motifs_utilisables(self):
+        noms = rhythm.beat_names()
+        self.assertTrue(noms)
+        self.assertEqual(len(noms), len(set(noms)))
+        # Chaque nom doit effectivement produire un motif.
+        for nom in noms:
+            with self.subTest(motif=nom):
+                self.assertIn(nom, rhythm._BEATS)
+        self.assertIn("four_on_floor", noms)
+        # La liste est une copie : la modifier ne doit rien casser.
+        noms.append("intrus")
+        self.assertNotIn("intrus", rhythm.beat_names())
+
+    def test_chord_names_liste_les_accords_utilisables(self):
+        noms = theory.chord_names()
+        self.assertTrue(noms)
+        self.assertEqual(len(noms), len(set(noms)))
+        for nom in noms:
+            with self.subTest(accord=nom):
+                notes = theory.chord_notes(60, nom)
+                self.assertTrue(notes, nom)
+                self.assertTrue(all(0 <= n <= 127 for n in notes), nom)
+        noms.append("intrus")
+        self.assertNotIn("intrus", theory.chord_names())
 
 
 if __name__ == "__main__":

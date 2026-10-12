@@ -163,7 +163,7 @@ Source : `C:\Users\sebas\Desktop\Informatique\Guide deluge\build\style.py`.
 ```python
 INK="#15181E"  INK_SOFT="#3B424E"  GREY="#7A828F"  GREY_LIGHT="#C3C9D2"
 PAPER="#FFFFFF"  PAPER_WARM="#FAF8F4"
-PANEL="#1C1F26"  PANEL_HI="#2A2E37"  PANEL_LO="#101319"
+PANEL="#171C25"  PANEL_HI="#222934"  PANEL_LO="#0A0D12"  # cf. encadré ci-dessous
 GOLD="#C79A22"  GOLD_HI="#EBC65C"  GOLD_LO="#8A6A12"
 PAD_RED="#F2453D"    PAD_ORANGE="#FF8C1A"  PAD_AMBER="#FFC400"  PAD_YELLOW="#F5E13C"
 PAD_GREEN="#3DD160"  PAD_MINT="#2FD3A6"    PAD_CYAN="#28C4E0"   PAD_BLUE="#3E86F5"
@@ -173,10 +173,35 @@ ACCENT="#1F7A8C"  ACCENT_2="#C4543C"  WASH="#EEF1F5"  WASH_2="#F6EEE4"
 PAD_CYCLE = [RED, ORANGE, AMBER, YELLOW, GREEN, MINT, CYAN, BLUE, INDIGO, PURPLE, MAGENTA, PINK]
 ```
 **Langage visuel :** fond `PANEL_LO`, panneaux `PANEL`, surfaces relevées `PANEL_HI`,
-texte `PAD_WHITE`, texte secondaire `GREY`, **accent unique = `GOLD`** (traits de titre,
-focus, sélection, bordure active). Carrés arrondis (rayon 6–10 px) partout, façon pads.
-Les catégories/sections sont colorées par `PAD_CYCLE`. L'emblème = grille 4×4 de pads
-colorés dans un disque sombre cerclé d'or.
+texte `PAD_WHITE`, texte secondaire `GREY`. Carrés arrondis (rayon 6–10 px) partout,
+façon pads. L'emblème = grille 4×4 de pads colorés dans un disque sombre cerclé d'or.
+
+**Deux corrections au dessin d'origine**, l'une et l'autre mesurées sur l'écran :
+
+1. **Les trois surfaces se distinguent.** Elles ne se séparaient que de douze
+   points de luminance : panneau et fond se confondaient, et l'écran entier
+   paraissait d'un seul gris. Le fond descend à `#0A0D12`, les panneaux
+   montent à `#171C25`, les bordures deviennent visibles (`BORDER="#333B48"`).
+
+2. **L'accent n'est plus unique.** « Accent unique = `GOLD` » donnait neuf
+   écrans rigoureusement identiques : rien ne disait où l'on était. L'or
+   reste l'accent de l'application (en-tête, action principale, focus), mais
+   **chaque page porte sa couleur**, prise dans les pads de la machine :
+
+   | Page | Couleur | | Page | Couleur |
+   |---|---|---|---|---|
+   | Tableau de bord | `PAD_AMBER` | | Générateur | `PAD_MAGENTA` |
+   | Échantillons | `PAD_CYAN` | | Boîte à outils | `PAD_MINT` |
+   | Presets | `PAD_PURPLE` | | Santé | `PAD_ORANGE` |
+   | Kits | `PAD_GREEN` | | Réglages | `PAD_INDIGO` |
+   | Morceaux | `PAD_BLUE` | | | |
+
+   Cette couleur sert, **et toujours de la même façon** : icône et liseré du
+   bouton de navigation, bande de 3 px sous l'en-tête, pad à gauche du titre
+   de la page, trait et libellé des titres de section, tuiles et raccourcis
+   qui mènent à cette page. Un raccourci montre la couleur de **sa
+   destination**, jamais celle de la page qui l'héberge — c'est tout
+   l'intérêt.
 Police : `Segoe UI` puis `DejaVu Sans` en repli ; monospace `Cascadia Mono`/`Consolas`.
 
 ---
@@ -193,6 +218,7 @@ delugeapp/
   core/
     __init__.py
     fixedpoint.py
+    units.py
     dxml.py
     sdcard.py
     model.py
@@ -212,6 +238,10 @@ delugeapp/
     rhythm.py
     midifile.py
     render.py
+    samplefix.py
+    similarity.py
+    slicer.py
+    songpack.py
   ui/
     __init__.py
     theme.py
@@ -271,6 +301,13 @@ class Settings:
 def load_settings() -> Settings
 def save_settings(s: Settings) -> None
 ```
+
+**`DELUGE_COMPANION_CONFIG`** impose le dossier de configuration
+(`CONFIG_ENV` dans le module). Deux usages : une installation portable, et
+l'isolement obligatoire de tout script ou test qui lance l'application —
+celle-ci enregistre les réglages en quittant, et un script d'essai qui coupe
+la confirmation d'écriture la laisserait coupée chez l'utilisateur. C'est
+arrivé trois fois ; cf. §7.
 
 ### 4.2 `delugeapp/core/fixedpoint.py`
 ```python
@@ -611,6 +648,17 @@ class Library:
     def recompute_usage(self) -> None                       # met à jour samples.used_count
 ```
 
+**L'index est sûr entre fils d'exécution.** ``check_same_thread=False`` ne
+rend pas une connexion SQLite partageable : il désactive seulement la
+vérification de Python. La connexion est donc enveloppée dans un proxy qui
+prend un verrou réentrant (``Library.lock``, public) **et matérialise le
+résultat sous ce verrou** : un curseur lu plus tard, pendant qu'un autre fil
+interroge la même connexion, entrelace les appels à SQLite. Mesuré avant
+correction, sur douze diagnostics de santé lancés en parallèle : « bad
+parameter or other API misuse », des lignes tronquées, et **deux notes
+différentes pour la même carte** (85 ou 90 selon la course). Un contrôle de
+santé avale ses erreurs : le rapport avait l'air normal.
+
 ### 4.9 `delugeapp/core/scan.py`
 ```python
 @dataclass
@@ -905,6 +953,476 @@ def spectrum(data: np.ndarray, sr: int, n: int = 4096) -> tuple[np.ndarray, np.n
 Qualité attendue : plausible, pas exact. Aucune dépendance hors numpy. Doit rendre 2,5 s
 en moins de 400 ms.
 
+### 4.22 `delugeapp/core/samplefix.py` — correction des défauts audio
+
+Corrige les quatre défauts que `health` ne savait que signaler : percussions en
+stéréo, fréquence d'échantillonnage inhabituelle, écrêtage, composante
+continue. Les plans sont des **intentions** : `simulate()` les chiffre sans
+rien écrire, `apply()` exécute.
+
+```python
+ACTIONS = ("trim", "mono", "dc", "rate", "normalize", "fade", "depth")
+LENGTH_SAFE = ("mono", "dc", "normalize", "fade", "depth")   # trames inchangées
+LENGTH_CHANGING = ("rate", "trim")                           # trames modifiées
+HEALTH_CODES = ("STEREO_DRUM", "ODD_SAMPLE_RATE", "DC_OFFSET", "CLIPPED_SAMPLE")
+BACKUP_ROOT = "_BACKUP"        # à la racine de la carte, comme _UNUSED
+
+# Seuils et fréquences : IMPORTÉS de health, jamais redéfinis.
+DC_THRESHOLD = health.DC_OFFSET_LIMIT
+CLIP_THRESHOLD = health.CLIPPED_RATIO
+STANDARD_RATES = health.GOOD_SAMPLE_RATES
+
+@dataclass
+class Edit:
+    rel: str; actions: dict; reason: str
+    before: dict; after: dict; skipped: str; error: str
+    @property changes_length -> bool
+    @property label -> str          # « stéréo → mono », « 32000 → 44100 Hz »…
+
+@dataclass
+class FixPlan:
+    title: str; edits: list[Edit]; skipped: list[Edit]
+    def counts() -> dict[str,int]; def summary() -> str; def to_text() -> str
+    @property changes_length -> bool
+    def simulate(sd, lib) -> FixResult                       # n'écrit rien
+    def apply(sd, lib, backup=True, progress=None, should_stop=None) -> FixResult
+
+@dataclass
+class FixResult:
+    done: list[str]; failed: list[tuple[str,str]]
+    bytes_before: int; bytes_after: int
+    retargeted: list[str]; zones_moved: int
+    backup_dir: str; applied: bool
+    @property bytes_saved -> int; def summary() -> str
+
+def plan_mono(sd, lib, rels=None) -> FixPlan
+def plan_standard_rate(sd, lib, rels=None, rate=44100) -> FixPlan
+def plan_remove_dc(sd, lib, rels=None) -> FixPlan
+def plan_headroom(sd, lib, rels=None, target_db=-1.0) -> FixPlan
+def plan_custom(sd, lib, rels, mono=False, rate=None, dc=False,
+                normalize_db=None, trim_db=None, fade_ms=0.0, depth=None) -> FixPlan
+def plan_from_health(sd, lib, codes: list[str]) -> FixPlan
+def song_locked_samples(sd) -> dict[str, list[str]]
+def retarget_zones(sd, ratios: dict[str,float], apply=False) -> tuple[int, list[str]]
+def restore(sd, backup_rel: str, lib=None, apply=False) -> tuple[int, list[str]]
+```
+
+`wav.convert()` gagne un paramètre `remove_dc: bool = False`. Ordre des
+traitements : coupe du silence → mono/stéréo → **retrait du continu** →
+rééchantillonnage → normalisation → fondus.
+
+#### 4.22.1 Correction mesurée — les bornes en trames
+
+**1 191 des 1 497 références de presets et de kits de la carte réelle bornent
+leur échantillon en nombre de trames** (`startSamplePos`, `endSamplePos`,
+`startLoopPos`, `endLoopPos`) ; les 306 autres sont en millisecondes. Changer
+le nombre de trames d'un fichier décale donc la lecture des presets qui le
+citent. `retarget_zones()` remet ces bornes à l'échelle dans la même
+opération ; les zones en millisecondes sont laissées telles quelles, puisque
+la durée réelle du fichier n'a pas bougé.
+
+#### 4.22.2 Correction mesurée — les morceaux interdisent de changer la longueur
+
+**Les 28 morceaux qui citent des échantillons les bornent tous en trames**
+(884 références). `Song` étant volontairement en lecture seule (§0),
+l'application ne peut pas recaler un morceau. Tout fichier cité par un
+morceau est donc **écarté** des corrections qui changent sa longueur
+(`rate`, `trim`), avec le motif en clair dans `FixPlan.skipped`. Les
+corrections qui conservent les trames restent permises.
+
+#### 4.22.3 Correction mesurée — recentrer peut écrêter
+
+Retirer la composante continue d'un fichier déjà chaud le pousse à pleine
+échelle : un signal dont les sommets atteignent 0,9999 avec un continu de
++0,062 sature une fois recentré. Trois fichiers de la carte d'essai
+basculaient ainsi dans l'écrêtage, le diagnostic passant de 35 à 38 fichiers
+écrêtés **après** une correction censée améliorer les choses.
+`plan_remove_dc()` accompagne donc le retrait d'une baisse de niveau à
+`DC_SAFE_CEILING_DB` dès que `peak + |dc| >= 0,9995` — ce qui met à l'échelle
+au lieu de raboter.
+
+#### 4.22.4 Ce que la correction ne fait pas
+
+**L'écrêtage ne se répare pas.** `plan_headroom()` rend de la marge en
+abaissant le niveau ; les sommets rabotés à l'enregistrement ne reviennent
+pas. Le libellé doit le dire, pour ne pas laisser croire à une restauration.
+
+#### 4.22.5 Sauvegarde
+
+Chaque fichier réécrit laisse son original dans
+`_BACKUP/samplefix-<horodatage>/<chemin relatif à la carte>`. Deux points
+impératifs :
+
+* le chemin conservé est celui **de la carte**, pas celui du disque : une
+  première version stockait `_BACKUP/…/Users/sebas/AppData/…`, et la
+  restauration recréait cette arborescence absurde dans la carte au lieu de
+  remettre le fichier à sa place ;
+* l'horodatage à la seconde ne suffit pas à distinguer deux exécutions
+  lancées coup sur coup : un suffixe numérique est ajouté si le dossier
+  existe déjà.
+
+`_BACKUP/` est à la racine de la carte, hors de `SAMPLES/`, pour que ni le
+Deluge ni `NON_AUDIO_IN_SAMPLES` ne prennent les copies pour des
+échantillons.
+
+### 4.23 `delugeapp/core/slicer.py` — découpage d'une boucle en kit
+
+```python
+MODES = ("transients", "grid", "manual")
+DEFAULT_SLICES = 16
+MAX_SLICES = 32
+MIN_SLICE_MS = 20.0
+MAX_ROW_NAME = 12
+
+@dataclass
+class Slice:
+    start: int; end: int; label: str          # `end` EXCLUSIF
+    @property frames -> int
+    def seconds(sr) -> float
+    def zone() -> Zone
+
+@dataclass
+class SliceSet:
+    rel: str; sr: int; frames: int
+    slices: list[Slice]; bpm: float; mode: str
+    @property duration -> float; @property covered -> int
+    def summary() -> str; def to_text() -> str
+    def quantize(bpm, division=16) -> SliceSet
+
+def detect_slices(data, sr, sensitivity=1.0, max_slices=16) -> list[int]
+def grid_slices(frames, sr, count=16) -> list[int]
+def slice_sample(sd, rel, mode="transients", count=16, sensitivity=1.0,
+                 bpm=0.0, positions=None, lib=None, quantize=False) -> SliceSet
+def slices_to_kit(sliceset, name="") -> Kit
+def save_sliced_kit(sd, sliceset, name="", folder="KITS",
+                    apply=False) -> tuple[str, str]
+def render_slice(sd, sliceset, index) -> np.ndarray
+def export_slices(sd, sliceset, folder, apply=False,
+                  bit_depth=None) -> tuple[list[str], list[str]]
+```
+
+#### 4.23.1 Fait vérifié — le Deluge joue des portions de fichier
+
+Un découpage **ne duplique aucun fichier audio** : les rangées du kit pointent
+toutes le même échantillon avec leurs propres `startSamplePos` /
+`endSamplePos`. Ce n'est pas une hypothèse, c'est mesuré sur la carte réelle :
+
+* **19 zones** ne jouent qu'une portion de leur fichier. `021 hodeur 1.XML`
+  joue les 10 à 55 % de six enregistrements ; `015 Andrew Stirton Frugal.XML`
+  démarre `frugalriser.wav` à la trame **113 403** (donc `start > 0`
+  fonctionne) ;
+* **un kit de la carte référence déjà deux fois le même fichier avec des
+  bornes différentes** (`snare smack.wav` dans
+  `020 Leonard Ludvigsen Beatbox.XML`), c'est-à-dire un découpage à deux
+  tranches.
+
+Les bornes sont **exclusives** : une zone qui couvre tout le fichier porte
+`endSamplePos` égal au nombre de trames, pas au dernier indice (`clap1.wav` :
+384 → 12259 pour 12259 trames).
+
+Le plus gros kit de la carte compte **19 rangées**. Rien dans le format ne
+plafonne ce nombre ; `MAX_SLICES = 32` est un choix d'ergonomie.
+
+#### 4.23.2 `grid` ne s'aligne PAS sur le tempo
+
+Sur une boucle correctement coupée, la division égale **est déjà** la grille
+musicale : les 4,0 s de `Bricky-NoKS-120.wav` donnent 16 tranches de 250 ms,
+soit la croche à 120 BPM. Ramener ces bornes sur un tempo *détecté* —
+120,2 BPM au lieu de 120 — déplaçait les coupes et faisait sortir une tranche
+à 256 ms : **l'alignement dégradait un découpage déjà juste.**
+
+L'alignement n'a de sens que pour les coupes issues des attaques, qui tombent
+réellement à côté de la grille. Il est donc dans `SliceSet.quantize()`, et là
+seulement.
+
+#### 4.23.3 Les tranches trop courtes se filtrent sur les BORNES
+
+Une tranche sous `MIN_SLICE_MS` ne produit qu'un clic. La première version
+fusionnait une tranche trop courte dans la précédente — mais la **première**
+tranche n'a pas de précédente, et restait à 30 trames. Le filtrage porte donc
+sur les bornes : on ne garde une borne que si elle est à `MIN_SLICE_MS` au
+moins de la dernière retenue, et une queue trop courte rejoint la tranche
+précédente.
+
+#### 4.23.4 Garanties
+
+* les tranches **couvrent tout le fichier**, sans trou ni chevauchement :
+  `slices[0].start == 0`, `slices[-1].end == frames`, et
+  `slices[i].end == slices[i+1].start` ;
+* `save_sliced_kit(..., apply=False)` n'écrit rien et retourne le chemin
+  prévu ;
+* **un kit existant n'est jamais écrasé** : le nom est numéroté ;
+* `export_slices()` existe pour sortir des échantillons autonomes, mais n'est
+  pas le mode normal : la somme des trames exportées doit égaler celle du
+  fichier d'origine.
+
+### 4.24 `delugeapp/core/similarity.py` — recherche par ressemblance
+
+```python
+FEATURES = ("centroid", "rolloff", "flatness", "bandwidth",
+            "low_ratio", "high_ratio", "crest", "attack")
+LOG_FEATURES = {"centroid", "rolloff", "bandwidth", "crest", "attack"}
+WEIGHTS = {...}            # low_ratio et attack pèsent le plus
+
+@dataclass
+class Match:
+    rel: str; distance: float; row: object
+    @property closeness -> int          # 0–100, indicatif
+
+@dataclass
+class Space:
+    rels: list[str]; vectors: np.ndarray; rows: dict; index: dict
+    def has(rel) -> bool
+
+def build_space(lib, rows=None, folder="", category="") -> Space
+def similar(lib, rel, limit=20, space=None, same_category=False,
+            max_distance=0.0) -> list[Match]
+def describe(row) -> str
+```
+
+Le schéma de l'index passe en **version 4** : huit colonnes s'ajoutent à
+`samples` (`centroid`, `rolloff`, `flatness`, `bandwidth`, `low_ratio`,
+`high_ratio`, `crest`, `attack`), remplies par `scan_card(analyze=True)`.
+`analysis.attack_time(data, sr)` complète `analysis.spectral()`, qui existait
+mais que `scan` n'appelait pas : les descripteurs étaient calculables et
+jamais conservés.
+
+#### 4.24.1 Normalisation
+
+Les grandeurs en hertz et en secondes passent au **logarithme** : l'oreille
+entend des rapports. Chaque dimension est ensuite divisée par l'écart-type de
+la population, puis pondérée. Une dimension d'écart-type nul est neutralisée
+plutôt que divisée par zéro. **Une ligne dont un seul descripteur manque est
+écartée** : un vecteur incomplet donnerait des voisins faux sans le signaler.
+
+#### 4.24.2 Mesure de qualité
+
+Sur la carte de référence, en comparant la catégorie des 5 plus proches
+voisins à celle du départ, sur les 22 catégories d'au moins 12 fichiers :
+
+* **aucune catégorie ne fait moins bien que le hasard** ;
+* la **marge disponible gagnée** — `(mesuré − hasard) / (1 − hasard)` — vaut
+  0,45 en médiane, jusqu'à 0,99 ;
+* facteur brut : médiane **10,8×** le hasard, jusqu'à 24×.
+
+⚠️ **Deux pièges dans cette mesure, tous deux rencontrés.** La moyenne
+*pondérée* est trompeuse, parce qu'une bibliothèque pèse 46 % de la carte et
+domine numérateur comme dénominateur (elle ramenait le résultat à 2,8×). Et
+le *facteur brut* a un plafond arithmétique : une catégorie occupant 46,1 %
+ne peut pas dépasser 2,17×, si bien qu'exiger 3× d'elle est impossible même
+avec une recherche parfaite. D'où la marge gagnée, bornée à 1.
+
+Les voisins sont musicalement justes et pas toujours du même dossier : un
+kick trouve des toms, une caisse claire trouve des rim et des cowbells. Le
+score par catégorie **sous-estime** donc la qualité réelle.
+
+#### 4.24.3 Ce que ce module ne fait PAS
+
+**Pas de détection de quasi-doublons.** Le descripteur est aveugle à la
+hauteur, et une bibliothèque multi-échantillon est faite de fichiers de même
+timbre et de même longueur à des hauteurs différentes. Mesuré : à une
+distance de 0,45 le regroupement avale 59 % de la bibliothèque ; serré à 0,12
+**avec** une durée à 2 % près, les 15 paires trouvées sont **toutes** deux
+notes voisines du même instrument (`Cello B3` avec `Cello C4`).
+`Library.duplicates()` répond déjà à la question du doublon, octet pour
+octet. Ne pas remplacer une certitude par une ressemblance.
+
+#### 4.24.4 Coût
+
+Construction de l'espace : **0,017 s** pour 1 741 échantillons (8 nombres
+chacun). En revanche l'analyse acoustique complète de la carte passe de
+**76 s à 203 s**, le temps de mesurer les descripteurs. Elle reste désactivée
+par défaut (`scan_analyze`), et une analyse incrémentale saute les fichiers
+inchangés.
+
+#### 4.24.5 `needs_rescan` doit être lu
+
+`Library.init_db` posait déjà `needs_rescan` lors d'une mise à niveau du
+schéma, mais **rien ne le lisait**. `scan_card` le consulte maintenant :
+une analyse incrémentale est forcée en complète quand le drapeau est levé,
+sinon les colonnes neuves resteraient vides — les fichiers n'ayant pas
+changé, elles seraient sautées. Le drapeau n'est baissé qu'au terme d'une
+analyse **complète et acoustique**.
+
+⚠️ `Library.needs_rescan` est une **propriété**, pas une méthode.
+
+### 4.25 `delugeapp/core/songpack.py` — rassembler un morceau
+
+Réunit dans un dossier tout ce dont un morceau a besoin : le morceau, les
+presets qu'il nomme, les échantillons que ces presets lisent.
+
+```python
+STD_DIRS = ("SONGS", "SYNTHS", "KITS", "SAMPLES")
+
+@dataclass
+class SongPack:
+    song_rel: str; name: str
+    presets: list[str]; samples: list[str]
+    missing_presets: list[str]; missing_samples: list[str]
+    bytes_total: int
+    def files() -> list[str]
+    @property complete -> bool
+    def summary() -> str; def to_text() -> str
+
+def collect(sd, song_rel) -> SongPack
+def write_pack(sd, pack, dest, apply=False, progress=None,
+               should_stop=None) -> tuple[list[str], list[str]]
+def safe_folder_name(name) -> str
+```
+
+Le dossier produit **a la forme d'une carte** : le recopier à la racine d'une
+autre suffit à y jouer le morceau.
+
+**Rien n'est déplacé ni modifié sur la carte** : tout est copié, et un test
+compare l'empreinte de chaque fichier avant et après. `apply=False` (défaut)
+ne crée même pas le dossier.
+
+#### 4.25.1 Un morceau nomme ses presets, il ne les situe pas
+
+Un morceau porte `presetName` et `presetFolder`, pas un chemin. La casse n'est
+pas fiable (FAT32) et le dossier annoncé peut omettre la racine — `acid`
+plutôt que `SYNTHS/acid`. `_find_preset()` essaie donc, dans l'ordre : le
+dossier annoncé tel quel, le même préfixé de `SYNTHS/` ou `KITS/`, puis le
+premier preset de ce nom où qu'il soit.
+
+#### 4.25.2 Deux sources d'échantillons
+
+Les échantillons viennent **à la fois** du morceau (il embarque une copie des
+définitions d'instruments) **et** des presets qu'il nomme. Les deux sont
+nécessaires : un morceau peut citer un échantillon qu'aucun preset de la carte
+ne lit.
+
+#### 4.25.3 Mesure
+
+Sur les 46 morceaux de la carte de référence : inventaire complet en
+**0,7 s**, soit 15 ms par morceau, et **46 morceaux complets sur 46** — les
+125 références cassées de la carte sont dans des presets qu'aucun morceau
+n'utilise. Le morceau le plus lourd réunit 22 fichiers pour 1,2 Mio.
+
+### 4.26 `midifile.song_to_midi` — le morceau entier en MIDI
+
+```python
+def song_to_midi(path, song, max_clips=64) -> int   # nombre de pistes écrites
+```
+
+Une piste MIDI par clip, les clips de kit sur le canal des percussions.
+Retourne 0 — et **n'écrit rien** — si aucun clip ne porte de note.
+
+⚠️ **Toutes les pistes démarrent au même point, et c'est une contrainte des
+données, pas un raccourci.** Les clips du Deluge vivent dans une grille de
+session : ce sont des boucles qu'on déclenche, et le fichier ne porte aucune
+position absolue pour elles. Vérifié : **aucun des 46 morceaux de la carte
+n'utilise la vue arrangement**, et aucun attribut de position n'apparaît dans
+leur XML. Inventer un placement dans le temps serait une fiction.
+
+### 4.27 `delugeapp/core/units.py` — grandeurs mises en forme
+
+```python
+BYTE_UNITS = ("o", "Kio", "Mio", "Gio")
+
+def human_size(size: int | float | None) -> str      # « 1,4 Mio », None -> « — »
+def human_duration(seconds: int | float | None) -> str   # « 3 min 07 s »
+def file_size(path: Path | str) -> int               # 0 si illisible
+```
+
+**Une seule implémentation, pour le noyau et pour l'interface.**
+`ui/widgets/common.py` réexporte `human_size` et `human_duration` ; les noms
+y restent valables, tout l'affichage les appelle déjà.
+
+⚠️ **Il y en a eu trois.** Une dans l'interface, et deux recopiées dans
+`core/samplefix.py` et `core/songpack.py` — où elles écrivaient le séparateur
+décimal **à l'anglaise**. Les messages de correction d'échantillons et de
+rassemblement de morceau annonçaient donc « libérés 9.9 Mio » au milieu d'une
+application en français. Ce module n'importe que la bibliothèque standard :
+le noyau peut s'en servir sans toucher à Qt.
+
+---
+
+### 4.28 `delugeapp/core/midiport.py` — MIDI temps réel, sans dépendance
+
+```python
+def available() -> bool                      # winmm chargé ?
+def outputs() -> list[MidiDevice]            # ports de sortie
+def inputs() -> list[MidiDevice]
+def find(kind: str = "out") -> MidiDevice | None       # le Deluge
+def short_message(status, data1=0, data2=0) -> int
+class MidiOut:  open/close/send/note_on/note_off/control_change/
+                program_change/pitch_bend/realtime/all_notes_off/play_note
+class MidiIn:   open/close/poll -> list[MidiMessage]
+```
+
+**Aucune bibliothèque tierce.** Ni `mido`, ni `python-rtmidi`, ni `pygame` :
+aucune n'est installée chez l'utilisateur, et le projet ne dépend que de
+`numpy` et PyQt6. Windows expose tout dans `winmm.dll`, appelé par `ctypes`.
+Hors Windows, `available()` rend `False` et tout devient silencieux.
+
+Règles non négociables :
+
+* **les octets de données sont bornés à 0..127** avant l'envoi : un message
+  illégal bloque le flux de certains appareils ;
+* **le rappel d'entrée ne fait qu'empiler** dans une `queue` — il est appelé
+  par un fil de Windows, et une exception qui remonterait dans du code C
+  tuerait le processus ;
+* **l'objet `CFUNCTYPE` est gardé sur l'instance** tant que le port est
+  ouvert : s'il est ramassé pendant que Windows le tient, le processus tombe ;
+* `all_notes_off` envoie un `note off` pour **chaque note réellement
+  allumée**, en plus du CC 123 que certains appareils ignorent ;
+* **pas de SysEx** : les tampons `MIDIHDR` demandent une gestion de cycle de
+  vie qui se paie par un plantage, pas par une exception. À écrire en face
+  d'un vrai Deluge, dans un module à part.
+
+### 4.29 `delugeapp/core/midifollow.py` — la carte des contrôleurs
+
+```python
+DEFAULT_CC: dict[str, int]            # noms du firmware -> CC (mesurés)
+FOLLOW_TO_PARAM: dict[str, str]       # noms du firmware -> clés du modèle
+SANS_EQUIVALENT: frozenset[str]
+def load_map(card=None, path=None) -> dict[str, int]   # clé app -> CC
+def cc_value(raw: int) -> int                          # 32 bits -> 0..127
+def sound_messages(sound, mapping=None, keys=None) -> list[tuple[int, int]]
+```
+
+**Mesuré sur la carte de l'utilisateur** (firmware communautaire c1.2.1,
+`MIDIFollow.XML`, 56 entrées) :
+
+| | |
+|---|---|
+| noms déjà identiques à ceux du modèle | **31** (`lpfFrequency`, `pan`, `reverbAmount`…) |
+| noms à traduire | **21** (`volumePostFX`→`volume`, `oscAPitch`→`oscAPitchAdjust`, les 8 segments d'enveloppe…) |
+| sans équivalent dans le modèle | **3** (`modulator1Pitch`, `modulator2Pitch`, `volumePostReverbSend`) |
+| sans contrôleur assigné | **1** (`stutterRate` = 255, hors de 0..127) |
+| **pilotables** | **52** |
+
+Une valeur hors de 0..127 veut dire « non assigné » et doit être écartée.
+Un paramètre **absent du son n'est pas envoyé** : écrire une valeur par
+défaut écraserait sur la machine un réglage que l'application ne connaît pas.
+
+### 4.30 `delugeapp/core/delugelink.py` — jouer sur la machine
+
+```python
+class DelugeLink:
+    connect(out_name="", in_name="", card=None) -> bool
+    disconnect() / close()
+    state() -> LinkState                 # ports, noms, résumé en français
+    send_sound(sound, keys=None) -> int  # nombre de contrôleurs envoyés
+    send_param(key, raw) -> bool         # un bouton qui tourne
+    play_notes(notes, velocity, seconds, gap, sound) -> bool   # sans bloquer
+    play_pattern(pattern, bpm, row_notes, repeats, clock, channel) -> bool
+    stop_playing() / panic() / poll_input()
+```
+
+**Le Deluge joue l'instrument sélectionné sur lui.** Aucun message MIDI
+standard ne permet de lui dire « charge ce preset » : c'est une limite de la
+machine, et l'interface le dit au lieu de laisser croire à un pilotage
+complet.
+
+**Un motif n'est pas une suite de 0 et de 1.** `pattern.tracks[nom]` est une
+liste éparse de `Step(pos, velocity, length, probability)` ; la grille se lit
+dans `pattern.steps`, `pattern.ppq` et `pattern.ticks_per_step`. Mesuré :
+16 pas, 24 ppq, 6 ticks par pas, soit une double-croche par pas et deux
+secondes la mesure à 120 BPM. Le séquenceur vise des instants **absolus**
+depuis le départ, sinon l'erreur s'accumule : mesuré à ±11 ms sur 4 secondes.
+
 ---
 
 ## 5. Contrats de l'interface
@@ -1140,6 +1658,291 @@ class MainWindow(QMainWindow):
 
 ---
 
+### 5.11 Correction audio dans l'interface
+
+`PlanDialog` vit dans `ui/widgets/common.py` (et non plus dans la page Santé)
+parce que deux pages s'en servent. Il n'exige de son plan que `summary()`,
+`counts()` et `to_text()`, ce qui lui permet d'afficher aussi bien un
+`organize.Plan` qu'un `samplefix.FixPlan`. Il avertit en rouge quand le plan
+comporte des suppressions **ou** quand `plan.changes_length` est vrai.
+
+* **Page Santé** — les quatre codes de `samplefix.HEALTH_CODES` reçoivent une
+  case à cocher au même titre que les codes de `health.AUTOFIX_CODES`, et le
+  bouton « Corriger » s'active même si aucune anomalie `organize` n'est
+  présente. Les codes cochés sont répartis entre les deux moteurs, chacun
+  avec sa propre confirmation.
+* **Page Échantillons** — un bouton « Traiter… » ouvre `ProcessDialog`
+  (mono, continu, normalisation, coupe du silence, fondus,
+  rééchantillonnage), puis `plan_custom` → `PlanDialog` → exécution dans un
+  fil. La page émet `cardModified` pour que les autres se rafraîchissent.
+
+⚠️ **En Qt 6.11, `ItemIsUserCheckable` fait partie des drapeaux par défaut
+d'un `QListWidgetItem`.** Tester ce drapeau pour savoir si un élément porte
+une case renvoie vrai partout ; ce qui fait apparaître la case, c'est l'appel
+à `setCheckState`, donc la présence de `CheckStateRole`.
+
+### 5.12 Découpage dans l'interface
+
+`WaveformView` gagne `set_markers(times, active=-1)`, `markers()` et
+`marker_at(x)` : des coupes numérotées, la tranche active légèrement remplie.
+La transparence se règle avec `QColor.setAlphaF` — `theme.with_alpha` rend une
+chaîne QSS `rgba(...)` que `QColor` **ne sait pas lire**.
+
+La page Échantillons gagne un bouton « Découper… » qui ouvre `SliceDialog` :
+onde avec les coupes, choix du placement (attaques / divisions égales), nombre
+de tranches, sensibilité, alignement sur le tempo, tableau des tranches avec
+écoute au clic, puis « Écrire le kit » ou « Exporter en fichiers… ». Le
+découpage porte sur **une** boucle à la fois.
+
+### 5.13 Recherche par ressemblance dans l'interface
+
+`RowTableModel` gagne `set_columns()`, symétrique de `set_rows()` : la page
+Échantillons ajoute une colonne « Proximité » dans la vue « sons proches » et
+la retire en revenant à la liste.
+
+Le bouton « Sons proches » bascule : il entre dans la vue, puis devient
+« Toute la liste ». Les lignes y sont des `ScoredRow`, une enveloppe autour de
+la ligne d'index — un `sqlite3.Row` ne se modifie pas — qui ajoute
+`closeness` et `distance` sans toucher aux extracteurs de colonnes.
+
+### 5.14 Exports de la page Morceaux
+
+La page reste **entièrement en lecture seule** pour la carte : ses deux
+nouveaux boutons écrivent ailleurs.
+
+* « Morceau en MIDI » — `midifile.song_to_midi`, avec un message qui dit
+  explicitement que les clips étant des boucles, toutes les pistes démarrent
+  au début ;
+* « Rassembler… » — `songpack.collect` puis `PlanDialog` puis
+  `songpack.write_pack` dans un fil. La classe `_PackPlan` enveloppe un
+  `SongPack` pour le dialogue : celui-ci n'exige que `summary()`, `counts()`
+  et `to_text()`, ce qui évite un second dialogue de confirmation.
+
+### 5.15 `Page.guard` ne transmet que ce que le destinataire accepte
+
+```python
+def guard(self, fn) -> Callable[..., None]   # try/except + troncature
+def _arite(fn) -> int | None                 # None = variadique
+```
+
+⚠️ **Une enveloppe variadique défait la troncature d'arguments de PyQt.**
+PyQt supprime normalement les arguments excédentaires d'un signal selon
+l'arité du destinataire : `clicked(bool)` branché sur une méthode sans
+paramètre fonctionne. Mais un `wrapper(*args, **kwargs)` paraît accepter
+tout, et le booléen arrive à une méthode qui n'en veut pas :
+
+```
+TypeError: _listen() takes 1 positional argument but 2 were given
+```
+
+**55 boutons** étaient inertes pour cette raison. `guard` tronque donc
+explicitement, en préservant les gestionnaires qui attendent vraiment un
+argument. **Ne pas réintroduire d'enveloppe variadique** autour d'un
+connecteur Qt.
+
+#### 5.15.1 Les tests doivent cliquer, pas appeler
+
+Un test qui appelle `page._methode()` ne vérifie pas ce que fait
+l'utilisateur. `tests/test_ui.py::TestClicsReels` clique **réellement** sur
+chaque bouton de chaque page, sur une carte jetable, toutes boîtes modales
+neutralisées — dont `QDialog.exec` sur la **classe de base**, ce qui couvre
+tous les dialogues de l'application, et les `QInputDialog` de la page
+Générateur. Vérifié par retrait du correctif : 56 échecs sans, 0 avec.
+
+#### 5.15.2 Toute la surface interactive est couverte
+
+Trois classes se partagent le travail, sur la fixture commune
+`InteractionCase` (hériter d'une classe de tests les rejouerait) :
+
+| Classe | Ce qu'elle actionne |
+|---|---|
+| `TestClicsReels` | chaque bouton de chaque page |
+| `TestInteractionsReelles` | onglets, lignes de tableau, listes déroulantes, cases à cocher, curseurs, champs de saisie |
+| `TestMenusEtRaccourcis` | chaque entrée de menu et chaque raccourci de la fenêtre principale |
+
+Mesuré à l'écriture : **398 interactions hors boutons, 0 erreur**. Les
+boutons étaient donc le seul chemin cassé, parce que seuls eux passaient par
+une enveloppe variadique branchée sur un signal porteur d'un argument
+indésirable. Les autres connexions guardées emploient des lambdas à la bonne
+arité (`lambda _t:`, `lambda _i:`) ou des méthodes qui veulent vraiment
+l'argument (`_set_favorite(checked)`, `_apply_volume(value)`).
+
+La fenêtre principale protège ses actions avec `_safely`, **un rempart
+distinct de `Page.guard`** : il a maintenant son propre test.
+
+### 5.18 Aucune commande ne laisse deviner
+
+```python
+# delugeapp/ui/aide.py
+COMMUNES: dict[str, str]                     # libellés partagés
+EXPLICATIONS: dict[str, dict[str, str]]      # par page, puis par commande
+def expliquer(page, key) -> int              # pose les infobulles manquantes
+def manquantes(page, key) -> list[str]       # ce qui n'explique toujours rien
+```
+
+**Mesuré avant** : 102 des 174 commandes de l'application (59 %)
+n'expliquaient rien, dont « Supprimer les doublons », « Relier
+automatiquement », « Archiver dans _UNUSED » et « Restaurer » — quatre
+actions qui écrivent sur la carte. **Après** : 0 sur 184.
+
+Règles :
+
+* les clés sont `"@_attribut"` (le widget est un attribut de la page, le
+  plus stable) ou le libellé exact ; `COMMUNES` sert aux libellés partagés ;
+* une explication **ne répète pas le libellé** et dit ce qui va se passer,
+  pas ce que le bouton s'appelle ; une action qui écrit sur la carte
+  **l'annonce en gras** ;
+* une infobulle posée à la création l'emporte : elle est plus proche du
+  code ;
+* quatre tests gardent l'état : aucune commande muette, aucune explication
+  orpheline, les quatre actions destructrices annoncent qu'elles écrivent,
+  et une explication n'est jamais son propre libellé.
+
+### 5.19 Le premier écran accueille
+
+Sans carte, les neuf pages montraient un triangle d'alerte et « Aucune carte
+SD ». C'est pourtant l'état normal du premier démarrage. Désormais :
+l'icône **de la page** dans sa couleur, « Où est votre carte Deluge ? », et
+**deux chemins** — « Indiquer le dossier » et « Détecter la carte », le
+second étant le plus court (`EmptyState(action2=…)`, `Page.detectRequested`).
+
+L'en-tête est juste **dès la première image** : l'invitation « Aucune carte
+— cliquez pour choisir » et la pastille du Deluge étaient peintes après
+150 ms, puis après une seconde. Et « Analyser » est éteint tant qu'il n'y a
+pas de carte : ne pas proposer ce qui ne peut pas marcher.
+
+### 5.20 « À faire maintenant »
+
+Un bandeau en tête du tableau de bord donne **une** suggestion, la plus
+urgente, avec le bouton qui l'exécute ou qui mène à l'endroit exact. L'ordre
+suit le risque, pas les fonctions :
+
+1. carte jamais lue → analyser ;
+2. aucune sauvegarde → sauvegarder (avant toute correction) ;
+3. échantillons manquants → les retrouver ;
+4. doublons → les voir ;
+5. plus de 200 orphelins → les ranger ;
+6. rien à signaler → générer un preset.
+
+`_fill_health` rend son rapport pour que le bandeau s'en serve : le
+recalculer serait absurde. Trois tests fixent l'ordre, le cas sans carte, et
+le fait que le bouton mène où il annonce.
+
+### 5.21 Lisible, et à toutes les tailles
+
+**Le contraste se calcule** : ``theme.contrast`` et ``theme.readable``. La
+norme demande 4,5 pour un texte courant. Mesuré avant correction :
+
+| texte | fond | ratio |
+|---|---|---|
+| secondaire | surface relevée | **3,78** |
+| secondaire | panneau | 4,41 |
+| titre « Presets » (violet) | panneau | 4,26 |
+| titre « Réglages » (indigo) | panneau | **3,51** |
+
+Deux règles en découlent :
+
+* ``TEXT_SOFT`` (#8E95A0) pour les **textes** secondaires, distinct de
+  ``GREY`` qui reste celui du décor : éclaircir le gris en bloc aurait aussi
+  éclairci traits et icônes, qui ont le droit d'être discrets ;
+* ``readable(couleur)`` éclaircit une teinte **juste** assez pour atteindre
+  4,5 ; un titre de section garde la couleur exacte de sa page pour son
+  trait, et la variante lisible pour son libellé. Les teintes déjà
+  lisibles ne bougent pas.
+
+**La feuille de style doit se construire.** ``qss()`` attrape une
+substitution manquante et rend un style minimal : l'application démarre,
+mais grise et plate, et seule une ligne de journal le dit. C'est arrivé en
+ajoutant ``TEXT_SOFT`` sans le déclarer. Deux tests le vérifient, pour
+l'accent par défaut et pour trois autres.
+
+**Les listes tiennent à toutes les tailles.** Mesuré : les largeurs avaient
+été réglées pour 1 440 px ; à 1 366 × 768 deux listes débordaient, à
+980 × 640 les quatre. ``_ColonnesAdaptatives`` cache les dernières colonnes
+— elles sont déclarées par ordre d'importance — et les redonne dès que la
+place revient. La première ne disparaît jamais. Vérifié de 980 à 1 920 :
+aucun débordement.
+
+**L'aperçu cède la place à la liste.** Son minimum atteignait 346 px : sur
+un portable de 720 px de haut, la liste tombait à **une ligne visible**.
+Placé dans une zone défilante, son minimum tombe à 131 px et la liste garde
+cinq lignes.
+
+**La barre d'actions se replie** plutôt que de couper ses libellés en plein
+mot (« Dans l'explorat »). Trois états : tous les textes, seul le principal,
+que des icônes — et l'infobulle nomme toujours le bouton. Le seuil dépend
+de la police, donc il ne se teste pas sous la plateforme « offscreen » : le
+test porte sur le mécanisme, la mesure du seuil se fait à la main.
+
+### 5.17 Le Deluge branché
+
+* **Pastille dans l'en-tête** : grise s'il est absent, or s'il est détecté
+  mais pas connecté, verte s'il est connecté. Un clic connecte quand c'est
+  le geste évident, et mène aux réglages sinon.
+* **Surveillance au battement de seconde** : énumérer les ports coûte
+  quelques microsecondes, moins cher qu'un bouton « rafraîchir ». Le
+  branchement et le débranchement sont annoncés dans la barre d'état ; un
+  débranchement referme le port, qui pointerait sinon sur un appareil
+  disparu.
+* **Réglages** : section « Deluge branché » — état, ports, canal,
+  connexion automatique, écoute sur la machine, « Jouer un do », « Tout
+  éteindre ».
+* **Écoute** : `Page.audition(sound)` rend `True` quand la machine a pris le
+  relais ; la page retombe sinon sur son rendu habituel. Le réglage est
+  explicite (`midi_audition`), parce qu'envoyer du son dans une machine
+  branchée sur un ampli ne doit jamais être une surprise.
+* **Anomalies cliquables** : chaque anomalie du tableau de bord mène à
+  l'onglet qui la répare, via `ISSUE_DESTINATION` et les adresses
+  `Page#Partie` de §5.16. `health.ISSUE_CODES` fige le vocabulaire des
+  codes, et deux tests vérifient qu'aucune destination ne vise un code mort.
+
+### 5.16 Refonte de l'interface : où suis-je, que puis-je faire
+
+L'utilisateur a jugé l'interface « triste et assez compliquée à utiliser » et
+a désigné quatre maux : on ne sait pas où l'on est ni où cliquer ; les listes
+sont des tableaux illisibles ; c'est terne ; il y a trop d'écrans et trop
+d'étapes. Les règles qui en découlent :
+
+**Où suis-je.** Une couleur par page (§2), déclinée partout de la même
+manière. `Page.color` et `Page.header()` la posent sans que chaque page ait à
+la répéter ; `Page._tint_sections()` l'applique après `build()` à tous les
+`SectionTitle` **qui n'ont pas choisi la leur** — un panneau qui montre une
+autre destination garde la couleur de cette destination.
+
+**Où cliquer.** Une seule action principale par écran (`#Primary`, plus
+grande et pleine) ; les actions qui exigent une sélection sont **éteintes**
+tant qu'il n'y en a pas, au lieu de répondre « Aucune sélection » après coup.
+Un contrôle qui ne mène nulle part n'affiche pas de curseur de main
+(`StatTile.set_clickable`). Deux commandes différentes ne portent pas le même
+mot : la barre d'en-tête garde « Analyser » (relire la carte), la page Santé
+dit « Diagnostiquer » (lire l'index).
+
+**Les listes.** Une colonne qui répète la même valeur partout ne mérite pas
+une colonne. Mesuré sur 1 741 échantillons : `sr` vaut 44 100 dans 90,7 % des
+cas, `bit_depth` vaut 16 dans 87,7 %, et **`bpm` est vide dans 96,2 %**. Les
+onze colonnes tombent à huit, dont une colonne « Format » qui ne montre que
+l'exception (vide quand le fichier est 44 100/16/mono). Une colonne de chemin
+montre le dernier segment (« Mellotron »), pas le chemin entier tronqué.
+
+**Les vides.** Un écran vide est un moment où l'utilisateur a besoin qu'on le
+guide : c'est le pire endroit pour économiser l'encre. Tout vide porte un
+emblème à la couleur de la page, dit ce qui manque et propose le geste
+(`EmptyState`, `hint_in_list`, `WaveformView.set_empty_text`,
+`SpectrumView.set_empty_text`). Un message d'attente doit parler de **cet**
+écran : « choisissez-en un dans la liste » n'a aucun sens dans le générateur,
+où il n'y a pas de liste.
+
+**Moins d'étapes.** `MainWindow.go_to` accepte une adresse `Page#Partie` :
+`Health#Sauvegardes` ouvre la page **et** son onglet. `Page.focus_on(hint)`
+compare le libellé des onglets sans tenir compte de la casse ni des accents,
+et ne fait rien si le libellé est inconnu — un raccourci approximatif ne doit
+jamais empêcher d'arriver sur la page. Le diagnostic de santé part de
+lui-même au premier affichage (il lit l'index, ne touche pas à la carte,
+0,7 s sur la carte réelle) plutôt que d'attendre un clic devant deux cadres
+vides.
+
+---
+
 ## 6. Contraintes de robustesse
 
 1. **L'application doit démarrer même sans carte SD valide** (toutes les pages affichent un
@@ -1148,6 +1951,12 @@ class MainWindow(QMainWindow):
    affichée, annulable, < 3 minutes avec empreintes rapides.
 3. Aucune exception non capturée ne doit atteindre la boucle Qt : chaque `refresh()` et chaque
    gestionnaire de signal enveloppe son corps dans `try/except` avec journalisation.
+   **Et aucun résultat tardif ne doit réveiller une page éteinte** : un travail
+   lancé dans un fil rend son résultat par un signal *mis en file*, qui peut
+   être délivré après `AppContext.close()`. `AppContext.closed` le dit, et
+   `Page.guard` s'arrête là. Sans ce rempart, le diagnostic de santé — qui
+   part tout seul à l'affichage — laissait trois « Cannot operate on a
+   closed database » dans le journal à chaque fermeture.
 4. Toute écriture sur la carte passe par `dxml.save(..., backup=True)` si
    `settings.always_backup_before_write`.
 5. Les listes de 8 500 lignes doivent utiliser `QAbstractTableModel` + `QTableView`
@@ -1156,6 +1965,24 @@ class MainWindow(QMainWindow):
 ---
 
 ## 7. Tests (`tests/test_core.py`)
+
+**Bac à sable obligatoire.** Les quatre premières lignes de chaque module de
+test posent `DELUGE_COMPANION_CONFIG` sur un dossier temporaire, **avant tout
+import de `delugeapp`** — qui calcule ses chemins à l'import. Elles sont
+répétées dans chaque module, et non dans `tests/__init__.py` : `unittest
+discover` charge les modules à plat, sans importer le paquet, et le garde-fou
+posé dans le paquet ne protégeait donc rien de la commande réellement
+employée. `MainWindow._settings_store` suit la même variable, pour que l'état
+de fenêtre n'aille pas non plus dans le registre réel.
+
+`TestDossierDeConfiguration.test_la_suite_n_ecrit_pas_chez_l_utilisateur`
+échoue si on retire ces lignes — vérifié en les retirant.
+
+Pourquoi tant de soin : mes propres essais ont trois fois modifié les
+réglages réels de l'utilisateur, dont une fois en éteignant `confirm_writes`
+et `always_backup_before_write`, les deux filets qui protègent une carte
+contenant des mois de travail.
+
 `unittest` (stdlib). Doit passer sans carte SD (créer une carte factice dans un `tempfile.TemporaryDirectory`).
 Couvrir : conversions fixed-point (aller-retour), réparation XML des 3 anomalies de §1.3,
 lecture/écriture d'un preset (le XML réécrit doit se relire à l'identique), décodage des blobs de

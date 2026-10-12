@@ -20,15 +20,16 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 from .sdcard import norm_rel
 
 log = logging.getLogger(__name__)
 
 #: Version du schéma ; une valeur différente dans ``meta`` déclenche une remise à neuf.
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 #: Natures d'éléments indexés.
 KINDS = ("sample", "synth", "kit", "song")
@@ -61,6 +62,16 @@ CREATE TABLE IF NOT EXISTS samples (
     bpm      REAL,
     key      TEXT,
     category TEXT,
+    -- Descripteurs acoustiques, pour la recherche par ressemblance
+    -- (cf. core/similarity.py). Nuls tant que l'analyse n'a pas tourné.
+    centroid  REAL,
+    rolloff   REAL,
+    flatness  REAL,
+    bandwidth REAL,
+    low_ratio  REAL,
+    high_ratio REAL,
+    crest    REAL,
+    attack   REAL,
     used_count INTEGER DEFAULT 0,
     ok       INTEGER DEFAULT 1,
     error    TEXT DEFAULT ''
@@ -155,6 +166,8 @@ _COLUMNS: dict[str, tuple[str, ...]] = {
         "rel", "rel_norm", "name", "folder", "ext", "size", "mtime", "sr",
         "channels", "bit_depth", "frames", "duration", "hash", "hash_full",
         "peak", "rms", "dc_offset", "clipped", "bpm", "key", "category",
+        "centroid", "rolloff", "flatness", "bandwidth", "low_ratio",
+        "high_ratio", "crest", "attack",
         "used_count", "ok", "error",
     ),
     "presets": (
@@ -177,13 +190,119 @@ def _escape_like(text: str) -> str:
                 .replace("_", "\\_"))
 
 
+class _Resultat:
+    """Résultat d'une requête, déjà lu, donc lisible hors du verrou."""
+
+    __slots__ = ("_rows", "lastrowid", "rowcount")
+
+    def __init__(self, rows, lastrowid=None, rowcount=-1) -> None:
+        self._rows = rows
+        self.lastrowid = lastrowid
+        self.rowcount = rowcount
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchmany(self, size: int = 1):
+        return list(self._rows[:max(0, int(size))])
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+
+class _ConnexionVerrouillee:
+    """Connexion SQLite protégée par un verrou.
+
+    **``check_same_thread=False`` ne rend pas une connexion sûre** : il
+    désactive seulement la vérification de Python. Deux fils qui lisent la
+    même connexion en même temps obtiennent « bad parameter or other API
+    misuse » et des lignes tronquées — mesuré sur trois fils et le
+    diagnostic de santé, qui rendait alors un rapport incomplet en silence.
+
+    Le verrou couvre l'exécution **et** la lecture du curseur : le relâcher
+    entre les deux laisserait la même fenêtre de course. Le résultat est donc
+    matérialisé, ce que le code appelant fait de toute façon.
+    """
+
+    def __init__(self, con: sqlite3.Connection,
+                 lock: threading.RLock) -> None:
+        self._con = con
+        self._lock = lock
+
+    # -- requêtes ---------------------------------------------------------- #
+
+    def execute(self, sql: str, parameters=()) -> _Resultat:
+        with self._lock:
+            cur = self._con.execute(sql, parameters)
+            try:
+                rows = cur.fetchall()
+            except sqlite3.Error:
+                rows = []              # ordre sans résultat : INSERT, PRAGMA…
+            return _Resultat(rows, cur.lastrowid, cur.rowcount)
+
+    def executemany(self, sql: str, seq) -> _Resultat:
+        with self._lock:
+            cur = self._con.executemany(sql, seq)
+            return _Resultat([], cur.lastrowid, cur.rowcount)
+
+    def executescript(self, script: str) -> _Resultat:
+        with self._lock:
+            cur = self._con.executescript(script)
+            return _Resultat([], cur.lastrowid, cur.rowcount)
+
+    # -- transaction et cycle de vie --------------------------------------- #
+
+    def commit(self) -> None:
+        with self._lock:
+            self._con.commit()
+
+    def rollback(self) -> None:
+        with self._lock:
+            self._con.rollback()
+
+    def close(self) -> None:
+        with self._lock:
+            self._con.close()
+
+    @property
+    def in_transaction(self) -> bool:
+        with self._lock:
+            return self._con.in_transaction
+
+    @property
+    def row_factory(self):
+        return self._con.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value) -> None:
+        with self._lock:
+            self._con.row_factory = value
+
+    @property
+    def raw(self) -> sqlite3.Connection:
+        """La vraie connexion, pour un besoin que le proxy ne couvre pas.
+
+        À n'utiliser que sous ``library.lock``, sans quoi la protection
+        tombe.
+        """
+        return self._con
+
+
 class Library:
     """Accès à l'index SQLite de la carte.
 
-    L'objet n'est **pas** partageable entre fils d'exécution : la connexion est
-    ouverte avec ``check_same_thread=False`` pour que l'analyse puisse écrire
-    depuis un fil de travail, mais il revient à l'appelant de ne pas écrire
-    depuis deux fils à la fois.
+    **L'objet est sûr entre fils d'exécution.** La connexion unique est
+    protégée par un verrou réentrant : l'interface peut interroger l'index
+    pendant qu'un fil de travail l'écrit. Ce n'était pas le cas, et cela se
+    voyait — le diagnostic de santé lancé dans un fil pendant que le tableau
+    de bord lisait la même base rendait un rapport amputé, sans erreur
+    visible.
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -193,8 +312,12 @@ class Library:
         except OSError as exc:
             log.warning("dossier de base de données inaccessible (%s) : %s",
                         self.path.parent, exc)
-        self.con = sqlite3.connect(str(self.path), check_same_thread=False)
-        self.con.row_factory = sqlite3.Row
+        #: Verrou de la connexion. Public : un appelant qui a besoin de
+        #: plusieurs requêtes **indivisibles** le prend lui-même.
+        self.lock = threading.RLock()
+        brute = sqlite3.connect(str(self.path), check_same_thread=False)
+        brute.row_factory = sqlite3.Row
+        self.con = _ConnexionVerrouillee(brute, self.lock)
         # WAL : l'interface peut lire pendant que l'analyse écrit.
         for pragma in ("journal_mode=WAL", "synchronous=NORMAL",
                        "temp_store=MEMORY", "cache_size=-16000"):
@@ -249,6 +372,17 @@ class Library:
             "hash_full": "TEXT DEFAULT ''",
             "dc_offset": "REAL",
             "clipped": "REAL",
+            # Schéma 4 : descripteurs acoustiques. Ajoutés par ALTER TABLE,
+            # donc une base existante garde ses tags, notes et favoris ; les
+            # colonnes restent nulles jusqu'à la prochaine analyse.
+            "centroid": "REAL",
+            "rolloff": "REAL",
+            "flatness": "REAL",
+            "bandwidth": "REAL",
+            "low_ratio": "REAL",
+            "high_ratio": "REAL",
+            "crest": "REAL",
+            "attack": "REAL",
         },
         "presets": {"rel_norm": "TEXT", "repaired": "TEXT DEFAULT ''"},
         "songs": {"rel_norm": "TEXT", "repaired": "TEXT DEFAULT ''"},

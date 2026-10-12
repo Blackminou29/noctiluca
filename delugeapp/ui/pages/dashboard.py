@@ -12,7 +12,6 @@ peut durer bien plus, et l'interface doit rester vivante (SPEC §6.2).
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -27,32 +26,70 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.scan import scan_card
+from .. import icons
 from ..theme import (
     GOLD,
     GREY,
     PAD,
-    PAD_CYAN,
     PAD_GREEN,
     PAD_MAGENTA,
-    PAD_WHITE,
     PANEL_HI,
+    _rgb,
     pad_color,
+    page_color,
     severity_color,
 )
 from ..widgets.common import (
+    clear_layout,
     BusyBar,
     Card,
     ElidedLabel,
     StatTile,
+    human_datetime,
     human_duration,
     human_size,
 )
-from .base import Page, page_header, tool_button
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
 #: Nombre de dossiers montrés dans la répartition.
 TOP_FOLDERS = 10
+
+#: Où l'on répare chaque sorte d'anomalie.
+#:
+#: Les codes viennent de ``core/health.py`` ; relevés sur la carte réelle :
+#: MAC_JUNK (1 564), ORPHAN_SAMPLE (379), MISSING_SAMPLE (125),
+#: ODD_SAMPLE_RATE (89), STEREO_DRUM (58), CLIPPED_SAMPLE (35), DC_OFFSET
+#: (17), REPAIRED_XML (6), NON_AUDIO_IN_SAMPLES (4), BAD_NAME (2),
+#: BIG_SAMPLE (1). Ceux qui n'ont pas d'onglet dédié mènent au rapport, où
+#: la correction automatique les prend en charge.
+ISSUE_DESTINATION: dict[str, str] = {
+    "MISSING_SAMPLE": "Health#Manquants",
+    "ORPHAN_SAMPLE": "Health#Inutilisés",
+    "DUPLICATE_SAMPLE": "Health#Doublons",
+    "NO_BACKUP": "Health#Sauvegardes",
+}
+
+
+class _LigneAnomalie(QWidget):
+    """Ligne d'anomalie cliquable, qui mène là où on la répare."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, cible: str, parent=None) -> None:
+        super().__init__(parent)
+        self.cible = cible
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(
+            "QWidget:hover { background-color: %s; border-radius: 4px; }"
+            % PANEL_HI)
+
+    def mouseReleaseEvent(self, event) -> None:      # noqa: N802 - API Qt
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 class DashboardPage(Page):
@@ -78,20 +115,14 @@ class DashboardPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(PAD)
 
-        header, actions = page_header(
+        # Rien dans la barre d'actions de la page : les commandes de
+        # l'analyse descendent dans la carte « Carte », aux côtés de la date
+        # de la dernière analyse — c'est là qu'on apprend qu'elle manque. La
+        # barre d'en-tête de la fenêtre garde le « Analyser » global
+        # (Ctrl+R), un seul au lieu de deux voisins identiques.
+        header, _actions = self.header(
             "Tableau de bord", "Ce que contient la carte, et son état")
         outer.addWidget(header)
-
-        self._scan_button = tool_button(
-            "Analyser la carte", "refresh",
-            "Relit la carte et met l'index à jour", primary=True)
-        self._scan_button.clicked.connect(self.guard(self._start_scan))
-        actions.addWidget(self._scan_button)
-
-        self._stop_button = tool_button("Arrêter", "stop")
-        self._stop_button.clicked.connect(self.guard(self._stop_scan))
-        self._stop_button.setVisible(False)
-        actions.addWidget(self._stop_button)
 
         self._progress = BusyBar()
         self._progress.setVisible(False)
@@ -112,6 +143,7 @@ class DashboardPage(Page):
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
 
+        column.addWidget(self._build_next_step())
         column.addWidget(self._build_tiles())
         column.addWidget(self._build_card_info())
 
@@ -126,22 +158,147 @@ class DashboardPage(Page):
         column.addWidget(self._build_folders())
         column.addStretch(1)
 
+    def _build_next_step(self) -> QWidget:
+        """Le bandeau « et maintenant ? », caché quand il n'a rien à dire."""
+        self._next_card = Card("À faire maintenant", color=self.color)
+        body = self._next_card.body()
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+
+        self._next_icon = QLabel()
+        self._next_icon.setFixedSize(34, 34)
+        self._next_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(self._next_icon)
+
+        self._next_text = QLabel("—")
+        self._next_text.setWordWrap(True)
+        row.addWidget(self._next_text, 1)
+
+        self._next_button = tool_button("", "", primary=True)
+        self._next_button.clicked.connect(self.guard(self._do_next_step))
+        row.addWidget(self._next_button)
+
+        holder = QWidget()
+        holder.setLayout(row)
+        body.addWidget(holder)
+        self._next_target = ""
+        self._next_card.setVisible(False)
+        return self._next_card
+
+    def _do_next_step(self) -> None:
+        """Le bouton du bandeau : analyser, ou aller là où ça se répare."""
+        if self._next_target == "@scan":
+            self._start_scan()
+            return
+        if self._next_target:
+            self.navigateRequested.emit(self._next_target)
+
+    def _fill_next_step(self, stats: dict, report=None) -> None:
+        """Choisit **la** suggestion la plus utile, et la montre.
+
+        L'ordre est celui de l'urgence réelle, pas celui des fonctions :
+        on ne propose pas de fabriquer des presets à quelqu'un dont la carte
+        n'a jamais été sauvegardée.
+        """
+        suggestion = self._next_suggestion(stats, report)
+        if suggestion is None:
+            self._next_card.setVisible(False)
+            self._next_target = ""
+            return
+
+        texte, bouton, cible, icone, teinte = suggestion
+        self._next_target = cible
+        self._next_text.setText(texte)
+        self._next_button.setText(bouton)
+        self._next_icon.setPixmap(icons.icon(icone, teinte, 22).pixmap(22, 22))
+        rouge, vert, bleu = _rgb(teinte)
+        self._next_icon.setStyleSheet(
+            "background-color: rgba(%d,%d,%d,32);"
+            " border: 1px solid rgba(%d,%d,%d,110);"
+            " border-radius: 9px;" % (rouge, vert, bleu, rouge, vert, bleu))
+        self._next_card.setVisible(True)
+
+    def _next_suggestion(self, stats: dict, report=None):
+        """``(phrase, bouton, destination, icône, couleur)`` ou ``None``."""
+        if self.sd is None:
+            return None
+
+        compte = sum(int((stats or {}).get(cle, 0) or 0)
+                     for cle in ("samples", "synths", "kits", "songs"))
+        if compte == 0:
+            return ("Cette carte n'a jamais été lue. L'analyse construit "
+                    "l'index qui fait vivre toutes les autres pages — elle "
+                    "ne modifie rien.",
+                    "Analyser la carte", "@scan", "refresh", self.color)
+
+        anomalies = {i.code: i for i in getattr(report, "issues", ())}
+
+        manque = anomalies.get("NO_BACKUP")
+        if manque is not None:
+            return ("Aucune sauvegarde de cette carte. Avant toute "
+                    "correction, une copie complète évite de perdre des "
+                    "mois de travail.",
+                    "Sauvegarder", "Health#Sauvegardes", "backup",
+                    page_color("Health"))
+
+        absents = anomalies.get("MISSING_SAMPLE")
+        if absents is not None and absents.count:
+            return ("%d échantillon(s) réclamé(s) par des presets sont "
+                    "absents de la carte : ces pads resteront muets sur la "
+                    "machine." % absents.count,
+                    "Les retrouver", "Health#Manquants", "warning",
+                    page_color("Health"))
+
+        doublons = anomalies.get("DUPLICATE_SAMPLE")
+        if doublons is not None and doublons.count:
+            return ("%d fichier(s) en double, vérifiés octet par octet : "
+                    "de la place à récupérer sans rien perdre."
+                    % doublons.count,
+                    "Voir les doublons", "Health#Doublons", "copy",
+                    page_color("Health"))
+
+        inutilises = anomalies.get("ORPHAN_SAMPLE")
+        if inutilises is not None and inutilises.count > 200:
+            return ("%d échantillons ne servent à aucun preset, kit ni "
+                    "morceau. Les archiver allège la carte sans rien "
+                    "supprimer." % inutilises.count,
+                    "Les ranger", "Health#Inutilisés", "folder",
+                    page_color("Health"))
+
+        # Rien ne cloche : on propose de créer, ce pour quoi la carte est
+        # faite.
+        return ("La carte est en ordre. De quoi fabriquer un son : le "
+                "générateur part d'un genre et vous rend un preset prêt à "
+                "enregistrer.",
+                "Générer un preset", "Generator#Preset de synthé", "wand",
+                page_color("Generator"))
+
     def _build_tiles(self) -> QWidget:
         """Les six tuiles chiffrées."""
-        card = Card("Contenu de la carte")
+        card = Card("Contenu de la carte", color=self.color)
         grid = QGridLayout()
         grid.setSpacing(8)
 
+        # Chaque tuile qui mène à une page prend **la couleur de cette
+        # page** : le cyan veut dire « échantillons » partout dans
+        # l'application, dans la barre latérale comme ici. Les deux tuiles
+        # qui ne mènent nulle part gardent une teinte neutre et n'affichent
+        # pas de curseur de main : une tuile qui ne réagit pas ne doit pas
+        # faire croire qu'elle est cliquable.
         definitions = (
-            ("samples", "Échantillons", "samples", PAD_CYAN, "Samples"),
-            ("synths", "Presets de synthé", "synth", pad_color(9), "Synths"),
-            ("kits", "Kits", "kit", pad_color(4), "Kits"),
-            ("songs", "Morceaux", "song", pad_color(1), "Songs"),
+            ("samples", "Échantillons", "samples", page_color("Samples"),
+             "Samples"),
+            ("synths", "Presets de synthé", "synth", page_color("Synths"),
+             "Synths"),
+            ("kits", "Kits", "kit", page_color("Kits"), "Kits"),
+            ("songs", "Morceaux", "song", page_color("Songs"), "Songs"),
             ("audio", "Durée d'audio", "wave", pad_color(5), ""),
             ("space", "Espace libre", "backup", pad_color(7), ""),
         )
         for index, (key, label, icon, colour, target) in enumerate(definitions):
             tile = StatTile(label, "—", colour, icon)
+            tile.set_clickable(bool(target))
             if target:
                 tile.clicked.connect(
                     self.guard(lambda _c=False, t=target:
@@ -153,7 +310,7 @@ class DashboardPage(Page):
         return card
 
     def _build_card_info(self) -> QWidget:
-        card = Card("Carte")
+        card = Card("Carte", color=self.color)
         body = card.body()
 
         self._card_path = ElidedLabel("—")
@@ -169,13 +326,30 @@ class DashboardPage(Page):
         self._card_detail.setProperty("role", "subtitle")
         body.addWidget(self._card_detail)
 
+        row = QHBoxLayout()
+        row.setSpacing(8)
         self._last_scan = QLabel("—")
         self._last_scan.setProperty("role", "subtitle")
-        body.addWidget(self._last_scan)
+        self._last_scan.setWordWrap(True)
+        row.addWidget(self._last_scan, 1)
+
+        self._scan_button = tool_button(
+            "Analyser la carte", "refresh",
+            "Relit la carte et met l'index à jour  (Ctrl+R)", primary=True)
+        self._scan_button.clicked.connect(self.guard(self._start_scan))
+        row.addWidget(self._scan_button)
+
+        self._stop_button = tool_button("Arrêter", "stop",
+                                        "Interrompre l'analyse en cours")
+        self._stop_button.clicked.connect(self.guard(self._stop_scan))
+        self._stop_button.setVisible(False)
+        row.addWidget(self._stop_button)
+
+        body.addLayout(row)
         return card
 
     def _build_health(self) -> QWidget:
-        card = Card("État de santé")
+        card = Card("État de santé", color=page_color("Health"))
         body = card.body()
 
         row = QHBoxLayout()
@@ -192,28 +366,46 @@ class DashboardPage(Page):
         self._issues.setSpacing(3)
         body.addLayout(self._issues)
 
-        open_health = tool_button("Voir le détail", "health")
+        open_health = tool_button("Voir le détail", "health",
+                                  "Ouvrir le diagnostic complet",
+                                  color=page_color("Health"))
         open_health.clicked.connect(
             self.guard(lambda: self.navigateRequested.emit("Health")))
         body.addWidget(open_health)
         return card
 
     def _build_actions(self) -> QWidget:
-        card = Card("Actions rapides")
+        """Six raccourcis, chacun à la couleur de sa destination.
+
+        C'étaient six boutons gris identiques, dont deux doublaient la barre
+        latérale (« Réglages ») et deux menaient au même écran sans dire où
+        (« Nettoyer la carte »). Chacun porte maintenant la teinte de sa page
+        et mène **à l'onglet exact** : trois clics économisés sur une
+        sauvegarde, et le gris ne cache plus la hiérarchie.
+        """
+        card = Card("Actions rapides", color=self.color)
         grid = QGridLayout()
         grid.setSpacing(6)
         shortcuts = (
-            ("Générer un preset", "wand", "Generator"),
-            ("Construire un kit", "kit", "Generator"),
-            ("Boîte à outils", "tools", "Toolbox"),
-            ("Sauvegarder", "backup", "Health"),
-            ("Nettoyer la carte", "check", "Health"),
-            ("Réglages", "settings", "Settings"),
+            ("Générer un preset", "wand", "Generator#Preset de synthé",
+             "Fabriquer un son de synthé par genre"),
+            ("Construire un kit", "kit", "Generator#Kit de batterie",
+             "Assembler un kit de batterie à partir de la carte"),
+            ("Chercher les doublons", "copy", "Health#Doublons",
+             "Trouver les échantillons présents plusieurs fois"),
+            ("Échantillons manquants", "warning", "Health#Manquants",
+             "Les sons que des presets réclament sans les trouver"),
+            ("Sauvegarder la carte", "backup", "Health#Sauvegardes",
+             "Copier la carte avant d'y toucher"),
+            ("Boîte à outils", "tools", "Toolbox",
+             "Gammes, tempos, conversions et aide-mémoire"),
         )
-        for index, (label, icon, target) in enumerate(shortcuts):
-            button = tool_button(label, icon)
+        for index, (label, icon, target, aide) in enumerate(shortcuts):
+            button = tool_button(label, icon, aide,
+                                 color=page_color(target.split("#")[0]))
             button.setSizePolicy(QSizePolicy.Policy.Expanding,
                                  QSizePolicy.Policy.Fixed)
+            button.setMinimumHeight(34)
             button.clicked.connect(
                 self.guard(lambda _c=False, t=target:
                            self.navigateRequested.emit(t)))
@@ -222,7 +414,8 @@ class DashboardPage(Page):
         return card
 
     def _build_folders(self) -> QWidget:
-        card = Card("Répartition des échantillons")
+        card = Card("Répartition des échantillons",
+                    color=page_color("Samples"))
         self._folders = QVBoxLayout()
         self._folders.setSpacing(4)
         card.body().addLayout(self._folders)
@@ -302,7 +495,8 @@ class DashboardPage(Page):
         stats = self._stats()
         self._fill_tiles(stats)
         self._fill_card_info(stats)
-        self._fill_health(stats)
+        rapport = self._fill_health(stats)
+        self._fill_next_step(stats, rapport)
         self._fill_folders()
 
     def _stats(self) -> dict:
@@ -355,21 +549,22 @@ class DashboardPage(Page):
             self._card_detail.setText("Espace disque indisponible.")
 
         last = stats.get("last_scan") or ""
+        # Carte déjà analysée : le « Analyser » de l'en-tête suffit, et le
+        # bouton de la page s'efface au lieu de crier.
+        self._scan_button.setVisible(not last)
         if last:
-            try:
-                when = datetime.fromisoformat(last)
-                self._last_scan.setText(
-                    "Dernière analyse : "
-                    + when.strftime("%d/%m/%Y à %Hh%M"))
-            except ValueError:
-                self._last_scan.setText(f"Dernière analyse : {last}")
+            self._last_scan.setText(
+                "Dernière analyse : " + human_datetime(last))
         else:
             self._last_scan.setText(
                 "Carte jamais analysée — lancez l'analyse pour remplir "
                 "les pages.")
 
-    def _fill_health(self, stats: dict | None = None) -> None:
+    def _fill_health(self, stats: dict | None = None):
         """Résume la santé : score et trois anomalies les plus graves.
+
+        Rend le rapport, dont le bandeau « à faire maintenant » se sert :
+        le calculer une seconde fois pour lui serait absurde.
 
         Le diagnostic lit l'index, il est donc instantané : inutile de le
         reporter dans un fil séparé.
@@ -379,14 +574,10 @@ class DashboardPage(Page):
         note monte à 98/100 : annoncer « carte en très bon état » alors que
         rien n'a été vérifié serait un mensonge.
         """
-        while self._issues.count():
-            item = self._issues.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        clear_layout(self._issues)
 
         if self.sd is None:
-            return
+            return None
 
         counted = sum(int((stats or {}).get(key, 0) or 0)
                       for key in ("samples", "synths", "kits", "songs"))
@@ -396,7 +587,7 @@ class DashboardPage(Page):
             self._verdict.setText(
                 "Carte pas encore analysée : l'état de santé sera calculé "
                 "après la première analyse.")
-            return
+            return None
         try:
             from ...core import health as health_mod
 
@@ -407,7 +598,7 @@ class DashboardPage(Page):
             log.debug("diagnostic impossible : %s", exc)
             self._score.setText("—")
             self._verdict.setText("Diagnostic indisponible.")
-            return
+            return None
 
         self._score.setText(f"{report.score}")
         self._score.setStyleSheet(
@@ -418,9 +609,10 @@ class DashboardPage(Page):
                        key=lambda i: ({"error": 0, "warn": 1, "info": 2}
                                       .get(i.severity, 3), -i.count))
         for issue in worst[:3]:
-            row = QWidget()
+            cible = ISSUE_DESTINATION.get(issue.code, "Health#Rapport")
+            row = _LigneAnomalie(cible)
             layout = QHBoxLayout(row)
-            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setContentsMargins(0, 2, 0, 2)
             layout.setSpacing(6)
 
             dot = QLabel("●")
@@ -428,14 +620,24 @@ class DashboardPage(Page):
             layout.addWidget(dot)
 
             text = ElidedLabel(f"{issue.title} ({issue.count})")
-            text.setToolTip(issue.detail)
             layout.addWidget(text, 1)
+
+            fleche = QLabel("›")
+            fleche.setStyleSheet(f"color: {GREY};")
+            layout.addWidget(fleche)
+
+            row.setToolTip("%s\n\nCliquez pour ouvrir « %s »."
+                           % (issue.detail, cible.replace("#", " › ")))
+            row.clicked.connect(
+                self.guard(lambda _c=False, d=cible:
+                           self.navigateRequested.emit(d)))
             self._issues.addWidget(row)
 
         if not worst:
             ok = QLabel("Aucune anomalie détectée.")
             ok.setStyleSheet(f"color: {PAD_GREEN};")
             self._issues.addWidget(ok)
+        return report
 
     @staticmethod
     def _score_colour(score: int) -> str:
@@ -449,11 +651,7 @@ class DashboardPage(Page):
 
     def _fill_folders(self) -> None:
         """Barres colorées montrant où se trouvent les échantillons."""
-        while self._folders.count():
-            item = self._folders.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        clear_layout(self._folders)
 
         try:
             folders = self.lib.folders("sample")

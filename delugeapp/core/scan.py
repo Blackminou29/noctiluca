@@ -299,8 +299,25 @@ def _analyze_sample(path: Path, result: ScanResult, rel: str) -> dict:
         levels = analysis.loudness(data)
         out["dc_offset"] = levels["dc_offset"]
         out["clipped"] = levels["clipped"]
+        out["crest"] = levels["crest"]
     except Exception as exc:  # noqa: BLE001
         log.debug("mesure de niveau de %s en échec : %s", rel, exc)
+
+    # Descripteurs spectraux : ils tiennent en huit nombres et permettent de
+    # chercher un son par ressemblance sans relire la carte. Les calculer
+    # ici ne coûte presque rien — le fichier est déjà décodé en mémoire —
+    # alors que les recalculer à la demande imposerait de tout relire.
+    try:
+        spec = analysis.spectral(data, sr)
+        out["centroid"] = spec["centroid"]
+        out["rolloff"] = spec["rolloff85"]
+        out["flatness"] = spec["flatness"]
+        out["bandwidth"] = spec["bandwidth"]
+        out["low_ratio"] = spec["low_ratio"]
+        out["high_ratio"] = spec["high_ratio"]
+        out["attack"] = round(analysis.attack_time(data, sr), 5)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("descripteurs spectraux de %s en échec : %s", rel, exc)
     try:
         # Le tempo n'a de sens que sur une matière assez longue pour contenir
         # plusieurs temps. Mesuré sur la carte : sur un échantillon tenu
@@ -517,6 +534,15 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
     started = time.monotonic()
     result = ScanResult()
 
+    # Après une mise à niveau du schéma, les colonnes neuves sont vides et
+    # une analyse incrémentale les laisserait vides : les fichiers n'ont pas
+    # changé, donc elle les sauterait. ``Library.init_db`` pose
+    # ``needs_rescan`` dans ce cas ; c'est ici qu'il sert, et c'est la seule
+    # chose qui le lisait jusqu'ici.
+    if not full and lib.needs_rescan:          # propriété, pas méthode
+        log.info("index mis à niveau : analyse complète forcée")
+        full = True
+
     if not sd.is_valid():
         result.errors.append(
             "La carte ne contient pas l'arborescence attendue "
@@ -567,6 +593,11 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
         if not result.stopped:
             lib.set_meta("last_scan", datetime.now().isoformat(timespec="seconds"))
             lib.set_meta("last_scan_root", str(sd.root))
+            # Le drapeau ne se lève qu'au terme d'une analyse complète ET
+            # acoustique : sans ``analyze``, les descripteurs restent nuls et
+            # il faudra bien y revenir.
+            if full and analyze:
+                lib.clear_rescan_flag()
     except Exception as exc:  # noqa: BLE001 - rempart ultime, SPEC §4.9
         log.exception("échec inattendu de l'analyse")
         result.errors.append(f"Échec inattendu : {type(exc).__name__}: {exc}")

@@ -25,6 +25,7 @@ Ne dépend que de numpy.
 from __future__ import annotations
 
 import logging
+import zlib
 from functools import lru_cache
 
 import numpy as np
@@ -527,6 +528,22 @@ def _oscillator(sound: Sound, osc, which: str, note: int, n: int, sr: int,
     out /= float(voices)
     return out
 
+def _graine(nom: str) -> int:
+    """Graine stable du bruit, tirée du nom du son.
+
+    C'était ``hash(nom)``. Or Python randomise le hachage des chaînes à
+    chaque démarrage : le même preset rendait un bruit différent d'une
+    session à l'autre, alors que le générateur promet qu'une graine donnée
+    redonne le même son. Un test de rendu est tombé dessus — une basse
+    « lo-fi » quasi muette, dans un processus sur plusieurs.
+
+    ``crc32`` ne vaut rien en cryptographie, mais il est stable, rapide et
+    c'est tout ce qu'on lui demande ici.
+    """
+    return zlib.crc32(str(nom or "").encode("utf-8")) & 0x7FFFFFFF
+
+
+
 
 def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
                  sr: int = 44100, gate: float = 0.7, velocity: float = 0.9,
@@ -545,7 +562,7 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
     try:
         n = max(1, int(float(seconds) * int(sr)))
         rate = int(sr)
-        rng = np.random.default_rng(abs(hash(sound.name)) % (1 << 31))
+        rng = np.random.default_rng(_graine(sound.name))
 
         # -- enveloppes et LFO ------------------------------------------- #
         a1, d1, s1, r1 = _env_times(sound.env1)

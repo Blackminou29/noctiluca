@@ -31,7 +31,8 @@ APP_NAME = "Deluge Companion"
 APP_ORG = "DelugeCompanion"
 
 __all__ = [
-    "APP_NAME", "APP_ORG", "CONFIG_DIR", "SETTINGS_PATH", "DB_PATH", "LOG_PATH",
+    "APP_NAME", "APP_ORG", "CONFIG_ENV",
+    "CONFIG_DIR", "SETTINGS_PATH", "DB_PATH", "LOG_PATH",
     "DEFAULT_BACKUP_DIR", "Settings", "AppContext",
     "load_settings", "save_settings", "ensure_config_dir",
 ]
@@ -54,7 +55,30 @@ def _base_dir() -> Path:
     return home / ".config"
 
 
-CONFIG_DIR: Path = _base_dir() / APP_ORG
+#: Variable d'environnement qui impose le dossier de configuration.
+#:
+#: Deux usages. Le premier est pour l'utilisateur : une installation
+#: « portable », réglages et index sur la clé USB, à côté du
+#: logiciel.
+#:
+#: Le second est une règle de travail. Tout script qui lance la vraie
+#: application doit la poser, car l'application **enregistre les
+#: réglages en quittant** : un script d'essai qui coupe la confirmation
+#: d'écriture pour reproduire un bogue la laisse coupée dans les
+#: réglages de l'utilisateur, et sa carte perd son filet. C'est
+#: arrivé.
+CONFIG_ENV = "DELUGE_COMPANION_CONFIG"
+
+
+def _config_dir() -> Path:
+    """Dossier de configuration, que l'environnement peut imposer."""
+    impose = (os.environ.get(CONFIG_ENV) or "").strip()
+    if impose:
+        return Path(impose).expanduser()
+    return _base_dir() / APP_ORG
+
+
+CONFIG_DIR: Path = _config_dir()
 SETTINGS_PATH: Path = CONFIG_DIR / "settings.json"
 DB_PATH: Path = CONFIG_DIR / "library.sqlite3"
 LOG_PATH: Path = CONFIG_DIR / "app.log"
@@ -184,6 +208,18 @@ class Settings:
     scan_hash: bool = True
     scan_analyze: bool = False
 
+    # -- lien avec le Deluge branché --------------------------------------
+    #: Nom du port de sortie MIDI, vide = chercher le Deluge tout seul.
+    midi_out: str = ""
+    #: Nom du port d'entrée MIDI, vide = chercher le Deluge tout seul.
+    midi_in: str = ""
+    #: Canal des notes et des contrôleurs (1..16).
+    midi_channel: int = 1
+    #: Se connecter dès que le Deluge apparaît.
+    midi_autoconnect: bool = True
+    #: Écouter **sur la machine** plutôt qu'avec le moteur approché.
+    midi_audition: bool = False
+
     # -- sérialisation ----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         """Dictionnaire JSON-sérialisable des réglages."""
@@ -200,6 +236,11 @@ class Settings:
             "language": self.language,
             "scan_hash": bool(self.scan_hash),
             "scan_analyze": bool(self.scan_analyze),
+            "midi_out": self.midi_out,
+            "midi_in": self.midi_in,
+            "midi_channel": int(self.midi_channel),
+            "midi_autoconnect": bool(self.midi_autoconnect),
+            "midi_audition": bool(self.midi_audition),
         }
 
     @classmethod
@@ -233,6 +274,13 @@ class Settings:
         s.language = (_as_str(g("language"), s.language).strip().lower() or "fr")
         s.scan_hash = _as_bool(g("scan_hash"), s.scan_hash)
         s.scan_analyze = _as_bool(g("scan_analyze"), s.scan_analyze)
+        s.midi_out = _as_str(g("midi_out"), s.midi_out)
+        s.midi_in = _as_str(g("midi_in"), s.midi_in)
+        s.midi_channel = int(_as_float(g("midi_channel"),
+                                       float(s.midi_channel), 1.0, 16.0))
+        s.midi_autoconnect = _as_bool(g("midi_autoconnect"),
+                                      s.midi_autoconnect)
+        s.midi_audition = _as_bool(g("midi_audition"), s.midi_audition)
         return s
 
     # -- confort ----------------------------------------------------------
@@ -330,6 +378,15 @@ class AppContext:
     sd: "SDCard | None" = None
     lib: "Library" = None  # type: ignore[assignment]
     player: "Player" = None  # type: ignore[assignment]
+    #: Lien MIDI avec le Deluge branché. ``None`` tant que personne ne l'a
+    #: demandé : ouvrir un port a un coût, et l'application doit démarrer
+    #: aussi vite sans machine qu'avec.
+    link: Any = None
+    #: Vrai une fois ``close()`` appelé. L'interface s'en sert pour ne pas
+    #: interroger une base déjà fermée : un travail lancé dans un fil rend
+    #: son résultat par un signal **mis en file**, qui peut arriver après la
+    #: fermeture de la fenêtre. Cf. ``Page.guard``.
+    closed: bool = False
 
     # -- carte SD ---------------------------------------------------------
     @property
@@ -343,6 +400,28 @@ class AppContext:
         except Exception:  # pragma: no cover - carte retirée, lecteur absent…
             log.exception("Validation de la carte SD impossible")
             return False
+
+    def ensure_link(self):
+        """Le lien MIDI avec le Deluge, créé au premier besoin.
+
+        Créer l'objet n'ouvre aucun port : il se contente de lire la carte
+        MIDI Follow de la carte SD. C'est la connexion qui ouvre, et elle est
+        toujours demandée explicitement — par les réglages, ou par la
+        reconnexion automatique quand la machine apparaît.
+        """
+        if self.link is None:
+            from delugeapp.core.delugelink import DelugeLink
+
+            lien = DelugeLink()
+            lien.set_channel(getattr(self.settings, "midi_channel", 1))
+            lien.load_follow_map(self.sd)
+            self.link = lien
+        return self.link
+
+    @property
+    def link_connected(self) -> bool:
+        """Vrai si un port MIDI est ouvert. Ne crée rien."""
+        return bool(self.link is not None and self.link.is_connected)
 
     def sd_or_warn(self, parent: Any = None) -> "SDCard | None":
         """Retourne la carte SD, ou affiche un avertissement et retourne None."""
@@ -371,6 +450,7 @@ class AppContext:
 
     def close(self) -> None:
         """Libère proprement les ressources (lecteur audio, base de données)."""
+        self.closed = True
         player = getattr(self, "player", None)
         stop = getattr(player, "stop", None)
         if callable(stop):
@@ -378,7 +458,7 @@ class AppContext:
                 stop()
             except Exception:
                 log.exception("Arrêt du lecteur audio impossible")
-        for name in ("player", "lib"):
+        for name in ("link", "player", "lib"):
             obj = getattr(self, name, None)
             close = getattr(obj, "close", None)
             if callable(close):

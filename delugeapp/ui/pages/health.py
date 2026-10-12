@@ -22,87 +22,42 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPlainTextEdit,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QStackedWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
 
-from ..theme import GOLD, GREY, PAD, PAD_GREEN, PAD_RED, severity_color
+from ..theme import GOLD, PAD, PAD_GREEN, PAD_RED, severity_color
 from ..widgets.common import (
     BusyBar,
     Card,
-    ElidedLabel,
+    EmptyState,
+    PlanDialog,
     human_size,
 )
-from .base import Page, page_header, tool_button
+from ...core import samplefix
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
-
-
-class PlanDialog(QDialog):
-    """Montre le plan d'opérations avant de l'appliquer.
-
-    Aucune réorganisation ne part sans que l'utilisateur ait lu cette liste :
-    c'est la dernière barrière avant que des fichiers bougent.
-    """
-
-    def __init__(self, plan, parent=None, title: str = "Plan d'opérations") -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(820, 540)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(PAD, PAD, PAD, PAD)
-        layout.setSpacing(8)
-
-        summary = QLabel(plan.summary())
-        summary.setProperty("role", "title")
-        summary.setWordWrap(True)
-        layout.addWidget(summary)
-
-        counts = plan.counts()
-        if counts.get("delete"):
-            warning = QLabel(
-                f"⚠ {counts['delete']} suppression(s) : cette opération est "
-                f"irréversible.")
-            warning.setStyleSheet(f"color: {PAD_RED}; font-weight: 600;")
-            warning.setWordWrap(True)
-            layout.addWidget(warning)
-
-        detail = QPlainTextEdit()
-        detail.setReadOnly(True)
-        detail.setPlainText(plan.to_text())
-        detail.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        layout.addWidget(detail, 1)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel)
-        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok.setText("Appliquer")
-        ok.setObjectName("Primary")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
-            "Annuler")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
 
 
 class HealthPage(Page):
     """Diagnostic et réparation de la carte."""
 
     TITLE = "Santé"
+    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
+                    "Le diagnostic cherchera ensuite les doublons, les "
+                    "sons manquants et les fichiers abîmés.")
     ICON = "health"
 
     #: La carte a changé : les autres pages doivent se rafraîchir.
@@ -111,6 +66,9 @@ class HealthPage(Page):
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
         self._report = None
+        #: Vrai dès que le diagnostic automatique a été tenté, pour ne pas
+        #: le relancer à chaque fois que l'on revient sur la page.
+        self._auto_done = False
 
     # -- construction ------------------------------------------------------- #
 
@@ -119,11 +77,17 @@ class HealthPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(8)
 
-        header, actions = page_header(
+        header, actions = self.header(
             "Santé de la carte", "Ce qui va mal, et comment le réparer")
         outer.addWidget(header)
 
-        analyse = tool_button("Analyser", "refresh", primary=True)
+        # Pas « Analyser » : la barre d'en-tête a déjà ce mot, pour relire
+        # la carte. Ici on ne relit rien, on cherche ce qui va mal dans ce
+        # que l'index contient déjà.
+        analyse = tool_button(
+            "Diagnostiquer", "health",
+            "Cherche les anomalies dans l'index — sans relire la carte",
+            primary=True)
         analyse.clicked.connect(self.guard(self._run_check))
         actions.addWidget(analyse)
 
@@ -152,6 +116,24 @@ class HealthPage(Page):
         outer.addWidget(tabs, 1)
 
     def _build_report_tab(self) -> QWidget:
+        """Deux états : l'invitation à diagnostiquer, puis le rapport.
+
+        Montrer des cadres vides revient à montrer une panne. Tant qu'aucun
+        rapport n'existe, la page dit ce qu'elle fera et propose de le faire.
+        """
+        self._report_stack = QStackedWidget()
+
+        self._report_empty = EmptyState(
+            "Aucun diagnostic pour l'instant",
+            "health", "Diagnostiquer",
+            detail=("Le diagnostic lit l'index déjà constitué : il ne touche "
+                    "pas à la carte, et prend moins d'une seconde. Il cherche "
+                    "les doublons, les échantillons manquants, les fichiers "
+                    "écrêtés et les presets abîmés."),
+            color=self.color)
+        self._report_empty.actionClicked.connect(self.guard(self._run_check))
+        self._report_stack.addWidget(self._report_empty)
+
         host = QWidget()
         column = QVBoxLayout(host)
         column.setContentsMargins(0, PAD, 0, 0)
@@ -189,7 +171,9 @@ class HealthPage(Page):
         holder = QWidget()
         holder.setLayout(row)
         column.addWidget(holder, 1)
-        return host
+
+        self._report_stack.addWidget(host)
+        return self._report_stack
 
     def _build_duplicates_tab(self) -> QWidget:
         host = QWidget()
@@ -369,6 +353,24 @@ class HealthPage(Page):
                  on_error=self.guard(self._check_failed),
                  title="Diagnostic")
 
+    def _vaut_le_coup(self) -> bool:
+        """Y a-t-il de quoi diagnostiquer ?
+
+        Sur un index vide, les contrôles ne trouvent rien à redire et la note
+        monte à 98/100 : annoncer « carte en très bon état » alors que rien
+        n'a été lu serait un mensonge — le tableau de bord se garde déjà de
+        le faire. On attend donc la première analyse de la carte.
+        """
+        if self.sd is None:
+            return False
+        try:
+            stats = self.lib.stats()
+        except Exception as exc:        # noqa: BLE001
+            log.debug("statistiques indisponibles : %s", exc)
+            return False
+        return any(int(stats.get(cle, 0) or 0) > 0
+                   for cle in ("samples", "synths", "kits", "songs"))
+
     def _check(self, card):
         from ...core import health as health_mod
 
@@ -392,6 +394,7 @@ class HealthPage(Page):
         self.say(f"Diagnostic impossible : {message}")
 
     def _fill_report(self, report) -> None:
+        self._report_stack.setCurrentIndex(1)
         self._score.setText(str(report.score))
         self._score.setStyleSheet(f"color: {self._colour(report.score)};")
         self._verdict.setText(report.verdict())
@@ -404,7 +407,7 @@ class HealthPage(Page):
             item = QListWidgetItem(f"{issue.title}  ({issue.count})")
             item.setForeground(Qt.GlobalColor.white)
             item.setData(Qt.ItemDataRole.UserRole, issue.code)
-            if issue.auto_fixable:
+            if issue.auto_fixable or issue.code in samplefix.HEALTH_CODES:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Unchecked)
                 item.setToolTip("Réparable automatiquement")
@@ -414,7 +417,9 @@ class HealthPage(Page):
                 Qt.GlobalColor.white)
             self._issues.addItem(item)
 
-        self._fix_button.setEnabled(bool(report.auto_fixable()))
+        self._fix_button.setEnabled(
+            bool(report.auto_fixable())
+            or any(i.code in samplefix.HEALTH_CODES for i in report.issues))
         if report.issues:
             self._issues.setCurrentRow(0)
         else:
@@ -476,11 +481,28 @@ class HealthPage(Page):
 
         from ...core import health as health_mod
 
-        plan = health_mod.autofix(card, self.lib, codes, apply=False)
-        if not plan:
+        # Deux familles de corrections, deux moteurs : ``health.autofix``
+        # déplace et relie des fichiers, ``samplefix`` réécrit leur contenu.
+        # Chacune a sa confirmation, pour que l'utilisateur voie exactement
+        # ce que chaque moteur va faire.
+        audio = [c for c in codes if c in samplefix.HEALTH_CODES]
+        autres = [c for c in codes if c not in samplefix.HEALTH_CODES]
+        fait = False
+
+        if autres:
+            plan = health_mod.autofix(card, self.lib, autres, apply=False)
+            if plan:
+                fait = True
+                self._apply_plan(plan, "Correction automatique")
+
+        if audio:
+            fix = samplefix.plan_from_health(card, self.lib, audio)
+            if fix:
+                fait = True
+                self._apply_fix(fix)
+
+        if not fait:
             self.say("Rien à faire pour les anomalies cochées.")
-            return
-        self._apply_plan(plan, "Correction automatique")
 
     def _apply_plan(self, plan, title: str) -> None:
         """Montre le plan et l'applique après accord explicite."""
@@ -501,6 +523,46 @@ class HealthPage(Page):
 
     def _do_apply(self, plan, card):
         return plan.apply(card, self.lib)
+
+    # -- correction audio --------------------------------------------------- #
+
+    def _apply_fix(self, plan) -> None:
+        """Montre un plan de correction audio, puis l'exécute si accepté."""
+        card = self.card_or_warn()
+        if card is None:
+            return
+        dialog = PlanDialog(plan, self, "Correction des défauts audio")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self.say("Correction annulée.")
+            return
+
+        self.say("Correction des fichiers…")
+        self.run(self._do_fix, plan, card,
+                 on_result=self.guard(self._fix_done),
+                 on_error=self.guard(lambda m: self.say(f"Échec : {m}")),
+                 title="Correction audio")
+
+    def _do_fix(self, plan, card, progress=None, should_stop=None):
+        return plan.apply(card, self.lib, progress=progress,
+                          should_stop=should_stop)
+
+    def _fix_done(self, result) -> None:
+        if result is None:
+            return
+        if result.failed:
+            detail = "\n".join("%s : %s" % (rel, msg)
+                               for rel, msg in result.failed[:12])
+            QMessageBox.warning(
+                self, "Correction partielle",
+                "%d fichier(s) corrigés, %d en échec :\n\n%s"
+                % (len(result.done), len(result.failed), detail))
+        if result.backup_dir:
+            self.say("%s Originaux conservés dans %s."
+                     % (result.summary(), result.backup_dir))
+        else:
+            self.say(result.summary())
+        self.cardModified.emit()
+        self._run_check()
 
     def _plan_done(self, result) -> None:
         if result is None:
@@ -841,9 +903,15 @@ class HealthPage(Page):
     # -- rafraîchissement --------------------------------------------------- #
 
     def _refresh(self) -> None:
-        # Le diagnostic n'est pas relancé à chaque affichage : il est à la
-        # demande, pour que la page s'ouvre instantanément.
+        # Le diagnostic n'est **pas** relancé à chaque affichage : il part
+        # tout seul la première fois, puis reste à la demande. Sans cela, la
+        # page s'ouvrait sur deux cadres vides et il fallait deviner qu'un
+        # bouton les remplirait.
         self._fill_backups()
+        if self._report is None and not self._auto_done and self._vaut_le_coup():
+            self._auto_done = True
+            self._run_check()
+            return
         if self._report is None:
             self._fill_duplicates()
             self._fill_missing()

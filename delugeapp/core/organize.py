@@ -22,13 +22,12 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable
 
 from . import deps
 from .analysis import DRUM_CATEGORIES
 from .db import Library
 from .sdcard import (
-    AUDIO_EXT,
     IGNORED_FILES,
     IGNORED_FILES_PREFIX,
     SDCard,

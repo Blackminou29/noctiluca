@@ -600,6 +600,35 @@ def loudness(data: np.ndarray) -> dict:
         return out
 
 
+def attack_time(data: np.ndarray, sr: int) -> float:
+    """Temps entre le début du son et sa crête, en secondes.
+
+    C'est ce qui sépare le mieux une percussion d'un son tenu : un kick
+    atteint sa crête en quelques millisecondes, une nappe met une seconde.
+    Mesuré sur l'enveloppe d'amplitude lissée, pour qu'un pic isolé ne
+    décide pas à lui seul.
+    """
+    try:
+        arr = _mono(data)
+        if arr.size < 8 or sr <= 0:
+            return 0.0
+        # Enveloppe : valeur absolue lissée sur 2 ms.
+        largeur = max(1, int(0.002 * sr))
+        noyau = np.ones(largeur, dtype=np.float32) / largeur
+        env = np.convolve(np.abs(arr), noyau, mode="same")
+        crete = float(env.max())
+        if crete <= 1e-6:
+            return 0.0
+        # Le début du son : premier dépassement de 10 % de la crête.
+        au_dessus = np.flatnonzero(env > 0.1 * crete)
+        debut = int(au_dessus[0]) if au_dessus.size else 0
+        sommet = int(np.argmax(env))
+        return max(0.0, (sommet - debut) / float(sr))
+    except (ValueError, FloatingPointError, MemoryError) as exc:
+        log.debug("temps d'attaque impossible : %s", exc)
+        return 0.0
+
+
 def silence_bounds(data: np.ndarray,
                    threshold_db: float = -60.0) -> tuple[int, int]:
     """Premier et dernier échantillon au-dessus du seuil.

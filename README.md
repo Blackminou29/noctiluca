@@ -42,6 +42,13 @@ Réglages, index et journal vivent dans `%APPDATA%\DelugeCompanion\` sous
 Windows, `~/.config/DelugeCompanion/` ailleurs : `settings.json`,
 `library.db`, `app.log`.
 
+La variable d'environnement **`DELUGE_COMPANION_CONFIG`** déplace ce dossier.
+De quoi emporter le logiciel et ses réglages sur une clé USB :
+
+```bash
+DELUGE_COMPANION_CONFIG=/media/cle/deluge-companion python main.py
+```
+
 ---
 
 ## Premier démarrage
@@ -62,15 +69,77 @@ quelques secondes.
 
 ---
 
+## Par où commencer
+
+Au premier lancement, l'application demande où se trouve votre carte : soit
+vous indiquez le dossier, soit vous la laissez **chercher toute seule** sur
+les lecteurs branchés. Ensuite, **Analyser la carte** (`Ctrl+R`) remplit
+l'index, et tout le reste s'allume.
+
+À partir de là, le tableau de bord ouvre sur un bandeau **« À faire
+maintenant »** : une suggestion, la plus utile sur le moment, avec le bouton
+qui l'exécute. Pas de sauvegarde ? Il le dit avant de proposer autre chose.
+Des sons manquent à des presets ? Il mène directement à l'écran qui les
+retrouve.
+
+**Chaque commande s'explique** : laissez la souris dessus une seconde. Les
+actions qui écrivent sur la carte le disent avant d'être cliquées.
+
+---
+
+## Se repérer
+
+Chaque page a **sa couleur**, prise dans les pads de la machine : ambre pour
+le tableau de bord, cyan pour les échantillons, violet pour les presets, vert
+pour les kits, bleu pour les morceaux, magenta pour le générateur, menthe
+pour la boîte à outils, orange pour la santé, indigo pour les réglages.
+
+Cette couleur se retrouve partout de la même façon : l'icône et le liseré du
+bouton dans la barre de gauche, la bande sous l'en-tête, le pad à côté du
+titre, les traits des panneaux. Un raccourci montre la couleur de **sa
+destination** — le bouton « Sauvegarder la carte » du tableau de bord est
+orange parce qu'il mène à la page *Santé*, et il y mène **directement sur
+l'onglet des sauvegardes**.
+
+Un bouton éteint attend quelque chose de vous : la plupart du temps, une
+ligne choisie dans la liste.
+
+---
+
+## Brancher le Deluge
+
+Reliez le Deluge au PC en USB : la pastille **Deluge** de la barre du haut
+passe au vert, et l'application peut alors travailler avec la machine.
+
+| | |
+|---|---|
+| **Écouter pour de vrai** | les presets sonnent sur le Deluge, avec son moteur, au lieu de l'approximation calculée par l'ordinateur |
+| **Régler à distance** | 52 paramètres de l'instrument sélectionné, par le mode MIDI Follow du firmware communautaire |
+| **Envoyer un motif** | le motif d'essai d'un kit part en mesure, avec l'horloge MIDI |
+| **Tout éteindre** | un bouton de secours qui relâche toutes les notes, sur tous les canaux |
+
+Deux choses à savoir :
+
+* **le Deluge joue l'instrument sélectionné sur lui.** Aucun message MIDI ne
+  permet de lui dire « charge ce preset » ; c'est une limite de la machine ;
+* l'écoute sur le Deluge ne s'active pas toute seule. Elle se coche dans
+  *Réglages › Deluge branché* : envoyer du son dans une machine reliée à un
+  ampli ne doit pas être une surprise.
+
+La correspondance des contrôleurs est lue dans `MIDIFollow.XML`, à la racine
+de votre carte. Si vous la modifiez sur le Deluge, l'application suit.
+
+---
+
 ## Les neuf pages
 
 | Page | Raccourci | À quoi elle sert |
 | --- | --- | --- |
 | **Tableau de bord** | `Ctrl+1` | l'état de la carte en un écran : contenu, espace, note de santé, ce qui demande attention |
-| **Échantillons** | `Ctrl+2` | parcourir, écouter, filtrer les 1700+ échantillons ; tempo, tonalité et catégorie détectés ; étiquettes et notes |
+| **Échantillons** | `Ctrl+2` | parcourir, écouter, filtrer les 1700+ échantillons ; tempo, tonalité et catégorie détectés ; étiquettes et notes ; **traitement par lot** (mono, normalisation, rééchantillonnage, fondus) |
 | **Presets** | `Ctrl+3` | inspecter les presets de synthé : oscillateurs, filtre, enveloppes, modulations, échantillons employés |
 | **Kits** | `Ctrl+4` | voir les kits pad par pad, repérer les pads muets ou cassés |
-| **Morceaux** | `Ctrl+5` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) |
+| **Morceaux** | `Ctrl+5` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; export MIDI et rassemblement des dépendances |
 | **Générateur** | `Ctrl+6` | créer des presets de synthé et des kits : par **genre musical** ou au hasard, avec écoute avant d'écrire |
 | **Outils** | `Ctrl+7` | gammes et accords, progressions, mixage harmonique, rythmes euclidiens, grooves, export MIDI |
 | **Santé** | `Ctrl+8` | diagnostic complet, réparation guidée, rangement, sauvegarde |
@@ -125,6 +194,91 @@ Vingt-deux diagnostics, dont les plus utiles en pratique :
 
 Une note sur 100 résume l'ensemble, et la réparation automatique traite les
 codes dans un ordre sûr.
+
+### Corriger, pas seulement signaler
+
+Quatre de ces défauts se corrigent directement : **percussions en stéréo**
+passées en mono, **fréquences inhabituelles** ramenées à 44,1 kHz,
+**composante continue** retirée, **marge rendue** aux fichiers écrêtés. La
+même mécanique sert au traitement par lot de la page *Échantillons*, avec en
+plus la coupe du silence et les fondus.
+
+Trois précautions, qui viennent de mesures sur une vraie carte :
+
+* les presets bornent souvent leur échantillon **en nombre de trames**. Si un
+  traitement change la longueur du fichier — rééchantillonnage, coupe du
+  silence — ces bornes sont **remises à l'échelle** dans la même opération ;
+* un **morceau** borne aussi ses échantillons en trames, et l'application ne
+  réécrit jamais un morceau. Les fichiers qu'un morceau utilise sont donc
+  **écartés** des traitements qui changent leur longueur, avec le motif
+  affiché ;
+* l'**écrêtage ne se répare pas.** Baisser le niveau rend de la marge pour le
+  mixage ; les sommets rabotés à l'enregistrement ne reviennent pas.
+
+Chaque fichier réécrit laisse son original dans
+`_BACKUP/samplefix-<date>/`, d'où un bouton de restauration le remet en place
+à l'octet près.
+
+---
+
+## Découper une boucle en kit
+
+Un break, une boucle de batterie, une phrase : le bouton **Découper…** de la
+page *Échantillons* en fait un kit où chaque pad joue une tranche.
+
+Les coupes se placent **sur les attaques** détectées — avec un réglage de
+sensibilité, et un alignement optionnel sur le tempo pour qu'un break rejoué
+reste en place — ou **en divisions égales**, ce qui suffit sur une boucle
+correctement coupée : 4 secondes à 120 BPM donnent 16 tranches de 250 ms, soit
+la croche juste. Les coupes s'affichent sur la forme d'onde, numérotées, et un
+clic écoute la tranche visée.
+
+**Aucun fichier audio n'est dupliqué.** Les rangées du kit pointent toutes le
+même échantillon, chacune avec ses propres bornes — exactement comme le font
+déjà certains kits de la carte. Un export en fichiers séparés est proposé pour
+qui veut des échantillons autonomes, mais il n'apporte rien au Deluge et
+occupe le double de place.
+
+---
+
+## Retrouver un son par ressemblance
+
+Sur 1 700 échantillons, le nom et le dossier ne suffisent plus. Sélectionnez
+un son, cliquez **Sons proches**, et la liste ne montre plus que ce qui lui
+ressemble, du plus proche au plus lointain, avec un pourcentage de proximité.
+
+La comparaison porte sur huit mesures faites pendant l'analyse : brillance,
+contenu grave et aigu, étalement du spectre, caractère bruité, rapport
+crête/RMS et temps d'attaque. Les fréquences et les durées sont comparées en
+rapports, pas en écarts — l'oreille entend un octave, pas un nombre de hertz.
+
+Les voisins sont souvent d'un autre dossier, et c'est normal : un kick trouve
+des toms, une caisse claire trouve des rim et des cowbells. C'est ce qui se
+ressemble à l'oreille, pas ce qui est rangé ensemble.
+
+Cette recherche demande que l'**analyse acoustique** ait tourné (une case dans
+*Réglages*). Elle allonge la première analyse d'une carte — comptez trois
+minutes pour 1 700 échantillons au lieu d'une — puis les analyses suivantes ne
+relisent que ce qui a changé.
+
+---
+
+## Sortir un morceau du Deluge
+
+Deux boutons sur la page *Morceaux*, qui n'écrivent jamais sur la carte :
+
+**Morceau en MIDI** produit un fichier MIDI multipiste, une piste par clip,
+les clips de batterie sur le canal des percussions. Toutes les pistes
+démarrent au début : les clips du Deluge sont des boucles de la grille de
+session, et le fichier ne dit pas à quel moment chacune se déclenche. Pour un
+clip seul, le bouton *Clip en MIDI* existe toujours.
+
+**Rassembler…** copie dans un dossier le morceau, les presets qu'il nomme et
+les échantillons que ces presets lisent — avec l'arborescence d'origine. Le
+dossier obtenu a la forme d'une carte : le recopier à la racine d'une autre
+suffit à y jouer le morceau. De quoi archiver un morceau ou le donner sans
+rien oublier. La liste complète s'affiche avant la première copie, et ce qui
+manquerait est signalé.
 
 ---
 
@@ -191,8 +345,11 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-380 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
-jetables pour tout ce qui écrit. Les tests d'interface se sautent d'eux-mêmes
+576 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
+chaque module de test déplace la configuration dans un dossier temporaire
+avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a
+bien eu lieu. Les tests d'interface se sautent d'eux-mêmes
 si PyQt6 est absent ; sans serveur graphique, `QT_QPA_PLATFORM=offscreen`
 suffit.
 

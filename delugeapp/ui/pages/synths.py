@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.fixedpoint import to_display
-from ..theme import GOLD, GREY, PAD, PAD_GREEN, PAD_RED, category_color
+from ..theme import PAD
 from ..widgets.common import (
     Card,
     ElidedLabel,
@@ -51,7 +51,7 @@ from ..widgets.envelope import EnvelopeEditor
 from ..widgets.filtercurve import FilterCurve, SpectrumView
 from ..widgets.knob import Knob
 from ..widgets.waveform import WaveformView
-from .base import Page, page_header, tool_button
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +73,9 @@ class SynthsPage(Page):
     """Presets de synthé."""
 
     TITLE = "Presets"
+    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
+                    "Chaque preset s'ouvrira ici avec ses oscillateurs, "
+                    "ses enveloppes et son filtre, expliqués en français.")
     ICON = "synth"
     #: ``'synth'`` ou ``'kit'`` : la page des kits réutilise cette classe.
     KIND = "synth"
@@ -95,7 +98,7 @@ class SynthsPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(8)
 
-        header, actions = page_header(
+        header, actions = self.header(
             "Presets de synthé",
             "Parcourir, écouter et comprendre les sons de la carte")
         outer.addWidget(header)
@@ -129,6 +132,12 @@ class SynthsPage(Page):
         splitter = QSplitter(Qt.Orientation.Horizontal, self.content())
         splitter.addWidget(self._build_table())
         splitter.addWidget(self._build_detail())
+        # ``setSizes`` est une **proportion** : Qt normalise les deux
+        # nombres à la largeur disponible. Donner [620, 820] sur une
+        # zone de 1 210 px rendait 521 px, pas 620 — d'où des colonnes
+        # écrasées. Les nombres ci-dessous valent pour une zone de
+        # 1 210 px (fenêtre de 1 440).
+        splitter.setSizes([640, 570])
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 4)
         outer.addWidget(splitter, 1)
@@ -180,10 +189,19 @@ class SynthsPage(Page):
 
         self._wave = WaveformView()
         self._wave.setMinimumHeight(80)
+        # Le message par défaut renvoie à « la liste » des échantillons : ici
+        # la liste est celle des sons que **ce preset** utilise, plus bas
+        # dans le même panneau.
+        self._wave.set_empty_text(
+            "Aucun échantillon affiché",
+            "Choisissez une ligne dans « Échantillons utilisés », en bas")
         column.addWidget(self._wave)
 
         self._spectrum = SpectrumView()
         self._spectrum.setMinimumHeight(90)
+        self._spectrum.set_empty_text(
+            "Aucun signal analysé\n\n"
+            "Écoutez le preset pour voir son spectre")
         column.addWidget(self._spectrum)
 
         samples_label = QLabel("Échantillons utilisés")
@@ -284,15 +302,22 @@ class SynthsPage(Page):
         def get(key, default=None):
             return lambda row: (row[key] if key in row.keys() else default)
 
+        def dossier(row):
+            """Dernier segment du chemin : « Mellotron », pas « SYNTHS/... »."""
+            brut = str(row["folder"] if "folder" in row.keys() else "")
+            parts = [p for p in brut.replace("\\", "/").split("/") if p]
+            return parts[-1] if parts else ""
+
+        # Cinq colonnes au lieu de neuf. « Osc 1 », « Filtre » et
+        # « Effets » sont repris mot pour mot dans le panneau de droite pour
+        # le preset choisi ; en liste, ils poussaient le nom et le dossier
+        # sous une barre de défilement horizontale. Le firmware n'aide pas à
+        # choisir un son — la page Santé signale ce qu'il faut savoir.
         return [
             ("Nom", get("name"), 200, left),
-            ("Dossier", get("folder"), 200, left),
+            ("Dossier", dossier, 150, left),
             ("Catégorie", get("category"), 95, left),
-            ("Moteur", get("mode"), 90, left),
-            ("Osc 1", get("osc1"), 110, left),
-            ("Filtre", get("filter"), 120, left),
-            ("Effets", get("fx"), 150, left),
-            ("Firmware", get("firmware"), 85, left),
+            ("Moteur", get("mode"), 85, left),
             ("Taille", get("size"), 80, right, human_size),
         ]
 
@@ -314,8 +339,12 @@ class SynthsPage(Page):
             self._proxy = sorted_proxy(self._model, self)
             self._table.setModel(self._proxy)
             configure_table(self._table, self._model)
+            # C'est le **nom** qui absorbe la place libre, pas le dossier :
+            # une colonne étirée reçoit ce qui reste, et « Dossier » se
+            # retrouvait écrasé à trente pixels dès que le panneau était un
+            # peu serré.
             self._table.horizontalHeader().setSectionResizeMode(
-                1, QHeaderView.ResizeMode.Stretch)
+                0, QHeaderView.ResizeMode.Stretch)
             selection = self._table.selectionModel()
             if selection is not None:
                 selection.selectionChanged.connect(
@@ -470,6 +499,8 @@ class SynthsPage(Page):
         """Rend le preset et le joue, hors du fil de l'interface."""
         if self._preset is None:
             self.say("Aucun preset sélectionné.")
+            return
+        if self.audition(self._preset.sound):
             return
         self.say("Rendu du son…")
         self.run(self._render, self._preset,

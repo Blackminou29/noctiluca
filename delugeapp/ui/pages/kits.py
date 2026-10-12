@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QSplitter,
     QTableView,
     QTableWidget,
@@ -32,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.fixedpoint import to_display
-from ..theme import GOLD, PAD, PAD_GREEN, PAD_RED
+from ..theme import PAD, PAD_GREEN, PAD_RED
 from ..widgets.common import (
     Card,
     ElidedLabel,
@@ -43,7 +42,7 @@ from ..widgets.common import (
     sorted_proxy,
 )
 from ..widgets.padgrid import StepSequencer
-from .base import Page, page_header, tool_button
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +51,13 @@ class KitsPage(Page):
     """Kits de batterie."""
 
     TITLE = "Kits"
+    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
+                    "Vous verrez ici les rangées de chaque kit, les sons "
+                    "qu'elles utilisent et celles qui sont cassées.")
     ICON = "kit"
+    #: Aide du séquenceur d'essai, quand le motif a bien des rangées.
+    AIDE_MOTIF = ("Cliquez les pads pour composer un motif, puis écoutez le "
+                  "kit ou exportez le motif en MIDI.")
 
     kitChosen = pyqtSignal(str)
 
@@ -71,7 +76,7 @@ class KitsPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(8)
 
-        header, actions = page_header(
+        header, actions = self.header(
             "Kits", "Rangées, échantillons et rangées cassées")
         outer.addWidget(header)
 
@@ -103,6 +108,12 @@ class KitsPage(Page):
         splitter = QSplitter(Qt.Orientation.Horizontal, self.content())
         splitter.addWidget(self._build_table())
         splitter.addWidget(self._build_detail())
+        # ``setSizes`` est une **proportion** : Qt normalise les deux
+        # nombres à la largeur disponible. Donner [620, 820] sur une
+        # zone de 1 210 px rendait 521 px, pas 620 — d'où des colonnes
+        # écrasées. Les nombres ci-dessous valent pour une zone de
+        # 1 210 px (fenêtre de 1 440).
+        splitter.setSizes([500, 710])
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 5)
         outer.addWidget(splitter, 1)
@@ -155,12 +166,10 @@ class KitsPage(Page):
         column.addWidget(rows_card, 2)
 
         seq_card = Card("Motif d'essai")
-        hint = QLabel(
-            "Cliquez les pads pour composer un motif, puis écoutez le kit "
-            "ou exportez le motif en MIDI.")
-        hint.setProperty("role", "subtitle")
-        hint.setWordWrap(True)
-        seq_card.body().addWidget(hint)
+        self._seq_hint = QLabel(self.AIDE_MOTIF)
+        self._seq_hint.setProperty("role", "subtitle")
+        self._seq_hint.setWordWrap(True)
+        seq_card.body().addWidget(self._seq_hint)
 
         genre_row = QHBoxLayout()
         genre_label = QLabel("Motif de départ")
@@ -190,11 +199,20 @@ class KitsPage(Page):
         def get(key, default=None):
             return lambda row: (row[key] if key in row.keys() else default)
 
+        def dossier(row):
+            """Dernier segment du chemin : « Mellotron », pas « SYNTHS/... »."""
+            brut = str(row["folder"] if "folder" in row.keys() else "")
+            parts = [p for p in brut.replace("\\", "/").split("/") if p]
+            return parts[-1] if parts else ""
+
+        # Quatre colonnes au lieu de cinq : le panneau de gauche sert à
+        # **choisir** un kit, celui de droite à le lire. « Firmware »
+        # poussait les autres hors du cadre, sous une barre de défilement
+        # horizontale.
         return [
-            ("Nom", get("name"), 180, left),
-            ("Dossier", get("folder"), 130, left),
+            ("Nom", get("name"), 190, left),
+            ("Dossier", dossier, 100, left),
             ("Rangées", get("summary"), 90, left),
-            ("Firmware", get("firmware"), 80, left),
             ("Taille", get("size"), 80, right, human_size),
         ]
 
@@ -264,7 +282,12 @@ class KitsPage(Page):
             self._rows.setItem(index, 0, QTableWidgetItem(row.name or "—"))
 
             ref = row.file_name or ""
-            file_item = QTableWidgetItem(ref or "— aucun échantillon —")
+            # Le nom du fichier suffit : les huit rangées d'un kit viennent
+            # presque toujours du même dossier, et répéter
+            # « SAMPLES/ARTISTS/Phil Elverum/ » huit fois pousse le nom hors
+            # de la colonne. Le chemin entier reste dans l'infobulle.
+            court = ref.replace("\\", "/").rsplit("/", 1)[-1]
+            file_item = QTableWidgetItem(court or "— aucun échantillon —")
             file_item.setToolTip(ref)
             self._rows.setItem(index, 1, file_item)
 
@@ -319,8 +342,21 @@ class KitsPage(Page):
         if not pattern.tracks:
             # Aucune correspondance de nom : on retombe sur les premières
             # rangées du kit, pour que l'essai soit possible malgré tout.
+            #
+            # Et on **le dit** : une grille entièrement éteinte sous un
+            # motif choisi ressemble à une panne. Beaucoup de kits de la
+            # carte sont mélodiques (CHOR, GONG, GUIT…) et ne portent aucun
+            # nom de batterie ; le motif n'a alors rien à déclencher.
             names = [row.name for row in self._kit.rows[:4]]
             pattern.tracks = {name: [] for name in names}
+            self._seq_hint.setText(
+                "Aucune rangée de ce kit ne porte un nom de batterie "
+                "(KICK, SNARE, HAT…) : le motif « %s » n'a rien à "
+                "déclencher ici. La grille part vide sur les premières "
+                "rangées — cliquez les pads pour composer le vôtre."
+                % self._genre.currentText())
+        else:
+            self._seq_hint.setText(self.AIDE_MOTIF)
         self._pattern = pattern
         self._sequencer.set_pattern(pattern)
 
@@ -360,12 +396,39 @@ class KitsPage(Page):
         if self._kit is None:
             self.say("Aucun kit sélectionné.")
             return
+        if self._jouer_sur_le_deluge():
+            return
         self.say("Rendu du kit…")
         self.run(self._render_kit, self._kit, self._pattern,
                  on_result=self.guard(self._play),
                  on_error=self.guard(
                      lambda m: self.say(f"Rendu impossible : {m}")),
                  title="Rendu du kit")
+
+    def _jouer_sur_le_deluge(self) -> bool:
+        """Envoie le motif d'essai à la machine, si elle est branchée.
+
+        **Les notes des rangées sont une hypothèse.** Sur le Deluge, les
+        rangées d'un kit répondent à des notes consécutives, mais la note de
+        départ dépend du réglage de la machine : faute de Deluge sous la
+        main pour le mesurer, on part de C1 (note 36) pour la première
+        rangée, ce qui est le cas le plus courant. Si les mauvais sons
+        partent, c'est ici qu'il faudra corriger — et le dire dans
+        REPRISE.md plutôt que de laisser deviner.
+        """
+        if not getattr(self.ctx.settings, "midi_audition", False):
+            return False
+        lien = getattr(self.ctx, "link", None)
+        if lien is None or not lien.is_connected or self._pattern is None:
+            return False
+        rangees = {row.name: 36 + index
+                   for index, row in enumerate(self._kit.rows)}
+        if not lien.play_pattern(self._pattern, bpm=128, row_notes=rangees,
+                                 repeats=2):
+            return False
+        self.say("Motif joué sur le Deluge (canal %d, rangées à partir de "
+                 "C1)." % lien.channel)
+        return True
 
     def _render_kit(self, kit, pattern):
         from ...core import render

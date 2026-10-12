@@ -20,7 +20,6 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -30,14 +29,14 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ... import __version__
-from ...config import CONFIG_DIR, save_settings
+from ...config import CONFIG_DIR
 from ...core import sdcard as sdmod
-from .. import icons
 from ..theme import (
     GOLD,
     GREY,
@@ -47,8 +46,9 @@ from ..theme import (
     PAD_RED,
     PAD_WHITE,
 )
-from ..widgets.common import Card, ElidedLabel, human_size
-from .base import Page, page_header, tool_button
+from ..widgets.common import (Card, ElidedLabel, clear_layout,
+                              human_datetime, human_size)
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class SettingsPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(PAD)
 
-        header, actions = page_header(
+        header, actions = self.header(
             "Réglages",
             "Emplacement de la carte, audio, analyse et apparence")
         outer.addWidget(header)
@@ -106,6 +106,7 @@ class SettingsPage(Page):
         outer.addWidget(scroll, 1)
 
         self._build_card_card()
+        self._build_deluge_card()
         self._build_audio_card()
         self._build_scan_card()
         self._build_safety_card()
@@ -233,11 +234,7 @@ class SettingsPage(Page):
         """Cherche les cartes branchées et propose celles trouvées."""
         self.say("Recherche des cartes branchées…")
         found = sdmod.detect_sd_cards()
-        while self._detected_row.count():
-            item = self._detected_row.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        clear_layout(self._detected_row)
 
         if not found:
             label = QLabel("Aucune carte Deluge détectée automatiquement.")
@@ -336,6 +333,205 @@ class SettingsPage(Page):
         self.ctx.settings.autoplay = bool(checked)
         self.ctx.save()
 
+    # -- le Deluge branché --------------------------------------------------- #
+
+    def _build_deluge_card(self) -> None:
+        """Le lien MIDI avec la machine, quand elle est au bout du câble."""
+        card = Card("Deluge branché")
+        body = card.body()
+
+        self._midi_state = QLabel("—")
+        self._midi_state.setWordWrap(True)
+        body.addWidget(self._midi_state)
+
+        hint = QLabel(
+            "Branchez le Deluge en USB. L'application peut alors jouer les "
+            "sons <b>sur la machine</b> plutôt qu'avec son moteur approché, "
+            "et régler l'instrument <b>sélectionné sur le Deluge</b> grâce "
+            "au mode MIDI Follow du firmware communautaire. Choisir le "
+            "preset à distance n'est pas possible : c'est une limite de la "
+            "machine, pas de l'application.")
+        hint.setProperty("role", "subtitle")
+        hint.setWordWrap(True)
+        body.addWidget(hint)
+
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(8)
+
+        self._midi_out_box = QComboBox()
+        self._midi_out_box.activated.connect(self.guard(self._apply_midi_out))
+        form.addRow("Sortie MIDI", self._midi_out_box)
+
+        self._midi_in_box = QComboBox()
+        self._midi_in_box.activated.connect(self.guard(self._apply_midi_in))
+        form.addRow("Entrée MIDI", self._midi_in_box)
+
+        self._midi_channel = QSpinBox()
+        self._midi_channel.setRange(1, 16)
+        # Un nombre de deux chiffres n'a pas besoin de toute la largeur du
+        # formulaire : étiré, il laissait croire à un champ de saisie libre.
+        self._midi_channel.setFixedWidth(80)
+        self._midi_channel.setToolTip(
+            "Le canal que le Deluge écoute en MIDI Follow")
+        self._midi_channel.valueChanged.connect(
+            self.guard(self._apply_midi_channel))
+        form.addRow("Canal", self._midi_channel)
+        body.addLayout(form)
+
+        self._midi_auto = QCheckBox(
+            "Se connecter dès que le Deluge apparaît")
+        self._midi_auto.toggled.connect(self.guard(self._apply_midi_auto))
+        body.addWidget(self._midi_auto)
+
+        self._midi_audition = QCheckBox(
+            "Écouter les presets sur le Deluge plutôt que sur l'ordinateur")
+        self._midi_audition.setToolTip(
+            "Le son vient alors du vrai moteur de la machine, et non de "
+            "l'approximation calculée par l'application")
+        self._midi_audition.toggled.connect(
+            self.guard(self._apply_midi_audition))
+        body.addWidget(self._midi_audition)
+
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self._midi_connect = tool_button(
+            "Connecter", "link",
+            "Ouvre ou ferme les ports MIDI choisis ci-dessus",
+            primary=True)
+        self._midi_connect.clicked.connect(self.guard(self._toggle_midi))
+        row.addWidget(self._midi_connect)
+
+        test = tool_button("Jouer un do", "play",
+                           "Envoyer une note pour vérifier le câble")
+        test.clicked.connect(self.guard(self._test_midi))
+        row.addWidget(test)
+
+        panic = tool_button("Tout éteindre", "stop",
+                            "Relâcher toutes les notes, sur tous les canaux")
+        panic.clicked.connect(self.guard(self._panic_midi))
+        row.addWidget(panic)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        body.addWidget(holder)
+
+        self._midi_follow = QLabel("")
+        self._midi_follow.setProperty("role", "subtitle")
+        self._midi_follow.setWordWrap(True)
+        body.addWidget(self._midi_follow)
+
+        self._column.addWidget(card)
+        self._refresh_midi()
+
+    def _refresh_midi(self) -> None:
+        """Remet la section à jour : ports visibles, état, boutons."""
+        from ...core import midiport
+
+        lien = self.ctx.ensure_link()
+        etat = lien.state()
+        self._midi_state.setText(etat.summary())
+        couleur = PAD_GREEN if etat.connected else GREY
+        self._midi_state.setStyleSheet("color: %s; font-weight: 600;" % couleur)
+
+        reglages = self.ctx.settings
+        self._remplir_ports(self._midi_out_box, etat.ports_out,
+                            reglages.midi_out)
+        self._remplir_ports(self._midi_in_box, etat.ports_in,
+                            reglages.midi_in)
+
+        self._midi_channel.blockSignals(True)
+        self._midi_channel.setValue(int(reglages.midi_channel))
+        self._midi_channel.blockSignals(False)
+        for case, valeur in ((self._midi_auto, reglages.midi_autoconnect),
+                             (self._midi_audition, reglages.midi_audition)):
+            case.blockSignals(True)
+            case.setChecked(bool(valeur))
+            case.blockSignals(False)
+
+        self._midi_connect.setText(
+            "Déconnecter" if etat.connected else "Connecter")
+        self._midi_connect.setEnabled(
+            bool(etat.supported) and (etat.connected or bool(etat.ports_out)))
+        self._midi_audition.setEnabled(bool(etat.supported))
+
+        if not midiport.available():
+            self._midi_follow.setText(
+                "Cette machine n'expose pas de MIDI : %s"
+                % (midiport.load_error() or "cause inconnue"))
+        else:
+            self._midi_follow.setText(
+                "MIDI Follow : %d paramètres pilotables, lus dans "
+                "MIDIFollow.XML sur la carte." % etat.follow_count)
+
+    @staticmethod
+    def _remplir_ports(boite, noms: list, choisi: str) -> None:
+        """Remplit une liste de ports sans perdre le choix de l'utilisateur."""
+        boite.blockSignals(True)
+        boite.clear()
+        boite.addItem("Chercher le Deluge tout seul", "")
+        for nom in noms:
+            boite.addItem(nom, nom)
+        index = boite.findData(choisi) if choisi else 0
+        boite.setCurrentIndex(index if index >= 0 else 0)
+        boite.setEnabled(bool(noms))
+        if not noms:
+            boite.clear()
+            boite.addItem("Aucun port", "")
+        boite.blockSignals(False)
+
+    def _apply_midi_out(self, index: int) -> None:
+        self.ctx.settings.midi_out = self._midi_out_box.itemData(index) or ""
+        self.ctx.save()
+        self.say("Sortie MIDI : %s"
+                 % (self.ctx.settings.midi_out or "détection automatique"))
+
+    def _apply_midi_in(self, index: int) -> None:
+        self.ctx.settings.midi_in = self._midi_in_box.itemData(index) or ""
+        self.ctx.save()
+
+    def _apply_midi_channel(self, value: int) -> None:
+        self.ctx.settings.midi_channel = int(value)
+        self.ctx.save()
+        self.ctx.ensure_link().set_channel(int(value))
+
+    def _apply_midi_auto(self, checked: bool) -> None:
+        self.ctx.settings.midi_autoconnect = bool(checked)
+        self.ctx.save()
+
+    def _apply_midi_audition(self, checked: bool) -> None:
+        self.ctx.settings.midi_audition = bool(checked)
+        self.ctx.save()
+        if checked and not self.ctx.link_connected:
+            self.say("Écoute sur le Deluge : il faut encore le connecter.")
+
+    def _toggle_midi(self) -> None:
+        lien = self.ctx.ensure_link()
+        if lien.is_connected:
+            lien.disconnect()
+            self.say("Deluge déconnecté.")
+        else:
+            reglages = self.ctx.settings
+            ouvert = lien.connect(reglages.midi_out, reglages.midi_in,
+                                  card=self.sd)
+            self.say(lien.state().summary() if ouvert
+                     else "Aucun port MIDI à ouvrir.")
+        self._refresh_midi()
+
+    def _test_midi(self) -> None:
+        """Un do central, une demi-seconde : de quoi entendre si ça marche."""
+        lien = self.ctx.ensure_link()
+        if not lien.is_connected:
+            self.say("Connectez d'abord le Deluge.")
+            return
+        lien.play_notes(60, velocity=100, seconds=0.5)
+        self.say("Do central envoyé sur le canal %d." % lien.channel)
+
+    def _panic_midi(self) -> None:
+        lien = self.ctx.ensure_link()
+        lien.panic()
+        self.say("Toutes les notes relâchées.")
+
     # -- analyse ------------------------------------------------------------ #
 
     def _build_scan_card(self) -> None:
@@ -413,7 +609,7 @@ class SettingsPage(Page):
             path = getattr(self.lib, "path", None)
             size = human_size(Path(path).stat().st_size) if path and \
                 Path(path).exists() else "—"
-            last = stats.get("last_scan") or "jamais"
+            last = human_datetime(stats.get("last_scan"), absent="jamais")
             self._index_label.setText(
                 f"Index : {stats.get('samples', 0)} échantillons, "
                 f"{stats.get('synths', 0)} presets, {stats.get('kits', 0)} "
@@ -571,6 +767,10 @@ class SettingsPage(Page):
     # -- rafraîchissement --------------------------------------------------- #
 
     def _refresh(self) -> None:
+        try:
+            self._refresh_midi()
+        except Exception as exc:        # noqa: BLE001 - MIDI accessoire
+            log.debug("état MIDI indisponible : %s", exc)
         settings = self.ctx.settings
 
         self._path_edit.blockSignals(True)

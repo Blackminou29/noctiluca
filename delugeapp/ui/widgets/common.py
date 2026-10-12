@@ -21,6 +21,8 @@ from typing import Any, Callable, Sequence
 
 from PyQt6.QtCore import (
     QAbstractTableModel,
+    QEvent,
+    QObject,
     QModelIndex,
     QRectF,
     QSize,
@@ -31,11 +33,14 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter
 from PyQt6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -46,15 +51,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ...core import units as _units
 from .. import icons
 from ..theme import (
     GOLD,
     GREY,
     PAD,
+    PAD_RED,
     PAD_WHITE,
     PANEL_HI,
     RADIUS,
+    _rgb,
     mix,
+    readable,
     with_alpha,
 )
 
@@ -75,12 +84,19 @@ class SectionTitle(QWidget):
                  color: str = GOLD) -> None:
         super().__init__(parent)
         self._color = color
+        # Hauteur fixe : sans cela le titre s'étire quand le panneau est plus
+        # haut que son contenu, et son trait part flotter soixante pixels
+        # plus bas, détaché du libellé qu'il souligne.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred,
+                           QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 6)
         layout.setSpacing(4)
 
         self._label = QLabel(title, self)
         self._label.setProperty("role", "section")
+        if color != GOLD:
+            self._label.setStyleSheet("color: %s;" % readable(color))
         layout.addWidget(self._label)
 
         self._rule = QWidget(self)
@@ -96,9 +112,23 @@ class SectionTitle(QWidget):
     def text(self) -> str:
         return self._label.text()
 
+    def color(self) -> str:
+        """Couleur actuelle du titre."""
+        return self._color
+
     def set_color(self, color: str) -> None:
-        """Change la couleur du trait."""
+        """Change la couleur du trait **et du libellé**.
+
+        Le libellé suivait l'accent global du thème : tous les titres de
+        l'application avaient donc la même teinte, quelle que soit la page.
+
+        Le **trait** garde la couleur exacte de la page ; le **libellé**
+        prend la variante lisible. Mesuré : le violet des presets tombait à
+        4,26 de contraste et l'indigo des réglages à 3,51, là où un texte
+        courant en demande 4,5.
+        """
         self._color = color
+        self._label.setStyleSheet("color: %s;" % readable(color))
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
@@ -211,6 +241,17 @@ class StatTile(QFrame):
         column.addWidget(self._label)
 
         layout.addLayout(column, 1)
+        self.set_color(color)
+
+    def set_clickable(self, clickable: bool) -> None:
+        """Dit si la tuile mène quelque part.
+
+        Le curseur de main était posé sur les six tuiles, y compris sur
+        « Durée d'audio » et « Espace libre », qui ne mènent nulle part : la
+        promesse d'un clic qui ne venait jamais.
+        """
+        self.setCursor(Qt.CursorShape.PointingHandCursor if clickable
+                       else Qt.CursorShape.ArrowCursor)
 
     def set_value(self, v: Any) -> None:
         """Met à jour la valeur affichée."""
@@ -220,9 +261,25 @@ class StatTile(QFrame):
         self._label.setText(text)
 
     def set_color(self, color: str) -> None:
-        """Change la couleur du liseré gauche."""
+        """Change la couleur du liseré gauche et la teinte de fond.
+
+        Appelée **depuis le constructeur** : sans cela la couleur passée à
+        la création restait dans ``self._color`` sans jamais atteindre la
+        feuille de style, et les six tuiles du tableau de bord portaient
+        toutes le liseré or du style global — alors que leurs icônes,
+        elles, étaient bien colorées.
+        """
         self._color = color
-        self.setStyleSheet(f"QFrame#Tile {{ border-left: 3px solid {color}; }}")
+        fond = QColor(color)
+        fond.setAlphaF(0.07)
+        self.setStyleSheet(
+            "QFrame#Tile {"
+            " border-left: 3px solid %s;"
+            " background-color: rgba(%d, %d, %d, %d); }"
+            "QFrame#Tile:hover {"
+            " background-color: rgba(%d, %d, %d, %d); }" % (
+                color, fond.red(), fond.green(), fond.blue(), 18,
+                fond.red(), fond.green(), fond.blue(), 34))
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
         if event.button() == Qt.MouseButton.LeftButton:
@@ -375,6 +432,21 @@ class SearchBar(QLineEdit):
         self._timer.stop()
         self._emit()
 
+    def showEvent(self, event) -> None:            # noqa: N802 - API Qt
+        """Nomme la croix d'effacement, que Qt crée sans infobulle.
+
+        Elle n'existe pas encore à la construction : Qt l'ajoute au premier
+        affichage. C'est une commande visible comme une autre, elle doit se
+        présenter.
+        """
+        super().showEvent(event)
+        try:
+            for bouton in self.findChildren(QToolButton):
+                if not bouton.toolTip():
+                    bouton.setToolTip("Effacer la recherche")
+        except Exception as exc:                   # noqa: BLE001
+            log.debug("croix d'effacement sans infobulle : %s", exc)
+
 
 class StarRating(QWidget):
     """Note de 0 à 5 étoiles, modifiable au clic."""
@@ -461,44 +533,86 @@ class EmptyState(QWidget):
     """
 
     actionClicked = pyqtSignal()
+    #: Second geste, facultatif : souvent le plus rapide des deux.
+    action2Clicked = pyqtSignal()
 
     def __init__(self, message: str = "Rien à afficher.",
                  icon_name: str = "info", action: str = "",
-                 parent: QWidget | None = None, detail: str = "") -> None:
+                 parent: QWidget | None = None, detail: str = "",
+                 color: str = GOLD, action2: str = "") -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(PAD * 2, PAD * 3, PAD * 2, PAD * 3)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # L'emblème était gris sur gris, à peine visible : un vide ressemblait
+        # à une panne. Il devient un grand pad coloré — on voit tout de suite
+        # que l'écran est en ordre, simplement qu'il attend quelque chose.
+        rouge, vert, bleu = _rgb(color)
         emblem = QLabel(self)
-        emblem.setPixmap(icons.icon(icon_name, mix(GREY, PANEL_HI, 0.3), 56)
-                         .pixmap(56, 56))
+        emblem.setFixedSize(88, 88)
+        emblem.setPixmap(icons.icon(icon_name, color, 44).pixmap(44, 44))
         emblem.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(emblem)
+        emblem.setStyleSheet(
+            "background-color: rgba(%d,%d,%d,26);"
+            " border: 1px solid rgba(%d,%d,%d,90);"
+            " border-radius: 22px;" % (rouge, vert, bleu, rouge, vert, bleu))
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(emblem)
+        row.addStretch(1)
+        layout.addLayout(row)
 
-        self._message = QLabel(message, self)
+        # Les deux textes vivent dans un bloc de largeur limitée, lui-même
+        # centré : une phrase étalée sur quatorze cents pixels ne se lit
+        # pas, l'œil perd la ligne. Un conteneur, et non une largeur
+        # maximale posée sur les étiquettes : un ``QLabel`` à retour à la
+        # ligne placé avec un drapeau d'alignement perd la négociation de sa
+        # hauteur, et son texte se retrouve coupé en deux.
+        bloc = QWidget(self)
+        bloc.setMinimumWidth(430)      # le titre tient sur une ligne
+        bloc.setMaximumWidth(620)      # et la phrase garde une mesure lisible
+        colonne = QVBoxLayout(bloc)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(8)
+
+        self._message = QLabel(message, bloc)
         self._message.setProperty("role", "title")
         self._message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._message.setWordWrap(True)
-        layout.addWidget(self._message)
+        colonne.addWidget(self._message)
 
-        self._detail = QLabel(detail, self)
+        self._detail = QLabel(detail, bloc)
         self._detail.setProperty("role", "subtitle")
         self._detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._detail.setWordWrap(True)
         self._detail.setVisible(bool(detail))
-        layout.addWidget(self._detail)
+        colonne.addWidget(self._detail)
+
+        ligne = QHBoxLayout()
+        ligne.addStretch(1)
+        ligne.addWidget(bloc)
+        ligne.addStretch(1)
+        layout.addLayout(ligne)
 
         self._button: QPushButton | None = None
-        if action:
-            self._button = QPushButton(action, self)
-            self._button.setObjectName("Primary")
-            self._button.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._button.clicked.connect(self.actionClicked.emit)
+        self._button2: QPushButton | None = None
+        if action or action2:
             row = QHBoxLayout()
+            row.setSpacing(8)
             row.addStretch(1)
-            row.addWidget(self._button)
+            if action:
+                self._button = QPushButton(action, self)
+                self._button.setObjectName("Primary")
+                self._button.setCursor(Qt.CursorShape.PointingHandCursor)
+                self._button.clicked.connect(self.actionClicked.emit)
+                row.addWidget(self._button)
+            if action2:
+                self._button2 = QPushButton(action2, self)
+                self._button2.setCursor(Qt.CursorShape.PointingHandCursor)
+                self._button2.clicked.connect(self.action2Clicked.emit)
+                row.addWidget(self._button2)
             row.addStretch(1)
             layout.addLayout(row)
 
@@ -622,6 +736,17 @@ class RowTableModel(QAbstractTableModel):
         self._rows = list(rows or [])
         self.endResetModel()
 
+    def set_columns(self, columns: Sequence[Column]) -> None:
+        """Remplace les colonnes affichées.
+
+        Sert aux vues qui ajoutent une colonne selon le mode — par exemple
+        la proximité en recherche par ressemblance. Les lignes sont
+        conservées : seule la façon de les lire change.
+        """
+        self.beginResetModel()
+        self._columns = list(columns)
+        self.endResetModel()
+
     def rows(self) -> list[Any]:
         return self._rows
 
@@ -711,6 +836,58 @@ class RowTableModel(QAbstractTableModel):
                     index, QHeaderView.ResizeMode.Stretch)
 
 
+#: Place garantie à la première colonne, celle du nom. En dessous, une
+#: liste ne sert plus à rien : autant cacher tout le reste.
+MIN_PREMIERE_COLONNE = 150
+
+
+class _ColonnesAdaptatives(QObject):
+    """Cache les dernières colonnes quand la largeur manque.
+
+    Les colonnes sont déclarées dans l'ordre d'importance : le nom d'abord,
+    les détails ensuite. On garde donc toujours la première, puis on ajoute
+    les suivantes tant qu'elles tiennent. Tout revient dès que la fenêtre
+    s'agrandit : rien n'est perdu, seulement remis à plus tard.
+    """
+
+    def __init__(self, view, model) -> None:
+        super().__init__(view)
+        self._view = view
+        self._model = model
+        view.viewport().installEventFilter(self)
+        self.ajuster()
+
+    def eventFilter(self, objet, evenement) -> bool:   # noqa: N802 - API Qt
+        if evenement.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.ajuster()
+        return False
+
+    def ajuster(self) -> None:
+        try:
+            colonnes = self._model.columns()
+            dispo = self._view.viewport().width()
+            if dispo <= 0 or not colonnes:
+                return
+            # Si la première colonne s'étire, elle sait rétrécir : on ne lui
+            # réserve que son minimum vital. Sinon elle gardera sa largeur
+            # conseillée, et il faut la compter en entier — sans quoi les
+            # dernières colonnes débordent quand même.
+            etiree = (self._view.horizontalHeader().sectionResizeMode(0)
+                      == QHeaderView.ResizeMode.Stretch)
+            cumul = (MIN_PREMIERE_COLONNE if etiree
+                     else max(40, int(colonnes[0][2]) or 120))
+            for index, colonne in enumerate(colonnes):
+                if index:
+                    cumul += max(40, int(colonne[2]) or 120)
+                # La première reste toujours : une liste sans nom ne sert
+                # à rien.
+                cache = index > 0 and cumul > dispo
+                if self._view.isColumnHidden(index) != cache:
+                    self._view.setColumnHidden(index, cache)
+        except Exception as exc:       # noqa: BLE001 - un ajustement ne casse rien
+            log.debug("ajustement des colonnes impossible : %s", exc)
+
+
 def configure_table(view, model: RowTableModel | None = None,
                     sortable: bool = True) -> None:
     """Règle un ``QTableView`` comme les pages l'attendent.
@@ -746,6 +923,17 @@ def configure_table(view, model: RowTableModel | None = None,
 
     if model is not None:
         model.apply_widths(view)
+        # Le nom prend la place libre, partout : c'est ce qu'on lit en
+        # premier, et deux listes sur quatre ne le faisaient pas.
+        try:
+            view.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeMode.Stretch)
+        except Exception as exc:       # noqa: BLE001
+            log.debug("colonne de nom non étirée : %s", exc)
+        # Les largeurs conseillées valent pour une fenêtre large ; sur un
+        # portable, mieux vaut montrer quatre colonnes lisibles que huit
+        # sous une barre de défilement.
+        view._colonnes_adaptatives = _ColonnesAdaptatives(view, model)
 
 
 def sorted_proxy(model: RowTableModel,
@@ -776,32 +964,133 @@ def mono_font(size: int = 9) -> QFont:
     return font
 
 
-def human_size(size: int | float | None) -> str:
-    """Taille lisible : ``1,4 Mio``. ``None`` rend un tiret, pas « 0 o »."""
-    if size is None:
-        return "—"
-    try:
-        value = float(size)
-    except (TypeError, ValueError):
-        return "—"
-    for unit in ("o", "Kio", "Mio", "Gio"):
-        if value < 1024 or unit == "Gio":
-            if unit == "o":
-                return f"{int(value)} {unit}"
-            return f"{value:.1f} {unit}".replace(".", ",")
-        value /= 1024.0
-    return "—"
+class PlanDialog(QDialog):
+    """Montre le plan d'opérations avant de l'appliquer.
+
+    Aucune réorganisation ne part sans que l'utilisateur ait lu cette liste :
+    c'est la dernière barrière avant que des fichiers bougent.
+    """
+
+    def __init__(self, plan, parent=None, title: str = "Plan d'opérations") -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(820, 540)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(PAD, PAD, PAD, PAD)
+        layout.setSpacing(8)
+
+        summary = QLabel(plan.summary())
+        summary.setProperty("role", "title")
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        counts = plan.counts()
+        if counts.get("delete"):
+            self._warn(layout,
+                       f"⚠ {counts['delete']} suppression(s) : cette "
+                       f"opération est irréversible.")
+        # Un plan de correction audio qui change la longueur des fichiers
+        # déplace aussi les bornes des presets : il faut le dire.
+        if getattr(plan, "changes_length", False):
+            self._warn(layout,
+                       "⚠ Des longueurs de fichiers vont changer. Les bornes "
+                       "des presets et des kits qui les citent sont remises à "
+                       "l'échelle automatiquement ; les fichiers utilisés par "
+                       "un morceau sont écartés.")
+        skipped = getattr(plan, "skipped", None)
+        if skipped:
+            note = QLabel("%d fichier(s) écarté(s) — voir le détail."
+                          % len(skipped))
+            note.setStyleSheet(f"color: {GOLD};")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+        detail = QPlainTextEdit()
+        detail.setReadOnly(True)
+        detail.setPlainText(plan.to_text())
+        detail.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        layout.addWidget(detail, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Appliquer")
+        ok.setObjectName("Primary")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
+            "Annuler")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _warn(layout, texte: str) -> None:
+        """Ajoute un avertissement en rouge au-dessus du détail."""
+        label = QLabel(texte)
+        label.setStyleSheet(f"color: {PAD_RED}; font-weight: 600;")
+        label.setWordWrap(True)
+        layout.addWidget(label)
 
 
-def human_duration(seconds: int | float | None) -> str:
-    """Durée lisible : ``1,25 s`` ou ``3 min 07 s``."""
+def hint_in_list(liste, texte: str) -> bool:
+    """Pose un texte d'attente dans une liste vide.
+
+    Une ``QListWidget`` vide est un rectangle gris : rien ne dit s'il
+    manque une donnée, s'il faut cliquer quelque part, ou si le logiciel
+    est en panne. L'élément posé ici n'est ni sélectionnable ni actif ;
+    les appelants bornent de toute façon leurs index sur leurs propres
+    données, pas sur le nombre de lignes affichées.
+
+    :return: vrai si la liste était vide et que le texte a été posé.
+    """
+    from PyQt6.QtWidgets import QListWidgetItem
+
     try:
-        value = float(seconds or 0)
-    except (TypeError, ValueError):
-        return "—"
-    if value <= 0:
-        return "—"
-    if value < 60:
-        return f"{value:.2f} s".replace(".", ",")
-    minutes, rest = divmod(int(round(value)), 60)
-    return f"{minutes} min {rest:02d} s"
+        if liste.count():
+            return False
+        item = QListWidgetItem(str(texte or ""))
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        item.setForeground(QColor(GREY))
+        liste.addItem(item)
+        return True
+    except Exception as exc:        # noqa: BLE001 - simple décor
+        log.debug("texte d'attente impossible : %s", exc)
+        return False
+
+
+def clear_layout(layout) -> None:
+    """Vide une disposition de ses widgets, **immédiatement**.
+
+    ``deleteLater()`` seul ne suffit pas : il diffère la destruction à la
+    prochaine itération de la boucle Qt, et le widget reste visible
+    entre-temps. Si l'appelant repeuple la disposition dans la foulée,
+    l'ancien contenu se dessine **sous** le nouveau — c'est le
+    chevauchement qu'on voyait sur le tableau de bord à chaque
+    rafraîchissement. ``setParent(None)`` le retire de l'affichage tout de
+    suite ; ``deleteLater`` libère ensuite la mémoire sans risque.
+    """
+    if layout is None:
+        return
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+            continue
+        enfant = item.layout()
+        if enfant is not None:
+            clear_layout(enfant)
+            enfant.deleteLater()
+
+
+#: Mise en forme des grandeurs : **une seule implémentation**, dans
+#: ``core/units.py``, pour que le noyau et l'interface écrivent la même
+#: chose. Il y en a eu trois, et les deux copies du noyau utilisaient le
+#: point décimal à l'anglaise : « 9.9 Mio » au milieu d'une application en
+#: français. Les noms restent exportés ici, puisque tout l'affichage les
+#: appelle déjà.
+human_size = _units.human_size
+human_duration = _units.human_duration
+human_datetime = _units.human_datetime

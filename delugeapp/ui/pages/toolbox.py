@@ -47,11 +47,11 @@ from PyQt6.QtWidgets import (
 from ...core import genres as genres_mod
 from ...core import rhythm as rhythm_mod
 from ...core import theory as theory_mod
-from ..theme import GOLD, GREY, PAD, PAD_CYAN, PAD_WHITE, pad_color
-from ..widgets.common import Card, ElidedLabel, SectionTitle
+from ..theme import GOLD, PAD, PAD_CYAN
+from ..widgets.common import Card
 from ..widgets.padgrid import StepSequencer
 from ..widgets.piano import PianoKeys
-from .base import Page, page_header, tool_button
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ class ToolboxPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(8)
 
-        header, _actions = page_header(
+        header, _actions = self.header(
             "Boîte à outils",
             "Théorie, rythme, calculs et aide-mémoire")
         outer.addWidget(header)

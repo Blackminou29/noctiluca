@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import logging
 import random
-from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -33,6 +31,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -41,13 +40,14 @@ from PyQt6.QtWidgets import (
 
 from ...core import genres as genres_mod
 from ...core.fixedpoint import to_display
-from ..theme import GOLD, GREY, PAD, PAD_WHITE, PANEL_HI, pad_color
-from ..widgets.common import Card, ElidedLabel, SectionTitle
+from ..theme import PAD
+from ..widgets.common import (Card, ElidedLabel, SectionTitle,
+                              hint_in_list)
 from ..widgets.envelope import EnvelopeEditor
 from ..widgets.filtercurve import FilterCurve, SpectrumView
 from ..widgets.knob import Knob
 from ..widgets.waveform import WaveformView
-from .base import Page, page_header, tool_button
+from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +70,9 @@ class GeneratorPage(Page):
     """Générateur de presets et de kits."""
 
     TITLE = "Générateur"
+    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
+                    "Le générateur fabriquera alors des presets et des "
+                    "kits prêts à être enregistrés dessus.")
     ICON = "wand"
     #: Le générateur fonctionne sans carte : seul l'enregistrement en a besoin.
     NEEDS_CARD = False
@@ -92,7 +95,7 @@ class GeneratorPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(8)
 
-        header, actions = page_header(
+        header, actions = self.header(
             "Générateur", "Fabriquer un son par genre, ou au hasard")
         outer.addWidget(header)
 
@@ -131,6 +134,10 @@ class GeneratorPage(Page):
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 4)
         splitter.setStretchFactor(2, 1)
+        # La colonne des genres porte deux pads par rangée : sans largeur
+        # minimale, le splitter la comprime et les libellés sont coupés
+        # (« Boards of Ca… », « Drum and ba… »).
+        splitter.setSizes([330, 700, 320])
         return splitter
 
     def _build_controls(self) -> QWidget:
@@ -152,6 +159,9 @@ class GeneratorPage(Page):
             profile = genres_mod.genre(key)
             button = tool_button(profile.label, "", color=profile.color)
             button.setCheckable(True)
+            button.setMinimumWidth(96)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                 QSizePolicy.Policy.Fixed)
             button.setToolTip(
                 f"{profile.description}\n\n"
                 f"{profile.bpm[0]}–{profile.bpm[1]} BPM")
@@ -253,9 +263,18 @@ class GeneratorPage(Page):
         sound = Card("Le son")
         self._wave = WaveformView()
         self._wave.setMinimumHeight(80)
+        # Les deux cadres annonçaient « choisissez-en un dans la liste » et
+        # « écoutez un échantillon » : il n'y a ici ni liste ni échantillon,
+        # le son se fabrique. Un message d'attente qui parle d'autre chose
+        # fait douter d'être au bon endroit.
+        self._wave.set_empty_text(
+            "Aucun son généré",
+            "Choisissez un genre, puis cliquez « Générer »")
         sound.body().addWidget(self._wave)
         self._spectrum = SpectrumView()
         self._spectrum.setMinimumHeight(90)
+        self._spectrum.set_empty_text(
+            "Le spectre du son apparaîtra ici")
         sound.body().addWidget(self._spectrum)
         column.addWidget(sound)
 
@@ -305,6 +324,11 @@ class GeneratorPage(Page):
         body.addWidget(make)
 
         self._variation_list = QListWidget()
+        # Les listes élident au lieu de pousser une barre de défilement
+        # horizontale sous un panneau de trois cents pixels.
+        self._variation_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        hint_in_list(self._variation_list,
+                     "  Aucune variante pour l'instant.")
         self._variation_list.currentRowChanged.connect(
             self.guard(self._preview_variation))
         self._variation_list.itemDoubleClicked.connect(
@@ -317,6 +341,9 @@ class GeneratorPage(Page):
 
         body.addWidget(SectionTitle("Historique"))
         self._history_list = QListWidget()
+        self._history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        hint_in_list(self._history_list,
+                     "  Les sons générés s'empileront ici.")
         self._history_list.itemDoubleClicked.connect(
             self.guard(lambda _i: self._restore_history()))
         body.addWidget(self._history_list, 1)
@@ -468,6 +495,8 @@ class GeneratorPage(Page):
         self._history_list.clear()
         for item in self._history:
             self._history_list.addItem(item.sound.name)
+        hint_in_list(self._history_list,
+                     "  Les sons générés s'empileront ici.")
 
         self._render_async(preset)
 
@@ -510,12 +539,17 @@ class GeneratorPage(Page):
             self._play(audio)
 
     def _listen(self) -> None:
+        if self._preset is None:
+            self.say("Générez d'abord un son.")
+            return
+        # La machine d'abord, quand elle est là : elle sonne juste, et le
+        # rendu approché n'a plus d'intérêt.
+        if self.audition(self._preset.sound):
+            return
         if self._audio is not None:
             self._play(self._audio)
-        elif self._preset is not None:
-            self._render_async(self._preset)
         else:
-            self.say("Générez d'abord un son.")
+            self._render_async(self._preset)
 
     def _play(self, audio) -> None:
         if self.player is None:
@@ -544,6 +578,8 @@ class GeneratorPage(Page):
             item = QListWidgetItem(f"{index}.  {variant.sound.name}")
             item.setToolTip(synthgen.describe(variant))
             self._variation_list.addItem(item)
+        hint_in_list(self._variation_list,
+                     "  Aucune variante pour l'instant.")
         self.say(f"{len(self._variations)} variantes produites.")
 
     def _preview_variation(self, row: int) -> None:

@@ -978,6 +978,19 @@ def _to_channels(a: np.ndarray, mono: bool) -> np.ndarray:
     return a
 
 
+def _remove_dc(a: np.ndarray) -> np.ndarray:
+    """Retire la composante continue, canal par canal.
+
+    Un décalage continu ne s'entend pas, mais il mange la dynamique
+    disponible et fait claquer les enchaînements. La moyenne est calculée en
+    double précision : sur un fichier long, l'accumulation en ``float32``
+    perd assez de bits pour fausser le résultat.
+    """
+    if a.size == 0:
+        return a
+    return (a - a.mean(axis=0, dtype=np.float64)).astype(np.float32)
+
+
 def _lowpass_fir(a: np.ndarray, fc: float, taps: int = 63) -> np.ndarray:
     """Filtre anti-repliement simple : sinus cardinal fenêtré (Blackman)."""
     fc = float(min(max(fc, 1e-4), 0.499))
@@ -1041,11 +1054,16 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
             bit_depth: int | None = None, mono: bool | None = None,
             normalize_db: float | None = None,
             trim_silence_db: float | None = None,
-            fade_ms: float = 0.0) -> AudioInfo:
+            fade_ms: float = 0.0, remove_dc: bool = False) -> AudioInfo:
     """Convertit un fichier audio ; retourne l'``AudioInfo`` du résultat.
 
-    Ordre des traitements : coupe du silence, mono/stéréo, rééchantillonnage,
-    normalisation, fondus. Ne lève jamais : en cas d'échec ``ok=False``.
+    Ordre des traitements : coupe du silence, mono/stéréo, retrait du
+    continu, rééchantillonnage, normalisation, fondus. Ne lève jamais : en
+    cas d'échec ``ok=False``.
+
+    Le continu part **avant** le rééchantillonnage : le filtre
+    anti-repliement appliqué lors d'une descente de fréquence réagirait au
+    saut de niveau que constitue un décalage continu.
     """
     src_p, dst_p = Path(src), Path(dst)
     try:
@@ -1061,6 +1079,8 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
             a = _trim_silence(a, float(trim_silence_db))
         if mono is not None:
             a = _to_channels(a, bool(mono))
+        if remove_dc:
+            a = _remove_dc(a)
         target_sr = int(sample_rate) if sample_rate else sr
         if target_sr != sr:
             a = _resample(a, sr, target_sr)

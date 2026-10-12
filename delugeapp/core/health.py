@@ -79,6 +79,22 @@ STANDARD_EMPTY_OK = frozenset({
 BENIGN_REPAIRS = ("multi-racines",)
 
 
+#: **Tous les codes d'anomalie que ce module peut émettre.**
+#:
+#: Le code est la clé stable d'une anomalie : le titre est une phrase
+#: française qui peut être réécrite, le code non. L'interface s'en sert pour
+#: mener chaque anomalie vers l'endroit où on la répare, et un test vérifie
+#: que cette liste reste fidèle à ce que ``check_card`` produit vraiment —
+#: sans quoi une destination pourrait viser un code disparu, en silence.
+ISSUE_CODES: frozenset[str] = frozenset({
+    "BAD_NAME", "BIG_SAMPLE", "CLIPPED_SAMPLE", "DC_OFFSET", "DEEP_FOLDER",
+    "DUPLICATE_SAMPLE", "EMPTY_FOLDER", "LONG_PATH", "LOW_SPACE",
+    "MAC_JUNK", "MISSING_SAMPLE", "MISSING_STD_DIR", "MULTI_FIRMWARE",
+    "NON_AUDIO_IN_SAMPLES", "NO_BACKUP", "NO_FIRMWARE", "ODD_SAMPLE_RATE",
+    "ORPHAN_SAMPLE", "REPAIRED_XML", "SILENT_SAMPLE", "STEREO_DRUM",
+})
+
+
 @dataclass
 class Issue:
     """Une anomalie du rapport de santé."""

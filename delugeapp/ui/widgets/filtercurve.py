@@ -238,6 +238,16 @@ class SpectrumView(_LogAxis):
         super().__init__(parent)
         self._freqs: np.ndarray | None = None
         self._db: np.ndarray | None = None
+        # Réglable : « écoutez un échantillon » ne veut rien dire dans
+        # le générateur, où le son n'existe pas encore : il s'y fabrique.
+        self._empty_text = ("Aucun signal analysé\n\n"
+                            "Écoutez un échantillon pour voir son "
+                            "spectre")
+
+    def set_empty_text(self, texte: str) -> None:
+        """Change ce qui s'affiche quand aucun spectre n'est chargé."""
+        self._empty_text = str(texte or "")
+        self.update()
 
     def set_spectrum(self, freqs, db) -> None:
         """Charge un spectre : fréquences et amplitudes en dB."""
@@ -275,9 +285,12 @@ class SpectrumView(_LogAxis):
 
             plot = self._plot()
             if self._freqs is None or self._db is None:
+                # La grille est déjà tracée : le cadre n'est pas en panne, il
+                # manque un son. On le dit, et on dit quoi faire.
                 painter.setPen(QPen(QColor(GREY)))
-                painter.drawText(plot, Qt.AlignmentFlag.AlignCenter,
-                                 "Aucun signal")
+                painter.drawText(plot,
+                                 Qt.AlignmentFlag.AlignCenter,
+                                 self._empty_text)
                 painter.end()
                 return
 

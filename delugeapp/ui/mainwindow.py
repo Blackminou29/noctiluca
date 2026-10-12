@@ -41,8 +41,17 @@ from .. import __version__
 from ..config import APP_NAME, AppContext
 from ..core import sdcard as sdmod
 from . import icons, tasks
-from .theme import GOLD, GREY, PAD, PAD_GREEN, PAD_WHITE, apply_theme
-from .widgets.common import BusyBar, ElidedLabel, SearchBar, human_size
+from .theme import (
+    GOLD,
+    GREY,
+    PAD,
+    PAD_GREEN,
+    PAD_WHITE,
+    apply_theme,
+    page_color,
+    with_alpha,
+)
+from .widgets.common import BusyBar, SearchBar, human_size
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +103,10 @@ class MainWindow(QMainWindow):
         self._buttons: dict[str, QPushButton] = {}
         self._classes = {_short_name(c): c for c in _page_classes()}
         self._rail_wide = True
+        #: Le Deluge était-il là au dernier battement ? ``None`` tant qu'on
+        #: n'a pas encore regardé, pour ne pas annoncer une « apparition »
+        #: au démarrage alors qu'il était déjà branché.
+        self._deluge_seen: bool | None = None
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(icons.app_icon(256))
@@ -119,6 +132,12 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
         self._build_menus()
         self._build_shortcuts()
+        # L'en-tête dit tout de suite où en est la carte et le Deluge : sans
+        # cela, l'invitation n'apparaît qu'après les 150 ms du premier
+        # contrôle, et la pastille reste blanche jusqu'au premier battement.
+        # **Après** la barre d'état : l'en-tête y écrit l'espace libre.
+        self._refresh_header()
+        self._safely(self._refresh_deluge_chip)
 
         self._restore_state()
         # Le choix de la carte se fait après l'affichage, pour que la fenêtre
@@ -154,6 +173,15 @@ class MainWindow(QMainWindow):
         row.addWidget(self._card_button)
         row.addStretch(1)
 
+        # Pastille du Deluge : grise tant qu'il n'est pas là, verte dès
+        # qu'il est connecté. C'est la première chose qu'on regarde quand on
+        # vient de brancher un câble.
+        self._deluge_chip = QPushButton("  Deluge", host)
+        self._deluge_chip.setFlat(True)
+        self._deluge_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._deluge_chip.clicked.connect(self.guard_deluge_chip)
+        row.addWidget(self._deluge_chip)
+
         self._search = SearchBar("Rechercher partout…")
         self._search.setFixedWidth(260)
         self._search.searchChanged.connect(self._global_search)
@@ -173,7 +201,107 @@ class MainWindow(QMainWindow):
         self._play_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._play_button.clicked.connect(self.toggle_play)
         row.addWidget(self._play_button)
-        return host
+
+        # Une bande de 3 px sous l'en-tête, teintée à la couleur de la page
+        # affichée : un repère permanent de « où suis-je », visible même du
+        # coin de l'œil.
+        conteneur = QWidget(self)
+        colonne = QVBoxLayout(conteneur)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(0)
+        colonne.addWidget(host)
+        self._accent_strip = QWidget(conteneur)
+        self._accent_strip.setFixedHeight(3)
+        self._accent_strip.setStyleSheet("background-color: %s;" % GOLD)
+        colonne.addWidget(self._accent_strip)
+        return conteneur
+
+    def guard_deluge_chip(self) -> None:
+        """Un clic sur la pastille : connecter, ou aller aux réglages.
+
+        Quand la machine est détectée mais pas encore connectée, le geste
+        évident est de la connecter — pas d'ouvrir une page pour y chercher
+        un bouton. Une fois connectée, le clic mène aux réglages, là où l'on
+        choisit le canal et ce qu'on veut en faire.
+        """
+        self._safely(self._deluge_chip_clicked)
+
+    def _deluge_chip_clicked(self) -> None:
+        from ..core import midiport
+
+        lien = self.ctx.ensure_link()
+        if lien.is_connected:
+            self.go_to("Settings")
+            return
+        if midiport.find("out") is not None:
+            reglages = self.ctx.settings
+            if lien.connect(reglages.midi_out, reglages.midi_in,
+                            card=self.ctx.sd):
+                self.statusBar().showMessage(lien.state().summary(), 6000)
+                self._refresh_deluge_chip()
+                return
+        self.go_to("Settings")
+
+    def _refresh_deluge_chip(self) -> None:
+        """Couleur et infobulle de la pastille, selon ce qui est branché."""
+        from ..core import midiport
+
+        if not midiport.available():
+            self._deluge_chip.setVisible(False)
+            return
+
+        lien = self.ctx.link
+        connecte = bool(lien is not None and lien.is_connected)
+        detecte = midiport.find("out") is not None
+        self._deluge_chip.setVisible(True)
+
+        if connecte:
+            teinte, etat = PAD_GREEN, "connecté"
+        elif detecte:
+            teinte, etat = GOLD, "détecté — cliquez pour connecter"
+        else:
+            teinte, etat = GREY, "absent"
+        self._deluge_chip.setIcon(icons.icon("link", teinte, 16))
+        self._deluge_chip.setStyleSheet("color: %s;" % teinte)
+        self._deluge_chip.setToolTip("Deluge %s" % etat)
+
+    def _poll_midi(self) -> None:
+        """Surveille l'apparition et la disparition de la machine.
+
+        Appelé une fois par seconde par le battement de la barre d'état.
+        Énumérer les ports coûte quelques microsecondes : c'est moins cher
+        que de demander à l'utilisateur de cliquer sur « rafraîchir ».
+        """
+        from ..core import midiport
+
+        if not midiport.available():
+            return
+        present = midiport.find("out") is not None
+        lien = self.ctx.link
+        connecte = bool(lien is not None and lien.is_connected)
+
+        if present and not connecte and self._deluge_seen is not True:
+            # Il vient d'apparaître — ou il était déjà là au démarrage, ce
+            # qui mérite la même attention : ``None`` compte comme « pas
+            # encore vu ».
+            if self.ctx.settings.midi_autoconnect:
+                lien = self.ctx.ensure_link()
+                reglages = self.ctx.settings
+                if lien.connect(reglages.midi_out, reglages.midi_in,
+                                card=self.ctx.sd):
+                    self.statusBar().showMessage(
+                        "Deluge branché : " + lien.state().summary(), 8000)
+            else:
+                self.statusBar().showMessage(
+                    "Deluge branché. Connectez-le dans les réglages.", 8000)
+        elif connecte and not present:
+            # Débranché pendant l'utilisation : on referme proprement, sinon
+            # le port reste ouvert sur un appareil qui n'existe plus.
+            lien.disconnect()
+            self.statusBar().showMessage("Deluge débranché.", 6000)
+
+        self._deluge_seen = present
+        self._refresh_deluge_chip()
 
     # -- barre latérale ----------------------------------------------------- #
 
@@ -187,12 +315,17 @@ class MainWindow(QMainWindow):
         column.setSpacing(3)
 
         for index, (key, cls) in enumerate(self._classes.items(), 1):
+            teinte = page_color(key)
             button = QPushButton(f"  {cls.TITLE}", self._rail)
             button.setObjectName("NavButton")
-            button.setIcon(icons.icon(cls.ICON, PAD_WHITE, 18))
+            # L'icône prend la couleur de sa page : la barre devient une
+            # rangée de pads colorés, et l'on repère une destination à la
+            # teinte avant même d'avoir lu l'étiquette.
+            button.setIcon(icons.icon(cls.ICON, teinte, 19))
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(f"{cls.TITLE}  (Ctrl+{index})")
+            button.setProperty("navColor", teinte)
             button.clicked.connect(
                 lambda _c=False, k=key: self.go_to(k))
             column.addWidget(button)
@@ -222,6 +355,14 @@ class MainWindow(QMainWindow):
                        GREY, 16))
 
     # -- barre d'état ------------------------------------------------------- #
+
+    def _tint_header(self, teinte: str) -> None:
+        """Teinte l'en-tête à la couleur de la page affichée."""
+        try:
+            self._accent_strip.setStyleSheet(
+                "background-color: %s;" % teinte)
+        except Exception as exc:        # noqa: BLE001 - simple décor
+            log.debug("teinte d'en-tête impossible : %s", exc)
 
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
@@ -261,6 +402,8 @@ class MainWindow(QMainWindow):
             self._progress.setVisible(busy > 0)
             if busy > 0:
                 self._progress.set_busy(True)
+
+            self._poll_midi()
         except Exception as exc:  # noqa: BLE001 - un indicateur ne casse rien
             log.debug("barre d'état : %s", exc)
 
@@ -285,6 +428,15 @@ class MainWindow(QMainWindow):
                 free = total = 0
         self._space.setText(
             f"{human_size(free)} libres" if total else "")
+
+        # Ne pas proposer ce qui ne peut pas marcher : sans carte, « Analyser »
+        # ne pouvait que répondre par un avertissement. Un bouton éteint qui
+        # dit pourquoi vaut mieux qu'un bouton vif qui refuse.
+        prete = bool(self.ctx.has_card)
+        self._scan_button.setEnabled(prete)
+        self._scan_button.setToolTip(
+            "Relire la carte et mettre l'index à jour  (Ctrl+R)" if prete
+            else "Indiquez d'abord l'emplacement de la carte")
 
     # -- menus et raccourcis ------------------------------------------------ #
 
@@ -356,7 +508,14 @@ class MainWindow(QMainWindow):
     # -- navigation --------------------------------------------------------- #
 
     def go_to(self, key: str) -> None:
-        """Affiche une page, en la créant si c'est la première fois."""
+        """Affiche une page, en la créant si c'est la première fois.
+
+        ``key`` peut être une adresse : ``"Health#Doublons"`` ouvre la santé
+        de la carte et la place sur son onglet des doublons. Le raccourci du
+        tableau de bord amène ainsi directement là où le travail se fait, au
+        lieu de laisser l'utilisateur chercher parmi cinq onglets.
+        """
+        key, _, partie = str(key or "").partition("#")
         if key not in self._classes:
             log.debug("page inconnue : %r", key)
             return
@@ -367,7 +526,22 @@ class MainWindow(QMainWindow):
                 return
         self._stack.setCurrentWidget(page)
         for name, button in self._buttons.items():
-            button.setChecked(name == key)
+            actif = name == key
+            button.setChecked(actif)
+            # Le bouton actif porte un liseré de sa couleur : on sait où
+            # l'on est sans avoir à comparer neuf icônes.
+            teinte = page_color(name)
+            button.setStyleSheet(
+                "QPushButton#NavButton {"
+                " border-left: 3px solid %s;"
+                " background-color: %s;"
+                " color: %s; font-weight: 600; }" % (
+                    teinte, with_alpha(teinte, 0.14), PAD_WHITE)
+                if actif else
+                "QPushButton#NavButton { border-left: 3px solid transparent; }")
+        self._tint_header(page_color(key))
+        if partie:
+            self._safely(lambda: page.focus_on(partie))
         try:
             page.refresh()
         except Exception:  # noqa: BLE001 - la page a déjà son rempart
@@ -399,6 +573,7 @@ class MainWindow(QMainWindow):
         # branche s'ils existent, sans supposer leur présence.
         connections = {
             "navigateRequested": self.go_to,
+            "detectRequested": self._check_card,
             "scanFinished": self.refresh_all,
             "cardModified": self.refresh_all,
             "presetSaved": lambda _rel: self.refresh_all(),
@@ -599,8 +774,21 @@ class MainWindow(QMainWindow):
     # -- persistance et fermeture ------------------------------------------- #
 
     def _settings_store(self) -> QSettings:
-        from ..config import APP_ORG
+        """Où l'état de la fenêtre est conservé.
 
+        D'ordinaire le registre de l'utilisateur. Mais si la configuration a
+        été déplacée (``DELUGE_COMPANION_CONFIG``), l'état de la fenêtre
+        suit : une installation portable emporte tout, et un script d'essai
+        n'écrit plus dans le registre réel. J'y ai laissé une fois
+        ``rail = narrow`` et ``page = Settings`` : l'utilisateur a démarré
+        sur les réglages, navigation repliée en neuf icônes anonymes.
+        """
+        from ..config import APP_ORG, CONFIG_ENV, CONFIG_DIR
+        import os
+
+        if (os.environ.get(CONFIG_ENV) or "").strip():
+            return QSettings(str(CONFIG_DIR / "fenetre.ini"),
+                             QSettings.Format.IniFormat)
         return QSettings(APP_ORG, APP_NAME)
 
     def _restore_state(self) -> None:

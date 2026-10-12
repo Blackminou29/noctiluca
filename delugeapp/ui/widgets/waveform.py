@@ -30,7 +30,6 @@ from ..theme import (
     GREY,
     PAD_CYAN,
     PAD_WHITE,
-    PANEL,
     PANEL_HI,
     PANEL_LO,
 )
@@ -59,11 +58,21 @@ class WaveformView(QWidget):
         self._position: float | None = None
         self._zone: tuple[float, float] | None = None
         self._selection: tuple[float, float] | None = None
+        #: Marqueurs multiples, en secondes — les coupes d'un découpage.
+        self._markers: list[float] = []
+        self._marker_active = -1
 
         # Fenêtre visible, en fraction de la durée totale.
         self._view = (0.0, 1.0)
         self._drag: str = ""          # '', 'select', 'zone_a', 'zone_b'
         self._drag_from = 0.0
+
+        # Ce que le cadre dit quand il n'a rien à montrer. Réglable, parce
+        # que « choisissez-en un dans la liste » n'a aucun sens dans le
+        # générateur, où il n'y a pas de liste : le son s'y fabrique.
+        self._empty_message = "Aucun échantillon sélectionné"
+        self._empty_hint = ("Choisissez-en un dans la liste pour voir sa "
+                            "forme d'onde")
 
         self.setMinimumHeight(70)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -99,7 +108,15 @@ class WaveformView(QWidget):
         self._position = None
         self._zone = None
         self._selection = None
+        self._markers = []
+        self._marker_active = -1
         self._view = (0.0, 1.0)
+        self.update()
+
+    def set_empty_text(self, message: str, hint: str = "") -> None:
+        """Change ce qui s'affiche quand le cadre est vide."""
+        self._empty_message = str(message or "")
+        self._empty_hint = str(hint or "")
         self.update()
 
     def has_data(self) -> bool:
@@ -121,6 +138,39 @@ class WaveformView(QWidget):
 
     def zone(self) -> tuple[float, float] | None:
         return self._zone
+
+    def set_markers(self, times, active: int = -1) -> None:
+        """Place des marqueurs numérotés, en secondes.
+
+        Sert à montrer les coupes d'un découpage. ``active`` met en valeur
+        la tranche en cours d'écoute ; -1 n'en met aucune.
+        """
+        try:
+            propres = sorted(max(0.0, float(x)) for x in (times or []))
+        except (TypeError, ValueError) as exc:
+            log.debug("marqueurs illisibles : %s", exc)
+            propres = []
+        self._markers = propres
+        self._marker_active = int(active)
+        self.update()
+
+    def markers(self) -> list[float]:
+        """Les marqueurs placés, en secondes."""
+        return list(self._markers)
+
+    def marker_at(self, x: float) -> int:
+        """Indice de la tranche sous l'abscisse donnée, ou -1.
+
+        Une tranche va d'un marqueur au suivant ; la dernière court jusqu'à
+        la fin du fichier.
+        """
+        if not self._markers or not self.has_data():
+            return -1
+        t = self._x_to_time(x)
+        for index in range(len(self._markers) - 1, -1, -1):
+            if t >= self._markers[index]:
+                return index
+        return -1
 
     def selection(self) -> tuple[float, float] | None:
         return self._selection
@@ -273,9 +323,32 @@ class WaveformView(QWidget):
             painter.drawRect(rect)
 
             if not self.has_data():
+                # L'axe du zéro suffit à montrer que le cadre fonctionne et
+                # qu'il attend seulement un son. Sous le message, le geste à
+                # faire : un vide sans consigne laisse l'utilisateur chercher.
+                axe = QColor(GREY)
+                axe.setAlphaF(0.25)
+                painter.setPen(QPen(axe, 1))
+                milieu = self.height() / 2.0
+                painter.drawLine(0, int(milieu), self.width(), int(milieu))
+
+                haut = QRectF(rect)
+                haut.setBottom(milieu - 4)
                 painter.setPen(QPen(QColor(GREY)))
-                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
-                                 "Aucun échantillon sélectionné")
+                painter.drawText(
+                    haut, int(Qt.AlignmentFlag.AlignHCenter
+                              | Qt.AlignmentFlag.AlignBottom),
+                    self._empty_message)
+
+                bas = QRectF(rect)
+                bas.setTop(milieu + 6)
+                indice = QColor(GREY)
+                indice.setAlphaF(0.6)
+                painter.setPen(QPen(indice))
+                painter.drawText(
+                    bas, int(Qt.AlignmentFlag.AlignHCenter
+                             | Qt.AlignmentFlag.AlignTop),
+                    self._empty_hint)
                 painter.end()
                 return
 
@@ -283,6 +356,7 @@ class WaveformView(QWidget):
             self._draw_grid(painter, middle)
             self._draw_selection(painter)
             self._draw_wave(painter, middle)
+            self._draw_markers(painter)
             self._draw_zone(painter)
             self._draw_position(painter)
             painter.end()
@@ -374,6 +448,49 @@ class WaveformView(QWidget):
             painter.setBrush(QColor(PAD_WHITE))
             painter.drawRect(QRectF(x - 3, 0, 6, 5))
             painter.drawRect(QRectF(x - 3, self.height() - 5, 6, 5))
+
+    def _draw_markers(self, painter: QPainter) -> None:
+        """Coupes d'un découpage : une ligne et un numéro par tranche.
+
+        La tranche active est remplie légèrement, pour qu'on voie laquelle
+        on écoute sans avoir à compter les lignes.
+        """
+        if not self._markers:
+            return
+        police = painter.font()
+        taille = police.pointSize()
+        police.setPointSize(max(6, taille - 2))
+        painter.setFont(police)
+
+        for index, value in enumerate(self._markers):
+            x = self._time_to_x(value)
+            fin = (self._time_to_x(self._markers[index + 1])
+                   if index + 1 < len(self._markers)
+                   else self._time_to_x(self._duration))
+
+            if index == self._marker_active and fin > x:
+                # `theme.with_alpha` rend une chaîne QSS « rgba(...) » que
+                # QColor ne sait pas lire : la transparence se règle avec
+                # setAlphaF, comme ailleurs dans l'interface.
+                fond = QColor(GOLD)
+                fond.setAlphaF(0.18)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(fond)
+                painter.drawRect(QRectF(x, 0, fin - x, self.height()))
+
+            if not -4 <= x <= self.width() + 4:
+                continue
+            couleur = GOLD_HI if index == self._marker_active else GOLD
+            painter.setPen(QPen(QColor(couleur), 1))
+            painter.drawLine(int(x), 0, int(x), self.height())
+            painter.setPen(QPen(QColor(couleur)))
+            painter.drawText(QRectF(x + 2, 1, 22, 12),
+                             Qt.AlignmentFlag.AlignLeft
+                             | Qt.AlignmentFlag.AlignTop,
+                             "%d" % (index + 1))
+
+        police.setPointSize(taille)
+        painter.setFont(police)
 
     def _draw_position(self, painter: QPainter) -> None:
         if self._position is None:

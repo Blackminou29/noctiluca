@@ -258,6 +258,55 @@ def progression_to_midi(path: Path, chords: list[dict], bpm: float,
     write_midi(path, [track], bpm=bpm, ppq=resolution)
 
 
+def song_to_midi(path: Path, song, max_clips: int = 64) -> int:
+    """Exporte un morceau entier : **une piste MIDI par clip**.
+
+    Retourne le nombre de pistes écrites.
+
+    Les clips du Deluge vivent dans une grille de session : ce sont des
+    boucles qu'on déclenche, et le fichier ne porte **aucune position
+    absolue** pour elles — vérifié sur les 46 morceaux de la carte de
+    référence, dont aucun n'utilise la vue arrangement. Toutes les pistes
+    démarrent donc au même point, chacune avec sa longueur propre. C'est ce
+    que les données permettent d'affirmer ; inventer un placement dans le
+    temps serait une fiction.
+
+    Une piste de kit part sur le canal des percussions, pour qu'un
+    séquenceur General MIDI la joue avec des percussions.
+    """
+    ratio = DEFAULT_PPQ / float(DELUGE_PPQ)
+    tracks: list[MidiTrack] = []
+
+    clips = list(getattr(song, "clips", []) or [])
+    clips += list(getattr(song, "arrangement_clips", []) or [])
+
+    for index, clip in enumerate(clips, 1):
+        if len(tracks) >= max(1, int(max_clips)):
+            log.info("morceau tronqué à %d pistes", len(tracks))
+            break
+        rows = [r for r in (getattr(clip, "note_rows", []) or []) if r.notes]
+        if not rows:
+            continue
+
+        est_kit = bool(getattr(clip, "is_kit", False))
+        nom = (getattr(clip, "name", "") or getattr(clip, "preset_name", "")
+               or "Clip %d" % index)
+        track = MidiTrack(name=nom[:40],
+                          channel=DRUM_CHANNEL if est_kit else 0)
+        for row in rows:
+            for note in row.notes:
+                track.add(int(round(note.pos * ratio)), int(row.y),
+                          max(1, min(127, note.velocity)),
+                          max(1, int(round(note.length * ratio))))
+        tracks.append(track)
+
+    if not tracks:
+        return 0
+    write_midi(path, tracks, bpm=float(getattr(song, "tempo_bpm", 120.0)),
+               ppq=DEFAULT_PPQ)
+    return len(tracks)
+
+
 def clip_to_midi(path: Path, clip, bpm: float) -> None:
     """Exporte un clip lu dans un morceau du Deluge.
 
