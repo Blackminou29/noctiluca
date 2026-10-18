@@ -31,11 +31,12 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter
+from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -52,18 +53,24 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core import units as _units
-from .. import icons
+from .. import art, icons
 from ..theme import (
+    BORDER_SOFT,
+    BORDER_TOP,
     GOLD,
     GREY,
     PAD,
+    PAD_CYCLE,
+    PAD_DIM,
     PAD_RED,
     PAD_WHITE,
     PANEL_HI,
     RADIUS,
+    TEXT_SOFT,
     _rgb,
     mix,
     readable,
+    text_on,
     with_alpha,
 )
 
@@ -77,33 +84,41 @@ SEARCH_DEBOUNCE_MS = 250
 # Titres et panneaux
 # --------------------------------------------------------------------------- #
 
+#: Hauteur d'un titre de section : une ligne, le pad, le filet.
+SECTION_HEIGHT = 24
+
+
 class SectionTitle(QWidget):
-    """Titre de section suivi d'un trait or, comme dans le guide du Deluge."""
+    """Titre de section à la manière du guide : un petit pad allumé, le
+    libellé en capitales espacées, puis un filet qui s'efface vers la droite.
+
+    Le filet était sous le libellé, sur une seconde ligne : il est passé à
+    sa droite, sur la même ligne. Chaque panneau y gagne huit pixels, et le
+    titre ressemble à une sérigraphie de façade plutôt qu'à un intertitre
+    de document.
+    """
 
     def __init__(self, title: str = "", parent: QWidget | None = None,
                  color: str = GOLD) -> None:
         super().__init__(parent)
         self._color = color
         # Hauteur fixe : sans cela le titre s'étire quand le panneau est plus
-        # haut que son contenu, et son trait part flotter soixante pixels
+        # haut que son contenu, et son filet part flotter soixante pixels
         # plus bas, détaché du libellé qu'il souligne.
         self.setSizePolicy(QSizePolicy.Policy.Preferred,
                            QSizePolicy.Policy.Fixed)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 6)
-        layout.setSpacing(4)
+        self.setFixedHeight(SECTION_HEIGHT)
+        layout = QHBoxLayout(self)
+        # La marge de gauche est la place du pad.
+        layout.setContentsMargins(19, 0, 0, 0)
+        layout.setSpacing(0)
 
         self._label = QLabel(title, self)
         self._label.setProperty("role", "section")
         if color != GOLD:
             self._label.setStyleSheet("color: %s;" % readable(color))
         layout.addWidget(self._label)
-
-        self._rule = QWidget(self)
-        self._rule.setFixedHeight(2)
-        self._rule.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                 QSizePolicy.Policy.Fixed)
-        layout.addWidget(self._rule)
+        layout.addStretch(1)
 
     def setText(self, text: str) -> None:
         """Change le libellé."""
@@ -136,26 +151,32 @@ class SectionTitle(QWidget):
         try:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            rect = self._rule.geometry()
-            # Trait franc à gauche, estompé vers la droite. On construit les
-            # couleurs avec setAlphaF : `theme.with_alpha` rend une chaîne
-            # « rgba(…) » destinée au QSS, que QColor ne sait pas lire.
-            start = QColor(self._color)
-            middle = QColor(self._color)
-            middle.setAlphaF(0.35)
-            end = QColor(self._color)
-            end.setAlphaF(0.0)
+            milieu = self.height() / 2.0
 
-            gradient = QLinearGradient(float(rect.x()), 0.0,
-                                       float(rect.x() + max(1, rect.width())),
-                                       0.0)
-            gradient.setColorAt(0.0, start)
-            gradient.setColorAt(0.45, middle)
-            gradient.setColorAt(1.0, end)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(gradient)
-            painter.drawRect(QRectF(rect.x(), rect.y(),
-                                    max(1, rect.width()), rect.height()))
+            # Le petit pad allumé, à gauche du libellé.
+            pad = QRectF(2.0, milieu - 4.5, 9.0, 9.0)
+            art.paint_pad(painter, pad, self._color, glow=0.45, radius=2.5)
+
+            # Le filet : franc près du libellé, estompé vers la droite. Les
+            # couleurs passent par setAlphaF : `theme.with_alpha` rend une
+            # chaîne « rgba(…) » destinée au QSS, que QColor ne sait pas lire.
+            texte = self._label.geometry()
+            debut = float(texte.right() + 12)
+            fin = float(self.width() - 2)
+            if fin - debut > 8:
+                start = QColor(self._color)
+                start.setAlphaF(0.65)
+                middle = QColor(self._color)
+                middle.setAlphaF(0.22)
+                end = QColor(self._color)
+                end.setAlphaF(0.0)
+                gradient = QLinearGradient(debut, 0.0, fin, 0.0)
+                gradient.setColorAt(0.0, start)
+                gradient.setColorAt(0.4, middle)
+                gradient.setColorAt(1.0, end)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(gradient)
+                painter.drawRect(QRectF(debut, milieu - 0.5, fin - debut, 1.2))
             painter.end()
         except Exception as exc:  # noqa: BLE001 - un tracé ne doit rien casser
             log.debug("tracé du titre de section impossible : %s", exc)
@@ -203,9 +224,67 @@ class Card(QFrame):
             self._title.setText(title)
 
 
+class LitPad(QWidget):
+    """Une icône posée sur un pad allumé, avec son halo.
+
+    C'est la pièce qui dit « cette chose a une couleur et elle est active » :
+    en-tête de page, tuiles du tableau de bord, raccourcis. Le widget réserve
+    autour du pad la place de son halo, pour que la lumière ne soit pas
+    coupée net par le bord.
+    """
+
+    def __init__(self, icon_name: str, color: str = GOLD, size: int = 44,
+                 parent: QWidget | None = None, glow: float = 0.42,
+                 halo: int = 8) -> None:
+        super().__init__(parent)
+        self._icon = str(icon_name or "")
+        self._color = color
+        self._size = max(12, int(size))
+        self._glow = float(glow)
+        self._halo = max(0, int(halo))
+        cote = self._size + 2 * self._halo
+        self.setFixedSize(cote, cote)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                          True)
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        self._color = color or GOLD
+        self.update()
+
+    def set_icon(self, icon_name: str) -> None:
+        self._icon = str(icon_name or "")
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            pad = QRectF(self._halo, self._halo, self._size, self._size)
+            art.paint_pad(painter, pad, self._color, glow=self._glow,
+                          radius=self._size * 0.26)
+            if self._icon:
+                taille = int(self._size * 0.52)
+                pixmap = icons.icon(self._icon, text_on(self._color),
+                                    taille).pixmap(taille, taille)
+                painter.drawPixmap(
+                    int(pad.center().x() - taille / 2),
+                    int(pad.center().y() - taille / 2), pixmap)
+            painter.end()
+        except Exception as exc:  # noqa: BLE001 - un décor ne casse rien
+            log.debug("pad allumé non tracé : %s", exc)
+
+
 class StatTile(QFrame):
     """Grande valeur, libellé, couleur de pad et icône : la tuile du tableau
-    de bord."""
+    de bord.
+
+    L'icône est posée sur un pad allumé, et la tuile prend un voile de sa
+    couleur qui s'estompe vers la droite : six tuiles se distinguent d'un
+    coup d'œil, comme six rangées de pads.
+    """
 
     clicked = pyqtSignal()
 
@@ -218,15 +297,13 @@ class StatTile(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(PAD, 10, PAD, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(6, 6, PAD, 6)
+        layout.setSpacing(6)
 
+        self._badge: LitPad | None = None
         if icon_name:
-            badge = QLabel(self)
-            badge.setPixmap(icons.icon(icon_name, color, 26).pixmap(26, 26))
-            badge.setFixedSize(30, 30)
-            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(badge)
+            self._badge = LitPad(icon_name, color, 40, self, halo=9)
+            layout.addWidget(self._badge)
 
         column = QVBoxLayout()
         column.setContentsMargins(0, 0, 0, 0)
@@ -237,7 +314,7 @@ class StatTile(QFrame):
         column.addWidget(self._value)
 
         self._label = QLabel(label, self)
-        self._label.setProperty("role", "subtitle")
+        self._label.setProperty("role", "caption")
         column.addWidget(self._label)
 
         layout.addLayout(column, 1)
@@ -261,7 +338,7 @@ class StatTile(QFrame):
         self._label.setText(text)
 
     def set_color(self, color: str) -> None:
-        """Change la couleur du liseré gauche et la teinte de fond.
+        """Change la couleur du pad, du voile de fond et du survol.
 
         Appelée **depuis le constructeur** : sans cela la couleur passée à
         la création restait dans ``self._color`` sans jamais atteindre la
@@ -270,16 +347,24 @@ class StatTile(QFrame):
         elles, étaient bien colorées.
         """
         self._color = color
-        fond = QColor(color)
-        fond.setAlphaF(0.07)
+        if self._badge is not None:
+            self._badge.set_color(color)
+        r, g, b = _rgb(color)
         self.setStyleSheet(
             "QFrame#Tile {"
-            " border-left: 3px solid %s;"
-            " background-color: rgba(%d, %d, %d, %d); }"
+            " border: 1px solid %s; border-top-color: %s;"
+            " background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+            " stop:0 rgba(%d,%d,%d,34), stop:0.55 rgba(%d,%d,%d,8),"
+            " stop:1 rgba(%d,%d,%d,0)); }"
             "QFrame#Tile:hover {"
-            " background-color: rgba(%d, %d, %d, %d); }" % (
-                color, fond.red(), fond.green(), fond.blue(), 18,
-                fond.red(), fond.green(), fond.blue(), 34))
+            " border-color: rgba(%d,%d,%d,140);"
+            " background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+            " stop:0 rgba(%d,%d,%d,60), stop:0.6 rgba(%d,%d,%d,16),"
+            " stop:1 rgba(%d,%d,%d,4)); }" % (
+                BORDER_SOFT, BORDER_TOP,
+                r, g, b, r, g, b, r, g, b,
+                r, g, b,
+                r, g, b, r, g, b, r, g, b))
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
         if event.button() == Qt.MouseButton.LeftButton:
@@ -511,7 +596,9 @@ class StarRating(QWidget):
                 elif i < shown:
                     color = mix(GOLD, PANEL_HI, 0.55)
                 else:
-                    color = PANEL_HI
+                    # Plus clair que le panneau : une étoile vide doit se
+                    # voir, sinon la note semble absente.
+                    color = PAD_DIM
                 pixmap = icons.icon("star", color, self._size).pixmap(
                     self._size, self._size)
                 painter.drawPixmap(i * self._size + 2, 2, pixmap)
@@ -523,6 +610,448 @@ class StarRating(QWidget):
 # --------------------------------------------------------------------------- #
 # États et progression
 # --------------------------------------------------------------------------- #
+
+#: Les huit pads allumés de l'emblème du guide (``figures/emblem.png``),
+#: en ``(rangée, colonne, couleur)``.
+EMBLEM_PADS = (
+    (0, 1, "#6B5CE7"), (0, 3, "#FF8C1A"), (1, 0, "#3E86F5"),
+    (1, 2, "#F04FA8"), (2, 1, "#FFC400"), (2, 3, "#3DD160"),
+    (3, 0, "#F2453D"), (3, 2, "#28C4E0"),
+)
+
+
+class PadEmblem(QWidget):
+    """L'emblème du guide — seize pads dans un disque cerclé d'or — qui joue.
+
+    Les huit pads de l'emblème restent allumés en veilleuse ; d'autres
+    s'allument au hasard et s'éteignent doucement, comme une grille de
+    Deluge qui attend qu'on la touche. L'animation ne tourne que tant que
+    l'emblème est visible : une page cachée ne coûte rien.
+
+    ``icon_name`` pose en médaillon le pad de la page, à sa couleur : on
+    reconnaît l'écran même quand il est vide.
+    """
+
+    #: Cadence de l'animation, en millisecondes.
+    TICK_MS = 190
+
+    def __init__(self, color: str = GOLD, icon_name: str = "",
+                 size: int = 112, parent: QWidget | None = None,
+                 animated: bool = True) -> None:
+        super().__init__(parent)
+        import random
+
+        self._color = color
+        self._icon = str(icon_name or "")
+        self._size = max(48, int(size))
+        self.setFixedSize(self._size + 22, self._size + 22)
+        self._niveaux = [[0.0] * 4 for _ in range(4)]
+        self._teintes = [[color] * 4 for _ in range(4)]
+        self._hasard = random.Random(art.seed_of(color))
+        self._animated = bool(animated)
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.TICK_MS)
+        self._timer.timeout.connect(self._tick)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                          True)
+
+    def is_running(self) -> bool:
+        """Vrai si l'animation tourne."""
+        return self._timer.isActive()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - API Qt
+        super().showEvent(event)
+        if self._animated:
+            self._timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _tick(self) -> None:
+        for rangee in self._niveaux:
+            for colonne in range(4):
+                rangee[colonne] *= 0.78
+        rangee = self._hasard.randrange(4)
+        colonne = self._hasard.randrange(4)
+        self._niveaux[rangee][colonne] = 1.0
+        # La couleur de la page revient une fois sur deux : l'emblème
+        # « joue » dans la teinte de l'écran qu'il habite.
+        if self._hasard.random() < 0.5:
+            self._teintes[rangee][colonne] = self._color
+        else:
+            self._teintes[rangee][colonne] = PAD_CYCLE[
+                self._hasard.randrange(len(PAD_CYCLE))]
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            from ..theme import GOLD as OR, PANEL_LO
+
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            cote = float(self._size)
+            disque = QRectF(4, 4, cote, cote)
+            centre = disque.center()
+
+            # Le halo tient dans le widget : un rayon plus grand que sa
+            # demi-largeur était coupé net, et l'on voyait un carré.
+            demi = min(self.width(), self.height()) / 2.0
+            lueur = QRectF(0, 0, demi, demi)
+            lueur.moveCenter(centre)
+            art.paint_glow(painter, lueur, self._color, 0.24, 0.48)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#1C1F26"))
+            painter.drawEllipse(centre, cote / 2 - 4, cote / 2 - 4)
+            anneau = QPen(QColor(OR))
+            anneau.setWidthF(max(2.0, cote * 0.035))
+            painter.setPen(anneau)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(centre, cote / 2 - 2, cote / 2 - 2)
+
+            cellule = cote * 0.135
+            ecart = cote * 0.042
+            origine = centre.x() - (4 * cellule + 3 * ecart) / 2
+            haut = centre.y() - (4 * cellule + 3 * ecart) / 2
+            veille = {(r, c): teinte for r, c, teinte in EMBLEM_PADS}
+            for r in range(4):
+                for c in range(4):
+                    rect = QRectF(origine + c * (cellule + ecart),
+                                  haut + r * (cellule + ecart),
+                                  cellule, cellule)
+                    art.paint_off_pad(painter, rect, diode=False,
+                                      radius=cellule * 0.24)
+                    if (r, c) in veille:
+                        painter.save()
+                        painter.setOpacity(0.72)
+                        art.paint_pad(painter, rect, veille[(r, c)],
+                                      glow=0.0, radius=cellule * 0.24)
+                        painter.restore()
+                    niveau = self._niveaux[r][c]
+                    if niveau > 0.03:
+                        painter.save()
+                        painter.setOpacity(niveau)
+                        art.paint_pad(painter, rect, self._teintes[r][c],
+                                      glow=0.30, radius=cellule * 0.24)
+                        painter.restore()
+
+            if self._icon:
+                badge = 38.0
+                rect = QRectF(disque.right() - badge + 6,
+                              disque.bottom() - badge + 6, badge, badge)
+                painter.setPen(QPen(QColor(PANEL_LO), 4))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(rect.adjusted(-2, -2, 2, 2), 12, 12)
+                # Halo serré : le médaillon est près du bord du widget, un
+                # halo plus large y était coupé net.
+                art.paint_glow(painter, rect, self._color, 0.32, 0.12)
+                art.paint_pad(painter, rect, self._color, glow=0.0,
+                              radius=10)
+                taille = int(badge * 0.52)
+                pixmap = icons.icon(self._icon, text_on(self._color),
+                                    taille).pixmap(taille, taille)
+                painter.drawPixmap(int(rect.center().x() - taille / 2),
+                                   int(rect.center().y() - taille / 2),
+                                   pixmap)
+            painter.end()
+        except Exception as exc:  # noqa: BLE001 - un décor ne casse rien
+            log.debug("emblème non tracé : %s", exc)
+
+
+_PASTILLES: dict[str, Any] = {}
+
+
+def pad_dot(color: str, size: int = 11):
+    """Petit pad allumé, pour une ligne de liste. Gardé en cache par couleur."""
+    from PyQt6.QtGui import QPixmap
+
+    cle = "%s/%d" % (color, size)
+    deja = _PASTILLES.get(cle)
+    if deja is not None:
+        return deja
+    image = QPixmap(size, size)
+    image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(image)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        art.paint_pad(painter, QRectF(0.5, 0.5, size - 1, size - 1), color,
+                      glow=0.0, radius=size * 0.26)
+    finally:
+        painter.end()
+    _PASTILLES[cle] = image
+    return image
+
+
+class GrilleAdaptative(QObject):
+    """Range des widgets en grille, sur plus ou moins de colonnes selon la
+    place.
+
+    Mesuré à 980 px : les six tuiles du tableau de bord demandaient 900 px
+    sur trois colonnes pour 720 disponibles, et le tableau de bord entier
+    partait sous une barre de défilement horizontale — le bouton
+    « Sauvegarder » coupé net. En dessous de ``seuil``, la grille passe sur
+    ``etroit`` colonnes, et revient à ``large`` dès que la place revient.
+    """
+
+    def __init__(self, hote: QWidget, grille, widgets, large: int = 3,
+                 etroit: int = 2, seuil: int = 900) -> None:
+        super().__init__(hote)
+        self._hote = hote
+        self._grille = grille
+        self._widgets = list(widgets)
+        self._large = max(1, int(large))
+        self._etroit = max(1, int(etroit))
+        self._seuil = int(seuil)
+        self._colonnes = 0
+        hote.installEventFilter(self)
+        self.ranger(self._large)
+
+    def colonnes(self) -> int:
+        """Nombre de colonnes en usage."""
+        return self._colonnes
+
+    def eventFilter(self, objet, evenement) -> bool:   # noqa: N802 - API Qt
+        if evenement.type() == QEvent.Type.Resize:
+            largeur = self._hote.width()
+            self.ranger(self._large if largeur >= self._seuil
+                        else self._etroit)
+        return False
+
+    def ranger(self, colonnes: int) -> None:
+        if colonnes == self._colonnes:
+            return
+        try:
+            for widget in self._widgets:
+                self._grille.removeWidget(widget)
+            for index, widget in enumerate(self._widgets):
+                self._grille.addWidget(widget, index // colonnes,
+                                       index % colonnes)
+            for colonne in range(max(self._large, self._etroit)):
+                self._grille.setColumnStretch(
+                    colonne, 1 if colonne < colonnes else 0)
+            self._colonnes = colonnes
+        except Exception as exc:       # noqa: BLE001 - une disposition ne casse rien
+            log.debug("grille non réarrangée : %s", exc)
+
+
+class RangeeAdaptative(QObject):
+    """Une rangée de panneaux qui s'empile quand la place manque.
+
+    Deux panneaux côte à côte demandent chacun leur largeur minimale ; sur
+    une fenêtre étroite, ils passent l'un sous l'autre au lieu de pousser la
+    page sous une barre de défilement horizontale.
+    """
+
+    def __init__(self, hote: QWidget, rangee, seuil: int = 880) -> None:
+        super().__init__(hote)
+        self._hote = hote
+        self._rangee = rangee
+        self._seuil = int(seuil)
+        hote.installEventFilter(self)
+
+    def empilee(self) -> bool:
+        """Vrai si les panneaux sont l'un sous l'autre."""
+        from PyQt6.QtWidgets import QBoxLayout
+
+        return self._rangee.direction() == QBoxLayout.Direction.TopToBottom
+
+    def eventFilter(self, objet, evenement) -> bool:   # noqa: N802 - API Qt
+        if evenement.type() == QEvent.Type.Resize:
+            from PyQt6.QtWidgets import QBoxLayout
+
+            sens = (QBoxLayout.Direction.LeftToRight
+                    if self._hote.width() >= self._seuil
+                    else QBoxLayout.Direction.TopToBottom)
+            if self._rangee.direction() != sens:
+                self._rangee.setDirection(sens)
+        return False
+
+
+class SegmentMeter(QWidget):
+    """Une jauge en segments, comme une rangée de pads ou un vumètre.
+
+    Les segments allumés prennent la couleur donnée, les autres restent au
+    repos : une barre pleine se lit comme une quantité, une rangée de pads
+    comme un niveau — et c'est le vocabulaire de la machine.
+    """
+
+    def __init__(self, parent: QWidget | None = None, segments: int = 24,
+                 color: str = GOLD) -> None:
+        super().__init__(parent)
+        self._segments = max(4, int(segments))
+        self._color = color
+        self._value = 0.0
+        self._maximum = 1.0
+        self.setFixedHeight(12)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Fixed)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        # Sans taille conseillée valide, la disposition donnait zéro pixel
+        # au libellé voisin et la jauge se dessinait par-dessus.
+        return QSize(240, 12)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        return QSize(self._segments * 4, 12)
+
+    def set_color(self, color: str) -> None:
+        self._color = color or GOLD
+        self.update()
+
+    def set_value(self, value: float, maximum: float) -> None:
+        """Valeur et maximum de la jauge."""
+        self._value = max(0.0, float(value or 0))
+        self._maximum = max(1e-9, float(maximum or 1))
+        self.update()
+
+    def lit(self) -> int:
+        """Nombre de segments allumés (au moins un pour une valeur non nulle)."""
+        if self._value <= 0:
+            return 0
+        part = min(1.0, self._value / self._maximum)
+        return max(1, int(round(part * self._segments)))
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            ecart = 3.0
+            largeur = (self.width() - ecart * (self._segments - 1)) / float(
+                self._segments)
+            if largeur <= 1:
+                return
+            hauteur = float(self.height())
+            allumes = self.lit()
+            painter.setPen(Qt.PenStyle.NoPen)
+            for index in range(self._segments):
+                rect = QRectF(index * (largeur + ecart), 0, largeur, hauteur)
+                if index < allumes:
+                    art.paint_pad(painter, rect, self._color, glow=0.0,
+                                  radius=2.5)
+                else:
+                    painter.setBrush(QColor(PANEL_HI))
+                    painter.drawRoundedRect(rect, 2.5, 2.5)
+            painter.end()
+        except Exception as exc:  # noqa: BLE001 - un décor ne casse rien
+            log.debug("jauge non tracée : %s", exc)
+
+
+class ScoreRing(QLabel):
+    """La note de santé dans une couronne, comme la bague d'un encodeur.
+
+    Reste un ``QLabel`` : la page y écrit la note avec ``setText`` comme
+    avant, et l'anneau suit — un arc de 270 degrés, plein en proportion de
+    la note sur 100, à la couleur que :meth:`set_color` lui donne. Sans
+    note (« — »), seule la piste éteinte est tracée.
+    """
+
+    def __init__(self, parent: QWidget | None = None, size: int = 96) -> None:
+        super().__init__("—", parent)
+        self._color = GREY
+        self.setFixedSize(int(size), int(size))
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setProperty("role", "value")
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        """Couleur de l'arc et du chiffre."""
+        self._color = color or GREY
+        self.setStyleSheet("color: %s;" % readable(self._color))
+        self.update()
+
+    def score(self) -> int | None:
+        """Note affichée, ou ``None`` s'il n'y en a pas."""
+        try:
+            return max(0, min(100, int(str(self.text()).strip())))
+        except ValueError:
+            return None
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            epaisseur = max(5.0, self.width() * 0.075)
+            # Le halo est deux fois plus large que l'arc : la marge doit
+            # le contenir, sinon il est coupé net par le bord du widget.
+            marge = epaisseur * 1.25
+            cadre = QRectF(self.rect()).adjusted(marge, marge, -marge, -marge)
+            piste = QPen(QColor(PANEL_HI))
+            piste.setWidthF(epaisseur)
+            piste.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(piste)
+            painter.drawArc(cadre, 225 * 16, -270 * 16)
+            note = self.score()
+            if note:
+                angle = int(-270 * 16 * note / 100.0)
+                halo = QColor(self._color)
+                halo.setAlphaF(0.22)
+                trait = QPen(halo)
+                trait.setWidthF(epaisseur * 2.2)
+                trait.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(trait)
+                painter.drawArc(cadre, 225 * 16, angle)
+                trait = QPen(QColor(self._color))
+                trait.setWidthF(epaisseur)
+                trait.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(trait)
+                painter.drawArc(cadre, 225 * 16, angle)
+            painter.end()
+        except Exception as exc:  # noqa: BLE001 - un décor ne casse rien
+            log.debug("anneau de note non tracé : %s", exc)
+        super().paintEvent(event)
+
+
+class _Halo(QObject):
+    """Tient le halo d'un bouton principal, et l'éteint avec le bouton.
+
+    Un bouton désactivé qui rayonnerait promettrait un clic qu'il refuse.
+    """
+
+    def __init__(self, button, effect) -> None:
+        super().__init__(button)
+        self._button = button
+        self._effect = effect
+        button.installEventFilter(self)
+        self.sync()
+
+    def sync(self) -> None:
+        try:
+            self._effect.setEnabled(self._button.isEnabled())
+        except RuntimeError:            # bouton déjà détruit
+            pass
+
+    def eventFilter(self, objet, evenement) -> bool:   # noqa: N802 - API Qt
+        if evenement.type() == QEvent.Type.EnabledChange:
+            self.sync()
+        return False
+
+
+def glow(widget, color: str, blur: float = 26.0,
+         alpha: float = 0.55) -> QGraphicsDropShadowEffect | None:
+    """Fait rayonner un widget de la couleur donnée : un pad allumé.
+
+    Pour un bouton, le halo suit son état : il s'éteint quand le bouton est
+    désactivé. Rappeler la fonction change simplement la couleur.
+    """
+    try:
+        effet = widget.graphicsEffect()
+        if not isinstance(effet, QGraphicsDropShadowEffect):
+            effet = QGraphicsDropShadowEffect(widget)
+            effet.setOffset(0, 0)
+            widget.setGraphicsEffect(effet)
+            if isinstance(widget, QPushButton):
+                widget._halo = _Halo(widget, effet)
+        teinte = QColor(color)
+        teinte.setAlphaF(max(0.0, min(1.0, float(alpha))))
+        effet.setColor(teinte)
+        effet.setBlurRadius(float(blur))
+        return effet
+    except Exception as exc:            # noqa: BLE001 - un décor ne casse rien
+        log.debug("halo impossible : %s", exc)
+        return None
+
 
 class EmptyState(QWidget):
     """Message affiché quand il n'y a rien à montrer.
@@ -547,20 +1076,13 @@ class EmptyState(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # L'emblème était gris sur gris, à peine visible : un vide ressemblait
-        # à une panne. Il devient un grand pad coloré — on voit tout de suite
-        # que l'écran est en ordre, simplement qu'il attend quelque chose.
-        rouge, vert, bleu = _rgb(color)
-        emblem = QLabel(self)
-        emblem.setFixedSize(88, 88)
-        emblem.setPixmap(icons.icon(icon_name, color, 44).pixmap(44, 44))
-        emblem.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        emblem.setStyleSheet(
-            "background-color: rgba(%d,%d,%d,26);"
-            " border: 1px solid rgba(%d,%d,%d,90);"
-            " border-radius: 22px;" % (rouge, vert, bleu, rouge, vert, bleu))
+        # à une panne. C'est désormais celui du guide, une grille de pads qui
+        # joue doucement, avec le pad de la page en médaillon — on voit tout
+        # de suite que l'écran est en ordre, simplement qu'il attend.
+        self._emblem = PadEmblem(color, icon_name, 112, self)
         row = QHBoxLayout()
         row.addStretch(1)
-        row.addWidget(emblem)
+        row.addWidget(self._emblem)
         row.addStretch(1)
         layout.addLayout(row)
 
@@ -607,6 +1129,7 @@ class EmptyState(QWidget):
                 self._button.setObjectName("Primary")
                 self._button.setCursor(Qt.CursorShape.PointingHandCursor)
                 self._button.clicked.connect(self.actionClicked.emit)
+                glow(self._button, color, 24, 0.50)
                 row.addWidget(self._button)
             if action2:
                 self._button2 = QPushButton(action2, self)
@@ -681,7 +1204,7 @@ class KeyValueTable(QTableWidget):
             self.insertRow(row)
 
             key_item = QTableWidgetItem(str(key))
-            key_item.setForeground(QColor(GREY))
+            key_item.setForeground(QColor(TEXT_SOFT))
             self.setItem(row, 0, key_item)
 
             text = "—" if value is None or value == "" else str(value)
@@ -693,8 +1216,12 @@ class KeyValueTable(QTableWidget):
 
 
 #: Description d'une colonne :
-#: ``(libellé, extracteur, largeur, alignement)`` ou
-#: ``(libellé, extracteur, largeur, alignement, formateur)``.
+#: ``(libellé, extracteur, largeur, alignement)``,
+#: ``(libellé, extracteur, largeur, alignement, formateur)`` ou
+#: ``(libellé, extracteur, largeur, alignement, formateur, pastille)`` — la
+#: pastille est une fonction de la valeur brute qui rend une couleur (ou une
+#: chaîne vide), tracée en petit pad devant le texte ; le formateur peut
+#: alors valoir ``None``.
 #:
 #: **L'extracteur rend la valeur BRUTE**, et le formateur optionnel la met en
 #: forme pour l'affichage. Cette séparation n'est pas un raffinement : un
@@ -804,6 +1331,20 @@ class RowTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(alignment | Qt.AlignmentFlag.AlignVCenter)
+
+        # Sixième élément facultatif : la couleur d'une pastille posée
+        # devant le texte — la couleur d'une catégorie, comme celle d'un
+        # clip sur la machine.
+        if role == Qt.ItemDataRole.DecorationRole and len(column) > 5:
+            pastille = column[5]
+            if pastille is None:
+                return None
+            try:
+                couleur = pastille(extract(row))
+            except Exception as exc:  # noqa: BLE001 - une pastille ne casse rien
+                log.debug("pastille de « %s » impossible : %s", label, exc)
+                return None
+            return pad_dot(couleur) if couleur else None
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation,  # noqa: N802
@@ -907,7 +1448,9 @@ def configure_table(view, model: RowTableModel | None = None,
     view.setEditTriggers(view.EditTrigger.NoEditTriggers)
     view.setShowGrid(False)
     view.verticalHeader().setVisible(False)
-    view.verticalHeader().setDefaultSectionSize(24)
+    # 28 px : la ligne respire, et la sélection se lit comme une bande
+    # plutôt que comme un surlignage serré.
+    view.verticalHeader().setDefaultSectionSize(28)
     view.horizontalHeader().setHighlightSections(False)
     view.setWordWrap(False)
     if sortable:
@@ -1051,7 +1594,7 @@ def hint_in_list(liste, texte: str) -> bool:
             return False
         item = QListWidgetItem(str(texte or ""))
         item.setFlags(Qt.ItemFlag.NoItemFlags)
-        item.setForeground(QColor(GREY))
+        item.setForeground(QColor(TEXT_SOFT))
         liste.addItem(item)
         return True
     except Exception as exc:        # noqa: BLE001 - simple décor

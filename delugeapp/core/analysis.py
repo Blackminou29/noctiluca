@@ -43,6 +43,8 @@ import re
 
 import numpy as np
 
+from .theory import NOTE_NAMES_FR
+
 log = logging.getLogger(__name__)
 
 #: Taille de fenêtre et pas de l'analyse spectrale.
@@ -76,8 +78,7 @@ CHROMA_HI_HZ = 3000.0
 MAX_SECONDS = 30.0
 
 #: Noms de notes, en français et en anglais.
-NOTE_FR = ("Do", "Do#", "Ré", "Ré#", "Mi", "Fa", "Fa#",
-           "Sol", "Sol#", "La", "La#", "Si")
+NOTE_FR = NOTE_NAMES_FR            # une seule orthographe dans l'application
 NOTE_EN = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 #: Profils de tonalité de Krumhansl-Schmuckler, pour la corrélation du

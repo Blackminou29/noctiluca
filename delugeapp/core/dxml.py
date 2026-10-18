@@ -645,8 +645,12 @@ def save(doc: DelugeDoc, path: Path | None = None, backup: bool = True) -> Path:
     except OSError as exc:
         raise DelugeXMLError("dossier inaccessible %s : %s" % (target.parent, exc)) from exc
 
-    if backup and target.exists():
-        _make_backup(target)
+    if backup and target.exists() and _make_backup(target) is None:
+        # Sans copie de sécurité, on n'écrase pas l'original : c'est la règle
+        # de non-destruction (SPEC §0), et un disque plein ou une carte
+        # verrouillée ne doit pas la lever en silence.
+        raise DelugeXMLError(
+            "sauvegarde .bak impossible : %s laissé intact" % target.name)
 
     tmp_path: Path | None = None
     try:

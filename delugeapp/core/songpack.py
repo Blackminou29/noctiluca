@@ -147,6 +147,11 @@ def _find_preset(sd: SDCard, kind: str, name: str, folder: str) -> str:
     return ""
 
 
+#: Nom public : la page Morceaux doit chercher les presets exactement comme
+#: l'export, sinon elle déclare « absent » ce que l'export copie.
+find_preset = _find_preset
+
+
 def _samples_of_preset(sd: SDCard, rel: str) -> list[str]:
     """Échantillons lus par un preset ou un kit."""
     chemin = sd.abs(rel)
@@ -191,7 +196,9 @@ def collect(sd: SDCard, song_rel: str) -> SongPack:
     # -- les presets -------------------------------------------------------- #
     vus_presets: set[str] = set()
     for kind, name, folder in song.preset_refs():
-        if not name:
+        # Une piste audio, MIDI ou CV porte parfois un nom, mais aucun preset
+        # à copier : la chercher dans SYNTHS la déclarait « introuvable ».
+        if not name or kind not in ("sound", "kit"):
             continue
         trouve = _find_preset(sd, kind, name, folder)
         if not trouve:

@@ -362,6 +362,7 @@ class SongsPage(Page):
                                       QTableWidgetItem(folder or "—"))
 
             present = self._preset_exists(kind, name, folder)
+            trouve = self._preset_path(kind, name, folder)
             if present is None:
                 label, colour = "—", Qt.GlobalColor.gray
             elif present:
@@ -370,6 +371,8 @@ class SongsPage(Page):
                 label, colour = "ABSENT", Qt.GlobalColor.red
             state = QTableWidgetItem(label)
             state.setForeground(colour)
+            if trouve:
+                state.setToolTip(trouve)
             self._instruments.setItem(index, 3, state)
 
     def _preset_exists(self, kind: str, name: str,
@@ -383,11 +386,24 @@ class SongsPage(Page):
             return None
         if self.sd is None:
             return None
-        base = folder or ("KITS" if kind == "kit" else "SYNTHS")
-        for suffix in (".XML", ".xml"):
-            if self.sd.resolve_sample(f"{base}/{name}{suffix}") is not None:
-                return True
-        return False
+        return bool(self._preset_path(kind, name, folder))
+
+    def _preset_path(self, kind: str, name: str, folder: str) -> str:
+        """Chemin du preset sur la carte, cherché **comme le fait l'export**.
+
+        Une recherche à l'emplacement exact seulement déclarait « ABSENT »
+        40 instruments sur 65 que « Rassembler » trouvait et copiait : le
+        dossier noté dans le morceau omet souvent la racine, ou le preset a
+        été rangé depuis dans un sous-dossier.
+        """
+        if kind not in ("sound", "kit") or not name or self.sd is None:
+            return ""
+        from ...core.songpack import find_preset
+        try:
+            return find_preset(self.sd, kind, name, folder)
+        except Exception:  # noqa: BLE001 - simple affichage
+            log.exception("recherche du preset %s impossible", name)
+            return ""
 
     def _fill_samples(self, song) -> None:
         self._samples.setRowCount(0)

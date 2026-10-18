@@ -31,6 +31,7 @@ from .sdcard import (
     IGNORED_FILES,
     IGNORED_FILES_PREFIX,
     SDCard,
+    _is_ignored_dir,
     check_name,
     norm_rel,
     safe_deluge_name,
@@ -75,6 +76,9 @@ class Plan:
 
     ops: list[Op] = field(default_factory=list)
     title: str = ""
+    #: Octets concernés, quand le plan les a comptés en se construisant
+    #: (fichiers parasites) : inutile de les redemander au disque.
+    size: int = 0
 
     def __len__(self) -> int:
         return len(self.ops)
@@ -176,6 +180,7 @@ class Plan:
                 shutil.move(str(op.src), str(op.dst))
                 if norm_rel(old_rel) != norm_rel(new_rel):
                     mapping[old_rel] = new_rel
+                lib.move(_kind_of(old_rel), old_rel, new_rel)
                 done += 1
             except (OSError, shutil.Error) as exc:
                 errors.append(f"Déplacement de {sd.rel(op.src)} impossible : {exc}")
@@ -186,7 +191,24 @@ class Plan:
         #      XML, sans déplacer aucun fichier (cas d'un échantillon déjà
         #      présent ailleurs, que les presets cherchaient au mauvais
         #      endroit).
-        for op in self.ops:
+        # Un doublon n'est retiré que s'il est **encore** identique, octet
+        # pour octet, à l'exemplaire gardé : l'index a pu vieillir, ou
+        # décrire une autre carte aux mêmes chemins. Vérifié avant de
+        # rediriger quoi que ce soit.
+        refuses: set[int] = set()
+        for index, op in enumerate(self.ops):
+            if op.kind != "delete" or op.dst is None or not op.src.is_file():
+                continue
+            garde = sd.abs(mapping.get(sd.rel(op.dst), sd.rel(op.dst)))
+            if not _identical(op.src, garde):
+                refuses.add(index)
+                errors.append(f"{sd.rel(op.src)} conservé : il ne correspond "
+                              f"plus à {sd.rel(garde)} octet pour octet")
+
+        redirections: dict[str, str] = {}
+        for index, op in enumerate(self.ops):
+            if index in refuses:
+                continue
             if op.kind in ("delete", "relink") and op.dst is not None:
                 target = sd.rel(op.dst)
                 # Si la cible a elle-même été déplacée à l'étape 2, suivre le
@@ -194,22 +216,38 @@ class Plan:
                 # un chemin qui vient d'être vidé.
                 target = mapping.get(target, target)
                 mapping[sd.rel(op.src)] = target
+                redirections[sd.rel(op.src)] = target
 
+        relink_ok = True
         if mapping:
             sd.invalidate_cache()
             _report("Réécriture des références…")
+            failures: list[str] = []
             try:
                 changed = deps.relink_many(sd, mapping, apply=True,
-                                           progress=lambda n: _report(n))
+                                           progress=lambda n: _report(n),
+                                           failures=failures)
                 done += len(changed)
                 log.info("%d fichier(s) XML mis à jour", len(changed))
             except Exception as exc:  # noqa: BLE001
                 log.exception("réécriture des références en échec")
-                errors.append(f"Réécriture des références : {exc}")
+                failures.append(f"Réécriture des références : {exc}")
+            if failures:
+                relink_ok = False
+                errors.extend(failures)
+            elif relink_ok:
+                for old_rel, new_rel in redirections.items():
+                    lib.retarget_links(old_rel, new_rel)
 
-        # 4. Suppressions
-        for op in self.ops:
-            if op.kind != "delete":
+        # 4. Suppressions. Un doublon dont les références n'ont pas toutes
+        #    été redirigées est gardé : le supprimer casserait les presets
+        #    qui le citent encore.
+        for index, op in enumerate(self.ops):
+            if op.kind != "delete" or index in refuses:
+                continue
+            if op.dst is not None and not relink_ok:
+                errors.append(f"{sd.rel(op.src)} conservé : ses références "
+                              f"n'ont pas pu être toutes redirigées")
                 continue
             _report(op.src.name)
             try:
@@ -225,8 +263,21 @@ class Plan:
                 errors.append(f"Suppression de {sd.rel(op.src)} impossible : {exc}")
 
         sd.invalidate_cache()
+        # L'index suit les fichiers : le diagnostic relancé juste après doit
+        # voir la carte telle qu'elle est devenue.
+        lib.recompute_usage()
         log.info("plan appliqué : %d opération(s), %d erreur(s)", done, len(errors))
         return done, errors
+
+
+def _identical(a: Path, b: Path) -> bool:
+    """Vrai si les deux fichiers ont exactement le même contenu."""
+    import filecmp
+
+    try:
+        return b.is_file() and filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -506,8 +557,11 @@ def plan_group_by(sd: SDCard, lib: Library, key: str) -> Plan:
         if not bucket:
             continue
         parent = Path(rel).parent.as_posix()
-        dst_dir = f"{parent}/{safe_deluge_name(bucket)}"
-        if norm_rel(parent).endswith(norm_rel(bucket)):
+        folder = safe_deluge_name(bucket)
+        dst_dir = f"{parent}/{folder}"
+        # Déjà dans le bon sous-dossier ? On compare le dernier segment entier :
+        # un simple suffixe prenait « BigKick » pour le dossier « Kick ».
+        if norm_rel(parent).rsplit("/", 1)[-1] == norm_rel(folder):
             continue
         plan.ops.append(Op("move", path, sd.abs(f"{dst_dir}/{path.name}"),
                            f"{key} = {bucket}"))
@@ -551,28 +605,45 @@ def plan_purge_junk(sd: SDCard) -> Plan:
     application.
     """
     plan = Plan(title="Nettoyage des fichiers parasites")
-    for path in sorted(sd.root.rglob("*")):
+    # Parcours par ``os.scandir`` plutôt que ``rglob`` : les dossiers ignorés
+    # sont élagués au lieu d'être parcourus puis écartés, seuls des noms —
+    # des chaînes — sont comparés, et sous Windows la taille vient avec
+    # l'entrée de répertoire, sans interroger le disque. Le parcours
+    # précédent créait un chemin relatif et un ``stat`` par fichier : 0,82 s
+    # sur la carte de l'utilisateur (16 936 fichiers), 90 % du diagnostic de
+    # santé, que le tableau de bord relançait à chaque affichage.
+    junk: list[tuple[str, int]] = []
+    pile = [str(sd.root)]
+    while pile:
+        dossier = pile.pop()
         try:
-            if not path.is_file():
-                continue
-        except OSError:
-            continue
-        # Ne pas descendre dans les dossiers ignorés.
-        if any(part.lower() in IGNORED_FILES or part.startswith(".Trash")
-               or part.lower() in ("system volume information",
-                                   ".spotlight-v100", ".trashes", ".fseventsd",
-                                   "$recycle.bin")
-               for part in path.parts[:-1]):
-            continue
-        name = path.name
-        if name.startswith(IGNORED_FILES_PREFIX) or name.lower() in IGNORED_FILES:
-            size = 0
-            try:
-                size = path.stat().st_size
-            except OSError:
-                pass
-            plan.ops.append(Op("delete", path, None,
-                               f"fichier parasite ({size} octets)"))
+            with os.scandir(dossier) as entrees:
+                for entree in entrees:
+                    try:
+                        if entree.is_dir(follow_symlinks=False):
+                            # Ne pas descendre dans les dossiers ignorés — la
+                            # même liste que tous les parcours.
+                            if not _is_ignored_dir(entree.name):
+                                pile.append(entree.path)
+                            continue
+                        if not (entree.name.startswith(IGNORED_FILES_PREFIX)
+                                or entree.name.lower() in IGNORED_FILES):
+                            continue
+                        if not entree.is_file():
+                            continue
+                    except OSError:
+                        continue
+                    try:
+                        size = entree.stat().st_size
+                    except OSError:
+                        size = 0
+                    junk.append((entree.path, size))
+        except OSError as exc:
+            log.debug("dossier illisible pendant le nettoyage : %s", exc)
+    for chemin, size in sorted(junk, key=lambda item: Path(item[0])):
+        plan.ops.append(Op("delete", Path(chemin), None,
+                           f"fichier parasite ({size} octets)"))
+        plan.size += size
     return plan
 
 
@@ -591,7 +662,7 @@ def plan_archive_unused(sd: SDCard, lib: Library,
         path = sd.resolve_sample(rel)
         if path is None:
             continue
-        if norm_rel(rel).startswith(norm_rel(base)):
+        if (norm_rel(rel) + "/").startswith(norm_rel(base) + "/"):
             continue
         # On conserve l'arborescence sous le dossier d'archive.
         inner = Path(rel)
@@ -628,10 +699,31 @@ def plan_fix_names(sd: SDCard, lib: Library) -> Plan:
 
     for row in lib.search_samples(limit=100000):
         _consider(row["rel"], sd.resolve_sample(row["rel"]))
+    # Un morceau désigne ses presets **par leur nom** : en renommer un que
+    # cite un morceau couperait ce lien, et aucune réécriture ne le rétablit
+    # (les morceaux ne sont jamais réécrits pour cela). Ceux-là restent.
+    cites = _preset_names_in_songs(sd)
     for kind in ("synth", "kit"):
         for row in lib.search_presets(kind=kind, limit=100000):
+            if norm_rel(Path(row["rel"]).stem) in cites:
+                continue
             _consider(row["rel"], sd.abs(row["rel"]))
     return plan
+
+
+def _preset_names_in_songs(sd: SDCard) -> set[str]:
+    """Noms (normalisés) des presets et kits que citent les morceaux."""
+    from .model import Song
+
+    noms: set[str] = set()
+    for path in sd.songs():
+        try:
+            for _kind, name, _folder in Song.load(path).preset_refs():
+                if name:
+                    noms.add(norm_rel(name))
+        except Exception as exc:  # noqa: BLE001 - un morceau illisible
+            log.debug("morceau illisible %s : %s", path.name, exc)
+    return noms
 
 
 def plan_create_drum_folders(sd: SDCard) -> Plan:

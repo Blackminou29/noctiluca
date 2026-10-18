@@ -152,19 +152,36 @@ def list_backups(backup_dir: Path) -> list[BackupInfo]:
                 if info is not None:
                     out.append(info)
             elif entry.is_file() and path.suffix.lower() == ".zip":
-                stat = path.stat()
-                out.append(BackupInfo(
-                    path=path,
-                    when=datetime.fromtimestamp(stat.st_mtime),
-                    files=_zip_count(path),
-                    bytes=stat.st_size,
-                    label=path.stem,
-                    zipped=True,
-                ))
+                out.append(_read_zip_info(path))
         except OSError as exc:
             log.debug("sauvegarde illisible %s : %s", path, exc)
     out.sort(key=lambda i: i.when, reverse=True)
     return out
+
+
+def _read_zip_info(path: Path) -> BackupInfo:
+    """Description d'une archive, d'après le manifeste qu'elle contient.
+
+    Sans lui, le libellé devenait le nom du fichier et une archive faite
+    *avec* les échantillons passait pour une archive sans : la comparer à la
+    carte déclarait alors chaque échantillon « supprimé ».
+    """
+    stat = path.stat()
+    info = BackupInfo(path=path, when=datetime.fromtimestamp(stat.st_mtime),
+                      files=_zip_count(path), bytes=stat.st_size,
+                      label=path.stem, zipped=True)
+    try:
+        with zipfile.ZipFile(path) as zf:
+            data = json.loads(zf.read(MANIFEST).decode("utf-8"))
+        info.when = datetime.fromisoformat(data.get("when", info.when.isoformat()))
+        info.label = str(data.get("label", ""))
+        info.include_samples = bool(data.get("include_samples", False))
+        info.source = str(data.get("source", ""))
+        # Le manifeste compte les fichiers copiés, sans lui-même.
+        info.files = int(data.get("files", info.files))
+    except (OSError, KeyError, ValueError, TypeError, zipfile.BadZipFile) as exc:
+        log.debug("manifeste absent ou illisible dans %s : %s", path, exc)
+    return info
 
 
 def _zip_count(path: Path) -> int:
@@ -228,6 +245,17 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
     journalisé. Lève ``OSError`` si le dossier de destination est inutilisable.
     """
     base = Path(backup_dir)
+    # Dans SAMPLES, SYNTHS, KITS ou SONGS, la sauvegarde se recopierait
+    # elle-même en cours de route, et le Deluge listerait ses copies comme
+    # des presets et des morceaux.
+    for top in STD_DIRS:
+        dossier = sd.abs(top)
+        try:
+            base.resolve().relative_to(dossier.resolve())
+        except (ValueError, OSError):
+            continue
+        raise OSError("le dossier de sauvegarde est dans %s, sur la carte "
+                      "elle-même : choisissez-en un autre" % top)
     base.mkdir(parents=True, exist_ok=True)
 
     when = datetime.now()
@@ -302,6 +330,12 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
             info.bytes = archive.stat().st_size
         except (OSError, zipfile.BadZipFile) as exc:
             log.error("compression impossible : %s", exc)
+            # Le dossier reste la sauvegarde ; une archive tronquée à côté de
+            # lui passerait pour une seconde sauvegarde.
+            try:
+                archive.unlink()
+            except OSError:
+                pass
 
     log.info("sauvegarde créée : %s", info.summary())
     return info
@@ -335,7 +369,8 @@ def _backup_files(info: BackupInfo) -> dict[str, Path | str]:
 
 def restore_backup(info: BackupInfo, sd: SDCard,
                    progress: Callable[[str], None] | None = None,
-                   apply: bool = True) -> tuple[int, list[str]]:
+                   apply: bool = True,
+                   safety_dir: Path | None = None) -> tuple[int, list[str]]:
     """Recopie une sauvegarde sur la carte.
 
     **Écrase les fichiers de la carte** par ceux de la sauvegarde : c'est la
@@ -344,6 +379,12 @@ def restore_backup(info: BackupInfo, sd: SDCard,
     limite l'usure de la carte.
 
     :param apply: ``False`` compte ce qui serait restauré sans rien écrire.
+    :param safety_dir: dossier des sauvegardes. S'il est donné, chaque
+        fichier de la carte **sur le point d'être écrasé** y est d'abord
+        copié, dans une sauvegarde « avant restauration » qui se restaure
+        comme les autres. Sans elle, restaurer par erreur une vieille
+        sauvegarde effaçait tout le travail fait depuis. Un fichier qu'on
+        n'a pas pu mettre à l'abri n'est pas écrasé.
     :returns: ``(fichiers restaurés, erreurs)``.
     """
     errors: list[str] = []
@@ -366,8 +407,41 @@ def restore_backup(info: BackupInfo, sd: SDCard,
         except (OSError, zipfile.BadZipFile) as exc:
             return 0, [f"Archive illisible : {exc}"]
 
+    abri: Path | None = None
+    abrites = 0
+    abrites_octets = 0
+
+    def _mettre_a_l_abri(dst: Path, rel: str) -> bool:
+        """Copie le fichier actuel avant de l'écraser. Faux si impossible."""
+        nonlocal abri, abrites, abrites_octets
+        if safety_dir is None or not dst.is_file():
+            return True
+        try:
+            if abri is None:
+                base = Path(safety_dir)
+                stamp = datetime.now().strftime(STAMP_FORMAT)
+                abri = base / f"{stamp}_avant restauration"
+                index = 2
+                while abri.exists():
+                    abri = base / f"{stamp}_avant restauration ({index})"
+                    index += 1
+                abri.mkdir(parents=True)
+            copie = abri / rel
+            copie.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(dst, copie)
+            abrites += 1
+            abrites_octets += copie.stat().st_size
+            return True
+        except (OSError, shutil.Error) as exc:
+            errors.append(f"{rel} : copie de sécurité impossible ({exc}), "
+                          f"fichier laissé tel quel")
+            return False
+
     try:
         for i, (rel, source) in enumerate(sorted(files.items()), 1):
+            if ".." in rel.replace("\\", "/").split("/") or ":" in rel:
+                errors.append(f"{rel} : chemin hors de la carte, ignoré")
+                continue
             dst = sd.abs(rel)
             try:
                 if archive is not None:
@@ -375,6 +449,8 @@ def restore_backup(info: BackupInfo, sd: SDCard,
                     if dst.is_file() and dst.read_bytes() == data:
                         continue
                     if apply:
+                        if not _mettre_a_l_abri(dst, rel):
+                            continue
                         dst.parent.mkdir(parents=True, exist_ok=True)
                         dst.write_bytes(data)
                 else:
@@ -384,6 +460,8 @@ def restore_backup(info: BackupInfo, sd: SDCard,
                             and dst.read_bytes() == src.read_bytes()):
                         continue
                     if apply:
+                        if not _mettre_a_l_abri(dst, rel):
+                            continue
                         dst.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, dst)
                 restored += 1
@@ -394,6 +472,12 @@ def restore_backup(info: BackupInfo, sd: SDCard,
     finally:
         if archive is not None:
             archive.close()
+        if abri is not None:
+            _write_manifest(abri, BackupInfo(
+                path=abri, when=datetime.now(), files=abrites,
+                bytes=abrites_octets, label="avant restauration",
+                include_samples=(abri / "SAMPLES").is_dir(),
+                source=str(sd.root)))
 
     if apply:
         sd.invalidate_cache()

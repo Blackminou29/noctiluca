@@ -38,13 +38,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .fixedpoint import INT32_MAX, INT32_MIN, to_unit
+from .fixedpoint import INT32_MAX, INT32_MIN
 
 log = logging.getLogger(__name__)
 
 __all__ = [
     "FOLLOW_FILE", "DEFAULT_CC", "FOLLOW_TO_PARAM", "SANS_EQUIVALENT",
-    "load_map", "cc_value", "sound_messages",
+    "HALF_RANGE", "PARAM_LABELS", "label_of", "load_map", "cc_value",
+    "raw_from_cc", "reverse_map", "sound_messages",
 ]
 
 #: Nom du fichier, à la racine de la carte.
@@ -109,6 +110,69 @@ SANS_EQUIVALENT: frozenset[str] = frozenset({
 })
 
 
+#: Nom français de chaque paramètre pilotable, dans l'ordre où la fenêtre
+#: « Deluge en direct » les range : sources, filtres, enveloppes, effets.
+PARAM_LABELS: dict[str, str] = {
+    "volume": "Volume",
+    "pan": "Panoramique",
+    "pitchAdjust": "Hauteur",
+    "portamento": "Portamento",
+    "oscAVolume": "Osc A — niveau",
+    "oscAPitchAdjust": "Osc A — hauteur",
+    "oscAPulseWidth": "Osc A — largeur",
+    "oscAWavetablePosition": "Osc A — table",
+    "carrier1Feedback": "Osc A — réinjection",
+    "oscBVolume": "Osc B — niveau",
+    "oscBPitchAdjust": "Osc B — hauteur",
+    "oscBPulseWidth": "Osc B — largeur",
+    "oscBWavetablePosition": "Osc B — table",
+    "carrier2Feedback": "Osc B — réinjection",
+    "noiseVolume": "Bruit",
+    "modulator1Amount": "Modulateur 1",
+    "modulator1Feedback": "Modulateur 1 — réinjection",
+    "modulator2Amount": "Modulateur 2",
+    "modulator2Feedback": "Modulateur 2 — réinjection",
+    "lpfFrequency": "Passe-bas — coupure",
+    "lpfResonance": "Passe-bas — résonance",
+    "lpfMorph": "Passe-bas — morph",
+    "hpfFrequency": "Passe-haut — coupure",
+    "hpfResonance": "Passe-haut — résonance",
+    "hpfMorph": "Passe-haut — morph",
+    "env1.attack": "Enveloppe 1 — attaque",
+    "env1.decay": "Enveloppe 1 — déclin",
+    "env1.sustain": "Enveloppe 1 — maintien",
+    "env1.release": "Enveloppe 1 — relâche",
+    "env2.attack": "Enveloppe 2 — attaque",
+    "env2.decay": "Enveloppe 2 — déclin",
+    "env2.sustain": "Enveloppe 2 — maintien",
+    "env2.release": "Enveloppe 2 — relâche",
+    "lfo1Rate": "LFO 1 — vitesse",
+    "lfo2Rate": "LFO 2 — vitesse",
+    "arpeggiatorRate": "Arpège — vitesse",
+    "arpeggiatorGate": "Arpège — durée",
+    "modFXRate": "Mod FX — vitesse",
+    "modFXDepth": "Mod FX — profondeur",
+    "modFXFeedback": "Mod FX — réinjection",
+    "modFXOffset": "Mod FX — décalage",
+    "delayRate": "Délai — temps",
+    "delayFeedback": "Délai — réinjection",
+    "reverbAmount": "Réverbération",
+    "compressorShape": "Compresseur",
+    "waveFold": "Repliement",
+    "sampleRateReduction": "Décimation",
+    "bitCrush": "Bitcrush",
+    "bass": "Graves",
+    "bassFrequency": "Graves — fréquence",
+    "treble": "Aigus",
+    "trebleFrequency": "Aigus — fréquence",
+}
+
+
+def label_of(key: str) -> str:
+    """Nom français d'un paramètre, ou sa clé à défaut."""
+    return PARAM_LABELS.get(str(key), str(key))
+
+
 def _param_key(nom_firmware: str) -> str:
     """Clé de l'application pour un nom du firmware, ou chaîne vide."""
     if nom_firmware in SANS_EQUIVALENT:
@@ -127,12 +191,25 @@ def load_map(card=None, path: Path | None = None) -> dict[str, int]:
     assignations hors de 0..127 — le ``255`` de ``stutterRate`` — sont
     écartées : elles veulent dire « non assigné ».
     """
+    return load_map_with_source(card, path)[0]
+
+
+def load_map_with_source(card=None, path: Path | None = None
+                         ) -> tuple[dict[str, int], str]:
+    """Comme :func:`load_map`, avec la provenance de la table : le nom du
+    fichier lu, ou ``""`` quand ce sont les valeurs d'usine du firmware.
+
+    L'interface le dit : annoncer « lus sur la carte » sans carte, c'était
+    affirmer une lecture qui n'avait pas eu lieu.
+    """
     brut = dict(DEFAULT_CC)
+    source = ""
     fichier = Path(path) if path is not None else _card_file(card)
     if fichier is not None:
         lu = _read_file(fichier)
         if lu:
             brut = lu
+            source = fichier.name
             log.info("MIDI Follow : %d assignations lues dans %s",
                      len(lu), fichier.name)
 
@@ -143,7 +220,7 @@ def load_map(card=None, path: Path | None = None) -> dict[str, int]:
         cle = _param_key(nom)
         if cle:
             sortie[cle] = int(cc)
-    return sortie
+    return sortie, source
 
 
 def _card_file(card) -> Path | None:
@@ -173,6 +250,12 @@ def _read_file(chemin: Path) -> dict[str, int]:
     if racine is None:
         return {}
 
+    # Seules les assignations comptent : une autre section numérique (canal,
+    # réglage ajouté par un firmware futur) deviendrait sinon un contrôleur.
+    section = racine.find(".//defaultCCMappings")
+    if section is not None:
+        racine = section
+
     sortie: dict[str, int] = {}
     for element in racine.iter():
         if len(element):
@@ -198,15 +281,56 @@ def _raw_value(sound, cle: str) -> int | None:
     return None
 
 
-def cc_value(raw: int) -> int:
-    """Valeur 0..127 d'un paramètre 32 bits.
+#: Paramètres que le firmware règle sur une demi-échelle (0 à 2^31) :
+#: ``(valeur >> 24) - 64`` au lieu de ``(valeur + 2^24) >> 25``
+#: (``PatchedParamSet::paramValueToKnobPos``).
+HALF_RANGE: frozenset[str] = frozenset({"oscAPulseWidth", "oscBPulseWidth"})
 
-    Le firmware étale un contrôleur sur toute la plage du paramètre :
-    ``0x80000000`` -> 0, ``0x7FFFFFFF`` -> 127. C'est exactement ce que
-    ``to_unit`` calcule déjà pour l'affichage.
+
+def cc_value(raw: int, key: str = "") -> int:
+    """Valeur 0..127 qui place un paramètre 32 bits sur ``raw``.
+
+    **Calcul du firmware** (tag ``release_1_2_1``) : une position de bouton
+    vaut ``(valeur + 2^24) >> 25`` (``ParamCollection::paramValueToKnobPos``),
+    de −64 à +64, et le contrôleur reçu en mode « saut » devient
+    ``position = cc − 64``, sauf 127 qui vaut +64, le maximum
+    (``MidiTakeover::calculateKnobPos``). L'ancienne règle de trois
+    (``to_unit × 127``) tombait souvent un cran à côté.
     """
     v = int(max(INT32_MIN, min(INT32_MAX, int(raw))))
-    return max(0, min(127, int(round(to_unit(v) * 127))))
+    if key in HALF_RANGE:
+        return max(0, min(127, v >> 24))
+    if v >= 0x7F000000:
+        return 127
+    return max(0, min(127, ((v + (1 << 24)) >> 25) + 64))
+
+
+def raw_from_cc(value: int, key: str = "") -> int:
+    """Valeur 32 bits d'un paramètre d'après un contrôleur reçu.
+
+    Inverse de :func:`cc_value`, pour lire le **retour** du mode MIDI
+    Follow : la machine envoie ``position + 64`` (128 pour le maximum, un
+    octet que le MIDI n'autorise pas — on le prend pour le maximum).
+    """
+    try:
+        c = int(value)
+    except (TypeError, ValueError):
+        return 0
+    position = c - 64
+    if position >= 64 or c >= 128:
+        return INT32_MAX
+    if key in HALF_RANGE:
+        return max(0, c) << 24
+    return max(-64, position) << 25
+
+
+def reverse_map(mapping: dict[str, int] | None = None) -> dict[int, str]:
+    """Contrôleur -> clé de l'application (la première, en cas de doublon)."""
+    carte = mapping if mapping is not None else load_map()
+    sortie: dict[int, str] = {}
+    for cle in sorted(carte):
+        sortie.setdefault(int(carte[cle]), cle)
+    return sortie
 
 
 def sound_messages(sound, mapping: dict[str, int] | None = None,
@@ -236,6 +360,6 @@ def sound_messages(sound, mapping: dict[str, int] | None = None,
         brut = _raw_value(sound, cle)
         if brut is None:
             continue
-        messages.append((int(cc), cc_value(brut)))
+        messages.append((int(cc), cc_value(brut, cle)))
         vus.add(int(cc))
     return messages

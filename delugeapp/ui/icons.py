@@ -40,7 +40,8 @@ ICON_NAMES = (
     "dashboard", "samples", "synth", "kit", "song", "wand", "tools", "health",
     "settings", "play", "stop", "search", "refresh", "folder", "save",
     "export", "import", "trash", "star", "tag", "wave", "dice", "copy",
-    "link", "warning", "check", "chevron-right", "chevron-down", "plus",
+    "link", "warning", "check", "chevron-right", "chevron-down",
+    "chevron-left", "plus",
     "minus", "filter", "grid", "list", "info", "backup", "midi",
 )
 
@@ -77,11 +78,14 @@ def _rounded(p: QPainter, x: float, y: float, w: float, h: float,
     p.drawRoundedRect(QRectF(x, y, w, h), r, r)
 
 
-def _chevron(p: QPainter, color: QColor, down: bool) -> None:
-    """Chevron orienté vers la droite ou vers le bas."""
+def _chevron(p: QPainter, color: QColor, down: bool,
+             left: bool = False) -> None:
+    """Chevron orienté vers la droite, vers le bas ou vers la gauche."""
     _pen(p, color, 10.0)
     if down:
         p.drawPolyline(_poly([(26, 40), (50, 64), (74, 40)]))
+    elif left:
+        p.drawPolyline(_poly([(60, 26), (36, 50), (60, 74)]))
     else:
         p.drawPolyline(_poly([(40, 26), (64, 50), (40, 74)]))
 
@@ -438,6 +442,7 @@ _DRAW = {
     "check": _draw_check,
     "chevron-right": lambda p, c: _chevron(p, c, down=False),
     "chevron-down": lambda p, c: _chevron(p, c, down=True),
+    "chevron-left": lambda p, c: _chevron(p, c, down=False, left=True),
     "plus": _draw_plus,
     "minus": _draw_minus,
     "filter": _draw_filter,

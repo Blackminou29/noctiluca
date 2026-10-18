@@ -58,7 +58,24 @@ SCALES: dict[str, tuple[int, ...]] = {
     "kumoi": (0, 2, 3, 7, 9),
     "égyptienne": (0, 2, 5, 7, 10),
     "prométhée": (0, 2, 4, 6, 9),
+    # Deux gammes que propose le firmware c1.x sous ces noms.
+    "marva": (0, 1, 4, 6, 7, 9, 11),
+    "arabe": (0, 2, 4, 5, 6, 8, 10),
     "chromatique": tuple(range(12)),
+}
+
+#: Nom qu'affiche le Deluge (firmware c1.2.1, ``model/scale/preset_scales.h``)
+#: pour les gammes qu'il propose d'office. Les autres s'y entrent comme
+#: gamme utilisateur (``USER``) : le firmware accepte n'importe quel jeu de
+#: notes dans ``<modeNotes>``.
+DELUGE_SCALE_NAMES: dict[str, str] = {
+    "majeur": "MAJOR", "mineur": "MINOR", "dorien": "DORIAN",
+    "phrygien": "PHRYGIAN", "lydien": "LYDIAN", "mixolydien": "MIXOLYDIAN",
+    "locrien": "LOCRIAN", "mineur mélodique": "MELODIC MINOR",
+    "mineur harmonique": "HARMONIC MINOR",
+    "hongroise mineure": "HUNGARIAN MINOR", "marva": "MARVA",
+    "arabe": "ARABIAN", "par tons": "WHOLE TONE", "blues": "BLUES",
+    "pentatonique mineure": "PENTATONIC MINOR", "hirajoshi": "HIRAJOSHI",
 }
 
 #: Accords, par intervalles depuis la fondamentale.
@@ -120,6 +137,24 @@ PROGRESSIONS: dict[str, list[list[str]]] = {
                ["IV", "V", "VI", "VI"]],
     "tendu": [["I", "VII", "VI", "V"], ["I", "II", "III", "IV"]],
     "lumineux": [["I", "IV", "V", "IV"], ["I", "V", "IV", "I"]],
+}
+
+#: Couleurs d'accords : ce qu'on empile sur chaque degré de la gamme.
+CHORD_COLORS: dict[str, str] = {
+    "triades": "trois sons : fondamentale, tierce, quinte",
+    "septièmes": "la septième de la gamme en plus (jazz, house, lo-fi)",
+    "neuvièmes": "septième et neuvième ; jouées sans la fondamentale, que "
+                 "tient la basse (deep house, nappes)",
+    "suspendus": "la tierce remplacée par la quarte ou la seconde "
+                 "(trance, techno mélodique)",
+}
+
+#: Couleur habituelle de chaque ambiance ; les autres restent en triades.
+#: Le jazz, la house et la deep house vivent de septièmes et de neuvièmes :
+#: en triades, une progression « jazz » sonnait comme une comptine.
+AMBIANCE_COLORS: dict[str, str] = {
+    "jazz": "septièmes", "house": "septièmes", "deep": "neuvièmes",
+    "ambient": "neuvièmes",
 }
 
 #: Roue de Camelot : (classe de hauteur, mineur ?) -> code.
@@ -220,6 +255,110 @@ def name_to_note(name: str) -> int:
     return -1
 
 
+# --------------------------------------------------------------------------- #
+# Orthographe selon la tonalité
+# --------------------------------------------------------------------------- #
+
+_LETTERS_FR = ("Do", "Ré", "Mi", "Fa", "Sol", "La", "Si")
+_LETTERS_EN = ("C", "D", "E", "F", "G", "A", "B")
+_LETTER_PC = (0, 2, 4, 5, 7, 9, 11)
+_ACCIDENTALS = {0: "", 1: "#", 2: "##", -1: "b", -2: "bb"}
+
+
+def _seven_note_parent(intervals: tuple[int, ...]) -> tuple[int, ...] | None:
+    """La gamme de sept notes à épeler pour ``intervals`` (elle-même ou un
+    mode parent qui la contient), ou ``None``."""
+    if len(set(intervals)) == 7:
+        return tuple(sorted(set(intervals)))
+    wanted = set(intervals)
+    for parent in _PARENT_MODES:
+        if wanted <= set(SCALES[parent]):
+            return SCALES[parent]
+    return None
+
+
+def scale_spelling(root: int, scale: str,
+                   french: bool = True) -> dict[int, str]:
+    """Nom de chaque note de la gamme, épelé selon la tonalité.
+
+    Dans une gamme de sept notes, chaque nom de note sert **une fois** :
+    do mineur s'écrit Do Ré Mib Fa Sol Lab Sib, et non « Sol# » comme le
+    donnait la table fixe des noms. Parmi les deux orthographes possibles de
+    la tonique (Do#/Réb…), on garde celle qui demande le moins d'altérations.
+    Une gamme plus courte est épelée comme son mode parent (la pentatonique
+    mineure comme le mineur naturel).
+
+    :returns: ``{classe de hauteur: nom}`` ; vide si la gamme ne s'épelle
+        pas ainsi (par tons, chromatique…).
+    """
+    intervals = SCALES.get(scale)
+    if intervals is None:
+        return {}
+    seven = _seven_note_parent(tuple(intervals))
+    if seven is None:
+        return {}
+    try:
+        tonic = int(root) % 12
+    except (TypeError, ValueError):
+        return {}
+    letters = _LETTERS_FR if french else _LETTERS_EN
+
+    best: tuple[int, dict[int, str]] | None = None
+    for start in range(7):
+        names: dict[int, str] = {}
+        cost = 0
+        for degree, step in enumerate(sorted(seven)):
+            index = (start + degree) % 7
+            pc = (tonic + step) % 12
+            diff = (pc - _LETTER_PC[index] + 6) % 12 - 6
+            if diff not in _ACCIDENTALS:
+                break
+            names[pc] = letters[index] + _ACCIDENTALS[diff]
+            cost += abs(diff) + (5 if abs(diff) == 2 else 0)
+        else:
+            # À égalité (mib mineur / ré# mineur : six altérations chacun),
+            # on garde la tonique telle que l'application l'écrit partout
+            # ailleurs, pour que le titre et les notes concordent.
+            if names.get(tonic) != note_to_name(tonic, french,
+                                                with_octave=False):
+                cost += 0.5
+            if best is None or cost < best[0]:
+                best = (cost, names)
+    if best is None:
+        return {}
+    wanted = {(tonic + i) % 12 for i in intervals}
+    return {pc: name for pc, name in best[1].items() if pc in wanted}
+
+
+def spell(midi: int, spelling: dict[int, str] | None,
+          with_octave: bool = True, french: bool = True) -> str:
+    """Nom d'une note selon une orthographe de tonalité.
+
+    Hors de la gamme (ou sans orthographe), retombe sur
+    :func:`note_to_name`. L'octave suit la lettre : Dob3 est le si juste
+    sous Do3.
+    """
+    try:
+        value = int(midi)
+    except (TypeError, ValueError):
+        return ""
+    name = (spelling or {}).get(value % 12)
+    if not name:
+        return note_to_name(value, french, with_octave)
+    if not with_octave:
+        return name
+    shift = name.count("#") - name.count("b")
+    # « Sib » commence par « Si » sans être un si bémol de « S » : seules
+    # les altérations finales comptent, d'où le compte sur la fin du nom.
+    letters = _LETTERS_FR if french else _LETTERS_EN
+    base = next((l for l in sorted(letters, key=len, reverse=True)
+                 if name.startswith(l)), name)
+    tail = name[len(base):]
+    shift = tail.count("#") - tail.count("b")
+    natural = value - shift
+    return f"{name}{natural // 12 - OCTAVE_OFFSET}"
+
+
 def frequency(midi: int, a4: float = 440.0) -> float:
     """Fréquence en hertz d'une note MIDI."""
     try:
@@ -264,21 +403,46 @@ def scale_notes(root: int, scale: str, octaves: int = 1) -> list[int]:
     return out
 
 
-def deluge_mode_notes(scale: str) -> list[int]:
+def deluge_scale_name(scale: str) -> str:
+    """Nom de la gamme sur l'écran du Deluge, ou ``USER`` à saisir à la main."""
+    return DELUGE_SCALE_NAMES.get(scale, "USER")
+
+
+#: Gammes de sept notes, dans l'ordre où l'on cherche un « mode parent ».
+_PARENT_MODES = ("majeur", "mineur", "dorien", "mixolydien", "phrygien",
+                 "lydien", "mineur harmonique", "mineur mélodique", "locrien")
+
+
+def deluge_mode_notes(scale: str, official: bool = False) -> list[int]:
     """Intervalles à écrire dans le ``<modeNotes>`` d'un morceau.
 
-    Le Deluge attend exactement sept valeurs : c'est la contrainte de son
-    écran, qui réserve sept rangées de pads par octave. Une gamme plus courte
-    est complétée, une gamme plus longue est réduite en gardant les degrés les
-    plus structurants.
+    **Firmware communautaire (c1.x, celui de la machine)** : la gamme telle
+    quelle. Le firmware lit ``<modeNotes>`` comme une liste de longueur
+    quelconque, propose lui-même des gammes de cinq et six notes, et un
+    morceau de la carte (« Truc 1 ») est enregistré en pentatonique mineure à
+    cinq notes. La règle des « sept notes exactement » valait pour le
+    firmware officiel.
+
+    ``official=True`` : sept valeurs, pour le firmware officiel. Une gamme
+    plus courte est complétée par son **mode parent** — la gamme de sept
+    notes qui la contient (mineur naturel pour la pentatonique mineure,
+    phrygien pour l'in sen). L'ancienne version complétait par le majeur, et
+    donnait à la pentatonique mineure à la fois la tierce mineure et la
+    tierce majeure.
     """
     intervals = list(SCALES.get(scale, SCALES["majeur"]))
+    if not official:
+        return sorted(set(intervals))
     if len(intervals) == 7:
         return intervals
 
     if len(intervals) < 7:
-        # Compléter avec les degrés du majeur qui manquent, pour rester dans
-        # une couleur proche.
+        wanted = set(intervals)
+        for parent in _PARENT_MODES:
+            if wanted <= set(SCALES[parent]):
+                return list(SCALES[parent])
+        # Aucune gamme de sept notes ne la contient (par tons, blues) :
+        # compléter par les degrés du majeur, faute de mieux.
         for candidate in SCALES["majeur"]:
             if len(intervals) >= 7:
                 break
@@ -418,18 +582,75 @@ def diatonic_chords(root: int, scale: str,
             seventh = steps[3]
             if third > 3 and seventh == 11:
                 symbol += "maj7"
-            elif seventh == 10:
-                symbol += "7"
-            elif seventh == 9:
+            elif symbol.endswith("°") and seventh == 10:
+                # Demi-diminué : la notation usuelle est « ø7 », pas « °7 »
+                # qui désigne le diminué (septième diminuée).
+                symbol = symbol[:-1] + "ø7"
+            elif seventh in (9, 10):
                 symbol += "7"
         out.append((symbol, [n for n in notes if 0 <= n <= 127]))
     return out
 
 
-def chord_symbol(root: int, chord: str, french: bool = True) -> str:
-    """Nom lisible d'un accord : ``Do min7``, ``A maj``."""
-    suffix = {"maj": "", "min": "m"}.get(chord, chord)
-    return f"{note_to_name(root, french, with_octave=False)}{suffix}"
+#: Suffixe d'un accord dans son nom usuel : ``Lam``, ``Sol7``, ``Si°``.
+_CHORD_SUFFIX = {"maj": "", "min": "m", "dim": "°", "aug": "+",
+                 "m7b5": "ø7", "dim7": "°7", "mMaj7": "m(maj7)"}
+
+
+def chord_symbol(root: int, chord: str, french: bool = True,
+                 spelling: dict[int, str] | None = None) -> str:
+    """Nom lisible d'un accord : ``Lam``, ``Sol7``, ``Siø7``, ``Lab``.
+
+    :param spelling: orthographe de la tonalité (:func:`scale_spelling`),
+        pour que le VI de do mineur s'appelle Lab et non Sol#.
+    """
+    suffix = _CHORD_SUFFIX.get(chord, chord)
+    return f"{spell(root, spelling, with_octave=False, french=french)}{suffix}"
+
+
+def chord_quality(notes: list[int]) -> str:
+    """Nom d'accord (clé de :data:`CHORDS`) d'après les intervalles réels.
+
+    Les notes sont prises **depuis la fondamentale** : ``[57, 60, 64]``
+    donne ``min``. Un empilement inconnu rend ``maj`` ou ``min`` selon la
+    tierce.
+    """
+    if not notes:
+        return "maj"
+    root = notes[0]
+    shape = tuple(sorted({(n - root) % 12 for n in notes}))
+    for name, intervals in CHORDS.items():
+        if tuple(sorted({i % 12 for i in intervals})) == shape:
+            return name
+    return "min" if 3 in shape and 4 not in shape else "maj"
+
+
+def name_chord(notes) -> str:
+    """Nom de l'accord formé par des notes tenues, quel que soit son
+    renversement : ``[64, 67, 72]`` donne ``Do``. Chaîne vide s'il y a moins
+    de trois classes de notes ou si l'empilement n'est pas un accord connu.
+
+    La basse est essayée en premier comme fondamentale : ``Do/Mi`` se lit
+    ``Do`` et non ``Mim♭6``.
+    """
+    try:
+        valeurs = sorted({int(n) for n in notes})
+    except (TypeError, ValueError):
+        return ""
+    classes = []
+    for note in valeurs:
+        if note % 12 not in classes:
+            classes.append(note % 12)
+    if len(classes) < 3:
+        return ""
+    formes = {name: tuple(sorted({i % 12 for i in intervals}))
+              for name, intervals in CHORDS.items()}
+    for fondamentale in classes:
+        forme = tuple(sorted({(c - fondamentale) % 12 for c in classes}))
+        for name, intervals in formes.items():
+            if intervals == forme:
+                return chord_symbol(60 + fondamentale, name)
+    return ""
 
 
 def voice_leading(a: list[int], b: list[int]) -> list[int]:
@@ -465,15 +686,72 @@ def progression_names() -> list[str]:
     return list(PROGRESSIONS)
 
 
+def colored_chord(root: int, scale: str, degree: int,
+                  color: str = "triades") -> tuple[list[int], list[int], str]:
+    """Accord diatonique d'un degré (0 à 6), dans la couleur demandée.
+
+    :returns: ``(empilement complet, notes à jouer, suffixe du degré)``.
+        L'empilement complet sert à nommer l'accord et à trouver sa basse :
+        une neuvième se joue **sans sa fondamentale** — tierce, quinte,
+        septième, neuvième, le voicing des pianistes, la basse tenant la
+        fondamentale —, mais c'est avec elle qu'on la reconnaît (``m9``).
+
+    Une couleur qui ne tient pas dans la gamme retombe sur la triade : pas
+    de neuvième mineure (le ii de la mineur porterait un si-do grinçant),
+    pas de quarte augmentée déguisée en « sus4 ». Les gammes de moins de
+    sept notes restent en triades.
+    """
+    intervals = list(SCALES.get(scale, SCALES["majeur"]))
+    if len(intervals) < 7:
+        intervals = deluge_mode_notes(scale)
+    size = len(intervals)
+    base = int(root)
+
+    def note(offset: int) -> int:
+        position = degree + offset
+        return base + intervals[position % size] + 12 * (position // size)
+
+    triad = [note(0), note(2), note(4)]
+    if size < 7 or color not in CHORD_COLORS or color == "triades":
+        return triad, triad, ""
+    low = triad[0]
+    if color == "septièmes":
+        full = triad + [note(6)]
+        return full, full, "7"
+    if color == "neuvièmes":
+        seventh, ninth = note(6), note(8)
+        if ninth - low == 14:
+            return (triad + [seventh, ninth],
+                    [triad[1], triad[2], seventh, ninth], "9")
+        full = triad + [seventh]
+        return full, full, "7"
+    # Suspendus : quarte juste ou seconde majeure, sur une quinte juste.
+    if triad[2] - low != 7:
+        return triad, triad, ""
+    sus4 = note(3) - low == 5
+    sus2 = note(1) - low == 2
+    if sus4 and (degree in (0, 4) or not sus2):
+        chord = [low, note(3), triad[2]]
+        return chord, chord, "sus4"
+    if sus2:
+        chord = [low, note(1), triad[2]]
+        return chord, chord, "sus2"
+    return triad, triad, ""
+
+
 def progression(root: int, scale: str, name: str = "",
-                seed: int | None = None, bars: int = 4) -> list[dict]:
+                seed: int | None = None, bars: int = 4,
+                color: str = "") -> list[dict]:
     """Suite d'accords sur une gamme.
 
     :param name: ambiance (``pop``, ``mélancolique``, ``techno``…). Vide = au
         hasard parmi toutes.
     :param bars: nombre de mesures à remplir ; la progression est répétée ou
         tronquée pour y tenir.
-    :returns: ``[{'degree', 'symbol', 'notes', 'bars'}]``.
+    :param color: couleur des accords (:data:`CHORD_COLORS`) ; vide = celle
+        de l'ambiance (:data:`AMBIANCE_COLORS`), triades à défaut.
+    :returns: ``[{'degree', 'symbol', 'notes', 'bars', 'root', 'quality',
+        'name', 'bass', 'color'}]``.
 
     L'enchaînement passe par :func:`voice_leading`, pour que les accords se
     suivent au lieu de sauter d'un bout à l'autre du clavier.
@@ -486,6 +764,9 @@ def progression(root: int, scale: str, name: str = "",
     chords = diatonic_chords(root, scale, sevenths=False)
     if not chords:
         return []
+    colour = color if color in CHORD_COLORS else AMBIANCE_COLORS.get(
+        key, "triades")
+    sevenths = diatonic_chords(root, scale, sevenths=True)
 
     wanted = max(1, int(bars))
     sequence: list[str] = []
@@ -499,17 +780,110 @@ def progression(root: int, scale: str, name: str = "",
         index = _degree_index(degree)
         if index is None or index >= len(chords):
             continue
-        symbol, notes = chords[index]
-        if previous:
-            notes = voice_leading(previous, notes)
-        previous = notes
-        out.append({
-            "degree": degree,
-            "symbol": symbol,
-            "notes": notes,
-            "bars": 1,
-            "name": chord_symbol(notes[0] if notes else root, "maj"),
-        })
+        entry = _chord_entry(root, scale, index, colour, previous,
+                             chords, sevenths, degree)
+        previous = entry["notes"]
+        out.append(entry)
+    return out
+
+
+#: Fonction harmonique de chaque degré (0 = I) : tonique, sous-dominante,
+#: dominante. Deux accords de même fonction se remplacent sans casser le
+#: sens de la phrase — le vi pour le I, le ii pour le IV, le vii° pour le V.
+FUNCTIONS: dict[int, str] = {0: "tonique", 2: "tonique", 5: "tonique",
+                             1: "sous-dominante", 3: "sous-dominante",
+                             4: "dominante", 6: "dominante"}
+
+
+def _chord_entry(root: int, scale: str, index: int, colour: str,
+                 previous: list[int], chords=None, sevenths=None,
+                 degree: str = "") -> dict:
+    """Un accord de progression, tout décrit (voir :func:`progression`)."""
+    chords = chords or diatonic_chords(root, scale, sevenths=False)
+    sevenths = sevenths or diatonic_chords(root, scale, sevenths=True)
+    symbol, position = chords[index]
+    full, played, suffix = colored_chord(root, scale, index, colour)
+    if suffix in ("7", "9") and index < len(sevenths):
+        # Le degré noté comme dans les manuels : ii7, Imaj7, iiø7 ; la
+        # neuvième remplace le 7 quand elle a pu être ajoutée.
+        symbol = sevenths[index][0]
+        if suffix == "9" and symbol.endswith("7"):
+            symbol = symbol[:-1] + "9"
+    elif suffix:
+        symbol = symbol.upper() + suffix
+    if played:
+        position = played
+    # Fondamentale et qualité se lisent sur l'accord en position serrée,
+    # **avant** la conduite des voix : l'ancien nom venait de la note la
+    # plus grave une fois les voix déplacées, et le VI de la mineur
+    # (fa-la-do) s'appelait « La ».
+    chord_root = (full or position or [int(root)])[0]
+    quality = chord_quality(full or position)
+    notes = voice_leading(previous, position) if previous else position
+    return {
+        "degree": degree or _ROMAN[index],
+        "symbol": symbol,
+        "notes": notes,
+        "bars": 1,
+        "root": chord_root,
+        "quality": quality,
+        "name": chord_symbol(chord_root, quality,
+                             spelling=scale_spelling(root, scale)),
+        # Basse : la fondamentale dans l'octave 1 (MIDI 36 à 47).
+        "bass": 36 + (chord_root % 12),
+        "color": colour,
+        "function": FUNCTIONS.get(index, ""),
+    }
+
+
+def substitute(progression: list[dict], position: int, root: int,
+               scale: str, seed: int | None = None) -> list[dict]:
+    """La progression où l'accord ``position`` est remplacé par un autre.
+
+    Le remplaçant a la **même fonction harmonique** (:data:`FUNCTIONS`) —
+    le vi à la place du I, le ii à la place du IV —, garde la couleur de la
+    progression, et n'est égal ni à l'accord remplacé ni à ses voisins
+    immédiats. Ses voix suivent l'accord précédent, et celles de l'accord
+    suivant sont reconduites depuis lui. Une gamme de moins de sept notes,
+    sans fonctions établies, prend n'importe quel autre degré.
+
+    Rend une **nouvelle** liste ; l'originale n'est pas touchée.
+    """
+    out = [dict(chord) for chord in progression or []]
+    if not 0 <= int(position) < len(out):
+        return out
+    chords = diatonic_chords(root, scale, sevenths=False)
+    if not chords:
+        return out
+    sevenths = diatonic_chords(root, scale, sevenths=True)
+    rng = random.Random(seed if seed is not None
+                        else random.randrange(1 << 30))
+    current = _degree_index(out[position].get("degree", ""))
+    neighbours = {_degree_index(out[i].get("degree", ""))
+                  for i in (position - 1, position + 1) if 0 <= i < len(out)}
+    size = len(chords)
+    function = FUNCTIONS.get(current) if size >= 7 else None
+    candidates = [i for i in range(size)
+                  if i != current and i not in neighbours
+                  and (function is None or FUNCTIONS.get(i) == function)]
+    if not candidates:
+        candidates = [i for i in range(size)
+                      if i != current
+                      and (function is None or FUNCTIONS.get(i) == function)]
+    if not candidates:
+        return out
+    index = rng.choice(candidates)
+    colour = out[position].get("color", "triades")
+    previous = out[position - 1]["notes"] if position > 0 else []
+    out[position] = _chord_entry(root, scale, index, colour, previous,
+                                 chords, sevenths)
+    if position + 1 < len(out):
+        following = _degree_index(out[position + 1].get("degree", ""))
+        if following is not None and following < size:
+            out[position + 1] = _chord_entry(
+                root, scale, following, out[position + 1].get("color", colour),
+                out[position]["notes"], chords, sevenths,
+                out[position + 1].get("degree", ""))
     return out
 
 

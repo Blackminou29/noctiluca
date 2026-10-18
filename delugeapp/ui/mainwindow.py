@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenuBar,
     QMessageBox,
     QPushButton,
     QStackedWidget,
@@ -44,20 +45,31 @@ from . import icons, tasks
 from .theme import (
     GOLD,
     GREY,
-    PAD,
     PAD_GREEN,
-    PAD_WHITE,
     apply_theme,
+    lit_fill,
     page_color,
-    with_alpha,
 )
-from .widgets.common import BusyBar, SearchBar, human_size
+from .widgets.chrome import LedButton, LedStrip, NavPad, OledDisplay, Wordmark
+from .widgets.common import BusyBar, SearchBar, glow, human_size
 
 log = logging.getLogger(__name__)
 
-#: Largeurs de la barre latérale, dépliée et repliée.
-RAIL_WIDE = 200
+#: Largeurs de la barre latérale, dépliée et repliée. 212 px : le pad, le
+#: libellé en gras de la page choisie (« Tableau de bord ») et le chiffre de
+#: son raccourci tiennent sans troncature.
+RAIL_WIDE = 212
 RAIL_NARROW = 64
+
+#: Hauteur de la barre du haut : celle de l'écran OLED et de ses marges.
+TOPBAR_HEIGHT = 56
+
+#: Largeurs de fenêtre sous lesquelles la barre du haut se resserre : la
+#: recherche et l'écran rétrécissent, « COMPANION » et l'étiquette du
+#: Deluge s'effacent. Mesuré : à 980 px, tout tient sans que les menus
+#: passent dans le débordement.
+TOPBAR_MEDIUM = 1360
+TOPBAR_NARROW = 1180
 
 #: Clés de persistance de la géométrie et de la page courante.
 _GEOMETRY_KEY = "window/geometry"
@@ -107,6 +119,10 @@ class MainWindow(QMainWindow):
         #: n'a pas encore regardé, pour ne pas annoncer une « apparition »
         #: au démarrage alors qu'il était déjà branché.
         self._deluge_seen: bool | None = None
+        #: La fenêtre « Deluge en direct », créée au premier appel.
+        self._live_window = None
+        #: Dernier tempo de la machine transmis aux pages (arrondi).
+        self._tempo_suivi: int | None = None
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(icons.app_icon(256))
@@ -117,6 +133,10 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        # La barre de menus vit **dans** la barre du haut : une seule bande
+        # de façade, au lieu d'une barre de menus Windows posée sur un
+        # bandeau. :meth:`menuBar` la rend, comme Qt le ferait.
+        self._menubar = QMenuBar()
         outer.addWidget(self._build_header())
 
         body = QHBoxLayout()
@@ -140,89 +160,124 @@ class MainWindow(QMainWindow):
         self._safely(self._refresh_deluge_chip)
 
         self._restore_state()
+        self._fit_header(self.width())
         # Le choix de la carte se fait après l'affichage, pour que la fenêtre
         # soit visible derrière la boîte de dialogue.
         QTimer.singleShot(150, self._check_card)
 
     # -- en-tête ------------------------------------------------------------ #
 
+    def menuBar(self) -> QMenuBar:  # noqa: N802 - API Qt
+        """La barre de menus, logée dans la barre du haut.
+
+        Qt la placerait sur sa propre ligne, au-dessus de tout : une bande
+        grise de plus, et l'allure d'un logiciel de bureautique. Elle est
+        ici un élément de la façade, entre le logotype et l'écran.
+        """
+        return self._menubar
+
     def _build_header(self) -> QWidget:
         host = QFrame(self)
         host.setObjectName("Header")
-        host.setFixedHeight(56)
+        host.setFixedHeight(TOPBAR_HEIGHT)
         row = QHBoxLayout(host)
-        row.setContentsMargins(PAD, 6, PAD, 6)
-        row.setSpacing(10)
+        row.setContentsMargins(12, 0, 12, 0)
+        row.setSpacing(8)
 
-        emblem = QLabel(host)
-        emblem.setPixmap(icons.app_icon(32).pixmap(32, 32))
-        row.addWidget(emblem)
+        self._wordmark = Wordmark(host)
+        row.addWidget(self._wordmark)
+        row.addSpacing(6)
+        row.addWidget(self._menubar, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addStretch(1)
 
-        title = QLabel(APP_NAME, host)
-        title.setProperty("role", "title")
-        row.addWidget(title)
-
-        # Chemin de la carte : cliquable, il mène aux réglages.
-        self._card_button = QPushButton(host)
-        self._card_button.setFlat(True)
-        self._card_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # L'écran du Deluge : la carte ouverte, et les messages de la barre
+        # d'état en surimpression. Un clic mène aux réglages de la carte.
+        self._card_button = OledDisplay(host)
         self._card_button.setToolTip(
             "Emplacement de la carte — cliquez pour le changer")
         self._card_button.clicked.connect(
             lambda: self.go_to("Settings"))
         row.addWidget(self._card_button)
-        row.addStretch(1)
 
-        # Pastille du Deluge : grise tant qu'il n'est pas là, verte dès
-        # qu'il est connecté. C'est la première chose qu'on regarde quand on
-        # vient de brancher un câble.
-        self._deluge_chip = QPushButton("  Deluge", host)
-        self._deluge_chip.setFlat(True)
-        self._deluge_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Pastille du Deluge : éteinte tant qu'il n'est pas là, or quand il
+        # est détecté, verte et rayonnante dès qu'il est connecté. C'est la
+        # première chose qu'on regarde quand on vient de brancher un câble.
+        self._deluge_chip = LedButton("midi", "Deluge", host)
         self._deluge_chip.clicked.connect(self.guard_deluge_chip)
         row.addWidget(self._deluge_chip)
 
         self._search = SearchBar("Rechercher partout…")
-        self._search.setFixedWidth(260)
+        self._search.setFixedWidth(240)
         self._search.searchChanged.connect(self._global_search)
         row.addWidget(self._search)
 
         self._scan_button = QPushButton("Analyser", host)
-        self._scan_button.setIcon(icons.icon("refresh", GOLD, 16))
         self._scan_button.setObjectName("Primary")
         self._scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._scan_button.setToolTip("Relire la carte  (Ctrl+R)")
         self._scan_button.clicked.connect(self.scan_card)
         row.addWidget(self._scan_button)
+        self._light_scan_button(self.ctx.settings.theme_accent or GOLD)
 
-        self._play_button = QPushButton(host)
-        self._play_button.setIcon(icons.icon("stop", GREY, 16))
-        self._play_button.setToolTip("Arrêter la lecture  (Espace)")
-        self._play_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # La touche PLAY de la machine : ronde, verte et rayonnante pendant
+        # une lecture.
+        self._play_button = LedButton("play", "", host)
+        self._play_button.setToolTip("Écouter ou arrêter  (Espace)")
         self._play_button.clicked.connect(self.toggle_play)
         row.addWidget(self._play_button)
 
-        # Une bande de 3 px sous l'en-tête, teintée à la couleur de la page
-        # affichée : un repère permanent de « où suis-je », visible même du
-        # coin de l'œil.
+        # Le filet lumineux sous la barre, à la couleur de la page affichée :
+        # un repère permanent de « où suis-je », visible même du coin de
+        # l'œil.
         conteneur = QWidget(self)
         colonne = QVBoxLayout(conteneur)
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.setSpacing(0)
         colonne.addWidget(host)
-        self._accent_strip = QWidget(conteneur)
-        self._accent_strip.setFixedHeight(3)
-        self._accent_strip.setStyleSheet("background-color: %s;" % GOLD)
+        self._accent_strip = LedStrip(conteneur)
         colonne.addWidget(self._accent_strip)
         return conteneur
 
+    def _light_scan_button(self, accent: str) -> None:
+        """« Analyser » est le pad allumé de la façade, à sa couleur."""
+        encre = lit_fill(accent)[2]
+        self._scan_button.setIcon(icons.icon("refresh", encre, 16))
+        glow(self._scan_button, accent, 22, 0.45)
+
+    def _fit_header(self, largeur: int) -> None:
+        """Resserre la barre du haut quand la fenêtre rétrécit.
+
+        Mesuré : à 980 px, la barre complète demandait 1 100 px et ses menus
+        passaient dans un débordement « » ». L'écran et la recherche
+        rétrécissent, « COMPANION » et l'étiquette « DELUGE » s'effacent ;
+        tout revient en élargissant.
+        """
+        try:
+            if largeur >= TOPBAR_MEDIUM:
+                ecran, recherche, compact, legende = 330, 240, False, True
+            elif largeur >= TOPBAR_NARROW:
+                ecran, recherche, compact, legende = 260, 200, False, False
+            else:
+                ecran, recherche, compact, legende = 196, 150, True, False
+            self._card_button.set_preferred_width(ecran)
+            self._search.setFixedWidth(recherche)
+            self._wordmark.set_compact(compact)
+            self._deluge_chip.set_caption_visible(legende)
+        except Exception as exc:       # noqa: BLE001 - un ajustement ne casse rien
+            log.debug("barre du haut non ajustée : %s", exc)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - API Qt
+        super().resizeEvent(event)
+        self._fit_header(self.width())
+
     def guard_deluge_chip(self) -> None:
-        """Un clic sur la pastille : connecter, ou aller aux réglages.
+        """Un clic sur la pastille : connecter, ou voir la machine.
 
         Quand la machine est détectée mais pas encore connectée, le geste
         évident est de la connecter — pas d'ouvrir une page pour y chercher
-        un bouton. Une fois connectée, le clic mène aux réglages, là où l'on
-        choisit le canal et ce qu'on veut en faire.
+        un bouton. Une fois connectée, le clic ouvre « Deluge en direct » :
+        son écran, son tempo, le son sélectionné. Sans machine, il mène aux
+        réglages.
         """
         self._safely(self._deluge_chip_clicked)
 
@@ -231,7 +286,7 @@ class MainWindow(QMainWindow):
 
         lien = self.ctx.ensure_link()
         if lien.is_connected:
-            self.go_to("Settings")
+            self.open_live_window()
             return
         if midiport.find("out") is not None:
             reglages = self.ctx.settings
@@ -256,13 +311,12 @@ class MainWindow(QMainWindow):
         self._deluge_chip.setVisible(True)
 
         if connecte:
-            teinte, etat = PAD_GREEN, "connecté"
+            teinte, etat = PAD_GREEN, self._chip_details(lien)
         elif detecte:
             teinte, etat = GOLD, "détecté — cliquez pour connecter"
         else:
             teinte, etat = GREY, "absent"
-        self._deluge_chip.setIcon(icons.icon("link", teinte, 16))
-        self._deluge_chip.setStyleSheet("color: %s;" % teinte)
+        self._deluge_chip.set_state(teinte, connecte or detecte)
         self._deluge_chip.setToolTip("Deluge %s" % etat)
 
     def _poll_midi(self) -> None:
@@ -303,6 +357,87 @@ class MainWindow(QMainWindow):
         self._deluge_seen = present
         self._refresh_deluge_chip()
 
+    # -- liaison vivante ---------------------------------------------------- #
+
+    @staticmethod
+    def _chip_details(lien) -> str:
+        """Infobulle de la pastille quand la machine est connectée."""
+        etat = lien.state()
+        morceaux = ["connecté"]
+        if etat.firmware:
+            morceaux.append("firmware %s" % etat.firmware)
+        if etat.tempo is not None:
+            tempo = ("%.1f" % etat.tempo).replace(".", ",")
+            morceaux.append("%s BPM%s" % (tempo,
+                                          " ▶" if etat.running else ""))
+        morceaux.append("cliquez pour le voir en direct")
+        return " — ".join(morceaux)
+
+    def _service_link(self) -> None:
+        """Fait vivre le lien : la machine parle, l'application écoute."""
+        lien = self.ctx.link
+        if lien is None or not lien.is_connected:
+            return
+        try:
+            evenements = lien.service()
+        except Exception as exc:       # noqa: BLE001 - un battement ne casse rien
+            log.debug("service du lien MIDI : %s", exc)
+            return
+        if not evenements:
+            return
+        if "identity" in evenements and lien.identity is not None:
+            self.statusBar().showMessage(
+                "Deluge identifié : firmware %s." % lien.identity.version,
+                6000)
+            reglages = self._pages.get("Settings")
+            if reglages is not None and hasattr(reglages, "_refresh_midi"):
+                self._safely(reglages._refresh_midi)
+        if "tempo" in evenements and lien.tempo is not None \
+                and getattr(self.ctx.settings, "midi_follow_tempo", True):
+            self._follow_tempo(lien.tempo)
+        if evenements & {"identity", "ping", "tempo", "transport"}:
+            self._refresh_deluge_chip()
+
+    def _follow_tempo(self, bpm: float) -> None:
+        """Les pages qui ont un tempo prennent celui de la machine.
+
+        Seulement quand le tempo arrondi change : l'horloge fluctue d'un
+        dixième, et réécrire les champs à chaque impulsion empêcherait de
+        les modifier à la main.
+        """
+        arrondi = int(round(float(bpm)))
+        if arrondi == self._tempo_suivi:
+            return
+        self._tempo_suivi = arrondi
+        suivis = 0
+        for page in self._pages.values():
+            suivre = getattr(page, "follow_tempo", None)
+            if suivre is None:
+                continue
+            try:
+                if suivre(arrondi):
+                    suivis += 1
+            except Exception as exc:   # noqa: BLE001
+                log.debug("tempo non transmis à une page : %s", exc)
+        if suivis:
+            self.statusBar().showMessage(
+                "Tempo du Deluge : %d BPM, repris par les outils." % arrondi,
+                4000)
+
+    def open_live_window(self) -> None:
+        """Ouvre — ou ramène devant — la fenêtre « Deluge en direct »."""
+        from .livewindow import DelugeLiveWindow
+
+        if self._live_window is None:
+            self._live_window = DelugeLiveWindow(self.ctx, self)
+            self._live_window.settingsRequested.connect(
+                lambda: (self.go_to("Settings"), self.raise_(),
+                         self.activateWindow()))
+        self._live_window.show()
+        self._live_window.raise_()
+        self._live_window.activateWindow()
+
+
     # -- barre latérale ----------------------------------------------------- #
 
     def _build_rail(self) -> QWidget:
@@ -311,21 +446,19 @@ class MainWindow(QMainWindow):
         self._rail.setFixedWidth(RAIL_WIDE)
 
         column = QVBoxLayout(self._rail)
-        column.setContentsMargins(8, 10, 8, 10)
-        column.setSpacing(3)
+        column.setContentsMargins(4, 12, 8, 10)
+        column.setSpacing(2)
 
         for index, (key, cls) in enumerate(self._classes.items(), 1):
-            teinte = page_color(key)
-            button = QPushButton(f"  {cls.TITLE}", self._rail)
-            button.setObjectName("NavButton")
-            # L'icône prend la couleur de sa page : la barre devient une
-            # rangée de pads colorés, et l'on repère une destination à la
-            # teinte avant même d'avoir lu l'étiquette.
-            button.setIcon(icons.icon(cls.ICON, teinte, 19))
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            # Chaque page est un pad de sa couleur : éteint, il la montre
+            # en veilleuse ; choisi, il s'allume. La colonne devient une
+            # rangée de pads de la machine, et l'on repère une destination à
+            # la teinte avant même d'avoir lu l'étiquette. Le chiffre est
+            # celui du raccourci.
+            button = NavPad(cls.TITLE, cls.ICON, page_color(key), index,
+                            self._rail)
             button.setToolTip(f"{cls.TITLE}  (Ctrl+{index})")
-            button.setProperty("navColor", teinte)
+            button.setProperty("navColor", page_color(key))
             button.clicked.connect(
                 lambda _c=False, k=key: self.go_to(k))
             column.addWidget(button)
@@ -335,8 +468,11 @@ class MainWindow(QMainWindow):
 
         self._fold_button = QPushButton("  Replier", self._rail)
         self._fold_button.setObjectName("NavButton")
-        self._fold_button.setIcon(icons.icon("chevron-right", GREY, 16))
+        self._fold_button.setIcon(icons.icon("chevron-left", GREY, 14))
         self._fold_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._fold_button.setToolTip(
+            "Réduire la colonne à ses pads, pour donner la place aux "
+            "listes  (Ctrl+B)")
         self._fold_button.clicked.connect(self.toggle_rail)
         column.addWidget(self._fold_button)
         return self._rail
@@ -351,16 +487,19 @@ class MainWindow(QMainWindow):
             button.setText(f"  {cls.TITLE}" if self._rail_wide else "")
         self._fold_button.setText("  Replier" if self._rail_wide else "")
         self._fold_button.setIcon(
-            icons.icon("chevron-right" if self._rail_wide else "chevron-down",
-                       GREY, 16))
+            icons.icon("chevron-left" if self._rail_wide else "chevron-right",
+                       GREY, 14))
+        self._fold_button.setToolTip(
+            "Réduire la colonne à ses pads, pour donner la place aux "
+            "listes  (Ctrl+B)" if self._rail_wide else
+            "Déplier la colonne et ses étiquettes  (Ctrl+B)")
 
     # -- barre d'état ------------------------------------------------------- #
 
     def _tint_header(self, teinte: str) -> None:
-        """Teinte l'en-tête à la couleur de la page affichée."""
+        """Teinte le filet lumineux à la couleur de la page affichée."""
         try:
-            self._accent_strip.setStyleSheet(
-                "background-color: %s;" % teinte)
+            self._accent_strip.set_color(teinte)
         except Exception as exc:        # noqa: BLE001 - simple décor
             log.debug("teinte d'en-tête impossible : %s", exc)
 
@@ -379,11 +518,24 @@ class MainWindow(QMainWindow):
         self._space = QLabel("")
         bar.addPermanentWidget(self._space)
 
+        # Comme la machine affiche ses messages en surimpression sur son
+        # écran, l'écran de la barre du haut reprend chaque message de la
+        # barre d'état quelques secondes : on le lit là où l'on regarde.
+        bar.messageChanged.connect(self._card_button.flash)
+
         # L'indicateur de lecture et l'espace libre se rafraîchissent seuls.
         self._ticker = QTimer(self)
         self._ticker.setInterval(1000)
         self._ticker.timeout.connect(self._tick)
         self._ticker.start()
+
+        # La liaison vivante : ce que la machine envoie (horloge, écran,
+        # réglages, notes) est traité vingt-cinq fois par seconde, et ne
+        # coûte rien quand rien n'arrive.
+        self._link_timer = QTimer(self)
+        self._link_timer.setInterval(40)
+        self._link_timer.timeout.connect(self._service_link)
+        self._link_timer.start()
         bar.showMessage("Prêt.")
 
     def _tick(self) -> None:
@@ -394,9 +546,9 @@ class MainWindow(QMainWindow):
             self._playing.setText("● lecture" if playing else "")
             self._playing.setStyleSheet(
                 f"color: {PAD_GREEN};" if playing else "")
-            self._play_button.setIcon(
-                icons.icon("stop" if playing else "play",
-                           GOLD if playing else GREY, 16))
+            self._play_button.set_icon_name("stop" if playing else "play")
+            self._play_button.set_state(PAD_GREEN if playing else GREY,
+                                        playing)
 
             busy = tasks.active_count()
             self._progress.setVisible(busy > 0)
@@ -407,18 +559,51 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - un indicateur ne casse rien
             log.debug("barre d'état : %s", exc)
 
+    def _card_counts(self) -> str:
+        """Le contenu de la carte en une ligne d'écran, ou rien."""
+        try:
+            stats = self.ctx.lib.stats() if self.ctx.lib is not None else {}
+        except Exception as exc:  # noqa: BLE001 - l'index peut manquer
+            log.debug("statistiques indisponibles : %s", exc)
+            return ""
+        morceaux = []
+        for cle, nom in (("samples", "sons"), ("synths", "presets"),
+                         ("kits", "kits"), ("songs", "morceaux")):
+            valeur = int((stats or {}).get(cle, 0) or 0)
+            if valeur:
+                morceaux.append(f"{valeur:,} {nom}".replace(",", " "))
+        return " · ".join(morceaux)
+
     def _refresh_header(self) -> None:
-        """Met à jour le chemin de la carte et l'espace libre."""
+        """Met à jour l'écran de la carte et l'espace libre.
+
+        Le texte du bouton garde le chemin complet, comme avant ; l'écran
+        en montre le nom en grand, et le contenu de la carte en petit.
+        """
         path = self.ctx.settings.sd_path
+        nom = Path(path).name if path else ""
         if self.ctx.has_card:
             self._card_button.setText(f"  {path}")
-            self._card_button.setStyleSheet(f"color: {GREY};")
+            contenu = self._card_counts()
+            etiquette = ("CARTE · " + contenu) if contenu else (
+                "CARTE · pas encore analysée")
+            self._card_button.set_display(etiquette, (nom or path).upper(),
+                                          "hi")
+            self._card_button.setToolTip(
+                f"{path}\n\nCliquez pour changer de carte.")
         elif path:
             self._card_button.setText(f"  {path}  (invalide)")
-            self._card_button.setStyleSheet("color: #F2453D;")
+            self._card_button.set_display("CARTE INTROUVABLE",
+                                          (nom or path).upper(), "error")
+            self._card_button.setToolTip(
+                f"{path}\n\nCe dossier ne contient pas d'arborescence "
+                f"Deluge. Cliquez pour en choisir un autre.")
         else:
             self._card_button.setText("  Aucune carte — cliquez pour choisir")
-            self._card_button.setStyleSheet(f"color: {GOLD};")
+            self._card_button.set_display("AUCUNE CARTE",
+                                          "CLIQUEZ POUR CHOISIR", "warn")
+            self._card_button.setToolTip(
+                "Aucune carte choisie. Cliquez pour indiquer où elle est.")
 
         free = total = 0
         if self.ctx.sd is not None:
@@ -426,8 +611,12 @@ class MainWindow(QMainWindow):
                 free, total = self.ctx.sd.free_space()
             except Exception:  # noqa: BLE001
                 free = total = 0
-        self._space.setText(
-            f"{human_size(free)} libres" if total else "")
+        if not total:
+            self._space.setText("")
+        elif self.ctx.sd.is_volume:
+            self._space.setText(f"{human_size(free)} libres")
+        else:
+            self._space.setText(f"{human_size(free)} libres sur le disque")
 
         # Ne pas proposer ce qui ne peut pas marcher : sans carte, « Analyser »
         # ne pouvait que répondre par un avertissement. Un bouton éteint qui
@@ -465,6 +654,8 @@ class MainWindow(QMainWindow):
                          lambda: self.go_to("Toolbox"))
         self._add_action(tools_menu, "Santé de la carte",
                          lambda: self.go_to("Health"))
+        self._add_action(tools_menu, "Deluge en direct",
+                         self.open_live_window, "Ctrl+D")
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Replier la barre latérale",
                          self.toggle_rail, "Ctrl+B")
@@ -520,32 +711,49 @@ class MainWindow(QMainWindow):
             log.debug("page inconnue : %r", key)
             return
         page = self._pages.get(key)
+        nouvelle = page is None
         if page is None:
             page = self._create_page(key)
             if page is None:
                 return
+        # Une page qui devient visible se rafraîchit d'elle-même
+        # (``Page.showEvent``). La rafraîchir ici aussi la faisait travailler
+        # deux fois à chaque visite — deux diagnostics de santé d'une seconde
+        # pour le tableau de bord, mesurés sur la carte de l'utilisateur. On
+        # ne le fait donc que si elle était déjà affichée : aucun événement
+        # d'affichage ne viendra alors.
+        deja_affichee = (self._stack.currentWidget() is page
+                         and page.isVisible())
         self._stack.setCurrentWidget(page)
         for name, button in self._buttons.items():
-            actif = name == key
-            button.setChecked(actif)
-            # Le bouton actif porte un liseré de sa couleur : on sait où
-            # l'on est sans avoir à comparer neuf icônes.
-            teinte = page_color(name)
-            button.setStyleSheet(
-                "QPushButton#NavButton {"
-                " border-left: 3px solid %s;"
-                " background-color: %s;"
-                " color: %s; font-weight: 600; }" % (
-                    teinte, with_alpha(teinte, 0.14), PAD_WHITE)
-                if actif else
-                "QPushButton#NavButton { border-left: 3px solid transparent; }")
+            # Le pad de la page s'allume, les autres retombent en veilleuse :
+            # on sait où l'on est sans avoir à comparer neuf icônes.
+            button.setChecked(name == key)
         self._tint_header(page_color(key))
+        if deja_affichee:
+            try:
+                page.refresh()
+            except Exception:  # noqa: BLE001 - la page a déjà son rempart
+                log.exception("rafraîchissement de %s en échec", key)
+        if nouvelle:
+            self._safely(lambda: self._offer_tempo(page))
         if partie:
             self._safely(lambda: page.focus_on(partie))
-        try:
-            page.refresh()
-        except Exception:  # noqa: BLE001 - la page a déjà son rempart
-            log.exception("rafraîchissement de %s en échec", key)
+
+    def _offer_tempo(self, page) -> None:
+        """Une page ouverte pendant que la machine joue prend son tempo.
+
+        Les pages ne se construisent qu'à leur première visite : sans cela,
+        une page ouverte après l'arrivée de l'horloge garderait le tempo du
+        genre. Une seule fois — ensuite, c'est l'utilisateur qui décide.
+        """
+        lien = self.ctx.link
+        suivre = getattr(page, "follow_tempo", None)
+        if (suivre is None or lien is None or not lien.is_connected
+                or lien.tempo is None
+                or not getattr(self.ctx.settings, "midi_follow_tempo", True)):
+            return
+        suivre(int(round(float(lien.tempo))))
 
     def _create_page(self, key: str):
         """Instancie une page et branche ses signaux."""
@@ -577,9 +785,12 @@ class MainWindow(QMainWindow):
             "scanFinished": self.refresh_all,
             "cardModified": self.refresh_all,
             "presetSaved": lambda _rel: self.refresh_all(),
+            "songWritten": lambda _rel: self.refresh_all(),
             "cardChanged": self._card_changed,
             "accentChanged": self._accent_changed,
             "resetIndexRequested": self.refresh_all,
+            "openInGenerator": self._open_in_generator,
+            "liveRequested": self.open_live_window,
         }
         for name, slot in connections.items():
             signal = getattr(page, name, None)
@@ -589,6 +800,25 @@ class MainWindow(QMainWindow):
                 signal.connect(slot)
             except TypeError as exc:
                 log.debug("signal %s.%s non branché : %s", key, name, exc)
+
+    def _open_in_generator(self, rel: str) -> None:
+        """Ouvre un preset de la carte dans le générateur."""
+        card = self.ctx.sd
+        if card is None or not rel:
+            return
+        from ..core.model import SynthPreset
+
+        try:
+            preset = SynthPreset.load(card.abs(rel))
+        except Exception:  # noqa: BLE001
+            log.exception("preset illisible pour le générateur : %s", rel)
+            self.statusBar().showMessage(f"Preset illisible : {rel}", 8000)
+            return
+        self.go_to("Generator")
+        page = self._pages.get("Generator")
+        starter = getattr(page, "start_from", None)
+        if callable(starter):
+            starter(preset)
 
     def refresh_all(self) -> None:
         """Rafraîchit la page visible, et marque les autres à rafraîchir.
@@ -656,12 +886,47 @@ class MainWindow(QMainWindow):
 
     # -- carte SD ----------------------------------------------------------- #
 
+    def _match_index_to_card(self) -> None:
+        """Écarte l'index s'il décrit une autre carte que celle choisie."""
+        if self.ctx.sd is None or self.ctx.lib is None:
+            return
+        from ..core.scan import forget_other_card
+
+        try:
+            if forget_other_card(self.ctx.sd, self.ctx.lib):
+                self.statusBar().showMessage(
+                    "Nouvelle carte : lancez « Analyser la carte » pour "
+                    "l'indexer.", 0)
+        except Exception:  # noqa: BLE001
+            log.exception("comparaison de l'index et de la carte impossible")
+
+    def _update_index_on_start(self) -> None:
+        """Relit en arrière-plan ce qui a changé sur la carte depuis la
+        dernière analyse : une fraction de seconde, en lecture seule.
+
+        Mesuré sur la carte de l'utilisateur : son index annonçait encore
+        125 échantillons manquants et une note de 85, alors qu'une
+        réparation les avait rétablis depuis ; 10 fichiers relus en 0,2 s
+        ramenaient la note à 90.
+        """
+        if not getattr(self.ctx.settings, "index_on_start", True):
+            return
+        page = self._pages.get("Dashboard") or self._create_page("Dashboard")
+        if page is None:
+            return
+        try:
+            page.update_index()
+        except Exception:  # noqa: BLE001 - l'index se rattrapera à la main
+            log.exception("mise à jour de l'index au démarrage impossible")
+
     def _check_card(self) -> None:
         """Au démarrage : propose une carte si aucune n'est valide."""
         self._refresh_header()
         if self.ctx.has_card:
             self.statusBar().showMessage(
                 f"Carte : {self.ctx.settings.sd_path}", 6000)
+            self._match_index_to_card()
+            self._update_index_on_start()
             return
 
         found = []
@@ -708,6 +973,13 @@ class MainWindow(QMainWindow):
             self.ctx.save()
         except Exception:  # noqa: BLE001
             log.exception("enregistrement des réglages impossible")
+        self._match_index_to_card()
+        # La table MIDI Follow est propre à chaque carte.
+        if self.ctx.link is not None:
+            try:
+                self.ctx.link.load_follow_map(self.ctx.sd)
+            except Exception:  # noqa: BLE001
+                log.exception("relecture de MIDI Follow impossible")
 
         self._refresh_header()
         # Les pages déjà créées voient une carte différente : elles doivent
@@ -732,7 +1004,11 @@ class MainWindow(QMainWindow):
             return
         try:
             apply_theme(app, colour)
-            self.statusBar().showMessage("Couleur d'accent appliquée.", 4000)
+            # Le bouton « Analyser » est le pad allumé de la façade : son
+            # icône et son halo suivent la nouvelle couleur.
+            self._light_scan_button(colour)
+            self.statusBar().showMessage(
+                "Couleur d'accent appliquée à la façade.", 4000)
         except Exception:  # noqa: BLE001
             log.exception("application du thème impossible")
 
@@ -845,6 +1121,9 @@ class MainWindow(QMainWindow):
                 return
 
         self._ticker.stop()
+        self._link_timer.stop()
+        if self._live_window is not None:
+            self._live_window.close()
         self._save_state()
         stubborn = tasks.stop_all(4000)
         if stubborn:

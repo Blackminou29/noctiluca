@@ -68,6 +68,29 @@ def _setup_logging(verbose: bool = False) -> Path | None:
         return None
 
 
+def _translate_qt(app):
+    """Les boutons standard de Qt en français : « Oui », « Non », « Annuler ».
+
+    Les questions posées par ``QMessageBox`` affichaient « Yes » et « No »
+    au milieu d'une application entièrement en français. La traduction est
+    livrée avec PyQt6 ; il suffisait de la charger.
+
+    Rend le traducteur installé, ou ``None`` s'il n'a pas pu l'être.
+    """
+    try:
+        from PyQt6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+        traducteur = QTranslator(app)
+        dossier = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+        if (traducteur.load(QLocale(QLocale.Language.French), "qtbase", "_",
+                            dossier)
+                and app.installTranslator(traducteur)):
+            return traducteur
+    except Exception:  # noqa: BLE001 - une traduction absente ne bloque rien
+        logging.getLogger("delugeapp").debug("traduction de Qt indisponible")
+    return None
+
+
 def _install_excepthook() -> None:
     """Détourne les exceptions non rattrapées vers le journal et l'écran."""
     log = logging.getLogger("delugeapp")
@@ -167,37 +190,79 @@ def _build_context(args: argparse.Namespace):
     return AppContext(settings=settings, sd=card, lib=library, player=player)
 
 
+#: Taille logique de l'écran de démarrage.
+SPLASH_SIZE = (520, 300)
+
+
 def _splash(app):
-    """Écran de démarrage : l'emblème sur un fond sombre."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QColor, QPainter, QPixmap
+    """Écran de démarrage : la couverture du guide, en petit.
+
+    Le treillis en haut, puis la typographie du plat : « COMPANION » en
+    capitales espacées, « SYNTHSTROM » en blanc, « DELUGE » en magenta et
+    son filet. Tracé à la densité de l'écran, pour rester net sur un
+    affichage agrandi.
+    """
+    from PyQt6.QtCore import QPointF, QRectF
+    from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
     from PyQt6.QtWidgets import QSplashScreen
 
     from delugeapp import __version__
-    from delugeapp.config import APP_NAME
-    from delugeapp.ui import icons
-    from delugeapp.ui.theme import GOLD, GREY, PANEL_LO
+    from delugeapp.ui import art, icons
+    from delugeapp.ui.theme import (FONT_UI, PAD_MAGENTA, PAD_WHITE,
+                                    TEXT_SOFT)
 
-    pixmap = QPixmap(420, 240)
-    pixmap.fill(QColor(PANEL_LO))
+    largeur, hauteur = SPLASH_SIZE
+    try:
+        ratio = max(1.0, float(app.devicePixelRatio()))
+    except Exception:  # noqa: BLE001 - écran inconnu
+        ratio = 1.0
+    pixmap = QPixmap(int(largeur * ratio), int(hauteur * ratio))
+    pixmap.setDevicePixelRatio(ratio)
     painter = QPainter(pixmap)
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.drawPixmap(170, 36, icons.app_icon(80).pixmap(80, 80))
-        font = painter.font()
-        font.setPointSize(15)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor(GOLD))
-        painter.drawText(pixmap.rect().adjusted(0, 60, 0, 0),
-                         Qt.AlignmentFlag.AlignCenter, APP_NAME)
-        font.setPointSize(9)
-        font.setBold(False)
-        painter.setFont(font)
-        painter.setPen(QColor(GREY))
-        painter.drawText(pixmap.rect().adjusted(0, 108, 0, 0),
-                         Qt.AlignmentFlag.AlignCenter,
-                         f"version {__version__}")
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        fond = QLinearGradient(QPointF(0, 0), QPointF(0, hauteur))
+        fond.setColorAt(0.0, QColor("#0B0D11"))
+        fond.setColorAt(1.0, QColor("#171B23"))
+        painter.fillRect(QRectF(0, 0, largeur, hauteur), fond)
+
+        dessin = art.circuit(largeur, 150, PAD_MAGENTA, art.seed_of("Deluge"),
+                             ratio, density=0.5, fade=(0.0, 0.0))
+        painter.setOpacity(0.9)
+        painter.drawPixmap(QPointF(0, 6), dessin)
+        painter.setOpacity(1.0)
+
+        # Le pied du dessin s'efface dans le fond, comme sur la couverture.
+        voile = QLinearGradient(QPointF(0, 110), QPointF(0, 160))
+        voile.setColorAt(0.0, QColor(11, 13, 17, 0))
+        voile.setColorAt(1.0, QColor(13, 16, 21, 255))
+        painter.fillRect(QRectF(0, 110, largeur, 50), voile)
+
+        painter.drawPixmap(QRectF(34, 176, 76, 76).toRect(),
+                           icons.app_icon(152).pixmap(152, 152))
+
+        def police(points, poids, espacement=0.0):
+            f = QFont(FONT_UI)
+            f.setPointSizeF(points)
+            f.setWeight(QFont.Weight(poids))
+            if espacement:
+                f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing,
+                                   espacement)
+            return f
+
+        x = 132.0
+        painter.setFont(police(7.5, 600, 4.0))
+        painter.setPen(QColor(TEXT_SOFT))
+        painter.drawText(QPointF(x, 188), "COMPANION")
+        painter.setFont(police(19, 800, 1.0))
+        painter.setPen(QColor(PAD_WHITE))
+        painter.drawText(QPointF(x, 218), "SYNTHSTROM")
+        painter.setPen(QColor(PAD_MAGENTA))
+        painter.drawText(QPointF(x, 248), "DELUGE")
+        painter.fillRect(QRectF(x, 258, 92, 2.5), QColor(PAD_MAGENTA))
+        painter.setFont(police(7, 700, 3.0))
+        painter.drawText(QPointF(x, 280), f"VERSION {__version__}")
     finally:
         painter.end()
 
@@ -237,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_ORG)
     app.setApplicationDisplayName(APP_NAME)
+    _translate_qt(app)
 
     _install_excepthook()
 

@@ -97,6 +97,10 @@ class KitsPage(Page):
         export.clicked.connect(self.guard(self._export_midi))
         actions.addWidget(export)
 
+        song = tool_button("Motif en morceau", "song")
+        song.clicked.connect(self.guard(self._song_from_motif))
+        actions.addWidget(song)
+
         row = QHBoxLayout()
         self._search = SearchBar("Rechercher un kit…")
         self._search.searchChanged.connect(self.guard(lambda _t: self._reload()))
@@ -480,6 +484,44 @@ class KitsPage(Page):
             self.say(f"Export impossible : {exc}")
             return
         self.say(f"Motif exporté : {Path(chosen).name}")
+
+    # -- morceau du Deluge -------------------------------------------------- #
+
+    def _song_from_motif(self) -> None:
+        """Le motif d'essai, joué par ce kit, en morceau du Deluge.
+
+        Le kit est repris **tel qu'il est sur la carte**, et non tel que
+        l'application le comprend : les conversions que la machine ferait en
+        le chargeant (kit ancien, bornes en millisecondes…) sont appliquées
+        par :func:`delugeapp.core.songwriter.kit_track`.
+        """
+        pattern = self._sequencer.pattern()
+        if pattern is None or not any(pattern.tracks.values()):
+            self.say("Composez d'abord un motif.")
+            return
+        if self._kit is None or not self._current:
+            self.say("Choisissez d'abord un kit.")
+            return
+        rel = self._current
+        model = self._kit
+
+        def build(card):
+            from ...core import dxml, songwriter
+
+            doc = dxml.load(card.abs(rel))
+            root = doc.root if doc.root.tag == "kit" else doc.root.find("kit")
+            if root is None:
+                raise ValueError("ce fichier ne contient pas de kit")
+            rows = songwriter.drum_rows(pattern.tracks, model)
+            dossier = str(Path(rel).parent).replace("\\", "/")
+            return songwriter.pattern_song(
+                pattern, root, rows, name="", bpm=128, version=doc.firmware,
+                kit_name=Path(rel).stem,
+                folder=dossier if dossier not in ("", ".") else "KITS",
+                sd=card)
+
+        self.write_song(build, f"{Path(rel).stem} motif")
+
 
     # -- rafraîchissement --------------------------------------------------- #
 

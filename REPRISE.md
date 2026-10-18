@@ -1,14 +1,20 @@
 # Point d'étape — Deluge Companion
 
-**Dernière mise à jour :** 11 octobre 2026 (seconde passe : lien MIDI)
+**Dernière mise à jour :** 15 octobre 2026 (le Deluge branché, en direct, §3 novovicies)
 **État :** **application terminée et fonctionnelle.** Les cinq phases sont écrites,
-`python main.py` démarre, **576 tests au vert**. Quatre modules se sont ajoutés
+`python main.py` démarre, **la suite complète passe** (le nombre exact est dans le dernier
+§ daté). Deux audits de bugs (§3 duovicies) puis trois passes sur les générateurs et la
+composition (§3 tervicies, quatervicies et quinvicies) ont suivi. Quatre modules se sont ajoutés
 depuis : `core/samplefix.py` **corrige** les défauts audio que le diagnostic ne
 savait que signaler, `core/slicer.py` **découpe une boucle en kit**,
 `core/similarity.py` **retrouve un son par ressemblance**, et
 `core/songpack.py` **sort un morceau du Deluge**. Une passe de nettoyage a
 suivi : voir §3 terdecies. **L'interface a ensuite été entièrement reprise**
-à la demande de l'utilisateur : voir §3 quindecies.
+à la demande de l'utilisateur : voir §3 quindecies, puis **redessinée d'après le
+guide** (« la façade ») : voir §3 septvicies. **Chaque outil de création écrit
+désormais un morceau du Deluge** (`core/songwriter.py`) : voir §3 octovicies.
+**L'application travaille avec le Deluge branché en USB** — écran recopié,
+tempo, son sélectionné, mesuré sur la machine : voir §3 novovicies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -25,7 +31,8 @@ presets de synthé par genre musical ou aléatoire, et boîte à outils de produ
 tous les modules, format XML du Deluge, palette graphique, description de chacune des
 9 pages. C'est le document de référence.
 
-> `SPEC.md` contient désormais **trois encadrés « Correction mesurée »** (§1.6, §4.5, §4.9).
+> `SPEC.md` contient plusieurs encadrés **« Correction mesurée »** (dont §1.5, §1.6, §4.5,
+> §4.9 ; la résolution des notes, au §1.6, a été corrigée le 14 octobre 2026).
 > Ce sont des points où la rédaction initiale était fausse et où la mesure sur la carte a
 > tranché. Ne pas revenir en arrière dessus : voir §2 ci-dessous.
 
@@ -212,13 +219,15 @@ Trois modules entièrement arithmétiques : ni carte, ni audio, ni numpy, ni Qt.
 | Module | Contenu | Vérifications |
 |---|---|---|
 | `theory` | 25 gammes, 28 accords, 12 ambiances de progression, cycle des quintes, Camelot | **Tous** les noms de notes se relisent sur 24–108 dans les deux langues ; accords diatoniques conformes aux manuels (`I ii iii IV V vi vii°` en majeur, `i ii° III iv v VI VII` en mineur) ; codes Camelot vérifiés sur la vraie roue (C=8B, Am=8A, F#m=11A) |
-| `rhythm` | euclidien (Bjorklund), 11 motifs de genre, 9 grooves MPC, swing, humanisation, tables de délai | **`E(3,8)` = `x..x..x.`** (exigence SPEC §7) et `E(5,8)` = `x.xx.xx.` ; le nombre de coups est exact pour toutes les combinaisons jusqu'à 32 pas ; 1/4 à 120 BPM = 500 ms ; `bars_to_ticks(16)` = 1536 |
+| `rhythm` | euclidien (Bjorklund), 11 motifs de genre, 9 grooves MPC, swing, humanisation, tables de délai | **`E(3,8)` = `x..x..x.`** (exigence SPEC §7) et `E(5,8)` = `x.xx.xx.` ; le nombre de coups est exact pour toutes les combinaisons jusqu'à 32 pas ; 1/4 à 120 BPM = 500 ms ; `bars_to_ticks(16)` = 1536 (grille **interne** de l'appli, 96 par mesure ; un morceau c1.2.1 en compte 384 : voir §3 octovicies) |
 | `midifile` | SMF type 1, stdlib seule | Relu par **un analyseur indépendant** écrit dans les tests : en-tête, blocs, délais en longueur variable, aucune note laissée allumée, aucun octet superflu. Un vrai clip de la carte (87 notes) ressort avec ses 87 notes et son tempo |
 
-**Contrainte du Deluge à ne pas oublier :** `<modeNotes>` veut **exactement sept**
-intervalles, parce que l'écran réserve sept rangées de pads par octave.
-`theory.deluge_mode_notes()` complète les gammes de cinq notes et réduit celles de huit ;
-c'est vérifié pour les 25 gammes.
+~~**Contrainte du Deluge à ne pas oublier :** `<modeNotes>` veut **exactement sept**
+intervalles.~~ **Fausse pour la machine de l'utilisateur** (voir §3 tervicies) : c'était la
+règle du firmware officiel. Le firmware communautaire c1.2.1 propose des gammes de cinq et
+six notes, et un morceau de la carte (« Truc 1 ») est enregistré à cinq notes.
+`theory.deluge_mode_notes()` rend la gamme telle quelle ; `official=True` garde l'ancien
+comportement, en complétant par le mode parent.
 
 ---
 
@@ -290,6 +299,838 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 novovicies. Le Deluge branché, en direct (15 octobre 2026)
+
+> « Le logiciel doit être capable de travailler avec un déluge qui serait
+> branché sur le port usb du PC. Il faut améliorer la compatibilité entre le
+> logiciel et la machine et la capacité de travail en direct. »
+
+Puis, en cours de travail : « J'ai branché le déluge en usb à mon pc. » Ce
+qui suit a donc été **mesuré sur la machine**, et pas seulement déduit du
+code de son firmware (`release_1_2_1`), qui a servi de plan.
+
+### Ce qui existe maintenant
+
+| | |
+|---|---|
+| `core/delugesysex.py` | le SysEx du firmware : identité, ping, message à l'écran, image OLED (complète, différences, abonnement), 7 segments, codages 7 bits portés de `util/pack.c` |
+| `core/midiport.py` | SysEx en entrée et en sortie (tampons `MIDIHDR`, fil de recyclage), les trois câbles USB, l'instant d'arrivée de chaque message |
+| `core/midifollow.py` | conversion exacte du firmware dans les deux sens, libellés français des 52 paramètres, provenance de la table |
+| `core/delugelink.py` | `service()` : identité, aller-retour, écran recopié, tempo et lecture d'après l'horloge, notes tenues, son sélectionné d'après le retour MIDI Follow |
+| `ui/livewindow.py` | la fenêtre « Deluge en direct » (Ctrl+D, pastille verte, page Réglages) |
+| `ui/widgets/delugescreen.py` | l'écran de la machine, pixel pour pixel, agrandi d'un facteur entier |
+| `tests/deluge_simule.py` | un Deluge simulé qui répond comme la vraie machine |
+
+Dans l'existant : la pastille, machine connectée, ouvre la fenêtre en
+direct ; la page Réglages montre ce que la machine a dit d'elle et les
+réglages à faire sur le Deluge ; les outils de composition suivent son tempo
+(`midi_follow_tempo`, actif par défaut).
+
+### Mesuré sur la machine
+
+| | |
+|---|---|
+| ports (Windows 11) | sorties `Deluge`, `MIDIOUT2 (Deluge)`, `MIDIOUT3 (Deluge)` ; entrées `Deluge`, `MIDIIN2 (Deluge)`, `MIDIIN3 (Deluge)` |
+| identité | `F0 7E 7F 06 02 00 21 7B 01 00 00 00 01 02 01 00 F7` → **c1.2.1**, reçue en 2,8 ms |
+| aller-retour | **0,31 à 0,39 ms**, compté à l'arrivée du pong |
+| écran | 110 octets compressé, 888 brut, décodages identiques ; « SYNTH / TB01 », à l'endroit ; notre codeur redonne les 110 octets exacts |
+| abonnement (mode 3) | une **différence pleine page**, pas une image ; ensuite, rien tant que l'écran ne change pas |
+| « Faire signe » | une différence 3 ms plus tard (blocs 19 à 76), une autre à 801 ms quand le message s'efface ; l'écran revient à l'identique |
+| application entière | connexion automatique au battement d'une seconde, fenêtre ouverte par la pastille, recopie, fermeture : **0 message court, 7 SysEx de lecture**, 0 tampon gardé |
+
+**Pas encore vu sur la machine**, parce qu'il faut un geste de
+l'utilisateur : l'horloge (lancer la lecture), le retour MIDI Follow
+(régler Follow ▸ Channel A, puis Feedback), les notes jouées. Le simulateur
+les couvre d'après le code du firmware ; c'est la prochaine mesure à faire,
+câble en main.
+
+### Ce que les mesures ont corrigé
+
+1. **L'aller-retour s'affichait 41 ms** : il était compté au passage du
+   service, toutes les 40 ms. Il se compte à l'arrivée du pong
+   (`MidiMessage.arrived`). Et 0,3 ms arrondi à l'unité donnait « 0 ms » :
+   `latency_text` garde une décimale sous les dix millisecondes.
+2. **L'écran ne passait jamais « complet »** : l'abonnement forcé répond
+   par une différence qui couvre tout l'écran, pas par une image. Mon
+   simulateur envoyait une image — c'est pour cela que les tests n'avaient
+   rien vu. Il répond désormais comme la machine.
+3. **Fermer un port envoyait seize « All Notes Off » et un
+   `midiOutReset`**, port des SysEx compris, y compris pendant mes essais
+   « en lecture seule ». Le firmware n'en fait qu'un relâchement des notes
+   reçues en MIDI — rien sur les sons ni sur le morceau —, mais c'était du
+   bruit envoyé sans raison : un port qui n'a rien joué se ferme désormais
+   sans rien envoyer.
+4. Sans carte, la page Réglages annonçait la table MIDI Follow « lue dans
+   MIDIFollow.XML sur la carte » : elle dit maintenant d'où elle vient.
+
+### Ce que les rendus ont montré
+
+* **Le tempo s'affichait en 10 points** au lieu de 30 : un `setFont`
+  accepté, puis écrasé par la feuille de style de l'application. Passé par
+  la feuille de style du label ; un test mesure la police réellement
+  appliquée (il lit 10,0 avec l'ancien code).
+* Recopie arrêtée, la fenêtre remettait **une image figée** au
+  rafraîchissement suivant ; débranchée puis rebranchée, elle restait
+  cochée sans abonnement, écran bloqué sur « En attente ». Corrigé, testé.
+* Une page ouverte **après** l'arrivée de l'horloge gardait le tempo de son
+  genre : elle le prend désormais à sa première visite. Le premier test le
+  « prouvait » par hasard — 132 BPM, c'est aussi le tempo par défaut de
+  l'acid, premier genre de la liste. Il joue maintenant à 111 BPM, qu'aucun
+  genre ne donne.
+
+### Deux pièges dans mes propres vérifications
+
+* **Un `.pyc` périmé.** Mon script de retrait a remplacé un appel par un
+  texte de *même longueur* et restauré le fichier dans la *même seconde* :
+  Python, qui ne compare que la taille et la seconde, a gardé le code
+  mutilé. Le rendu affichait « 0 ms » avec un source juste. Les essais de
+  retrait tournent désormais avec `PYTHONDONTWRITEBYTECODE=1`.
+* **Un rempart épinglé.** Trois classes de test « restauraient »
+  `PlanDialog.exec` (et une `QMessageBox.exec`) en réaffectant la méthode
+  héritée — le rempart de la suite —, qui restait collée sur la
+  sous-classe. Sous pytest, qui suit l'ordre du fichier, `TestClicsReels`
+  échouait ; sous unittest, qui trie les classes, rien ne se voyait.
+  `mock.patch.object` partout, et `WidgetCase._aucun_rempart_epingle` échoue
+  dès qu'un test l'oublie.
+
+### Vérifié
+
+* **902 tests** (583 du cœur, 319 d'interface), sous unittest
+  **et** sous pytest ; chaque correctif éprouvé en le retirant.
+* Réglages et index réels inchangés (`settings.json` 3fb1bea31e2e9db7,
+  `library.db` 9e4f93ecc8779543), avant et après chaque passage.
+* Rendus de la fenêtre et des réglages à 1440 et 980 px, face au simulateur
+  (avec l'écran capturé sur la machine) et face à la vraie machine.
+
+---
+
+## 3 octovicies. Des morceaux pour le Deluge, depuis chaque outil (15 octobre 2026)
+
+> « J'aimerais qu'il soit possible d'exporter les progressions créées sous forme
+> de chanson pour qu'elles soient directement exploitables dans le Deluge. Faire
+> de même avec tous les outils de création, ce logiciel est destiné à gagner du
+> temps dans la création musicale avec le Deluge. » — l'utilisateur.
+
+Le contrat est dans **SPEC §4.31** (module) et **SPEC §5.23** (interface). Ce
+qui suit est ce qu'il faut savoir pour ne pas le défaire.
+
+### Ce qui existe
+
+`core/songwriter.py` fait d'une création un fichier `SONGS/*.XML` **neuf**, au
+format c1.2.1 de la machine. Sept boutons, un par outil, passent par le même
+parcours (`ui/songexport.py`) : construire, nommer, montrer le plan, confirmer
+selon le réglage, écrire, indexer.
+
+| Outil | Bouton | Morceau |
+|---|---|---|
+| Outils › Théorie | En morceau | un clip par partie avec les sons de l'écoute, batterie comprise |
+| Outils › Rythme | En morceau | le motif, joué par le kit de l'écoute complété |
+| Outils › Arrangement | Esquisse en morceau | sections enchaînées et arrangement complet |
+| Kits | Motif en morceau | le kit de la carte, tel qu'en son fichier, et le motif d'essai |
+| Générateur | Essayer en morceau | le son dans une phrase faite pour son rôle, sur la batterie du genre |
+| Générateur › Kit | Kit en morceau | le kit construit et le rythme du genre |
+| Découper (dialogue) | Écrire en morceau | le kit des tranches et un clip qui rejoue la boucle |
+
+### Mesuré avant d'écrire : la résolution était fausse
+
+Une mesure ne vaut pas 96 ticks mais **`96 << inputTickMagnitude`** : 192 dans
+les 40 morceaux 3.x, **384 dans les morceaux c1.2.1** (mesuré sur les notes des
+46 morceaux). Trois défauts visibles en venaient, corrigés et testés :
+
+- la page Morceaux annonçait **2 à 4 fois trop de mesures** ;
+- « Clip en MIDI » et « Morceau en MIDI » sortaient **2 à 4 fois trop lents** ;
+- l'index gardait ces nombres : il relit une fois les morceaux
+  (`scan.SONG_READER = "2"`), et `index_songs` — qui indexe un morceau neuf —
+  ne marque pas cette relecture comme faite.
+
+L'aide-mémoire de la Boîte à outils disait aussi « 1 536 ticks = 16 mesures » :
+corrigé.
+
+### Ce que le firmware impose, lu dans son code
+
+Tout vient du tag `release_1_2_1` et des six morceaux c1.2.1 de la carte :
+
+- un instrument est **intégré**, ses paramètres passent dans **chaque** clip
+  (`soundParams`, `kitParams`, un `soundParams` par rangée de kit) ;
+- l'arpège d'un synthé passe dans le clip avec sa synchro en **valeur interne**
+  (7 devient 6 : TB01 et `DEFAULT.XML`) ;
+- une note qui commence avant la fin de la précédente, sur la même rangée, est
+  **ignorée** à la lecture : on raccourcit la première ;
+- un clip retrouve son instrument par nom et dossier **sans la casse** : deux
+  homonymes, et le second se tairait — les noms sont rendus uniques ;
+- une section passe à la suivante après `numRepeats` boucles de son plus long
+  clip ; en disposition « rangées », la suivante est celle du clip **d'en
+  dessous**, d'où la première section en haut ; l'enchaînement ne part que si
+  l'on **lance** une section pendant la lecture (PLAY seul fait tourner la
+  première) ;
+- **un `firmwareVersion` laissé dans un son ou un kit change la version de
+  lecture de tout le reste du fichier** : un preset 3.x recopié tel quel aurait
+  fait lire les clips suivants comme du 3.x. Retiré à toute profondeur.
+
+### Un preset ancien : les conversions de la machine, comparées à la machine
+
+En chargeant un preset ancien, la machine le convertit ; intégré tel quel dans
+un morceau c1.2.1, il serait lu comme du c1.2.1. `upgrade_sound` / `upgrade_kit`
+appliquent ces conversions (arpège éclaté et filtres FM avant c1.2.0, câbles
+d'expression avant 4.0.0-beta, bornes en millisecondes avant 2.1.0-beta,
+compensation de résonance avant 1.2.0 — défaut de `shiftVolumeByDB` compris).
+
+**Contrôle** (`scratchpad/valider_integration.py`, lecture seule) : chaque
+instrument des six morceaux c1.2.1 a été reconstruit depuis son preset
+d'origine et comparé au morceau. **TB01 ressort à l'identique.** Le TR-808 sans
+version (27 kits de la carte sont dans ce cas, dont les kits d'usine) ressort
+identique pour tout ce qui dépend des conversions : bornes **à la trame près**,
+y compris la règle « une fin qui dépasse de 45 trames au plus vaut la longueur »
+(501 ms → 22 051 trames), résonances, câbles. Les écarts restants sont des
+retouches de l'utilisateur sur la machine : valeurs de potentiomètre (multiples
+de 2^25), automatisations, oscillateurs changés.
+
+Trois bizarreries du firmware notées en chemin (SPEC §1.5) : le mode de filtre
+éteint s'écrit `"flanger"` (`filterMap` n'a pas de nom pour `OFF`) et tout nom
+inconnu se relit éteint ; `octaveMode="upDown"` se relit **aléatoire** ; les
+câbles « range » d'avant 3.2 sont lus par toutes les versions.
+
+### Défauts préexistants trouvés en chemin
+
+- **Les vignettes de morceau s'affichaient à l'envers** dans la page Morceaux :
+  le fichier commence par la rangée du bas (vérifié sur « Truc 1 » et
+  « Nimp1 » avec leur défilement), la grille de l'appli dessine la première
+  ligne en haut. `Song.preview_colors` retourne la matrice.
+- **Les sons de l'écoute gardaient `arpMode="arp"`** quand le générateur leur
+  avait donné un arpège : sans effet dans le rendu de l'appli, qui ignore
+  l'arpégiateur, mais la machine l'aurait joué par-dessus l'arpège écrit.
+  L'écoute et l'export partagent désormais `songwriter.part_presets`.
+- **Le générateur écrivait `maxVoices="0"`** pour les sons non polyphoniques
+  (basses et leads en legato ou mono, sons « auto »). La machine écrit 8 pour
+  chacun des 94 sons des morceaux de la carte, quelle que soit la polyphonie,
+  ne produit jamais 0 (son menu le remplace par 127) et compare chaque nouvelle
+  voix à ce plafond. `synthgen` écrit désormais 8 ; un 0 hérité redevient 8
+  dans un morceau. Aucun preset de la carte ne porte ce 0 : les deux seuls
+  `maxVoices` de SYNTHS valent 8.
+- **L'onglet Théorie débordait à 980 pixels** sous une barre horizontale,
+  « Proposer » et le tempo coupés (déjà visible sur les rendus du 14) : ses
+  listes peuvent rétrécir.
+
+### Mes tests étaient fautifs, deux fois
+
+Une vélocité attendue à 127 alors que la note fournie était déjà brute (100) ;
+un « motif vide » qui ne l'était pas, la page s'ouvrant sur le motif du genre.
+Le code était juste.
+
+### Vérifié en retirant les correctifs
+
+Onze garde-fous du module retirés un à un (`retirer_correctifs_songwriter.py`,
+`retirer_trois.py`) : chacun fait échouer son test, et passe une fois rétabli.
+Trois retraits ne prouvaient d'abord rien — l'un parce qu'un garde-fou était en
+double (le nom `DEFAULT`, simplifié), deux parce que mon retrait ne reproduisait
+pas le vrai défaut ; corrigés et refaits. Même chose pour l'orientation des
+vignettes.
+
+### Ce qu'il reste à vérifier **sur la machine**
+
+Rien de ce qui précède n'a été chargé sur un Deluge. Au premier essai :
+
+1. un morceau « En morceau » de la Théorie : sons, tempo, gamme (mode gamme des
+   clips), boucles courtes ;
+2. une esquisse : PLAY fait-il tourner l'intro seule ? lancer la deuxième
+   section déroule-t-il la suite jusqu'à l'arrêt final ? la vue arrangement
+   joue-t-elle les instances plus longues que leur clip en boucle ?
+3. un « Motif en morceau » sur le **TR-808** : les pads sonnent-ils comme le
+   kit chargé directement (bornes, volumes) ?
+4. le nom des clips et la vignette dans le navigateur de morceaux.
+
+### Le vocabulaire écrit, comparé à celui de la machine
+
+`scratchpad/vocabulaire_ecrit.py` relève chaque couple (balise, attribut) des
+morceaux écrits ici et le cherche dans les morceaux écrits par la machine.
+Restent dix couples, tous lus par le firmware mais omis par lui à leur valeur
+par défaut : `clippingAmount="0"`, `<midiKnobs>` vide, `transpose`, `cents` et
+`retrigPhase` d'un oscillateur à échantillon, `fileName` vide, `transpose` d'un
+synthé. **Ce contrôle a trouvé un défaut** : la page Kits intégrait un kit
+ancien sans passer la carte, et ses bornes en millisecondes restaient telles
+quelles — la machine les aurait ignorées et joué chaque échantillon en entier.
+`pattern_song(sd=…)` ; testé en cliquant sur un vrai kit 2.x de la carte
+jetable, et prouvé en retirant le correctif.
+
+### Contrôles
+
+847 tests au vert (544 du cœur, 303 d'interface). Empreintes de `settings.json`
+et `library.db` identiques avant et après chaque script et chaque suite. Rendus
+PNG à 1 440 et 980 pixels, tous les onglets, sur la vraie carte. Le dossier
+`SONGS` de la carte n'a reçu aucun fichier : les essais écrivent dans des
+cartes jetables.
+
+---
+
+## 3 septvicies. La façade : refonte graphique d'après le guide (14 octobre 2026)
+
+> « Retravailler entièrement le design de l'UI de l'application. Celle-ci
+> doit être moderne, intuitive et respecter le thème de couleur du guide
+> deluge. Le design actuel est trop classique et manque cruellement de
+> fun. » — l'utilisateur.
+
+Les règles qui en sortent sont dans **SPEC §2 (troisième temps)** et
+**SPEC §5.22**. Ce qui suit est ce qu'il faut savoir pour ne pas défaire le
+travail.
+
+### Le diagnostic, sur images
+
+Avant d'écrire une ligne : les 23 écrans rendus en PNG sur la vraie carte
+(neuf pages, tous les onglets). L'interface reprenait la **palette** du guide,
+pas ses **signatures**. Barre de menus Windows posée sur un bandeau, rail de
+texte, neuf pages faites des mêmes panneaux sombres et de tableaux. Et un
+accent unique — le cyan choisi par l'utilisateur — qui se battait avec la
+couleur de la page : bouton cyan sur la page magenta du générateur, à côté
+d'encodeurs dorés.
+
+Le guide, lui (`Guide deluge/build/style.py`, `figs_schema.py`,
+`figs_couverture.py`, `figs_oled.py`) : un treillis de circuits
+multicolores sur la couverture et chaque ouverture de partie, des pads
+lumineux avec halo, des pads éteints « comme une diode au repos », l'écran
+OLED noir et cyan, des capitales espacées, et **une couleur dominante par
+partie**.
+
+### Ce qui a été fait
+
+- **`ui/art.py`** trace les algorithmes du guide au QPainter : le treillis
+  (`circuit`, en cache, déterministe par graine), le pad allumé, le pad au
+  repos, le halo.
+- **Chaque page porte sa couleur jusque dans ses contrôles** : bouton
+  principal (pad allumé qui rayonne), sélections, onglets en pastilles,
+  cases, curseurs, fenêtres de dialogue qu'elle ouvre. Forme d'onde,
+  enveloppes, courbe de filtre et spectre prennent la couleur de la page ;
+  les encodeurs restent dorés, comme sur la machine.
+- **La façade** : une seule barre du haut, menus intégrés, logotype de la
+  couverture, **écran OLED** (la carte, son contenu, et chaque message de la
+  barre d'état en surimpression, qui défile s'il est long), pastille du
+  Deluge, touche de lecture ronde, filet lumineux à la couleur de la page.
+  La colonne de gauche est une **rangée de pads** : veilleuse de leur
+  couleur, allumage animé, chiffre du raccourci.
+- **Les pages** : en-tête « ouverture de partie » (pad, titre en capitales,
+  treillis qui s'allume à l'affichage) ; titres de section sur une ligne
+  (petit pad, capitales espacées, filet) ; tuiles-pads ; note de santé dans
+  une couronne d'encodeur ; répartition des échantillons en segments ;
+  grilles de pads avec halo et reflet ; état vide animé (l'emblème du guide
+  qui joue, le pad de la page en médaillon) ; écran de démarrage composé
+  comme la couverture.
+- **Les listes** gagnent une pastille de couleur devant la catégorie des
+  échantillons et des presets, comme la couleur d'un clip sur la machine ;
+  leurs lignes passent de 24 à 28 px.
+- La couleur d'accent des réglages devient celle de **la façade**. Le texte
+  de la carte « Apparence » le dit.
+
+### Une règle de Qt qui commande toute la feuille de style
+
+La feuille posée sur une page l'emporte **toujours** sur celle de
+l'application, quelle que soit la spécificité des sélecteurs. D'où la
+séparation de `theme.py` en deux parties : toute propriété de couleur d'un
+contrôle vit dans la partie colorée, **avec tous ses états**. Sinon un bouton
+désactivé garderait le fond vif de la page. Un test vérifie la présence des
+états, un autre que chaque page pose bien sa couleur.
+
+### Ce que la mesure a trouvé
+
+| sur la carte de l'utilisateur | mesure | correction |
+|---|---|---|
+| bouton principal violet / indigo | bas 4,43, haut 4,42 | `lit_fill` pousse chaque extrémité à 4,5 |
+| barre d'actions à 980 px | 6 boutons coupés en plein mot, ajusteur à l'état 0 | réveil à l'affichage, boutons « non masqués » |
+| tableau de bord à 980 px | 900 px demandés pour 720 visibles | tuiles sur 2 colonnes, panneaux empilés |
+| phrase « Copie dans un dossier… » | 900 px de largeur minimale | retour à la ligne |
+| répartition des échantillons | la jauge se dessinait sur le nom du dossier | politique fixe du libellé élidé |
+| `QMessageBox` | « Yes », « No » | traduction `qtbase_fr` de PyQt6 chargée |
+
+**Tous, sauf le premier, dataient d'avant la refonte** (le premier tient aux
+dégradés qu'elle a introduits). Ils ne se voyaient qu'à 980 px, en faisant
+défiler le tableau de bord, ou en ouvrant une question — ce que mes captures
+précédentes ne faisaient pas. Le script de rendu photographie désormais le
+bas des pages qui défilent.
+
+L'ajusteur de la barre d'actions mérite une note : il ne comptait que les
+boutons *visibles*. Or la première taille d'un en-tête arrive avant que la
+page ait montré ses enfants ; si la fenêtre ne change plus de taille
+ensuite, rien ne le réveillait. La mesure à la main du 12 octobre
+(§3 unvicies) passait parce qu'elle redimensionnait la fenêtre.
+
+### Mes tests étaient fautifs
+
+Le réveil de l'ajusteur a fait échouer quatre tests. Ils lisaient le
+**texte affiché** d'un bouton (`_similar_button.text()`) ; la plateforme
+« offscreen » n'a aucune police, la barre s'y replie dès l'affichage, et le
+nom part dans la propriété `libelleComplet`. Ils lisent maintenant le nom
+(`_libelle`), comme le faisait déjà l'aide `_bouton`. Un cinquième attendait
+le mot « accent » dans le message de changement de couleur ; il y est
+revenu.
+
+### Vérifié en retirant les correctifs
+
+Chaque correctif retiré seul fait échouer son test, sauf un : l'ajusteur a
+deux moitiés qui suffisent chacune (réveil à l'affichage, comptage des
+boutons non masqués). Les deux retirées ensemble, le test échoue ; remises,
+il passe.
+
+### Contrôles
+
+- Empreintes de `settings.json` et `library.db` réels identiques avant et
+  après chaque rendu et chaque suite ; aucun fichier de la carte modifié
+  (`find -newer` sur un repère posé au début).
+- `main.main()` lancé pour de vrai trois secondes, configuration isolée :
+  code 0, aucune exception, aucune erreur au journal.
+- Aucun import inutilisé dans les modules touchés (analyse de l'AST).
+- Rendus regardés à 1 440 × 900 (tous les onglets, bas des pages), à
+  980 × 640, et sans carte.
+
+Tests : **798 au vert** (762 + 35 pour la façade + 1 pour la traduction).
+
+---
+
+## 3 sexvicies. Audit d'usage réel : la carte et le journal de l'utilisateur (14 octobre 2026)
+
+Demande : « continuer à améliorer le logiciel ». Plutôt que de choisir au jugé, deux sources
+réelles : **le journal de l'utilisateur** (`%APPDATA%/DelugeCompanion/app.log`, lu sans le
+modifier) et **un audit d'usage** — la fenêtre complète sur la vraie carte, avec une copie de
+son index réel et une configuration isolée, en ne faisant que naviguer. Script : il chronomètre
+le démarrage et chaque page, compte les diagnostics de santé, mesure les blocages du fil de
+l'interface (minuteur de 20 ms) et relève le journal. Empreintes de `settings.json` et de
+`library.db` identiques avant et après, aucun fichier de la carte modifié.
+
+### Ce que le journal disait
+
+- Le diagnostic de santé tournait **deux fois de suite** à chaque démarrage et à chaque retour
+  au tableau de bord.
+- Le 11 octobre, « Relier automatiquement » avait réécrit 125 références dans 10 presets
+  REPHAZER ; le diagnostic suivant gardait les mêmes 12 anomalies. Vérifié sur la carte : les
+  125 fichiers cités **existent tous**. La réparation avait réussi ; l'index ne l'avait pas vue
+  (défaut corrigé depuis par l'audit du 12 octobre — reproduit sur une carte jetable : le code
+  actuel remet l'index à jour), mais **l'index de l'utilisateur était resté faux** : 125
+  « manquants » et une note de 85 au lieu de 90, sans rien pour le rattraper.
+
+### Ce que l'audit a mesuré, et corrigé
+
+| Sur la carte de l'utilisateur | Avant | Après |
+|---|---|---|
+| Fenêtre créée et affichée | 2,29 s | **0,52 s** |
+| Diagnostics au démarrage (fil de l'interface) | 2 × 0,98 s | 2 × 0,20 s, dont un après la mise à jour de l'index |
+| Fenêtre figée au retour sur le tableau de bord | **2,0 s** | **0,24 s** |
+| Recherche des fichiers parasites | 0,82 s | **0,037 s**, plan identique (1 564 opérations) |
+
+- **Chaque page se rafraîchissait deux fois par visite** : `go_to` la rendait visible — son
+  `showEvent` la rafraîchit — puis appelait `refresh()` à son tour. Il ne le fait plus que si
+  la page était déjà affichée. Même doublon après chaque analyse : le tableau de bord se
+  rafraîchissait puis émettait `scanFinished`, auquel la fenêtre répond en rafraîchissant la
+  page visible ; il ne se rafraîchit plus lui-même que si personne n'écoute.
+- **90 % du diagnostic** partaient dans `organize.plan_purge_junk` : `rglob` parcourait tout,
+  corbeilles comprises, puis un chemin relatif et un `stat` par fichier (16 936). Désormais
+  `os.scandir`, dossiers ignorés élagués, tailles lues dans l'entrée de répertoire et gardées
+  dans le plan (`Plan.size`) — le diagnostic les redemandait au disque.
+- La docstring du tableau de bord affirmait « le diagnostic lit l'index, il est donc
+  instantané » : 0,96 s mesuré. Corrigée avec les chiffres.
+- **Index mis à jour au démarrage** (réglage « Mettre l'index à jour au démarrage », actif par
+  défaut) : analyse incrémentale en arrière-plan, en lecture seule. Sur la copie de l'index
+  réel : 10 fichiers relus en 0,20 s, manquants 125 → 0, note 85 → 90. Le message de la barre
+  d'état dit ce qui a été relu, pas le contenu entier de la carte.
+- **L'espace d'un dossier n'est pas celui d'une carte** : une copie dans un dossier affichait
+  « 125,1 Gio d'espace libre » et « 349,6 Gio utilisés sur 474,7 Gio », chiffres du disque de
+  l'ordinateur. `SDCard.is_volume` distingue la racine d'un lecteur ; sinon la tuile dit
+  « Libre sur le disque » et la carte « Copie dans un dossier… ».
+
+> ⚠️ **Mon test était fautif.** `test_focus_sur_la_recherche` a échoué une fois dans la suite
+> complète, jamais seul : il exigeait `hasFocus()`, donc une fenêtre **active**, ce que
+> l'application ne décide pas quand d'autres fenêtres de test vivent encore. Il vérifie
+> maintenant que le champ est le widget de focus de sa fenêtre (`focusWidget()`), et échoue
+> toujours si la commande ne fait rien.
+
+Tests : **762 au vert**.
+
+---
+
+## 3 quinvicies. Outils de composition : du fragment au morceau (14 octobre 2026)
+
+Demande : « améliorer encore les outils de composition ». L'inventaire de la Boîte à outils
+montrait des pièces qui ne se rejoignaient pas : on proposait des accords, une basse, une
+mélodie, un rythme et une structure, mais **le rythme ne s'écoutait pas**, « Motif du
+genre » rendait toujours le même motif, **l'export MIDI du rythme était figé à 128 BPM**
+quel que soit le genre (défaut), la batterie ne jouait jamais avec l'accompagnement, et
+l'arrangement n'était qu'un tableau de durées.
+
+### Écouter et varier le rythme
+
+- **Batterie synthétisée** (`render.synth_drum`, 22 rôles) pour écouter sans carte, ou une
+  piste que la carte ne couvre pas ; avec une carte, les pistes sont jouées par un kit bâti
+  dans la bibliothèque (`kitgen.build_kit`). Mesuré : grosse caisse à 47 Hz, toms dans l'ordre
+  grave → aigu (97, 136, 187 Hz), caisse claire vers 4 kHz, charleys vers 12 kHz. Le premier
+  jet était faux — grosse caisse à 1,65 de crête, caisse claire à 11,7 kHz — parce que le bruit
+  n'était éclairci que par une différence première : il est désormais filtré par bande.
+- **Variation** (`rhythm.variation`) : notes fantômes, charleys serrés, percussion
+  euclidienne, grosse caisse syncopée, charleston ouvert. Sur 440 variations (22 genres ×
+  20 graines), **aucun coup de grosse caisse, de caisse claire ou de clap retiré**. Les
+  charleys serrés sont écartés des genres clairsemés : ils multipliaient par 4,6 la densité
+  d'un motif dub.
+- Le tempo suit le genre, et le fichier MIDI porte le tempo affiché.
+
+### Assembler
+
+- **Batterie dans l'accompagnement** (case « Batterie ») : le rythme de l'onglet Rythme,
+  ou celui du genre, sous les accords, à l'écoute comme en MIDI (piste 10).
+- **Basse acide** (style « acide », par défaut en acid) : deux mesures de 303 en alternance,
+  silences, accents, octaves et glissés. Un glissé chevauche la note suivante, **toujours
+  d'une autre hauteur** : deux notes identiques qui se chevauchent se coupent en MIDI.
+- **Autre accord** : l'accord choisi est remplacé par un autre de **même fonction**
+  (tonique, sous-dominante, dominante ; `theory.FUNCTIONS`, `theory.substitute`), et la
+  fonction s'affiche dans la liste. Sur 1 728 remplacements : même fonction 100 %, aucune
+  note hors gamme, progression d'origine intacte ; dans 1,7 % des cas le seul candidat
+  égale un voisin, accepté faute d'autre choix. La fabrication d'un accord a été extraite de
+  `progression()` : vérifié sur 4 800 cas, sa sortie est identique à l'octet près.
+- **Esquisse du morceau** (`core/sketch.py`, onglet Arrangement) : la progression tourne sur
+  tout le modèle du genre ; chaque section ne garde que les parties de son rôle (intro et
+  fin : batterie légère et accords ; montée : + basse, arpège ; sommet : tout, mélodie
+  comprise, batterie variée et crash d'entrée ; cassure : ni grosse caisse ni basse). Sur les
+  22 genres : **aucune note hors de ses sections**, pas de caisse claire en intro, pas de
+  batterie en cassure, quelques millisecondes de calcul. « Écouter la section » joue le
+  début d'une section (8 mesures au plus) ; « Esquisse en MIDI » écrit le morceau entier,
+  une piste par partie, **le nom des sections en repères** (méta-événement 0x06, affiché
+  par les logiciels de MAO).
+
+> ⚠️ « Refrain final » contient « final » : il était pris pour une fin. Les mots du sommet
+> sont cherchés avant ceux de la fin (`sketch.section_kind`).
+
+### Ce que les images ont montré
+
+- L'onglet Théorie **débordait à 980 pixels** après l'ajout de la case « Batterie » :
+  « Proposer » coupé, barre de défilement horizontale. Les parties facultatives ont leur
+  ligne.
+- Le motif en texte de l'onglet Rythme n'a **jamais** été en chasse fixe : le thème visait
+  `QPlainTextEdit#Mono` (nom d'objet) et le widget portait la propriété `role="mono"`. Les
+  colonnes s'alignent maintenant.
+- La colonne « Position » de l'arrangement était tronquée depuis que « Parties » s'étire.
+
+Tests : **757 au vert**.
+
+---
+
+## 3 quatervicies. Générateurs et composition : seconde passe (14 octobre 2026)
+
+Demande : « continuer à améliorer l'aide à la composition et la génération des presets et
+kits ». Même méthode que la passe précédente : mesurer d'abord sur la carte ce que le
+générateur fait autrement que l'utilisateur et les presets d'usine.
+
+### Presets : les traits que la première mesure ne regardait pas
+
+Le contrôle de plausibilité ne portait que sur des réglages numériques. Un second contrôle,
+par traits, compare la part des presets qui portent chaque réglage, rôle par rôle (911 presets
+réels, 880 tirages par rôle) :
+
+| Trait | Presets réels | Avant | Après |
+|---|---|---|---|
+| Portamento (basses / leads) | 33 % / 25 % | **jamais** | 33 % / 26 % |
+| Saturation `clippingAmount` | 27 à 56 % selon le rôle | **jamais** (curseur de saleté > 0,5 seulement) | 25 à 56 % |
+| Synchro du délai | croche dominante, double-croche pour nappes et bourdons | toujours double-croche | idem réel |
+| Passe-haut sur les basses / bourdons | 23 % / 49 % | 0 % / 0 % | 17 % / 42 % |
+| Effet de modulation (basse… arpège) | 15 % … 38 % | 35 % pour tous | 16 % … 40 % |
+| Basses : poly / legato / mono | 34 / 33 / 23 % | 13 / 22 / 65 % (poids) | 37 / 36 / 25 % |
+
+Le glissé dépend du genre (`GenreProfile.glide`) : 70 % des basses acid — la 303 —, 38 % en
+techno, 20 % en house. Contrôle numérique : **98 %** (102/104), **6 signatures de genre sur 6**.
+
+> ⚠️ **Ma mesure était fausse, et elle cachait un défaut du produit.** Les deux contrôles
+> tiraient les 22 genres avec les **mêmes douze graines** : `random.Random(graine)` donnait
+> la même suite aux 22 genres, donc 12 tirages distincts et non 264. Les pourcentages de
+> mode de jeu ou d'effet n'avaient pas de sens — le « 5 signatures sur 6 » d'un premier essai
+> venait de là. Côté produit, cela voulait dire que **la graine 42 faisait les mêmes choix
+> dans tous les genres**, comme le générateur de kits avant sa correction. La graine mêle
+> désormais graine, genre et rôle ; conséquence assumée : une graine ne redonne plus le son
+> d'avant cette passe (la reproductibilité vaut à version égale).
+
+Écartés après mesure : les **tables d'onde** (aucun fichier sur la carte, aucun preset qui
+s'en sert) et les presets à échantillon (4 %).
+
+### Kits : l'espace et l'équilibre des vrais kits
+
+Mesuré sur les 523 rangées : grosse caisse, caisse claire, clap et charleys au centre ; toms
+en éventail (tom grave +9, tom aigu −12), ride à droite (+5), crash et shaker un peu à gauche.
+41 kits sur 43 règlent le volume rangée par rangée ; médianes par rôle (grosse caisse 38,
+caisse claire 39, ride 30). Le générateur mettait tout au centre et la grosse caisse à 44 :
+`ROLE_PAN`, `ROLE_VOLUME`.
+
+**« Autre son »** (page Générateur, onglet Kit) remplace l'échantillon de la rangée choisie :
+même machine d'abord, puis une machine voisine du genre ; jamais un fichier déjà dans le kit
+ni un son déjà essayé pour la rangée — sans cette mémoire, une famille de deux caisses
+claires faisait la navette à chaque clic (`kitgen.reroll_row`).
+
+Écarté : **équilibrer les rangées selon le niveau de leurs fichiers.** Il faudrait la loi
+du paramètre `volume` du firmware, que je n'ai pas établie ; je ne code pas sur une loi
+supposée.
+
+### Composition
+
+- **Couleur des accords** (`theory.colored_chord`, choix « Couleur » de la Boîte à outils) :
+  triades, septièmes, neuvièmes, suspendus. Les ambiances jazz et house prennent des
+  septièmes, deep et ambient des neuvièmes : en triades, une progression « jazz » sonnait
+  comme une comptine. Les neuvièmes se jouent **sans fondamentale** (tierce, quinte,
+  septième, neuvième — la basse tient la fondamentale) ; jouées avec, la conduite des voix
+  en faisait une grappe de secondes (Sol9 = fa-sol-la-si). Pas de neuvième mineure (le ii de
+  la mineur reste demi-diminué), pas de « sus4 » sur une quarte augmentée. Mesuré sur
+  73 728 accords : **0 note hors gamme**, noms reconnus (`m9`, `maj9`, `sus2`…).
+- **Mélodie** (`accomp.melody_part`, case « Mélodie », bouton « Autre mélodie ») : phrases
+  de quatre mesures A A B fin, la mesure 2 reprenant la 1 en marche sur le nouvel accord.
+  Sur 132 000 notes (22 genres × 12 ambiances × 3 gammes) : **0 note hors gamme**, **100 %
+  des temps forts sur une note de l'accord**, intervalle médian d'un ton (96 % au plus une
+  quarte, aucun saut au-delà de l'octave), **fin sur la fondamentale du dernier accord dans
+  100 % des cas**. L'allure suit le genre (posée, chantante, syncopée). En MIDI, la mélodie
+  est la quatrième piste, canal 4.
+
+> ⚠️ **Une réécriture retirée après mesure.** J'avais aussi refait `voice_leading` pour
+> qu'elle choisisse un renversement entier plutôt que de déplacer chaque note. Mesuré à
+> voicings égaux sur 41 472 accords : aucune grappe dans un cas comme dans l'autre, même
+> mouvement moyen (2,70), dérive 2,0 contre 2,2 demi-tons. C'est le voicing sans
+> fondamentale qui supprimait les grappes, pas la nouvelle conduite : l'ancienne fonction
+> est restée. Le test qui garde ce point a été renommé en conséquence, et il échoue si l'on
+> remet la fondamentale dans les neuvièmes.
+
+Écarté : **importer un fichier MIDI sur le Deluge.** Le firmware c1.2.1 n'en lit pas (aucune
+trace de `MThd` ni de `.mid` dans ses sources) : les exports MIDI servent au logiciel de MAO.
+
+Tests : **733 au vert**. Les nouveaux échouent sans les modifications ; vérifié par retrait
+pour les deux qui auraient pu passer par hasard (effet de modulation par rôle, neuvièmes).
+
+---
+
+## 3 tervicies. Générateurs et aides à la composition (13 octobre 2026)
+
+Demande de l'utilisateur : « améliorer les fonctions de génération de preset et de kit ainsi
+que toutes les fonctions d'aide à la composition ». Méthode : comparer ce que produisent les
+générateurs à **ce que contient la carte**, et vérifier le format dans le **code source du
+firmware c1.2.1** (`release_1_2_1` du dépôt communautaire, celui de la machine) quand la carte
+n'a pas d'exemple. Tout ce qui suit est mesuré ; les scripts sont décrits pour être refaits.
+
+### Ce qui ne marchait pas sur la machine
+
+- **L'arpégiateur des presets générés restait éteint.** La 1.2.1 ne lit plus l'attribut
+  `mode` d'un fichier qui se déclare c1.2.0 ou plus récent (`sound.cpp`) ; nos presets sont
+  estampillés c1.2.1. Il faut `arpMode="arp"`, `noteMode`, `octaveMode` — écrits désormais,
+  `mode` gardé pour les vieux firmwares. Les 59 arpèges de la carte sont tous dans de vieux
+  fichiers, d'où l'absence d'exemple.
+- **Les kits générés coupaient chaque coup.** Rangées en `loopMode` 0 (CUT : l'échantillon
+  s'arrête avec la note) et enveloppe à sustain nul. Les 523 rangées réelles : `loopMode` 1
+  (ONCE) dans 83 %, enveloppe ouverte A0 D20 S50 R0, `velocity → volume` sur 505. Le firmware
+  choisit ONCE sous 2,002 s (`sample_browser.cpp`, `slicer.cpp`) : `model.repeat_mode_for()`.
+  Le découpeur écrivait aussi CUT en croyant « ne pas boucler ».
+- **`syncLevel` décalé d'un cran** dans la table de la Boîte à outils (7 annoncé croche) :
+  calcul du firmware (`sync.cpp`), `2^(3 − niveau)` mesures — 7 = double-croche, ce que
+  confirment les 23 arpèges synchronisés de la carte. Le générateur tirait des arpèges en 9
+  (quadruple-croche).
+
+### Presets : plus plausibles, genres préservés
+
+Script de mesure : pour chaque rôle, la médiane générée tombe-t-elle dans l'écart
+interquartile des vrais presets de la même catégorie (911 presets, `category_guess`) ?
+L'enveloppe 2 est exclue (les vrais presets la laissent à sa valeur par défaut). Six
+signatures de genre sont contrôlées en même temps (résonance acid > house, unisson trance >
+deep house, réverb ambient > techno…).
+
+| | Avant | Après |
+|---|---|---|
+| Plausibilité | 58/104 (**56 %**) | 101/104 (**97 %**) |
+| Signatures de genre tenues | 5/6 | **6/6** |
+| `velocity → volume` présent | au hasard | **100 %** (médiane 45 ; carte 50) |
+
+Les écarts corrigés allaient tous dans le même sens : résonance médiane 15,5 contre 4 à 7,
+unisson 5 sur les nappes contre 1, délai 20 partout, réverbération 20 sur les basses contre
+0, basses sans tenue (sustain 3 contre 35), jamais de ring mod pour les effets (21 effets
+réels sur 41). Les trois écarts restants (résonance des leads, désaccord des nappes, câbles
+des bourdons) viennent des genres et sont laissés : niveler au-delà effacerait leurs
+différences.
+
+Et trois nouveautés : la **FM accordée** (`Sound.modulator1/2`, tirés dans la distribution
+des 145 presets FM de la carte — l'unisson d'avant donnait la même couleur à tous), le
+**LFO synchronisé** par genre (80 % en dubstep : c'est le « wobble »), et l'**aperçu FM**
+qui module enfin avec les modulateurs (centroïde 6 100 Hz contre 5 012 Hz à l'unisson).
+
+### Kits : autour d'une machine
+
+`SAMPLES/DRUMS` est la bibliothèque d'usine, rangée par instrument et nommée par machine
+(« 909 Kick dry », « Linndrum Snare ») ; huit banques d'artistes couvrent 4 à 7 rôles. Le
+kit se bâtit désormais autour d'une **famille** (`kitgen.family_of`), choisie selon le genre
+(`GENRE_AFFINITY` : 909 pour la techno, CR78/KR55 pour le lo-fi, 808 pour l'electro).
+
+| Sur 60 kits (6 genres × 10 graines) | Avant | Après |
+|---|---|---|
+| Familles par kit | 9,9 | **1,9** |
+| Rôles remplis | — | 620/620 |
+| Rôle confirmé par le nom ou le dossier | — | 100 % |
+| Échantillons distincts | 142 (sur 40 kits) | 158 |
+
+> ⚠️ **Deux pièges trouvés en mesurant.** Le tirage se faisait dans les 12 premiers
+> candidats **par ordre alphabétique** : 62 grosses caisses sur 74 ne sortaient jamais. Et
+> mon motif de fichier numéroté (`07-KICK`) attrapait « 909 Snare » : la 909 semblait n'avoir
+> ni caisse claire ni clap, et n'était jamais choisie — le défaut était dans mon expression.
+
+L'analyse rangeait aussi les catégories « Hatc », « Toml »… (`title()` sur un chemin en
+minuscules) : elles reprennent l'orthographe du Deluge.
+
+### Aides à la composition
+
+- **Progressions nommées juste** : le VI de la mineur s'appelait « La » (note grave après
+  conduite des voix, qualité ignorée) ; c'est « Fa », et les noms suivent la **tonalité** —
+  do mineur s'écrit avec Lab, pas Sol# (`theory.scale_spelling`). Chaque accord porte sa
+  basse ; « ø7 » pour le demi-diminué.
+- **Gammes du Deluge** : `deluge_mode_notes` rend la vraie gamme pour c1.x, avec le nom que
+  la machine affiche (`deluge_scale_name` : `PENTATONIC MINOR`, `HIRAJOSHI`… ou `USER`) ;
+  Marva et Arabian ajoutées.
+- **Accompagnement** (`core/accomp.py`, nouveau) : basse en sept styles, accords en cinq
+  rythmes, arpège ; chaque genre a ses habitudes. **Écouter** joue les parties sur des sons
+  générés pour le genre (`render.render_parts`, quatre mesures en ~1 s) ; **En MIDI** écrit une
+  piste par partie, chacune sur son canal.
+- **Rythme** : vélocités en pour-cent (l'ancien 105 ± 6 écrêtait tous les accents à 127), vrai
+  break **amen**, two-step de **drum and bass**, motifs trance, psytrance, motorik, synthwave,
+  boom bap ; **polyrythme** exact (3 contre 4 sur 16 pas mettait 4 coups au 3) ; **grooves MPC**
+  aux vrais pourcentages (les anciens « MPC 16B », « MPC 54 » n'existaient sur aucune MPC) avec
+  l'équivalent du swing du Deluge ; « Appliquer » **ne plantait plus au second clic** et ne
+  cumule plus (`Step.grid`, `straighten`) ; le jeu sur la machine garde le swing.
+- **Générateur** : « Varier dans le générateur » depuis la page Presets (le signal existait
+  sans être relié), « Fondre » (le morphing existait sans commande).
+- Modèles de structure pour les 22 genres ; aide-mémoire corrigé (gammes, `syncLevel`,
+  arpégiateur c1.x, rangées de kit).
+
+Les tests de cette passe échouent tous sans les modifications, sauf « un preset soustractif
+n'écrit pas de modulateur », qui garde la frontière de la nouveauté. Suite complète :
+**709 tests au vert** en 106 s.
+
+### La suite de tests ne se fige plus en silence
+
+Deux fois dans la journée, la suite complète (~110 s d'habitude) a tourné plus de dix
+minutes sans rien écrire ; cinq passages d'affilée sous surveillance n'ont pas su le
+reproduire. **Cause exacte non prouvée.** Le code montre en revanche une porte ouverte : à
+la fin d'un test, les classes rétablissaient les **vrais** dialogues avant que
+`tasks.stop_all` et `processEvents` n'aient vidé la file, et le contexte n'était jamais
+marqué fermé — un résultat tardif atteignait donc la page, et toute fenêtre modale réelle
+attend hors écran un clic qui ne vient jamais. Quatre protections dans les tests :
+
+- **plus de modale réelle** : `setUpModule` remplace chaque dialogue bloquant (`QMessageBox`,
+  `QFileDialog`, `QInputDialog`, `QDialog.exec`) par un refus qui répond « non » et le
+  note ; le test en cours **échoue en nommant la fenêtre**. Les classes qui rétablissent
+  « l'original » rétablissent désormais ce refus. Contre-épreuve : sans lui, le test
+  `TestRempartsDeLaSuite` se fige (tué au bout de 20 s) ; avec, il passe en 45 ms ;
+- `PageCase.tearDown` marque le contexte fermé **avant** d'arrêter les fils : `Page.guard`
+  ignore alors les résultats tardifs, comme dans l'application ;
+- un **chien de garde** (`faulthandler`) : un test d'interface qui dépasse 120 s écrit la
+  pile de chaque fil et arrête le processus. Si un blocage revient, l'échec ou la pile dira
+  où ;
+- **aucun port MIDI réel** : `connect` sans nom de port ne choisit que le Deluge, et
+  `midi_autoconnect` vaut « oui » par défaut. Deluge branché pendant la suite, les fenêtres
+  principales des tests auraient pris ses ports et le test qui clique tout lui aurait envoyé
+  la note d'essai des Réglages. Les tests d'interface ne voient plus aucun port ; le seul
+  test qui ouvre un vrai port (`TestMidiPort`) écarte le Deluge, à qui il aurait envoyé un
+  CC 74 — la coupure du filtre en MIDI Follow.
+
+⚠️ Piège rencontré en écrivant le test : lancer un cas imbriqué **par une suite**
+(`loadTestsFromTestCase(...).run()`) rejoue `setUpModule` et `tearDownModule` du module —
+qui a rétabli les vrais dialogues au milieu de la suite, et le test suivant s'est figé.
+Lancer le cas seul (`Cas("test").run(resultat)`).
+
+---
+
+## 3 duovicies. Audit des bugs et incohérences (12 octobre 2026)
+
+Relecture complète du cœur et des pages, chaque défaut **mesuré sur la carte** avant
+correction. Les 19 tests de `TestAuditOctobre` (test_core) et les trois ajoutés à
+test_ui échouent tous sur le code d'avant : vérifié en retirant les corrections.
+
+### Ce qui abîmait des fichiers
+
+- **« Dupliquer » perdait des données dans 516 presets sur 911.** `SynthPreset.copy()`
+  jetait le document d'origine : modulateurs FM (145 presets, le son changeait),
+  synchro d'oscillateur, affectations MIDI, compresseur. La copie garde désormais le
+  document. Mesure après : **911 sur 911** sans aucune valeur perdue.
+- **`depthControlledBy` réécrit faux** : une seule source de profondeur lue, réécrite
+  avec la source du câble *extérieur*. « 5. Boc Pad » en a deux (`lfo2`, `random`).
+  `PatchCable.range_amount` est remplacé par `depth_cables`.
+- **Câbles et tranches recréés à neuf** à chaque enregistrement : `rangeAdjustable`
+  (151 presets) disparaissait. Ils sont maintenant réutilisés, appariés par
+  source/destination ou par fichier. `polyphonic="1"` n'est plus traduit s'il n'a pas
+  changé ; la dernière tranche ne reçoit plus de `rangeTopNote="127"`.
+- **`wav.convert` effaçait `smpl`, `cue `, `acid`, `LIST`…** : 228 fichiers portent un
+  bloc `smpl`, 184 avec une boucle. Toute correction audio les effaçait. Ils sont
+  reportés, positions recalées si la fréquence change ou si le silence de tête est rogné.
+- **Rogner un fichier cité par un preset** mettait ses bornes à l'échelle alors que le
+  contenu avait *reculé* : la tranche jouait le mauvais passage. Ces fichiers sont
+  maintenant écartés du rognage, comme ceux des morceaux.
+- **Restaurer après un rééchantillonnage** laissait les bornes à l'échelle du fichier
+  converti. `samplefix.restore` les recale en sens inverse.
+- **Recentrer un fichier chaud l'écrêtait** (5 des 17 fichiers à continu). La page Santé
+  s'en gardait déjà ; le traitement par lot, non. `convert` abaisse le gain au lieu
+  d'écrêter.
+
+### Ce qui pouvait casser des références
+
+- **Doublon supprimé malgré une réécriture ratée** : `relink_many` avalait en silence
+  les XML illisibles et les écritures refusées, puis `Plan.apply` supprimait. Il les
+  rapporte (`failures=`) et le doublon est gardé.
+- **Noms avec `&`** : le pré-filtre cherchait le nom brut, le XML contient `&amp;`.
+- **`dxml.save` écrasait même si la copie `.bak` échouait.** Il refuse désormais.
+- **`SDCard.rel`** prenait « SDCARD Deluge 2 » pour un sous-dossier de « SDCARD Deluge » ;
+  **`resolve_sample`** acceptait `..` dans un `fileName`. Les deux sont fermés, ainsi
+  qu'une entrée `..` dans une archive à restaurer.
+
+### Ce que l'interface affichait de faux
+
+- **Texte blanc sur les boutons verts, cyan, or** (contraste 1,7 à 2,4) : `text_on`
+  gardait un seuil réglé pour l'ancienne `luminance`, redéfinie en WCAG plus bas dans
+  le même fichier. Il choisit maintenant la couleur la plus contrastée.
+- **Page Morceaux : 40 instruments sur 65 « ABSENT »** que « Rassembler » trouvait et
+  copiait. La page cherche maintenant comme l'export (`songpack.find_preset`).
+- **Un preset dupliqué ou généré n'apparaissait dans aucune liste** avant une analyse
+  complète : `scan.index_presets` l'indexe aussitôt.
+- **Après un rangement, le diagnostic montrait encore les anomalies corrigées** :
+  l'index gardait les anciens chemins. `Library.move` suit le fichier, ses
+  dépendances, ses favoris et ses étiquettes.
+- **Archives `.zip`** : le manifeste n'était pas lu ; une archive *avec* échantillons
+  passait pour une archive sans, et sa comparaison déclarait tout « supprimé ».
+- **Deux tables de gammes divergentes** dans `model.py` (une « hongroise » et un
+  « in sen » faux), « Ré# » ici et « Mib » ailleurs : tout passe par `theory`.
+
+### Seconde passe : l'index, les doublons et le vocabulaire du firmware
+
+Treize tests de `TestAuditOctobreSuite`, tous en échec sur le code d'avant.
+
+- **Un fichier modifié restait « doublon confirmé »** : la ligne réindexée gardait
+  son ancienne empreinte complète, et la déduplication proposait de supprimer un
+  fichier devenu différent. Toute réindexation efface désormais les empreintes.
+- **Changer de carte gardait l'index de l'ancienne.** Les plans appliquaient ses
+  empreintes aux fichiers de *même chemin* de la nouvelle — exactement le cas de
+  `SDCARD Deluge` et de la carte réelle. `scan.forget_other_card` l'écarte
+  (favoris et notes gardés), au changement de carte, au démarrage et à l'analyse.
+- **Dernier filet** : `Plan.apply` recompare chaque doublon à l'octet près
+  *avant* de rediriger ses références ; s'il diffère, rien ne bouge.
+- **Les fichiers disparus restaient indexés** pour toujours. L'analyse les retire ;
+  les références vers eux deviennent « cassées », et redeviennent saines si le
+  fichier revient (un preset inchangé n'est pas relu en analyse incrémentale).
+- **Vocabulaire du firmware** — relevé dans le code du firmware communautaire, la
+  carte ne contenant aucun exemple : `SVF_Band` (et non `SVF_Bandpass`),
+  `StereoChorus`, `TapeWarble`, `grainFX`, LFO `sah` et `rwalk`. Ancienne
+  polyphonie : seuls `0` et `2` ont un sens, tout autre nombre vaut `poly`.
+- **Destinations de câble** : `oscAPulseWidth` se vise par `oscAPhaseWidth`
+  (295 câbles sur la carte), `bitCrush` par `bitcrushAmount`… Sur 1 800 presets
+  d'essai, le générateur écrivait ~1 600 câbles vers une destination inconnue. Le
+  moteur d'écoute ignorait, lui, les 295 câbles réels. Table :
+  `model.CABLE_DESTINATIONS` (midifollow.py la connaissait déjà).
+- **Restaurer une sauvegarde** écrasait le travail récent sans recours. Les
+  versions remplacées vont d'abord dans une sauvegarde « avant restauration ».
+- **Jouer un motif sur le Deluge** tronquait les positions fractionnaires : le
+  swing disparaissait. L'agenda est désormais à la résolution de l'horloge.
+- Plus petits : renommer un preset cité par un morceau cassait le lien (écarté) ;
+  un dossier de sauvegarde dans `SAMPLES/` se recopiait lui-même (refusé) ;
+  `MIDIFollow.XML` est lu dans sa seule section d'assignations ; « Réinitialiser
+  l'index » effaçait l'index mais pas la date de dernière analyse.
+
+### Écart à la règle, laissé en l'état
+
+`deps.relink` réécrit aussi les **morceaux** (`SONGS/`), alors que §6 dit que
+l'application n'en réécrit jamais. Mesuré : les 46 morceaux ressortent du sérialiseur
+avec un arbre XML identique (seule la mise en forme change), et une copie `.bak` est
+laissée. Exclure les morceaux empêcherait de réparer leurs références : à trancher.
 
 ---
 
@@ -479,6 +1320,15 @@ Restent à confirmer, câble en main :
 * le **canal** que le mode MIDI Follow écoute ;
 * la **note de la première rangée d'un kit** — l'application part de C1
   (note 36), qui est le cas courant, mais cela n'a pas été mesuré.
+
+> **Vérifié le 15 octobre 2026** (§3 novovicies). Les ports s'appellent
+> `Deluge`, `MIDIOUT2 (Deluge)`, `MIDIOUT3 (Deluge)` (entrées : `MIDIIN2`,
+> `MIDIIN3`). Le canal n'est pas une constante : c'est un réglage de la
+> machine, MIDI ▸ Follow ▸ Channel A, **éteint par défaut** — l'interface
+> dit de le régler. La note 36 est la valeur d'usine de Follow ▸ Kit Root
+> Note (code du firmware). Le SysEx, annoncé ici « pas encore fait », est
+> écrit et vérifié sur la machine ; le transfert de fichiers, lui, n'existe
+> pas dans le firmware c1.2.1.
 
 ---
 
@@ -1058,10 +1908,10 @@ dépendances est celui du tableau du §3. Pour la suite, demander :
 > Lis `SPEC.md` et implémente `<liste de fichiers>` en respectant les signatures à la lettre.
 > Vérifie sur la vraie carte `SDCARD Deluge`.
 
-**Tout est écrit.** Les cinq phases sont terminées, et cinq modules s'y sont
-ajoutés (`samplefix`, `slicer`, `similarity`, `songpack`, `units`) :
-26 modules de noyau, 7 widgets, 9 pages, la fenêtre principale et le point
-d'entrée. **566 tests au vert** (364 pour le noyau, 202 pour l'interface).
+**Tout est écrit.** Les cinq phases sont terminées, et des modules s'y sont
+ajoutés depuis (`samplefix`, `slicer`, `similarity`, `songpack`, `units`,
+`delugelink`, `midiport`, `midifollow`, `accomp`, `sketch`…). **798 tests au
+vert** au 14 octobre 2026 ; le nombre exact de chaque passe est dans son § daté.
 
 ### Regarder l'interface, pas seulement la tester
 
@@ -1075,7 +1925,14 @@ image**. Le script de rendu tient en quarante lignes ; deux pièges :
   jamais apparaître ;
 - **poser `DELUGE_COMPANION_CONFIG` avant tout import de `delugeapp`**, sans
   quoi le script écrit les réglages et l'état de fenêtre de l'utilisateur en
-  quittant (§3 sexdecies).
+  quittant (§3 sexdecies) ;
+- **rendre aussi à 980 × 640, faire défiler les pages jusqu'en bas, et
+  rendre sans carte.** Trois défauts anciens (§3 septvicies) ne se voyaient
+  qu'ainsi : une jauge dessinée sur le nom d'un dossier en bas du tableau
+  de bord, une phrase qui imposait 900 px, une barre d'actions coupée en
+  plein mot. Copier l'index réel dans la configuration isolée, masquer les
+  ports MIDI, refuser les modales, et comparer les empreintes des réglages
+  réels avant et après.
 
 ### Lancer et vérifier
 
@@ -1083,11 +1940,15 @@ image**. Le script de rendu tient en quarante lignes ; deux pièges :
 cd "C:\Users\sebas\Desktop\Informatique\Deluge app"
 PY="C:/Users/sebas/AppData/Local/Programs/Python/Python313/python.exe"
 "$PY" main.py                                # l'application
-"$PY" -m unittest discover -s tests -t .     # 566 tests, doit afficher OK
+"$PY" -m unittest discover -s tests          # 798 tests, doit afficher OK
 ```
 
 Les tests d'interface ont besoin d'un affichage ; sans serveur graphique,
-`QT_QPA_PLATFORM=offscreen` suffit. La suite complète dure environ 70 secondes.
+`QT_QPA_PLATFORM=offscreen` suffit. La suite complète dure environ 105 secondes.
+
+Un audit d'usage réel (§3 sexvicies) se refait sans risque : configuration isolée, copie de
+l'index de l'utilisateur, navigation seule, empreintes avant et après. C'est lui, et le
+journal `app.log` de l'utilisateur, qui ont trouvé les défauts que la suite ne voyait pas.
 
 Deux contrôles à refaire après toute modification touchant à l'écriture :
 

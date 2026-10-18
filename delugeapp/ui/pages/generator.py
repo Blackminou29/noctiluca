@@ -121,6 +121,10 @@ class GeneratorPage(Page):
         save.clicked.connect(self.guard(self._save))
         actions.addWidget(save)
 
+        song = tool_button("Essayer en morceau", "song")
+        song.clicked.connect(self.guard(self._song_from_preset))
+        actions.addWidget(song)
+
         tabs = QTabWidget()
         tabs.addTab(self._build_synth_tab(), "Preset de synthé")
         tabs.addTab(self._build_kit_tab(), "Kit de batterie")
@@ -347,6 +351,19 @@ class GeneratorPage(Page):
         self._history_list.itemDoubleClicked.connect(
             self.guard(lambda _i: self._restore_history()))
         body.addWidget(self._history_list, 1)
+
+        # Fondre le son courant avec un son de l'historique : les réglages
+        # continus se mélangent, les choix (formes d'onde, moteur) basculent
+        # à mi-chemin.
+        morph_row = QHBoxLayout()
+        self._morph_amount = QSlider(Qt.Orientation.Horizontal)
+        self._morph_amount.setRange(0, 100)
+        self._morph_amount.setValue(50)
+        morph_row.addWidget(self._morph_amount, 1)
+        morph = tool_button("Fondre", "refresh")
+        morph.clicked.connect(self.guard(self._morph))
+        morph_row.addWidget(morph)
+        body.addLayout(morph_row)
         return card
 
     def _build_kit_tab(self) -> QWidget:
@@ -359,9 +376,14 @@ class GeneratorPage(Page):
         body = card.body()
 
         hint = QLabel(
-            "Un échantillon est choisi par rôle dans votre bibliothèque, et "
-            "chaque rangée reçoit l'enveloppe et le volume qui conviennent à "
-            "son rôle.")
+            "Le kit se construit autour d'une machine ou d'une banque de "
+            "votre bibliothèque (909, Linndrum, un kit d'artiste…), choisie "
+            "selon le genre ; les rôles qu'elle n'a pas sont complétés "
+            "ailleurs. Chaque rangée est réglée comme le Deluge la crée : "
+            "l'échantillon joué jusqu'au bout et sensible à la vélocité ; "
+            "volume et panoramique suivent les kits de la carte, toms en "
+            "éventail. Une rangée ne vous plaît pas ? Choisissez-la, puis "
+            "« Autre son ».")
         hint.setProperty("role", "subtitle")
         hint.setWordWrap(True)
         body.addWidget(hint)
@@ -397,9 +419,15 @@ class GeneratorPage(Page):
         listen = tool_button("Écouter", "play")
         listen.clicked.connect(self.guard(self._listen_kit))
         row.addWidget(listen)
+        self._reroll_button = tool_button("Autre son", "dice")
+        self._reroll_button.clicked.connect(self.guard(self._reroll_kit_row))
+        row.addWidget(self._reroll_button)
         save = tool_button("Enregistrer dans KITS", "save")
         save.clicked.connect(self.guard(self._save_kit))
         row.addWidget(save)
+        kit_song = tool_button("Kit en morceau", "song")
+        kit_song.clicked.connect(self.guard(self._song_from_kit))
+        row.addWidget(kit_song)
         row.addStretch(1)
         body.addLayout(row)
 
@@ -407,6 +435,9 @@ class GeneratorPage(Page):
         body.addWidget(self._kit_result, 1)
         column.addWidget(card, 1)
         self._kit = None
+        #: Échantillons déjà essayés, par rangée, pour « Autre son ».
+        self._kit_tried: dict[int, set] = {}
+        self._kit_rolls = 0
         return host
 
     # -- réglages ----------------------------------------------------------- #
@@ -463,6 +494,18 @@ class GeneratorPage(Page):
 
         self._show_preset(synthgen.mutate(self._preset, amount=0.3))
         self.say(f"Variante : {self._preset.sound.name}")
+
+    def start_from(self, preset) -> None:
+        """Prend un preset existant comme point de départ.
+
+        C'est la porte d'entrée depuis la page Presets : le son de la carte
+        devient le son courant, que « Muter » et « Produire 8 variantes »
+        font évoluer. L'original n'est jamais réécrit : « Enregistrer » en
+        fait une copie, sous le nom que vous choisirez.
+        """
+        self._show_preset(preset)
+        self.say(f"Point de départ : {preset.sound.name}. « Muter » ou "
+                 f"« Produire 8 variantes » partent de lui.")
 
     def _show_preset(self, preset) -> None:
         """Affiche un preset et le place dans l'historique."""
@@ -594,6 +637,25 @@ class GeneratorPage(Page):
         self._show_preset(self._variations[row])
         self.say(f"Variante adoptée : {self._preset.sound.name}")
 
+    def _morph(self) -> None:
+        """Fond le son courant avec le son choisi dans l'historique."""
+        row = self._history_list.currentRow()
+        if self._preset is None or not 0 <= row < len(self._history):
+            self.say("Choisissez dans l'historique le son avec lequel "
+                     "fondre le son courant.")
+            return
+        autre = self._history[row]
+        if autre is self._preset:
+            self.say("Choisissez un autre son que le son courant.")
+            return
+        from ...core import synthgen
+
+        dosage = self._morph_amount.value() / 100.0
+        mixte = synthgen.morph(self._preset, autre, dosage)
+        self._show_preset(mixte)
+        self.say(f"Fondu à {self._morph_amount.value()} % vers "
+                 f"{autre.sound.name} : {mixte.sound.name}")
+
     def _restore_history(self) -> None:
         row = self._history_list.currentRow()
         if not 0 <= row < len(self._history):
@@ -657,6 +719,7 @@ class GeneratorPage(Page):
             return
 
         card.invalidate_cache()
+        _index_written(self, [target])
         rel = card.rel(target)
         self.say(f"Preset enregistré : {rel}")
         self.presetSaved.emit(rel)
@@ -684,6 +747,7 @@ class GeneratorPage(Page):
         target_dir = card.abs(f"SYNTHS/{safe_deluge_name(folder)}")
         base = int(self._seed.value())
         written, failed = 0, []
+        chemins: list = []
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -702,12 +766,14 @@ class GeneratorPage(Page):
                     path = target_dir / f"{name} {suffix}.XML"
                     suffix += 1
                 preset.save(path, backup=False)
+                chemins.append(path)
                 written += 1
             except Exception as exc:  # noqa: BLE001
                 log.debug("preset %d du lot en échec : %s", index, exc)
                 failed.append(str(exc))
 
         card.invalidate_cache()
+        _index_written(self, chemins)
         self.say(f"{written} preset(s) écrit(s) dans "
                  f"SYNTHS/{safe_deluge_name(folder)}"
                  + (f", {len(failed)} en échec" if failed else ""))
@@ -732,13 +798,63 @@ class GeneratorPage(Page):
             self.say(f"Construction impossible : {exc}")
             return
 
-        self._kit_result.clear()
-        for row in self._kit.rows:
-            self._kit_result.addItem(f"{row.name:<12} {row.file_name}")
+        self._kit_tried = {}
+        familles = self._show_kit_rows()
         if not self._kit.rows:
             self._kit_result.addItem(
                 "Aucun échantillon trouvé — lancez une analyse de la carte.")
-        self.say(f"Kit « {self._kit.name} » : {len(self._kit.rows)} rangées")
+        if self._kit.rows:
+            self.say(f"Kit « {self._kit.name} » : {len(self._kit.rows)} "
+                     f"rangées, autour de {familles[0]}"
+                     + (f" (+ {len(familles) - 1} autre(s) famille(s))"
+                        if len(familles) > 1 else "") + ".")
+        else:
+            self.say(f"Kit « {self._kit.name} » : aucune rangée.")
+
+    def _show_kit_rows(self) -> list[str]:
+        """Remplit la liste des rangées ; rend les familles dans l'ordre."""
+        from ...core.kitgen import family_of
+
+        selection = self._kit_result.currentRow()
+        self._kit_result.clear()
+        familles: list[str] = []
+        for row in self._kit.rows:
+            famille = family_of(row.file_name)
+            if famille not in familles:
+                familles.append(famille)
+            self._kit_result.addItem(
+                f"{row.name:<12} {row.file_name.rsplit('/', 1)[-1]}"
+                f"   — {famille}")
+        if 0 <= selection < self._kit_result.count():
+            self._kit_result.setCurrentRow(selection)
+        return familles
+
+    def _reroll_kit_row(self) -> None:
+        """Remplace le son de la rangée choisie, le reste du kit intact."""
+        if self._kit is None or not self._kit.rows:
+            self.say("Construisez d'abord un kit.")
+            return
+        index = self._kit_result.currentRow()
+        if not 0 <= index < len(self._kit.rows):
+            self.say("Choisissez d'abord une rangée dans la liste.")
+            return
+        from ...core import kitgen
+
+        avant = self._kit.rows[index].file_name
+        essayes = self._kit_tried.setdefault(index, set())
+        essayes.add(avant)
+        self._kit_rolls += 1
+        slot = kitgen.reroll_row(
+            self._kit, index, self.lib,
+            genre=self._kit_genre.currentData() or "techno",
+            seed=f"{self._kit_seed.value()}|{index}|{self._kit_rolls}",
+            avoid=essayes)
+        if slot is None:
+            self.say("La bibliothèque n'a pas d'autre son pour cette rangée.")
+            return
+        self._show_kit_rows()
+        self.say(f"{self._kit.rows[index].name} : "
+                 f"{slot.rel.rsplit('/', 1)[-1]} ({slot.family}).")
 
     def _listen_kit(self) -> None:
         if self._kit is None:
@@ -786,8 +902,60 @@ class GeneratorPage(Page):
             self.say(f"Enregistrement impossible : {exc}")
             return
         card.invalidate_cache()
+        _index_written(self, [target])
         self.say(f"Kit enregistré : {card.rel(target)}")
         self.presetSaved.emit(card.rel(target))
+
+    # -- morceaux du Deluge ------------------------------------------------- #
+
+    def _genre_tempo(self, genre: str) -> int:
+        low, high = genres_mod.genre(genre or "techno").bpm
+        return int(round((low + high) / 2.0))
+
+    def _song_from_preset(self) -> None:
+        """Le son courant mis en situation : une phrase faite pour son rôle,
+        sur une progression et la batterie du genre."""
+        if self._preset is None:
+            self.say("Générez d'abord un son.")
+            return
+        options = self._options()
+        genre = options.genre or "techno"
+        role = options.role or "bass"
+        preset = self._preset
+        bpm = self._genre_tempo(genre)
+
+        def build(card):
+            from ...core import rhythm, songwriter
+
+            beat = rhythm.genre_beat(genre, bars=1, seed=1, fills=False)
+            kit, rows, _lost = songwriter.drum_kit_for(card, self.lib, genre,
+                                                       beat.tracks)
+            return songwriter.preset_song(
+                preset, name="", bpm=bpm, genre=genre, role=role,
+                drums=rhythm.loop(beat, 4), kit=kit, row_map=rows)
+
+        self.write_song(build, preset.sound.name or "Essai")
+
+    def _song_from_kit(self) -> None:
+        """Le kit construit, avec le rythme de son genre, en morceau."""
+        if self._kit is None or not self._kit.rows:
+            self.say("Construisez d'abord un kit.")
+            return
+        genre = self._kit_genre.currentData() or "techno"
+        kit = self._kit
+        bpm = self._genre_tempo(genre)
+
+        def build(card):
+            from ...core import rhythm, songwriter
+
+            beat = rhythm.genre_beat(genre, bars=1, seed=1, fills=False)
+            rows = songwriter.drum_rows(beat.tracks, kit)
+            return songwriter.pattern_song(beat, kit, rows, name="", bpm=bpm,
+                                           kit_name=kit.name)
+
+        self.write_song(build, f"{self._kit.name} "
+                               f"{genres_mod.genre(genre).label}")
+
 
     # -- rafraîchissement --------------------------------------------------- #
 
@@ -800,3 +968,12 @@ class GeneratorPage(Page):
         if self._seed.value() == 0:
             self._roll_seed()
             self._kit_seed.setValue(random.randrange(1 << 20))
+
+
+def _index_written(page, paths) -> None:
+    """Ajoute à l'index ce qu'on vient d'écrire, pour que les listes le montrent."""
+    try:
+        from ...core.scan import index_presets
+        index_presets(page.sd, page.lib, list(paths))
+    except Exception:  # noqa: BLE001 - l'index se rattrapera à l'analyse
+        log.exception("indexation immédiate impossible")

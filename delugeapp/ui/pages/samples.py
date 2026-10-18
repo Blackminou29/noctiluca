@@ -70,6 +70,13 @@ from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
+
+def _pastille(categorie) -> str:
+    """Couleur de la pastille d'une catégorie, rien si elle est vide."""
+    texte = str(categorie or "").strip()
+    return category_color(texte) if texte else ""
+
+
 #: Saut de ligne, nommé pour que les messages restent lisibles en format %.
 NL = chr(10)
 
@@ -228,6 +235,8 @@ class SliceDialog(QDialog):
         self.rel = rel
         self.sliceset = slicer.SliceSet(rel=rel, sr=0, frames=0)
         self.written = ""
+        #: Morceau écrit depuis ce dialogue (chemin relatif), s'il y en a un.
+        self.written_song = ""
 
         self.setWindowTitle("Découper en kit — %s" % Path(rel).name)
         self.resize(900, 620)
@@ -271,9 +280,16 @@ class SliceDialog(QDialog):
         self._write.setObjectName("Primary")
         self._export = buttons.addButton(
             "Exporter en fichiers…", QDialogButtonBox.ButtonRole.ActionRole)
+        self._song = buttons.addButton(
+            "Écrire en morceau", QDialogButtonBox.ButtonRole.ActionRole)
+        self._song.setToolTip(
+            "Écrit sur la carte un morceau neuf dans SONGS : le kit des "
+            "tranches et un clip qui rejoue la boucle tranche par tranche, à "
+            "sa place. Aucun fichier existant n'est remplacé.")
         buttons.addButton("Fermer", QDialogButtonBox.ButtonRole.RejectRole)
         self._write.clicked.connect(self._do_write)
         self._export.clicked.connect(self._do_export)
+        self._song.clicked.connect(self._do_song)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -370,6 +386,7 @@ class SliceDialog(QDialog):
         self._summary.setText(self.sliceset.summary())
         self._write.setEnabled(bool(self.sliceset))
         self._export.setEnabled(bool(self.sliceset))
+        self._song.setEnabled(bool(self.sliceset))
 
     def _fill_list(self) -> None:
         sr = float(self.sliceset.sr or 1)
@@ -445,8 +462,30 @@ class SliceDialog(QDialog):
             QMessageBox.warning(self, "Découpage", message)
             return
         self.written = rel
+        try:
+            # Indexé tout de suite, pour que la page Kits le montre.
+            from ...core.scan import index_presets
+            index_presets(card, self.ctx.lib, [card.abs(rel)])
+        except Exception:  # noqa: BLE001 - l'index se rattrapera à l'analyse
+            log.exception("indexation du kit découpé impossible")
         QMessageBox.information(self, "Kit écrit", message)
         self.accept()
+
+    def _do_song(self) -> None:
+        """La boucle découpée, rejouée par un clip, en morceau du Deluge."""
+        if not self.sliceset:
+            return
+        from ...core import songwriter
+        from ..songexport import export_song
+
+        sliceset = self.sliceset
+        rel = export_song(
+            self, self.ctx,
+            lambda card: songwriter.slices_song(sliceset, name=""),
+            Path(self.rel).stem, self._summary.setText)
+        if rel:
+            self.written_song = rel
+
 
     def _do_export(self) -> None:
         card = self.ctx.sd
@@ -784,7 +823,7 @@ class SamplesPage(Page):
         return proximite + [
             ("Nom", get("name"), 260, left),
             ("Dossier", dossier, 130, left),
-            ("Catégorie", get("category"), 120, left),
+            ("Catégorie", get("category"), 132, left, None, _pastille),
             ("Durée", get("duration"), 80, right, human_duration),
             ("Tonalité", get("key"), 70, left),
             # Vide = format courant. Rempli = ce qui mérite un regard.
@@ -1204,6 +1243,8 @@ class SamplesPage(Page):
 
         dialog = SliceDialog(self.ctx, rows[0]["rel"], self)
         dialog.exec()
+        if dialog.written_song:
+            self.songWritten.emit(dialog.written_song)
         if dialog.written:
             self.say("Découpage écrit : %s" % dialog.written)
             self.cardModified.emit()

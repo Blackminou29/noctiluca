@@ -43,6 +43,7 @@ from ..widgets.common import (
     Card,
     EmptyState,
     PlanDialog,
+    ScoreRing,
     human_size,
 )
 from ...core import samplefix
@@ -140,8 +141,11 @@ class HealthPage(Page):
         column.setSpacing(8)
 
         head = QHBoxLayout()
-        self._score = QLabel("—")
-        self._score.setProperty("role", "value")
+        head.setContentsMargins(PAD, 0, 0, 0)
+        head.setSpacing(14)
+        # La note dans sa couronne d'encodeur : on lit l'état de la carte
+        # d'un coup d'œil, à la longueur de l'arc avant même le chiffre.
+        self._score = ScoreRing(size=76)
         head.addWidget(self._score)
         self._verdict = QLabel("Lancez une analyse.")
         self._verdict.setProperty("role", "subtitle")
@@ -396,7 +400,7 @@ class HealthPage(Page):
     def _fill_report(self, report) -> None:
         self._report_stack.setCurrentIndex(1)
         self._score.setText(str(report.score))
-        self._score.setStyleSheet(f"color: {self._colour(report.score)};")
+        self._score.set_color(self._colour(report.score))
         self._verdict.setText(report.verdict())
 
         self._issues.clear()
@@ -858,7 +862,9 @@ class HealthPage(Page):
             f"{count} fichier(s) de la carte vont être remplacés par ceux "
             f"de la sauvegarde du "
             f"{info.when.strftime('%d/%m/%Y à %Hh%M')}.\n\n"
-            f"Cette opération est irréversible.\n\nContinuer ?",
+            f"Les versions actuelles de ces fichiers seront d'abord mises "
+            f"à l'abri dans une sauvegarde « avant restauration ».\n\n"
+            f"Continuer ?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
@@ -866,6 +872,7 @@ class HealthPage(Page):
 
         self.say("Restauration…")
         self.run(backup_mod.restore_backup, info, card,
+                 safety_dir=self._backup_dir(),
                  on_result=self.guard(self._restore_done),
                  on_error=self.guard(
                      lambda m: self.say(f"Restauration impossible : {m}")),
@@ -876,7 +883,9 @@ class HealthPage(Page):
             return
         restored, errors = result
         self.say(f"{restored} fichier(s) restauré(s), "
-                 f"{len(errors)} erreur(s).")
+                 f"{len(errors)} erreur(s). Les versions remplacées sont "
+                 f"dans la sauvegarde « avant restauration ».")
+        self._fill_backups()
         self.cardModified.emit()
 
     # -- export ------------------------------------------------------------- #

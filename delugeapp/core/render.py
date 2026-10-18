@@ -31,7 +31,7 @@ from functools import lru_cache
 import numpy as np
 
 from .fixedpoint import to_display
-from .model import Kit, Sound, SynthPreset
+from .model import Kit, Sound, SynthPreset, param_of_destination
 from .sdcard import SDCard
 
 log = logging.getLogger(__name__)
@@ -62,7 +62,32 @@ KNOWN_DESTINATIONS = (
     "oscAVolume", "oscBVolume", "oscAPitch", "oscBPitch", "oscAPulseWidth",
     "oscBPulseWidth", "noiseVolume", "modFXDepth", "modFXRate",
     "reverbAmount", "delayFeedback", "pan",
+    "modulator1Amount", "modulator2Amount",
 )
+
+#: Tempo supposé pour l'aperçu d'un LFO synchronisé : un preset n'a pas de
+#: tempo, c'est le morceau qui le donne.
+PREVIEW_BPM = 120.0
+
+
+def synced_hz(sync_level: int, bpm: float = PREVIEW_BPM) -> float:
+    """Fréquence d'un LFO calé sur le tempo, d'après son ``syncLevel``.
+
+    Valeur de fichier, calcul du firmware (``sync.cpp``) : la durée vaut
+    ``2^(3 - niveau)`` mesures — 3 = une mesure, 5 = une noire,
+    7 = une double-croche. La magnitude du morceau s'annule entre la lecture
+    du fichier et l'affichage, d'où une formule qui n'en dépend pas.
+    """
+    try:
+        level = int(sync_level)
+        tempo = float(bpm)
+    except (TypeError, ValueError):
+        return 2.0
+    if level <= 0 or tempo <= 0:
+        return 0.0
+    bars = 2.0 ** (3 - level)
+    seconds = bars * 4.0 * 60.0 / tempo
+    return 1.0 / seconds if seconds > 0 else 0.0
 
 #: Sources de modulation reconnues.
 KNOWN_SOURCES = ("envelope1", "envelope2", "lfo1", "lfo2", "velocity", "note",
@@ -226,13 +251,13 @@ def _lfo(n: int, sr: int, kind: str, rate_hz: float,
         return np.where((phase % 1.0) < 0.5, 1.0, -1.0).astype(np.float32)
     if kind == "saw":
         return (2.0 * (phase % 1.0) - 1.0).astype(np.float32)
-    if kind == "sampleAndHold":
+    if kind == "sah":
         steps = max(1, int(rate_hz * n / sr))
         values = rng.uniform(-1.0, 1.0, steps + 1).astype(np.float32)
         return values[np.minimum((phase % steps).astype(np.int64)
                                  if steps > 1 else np.zeros(n, dtype=np.int64),
                                  steps)]
-    if kind == "randomWalk":
+    if kind == "rwalk":
         steps = max(2, int(rate_hz * n / sr) + 1)
         knots = np.cumsum(rng.uniform(-0.4, 0.4, steps)).astype(np.float32)
         peak = float(np.max(np.abs(knots))) or 1.0
@@ -255,7 +280,11 @@ def _modulations(sound: Sound, n: int, sr: int, sources: dict,
     """
     out: dict[str, np.ndarray] = {}
     for cable in sound.patch_cables:
-        if cable.destination not in KNOWN_DESTINATIONS:
+        # Le câble vise ``oscAPhaseWidth`` quand le paramètre s'appelle
+        # ``oscAPulseWidth`` : sans cette traduction, les 295 câbles de
+        # largeur d'impulsion de la carte restaient muets à l'écoute.
+        destination = param_of_destination(cable.destination)
+        if destination not in KNOWN_DESTINATIONS:
             log.debug("destination de modulation ignorée : %s",
                       cable.destination)
             continue
@@ -265,10 +294,10 @@ def _modulations(sound: Sound, n: int, sr: int, sources: dict,
             continue
         amount = cable.display() / 50.0        # −1 à +1
         contribution = (signal * amount * 50.0).astype(np.float32)
-        if cable.destination in out:
-            out[cable.destination] = out[cable.destination] + contribution
+        if destination in out:
+            out[destination] = out[destination] + contribution
         else:
-            out[cable.destination] = contribution
+            out[destination] = contribution
     return out
 
 
@@ -426,8 +455,8 @@ def _mod_fx(signal: np.ndarray, sr: int, kind: str, depth: float,
     """Chorus, flanger ou phaser : un délai court modulé."""
     if kind in ("", "none") or depth <= 0.01:
         return signal
-    base_ms = {"flanger": 2.0, "chorus": 14.0, "stereoChorus": 18.0,
-               "phaser": 6.0, "warble": 24.0, "grain": 30.0}.get(kind, 14.0)
+    base_ms = {"flanger": 2.0, "chorus": 14.0, "StereoChorus": 18.0,
+               "phaser": 6.0, "TapeWarble": 24.0, "grainFX": 30.0, "dimension": 10.0}.get(kind, 14.0)
     sweep_ms = base_ms * depth * 0.8
     n = signal.size
     t = np.arange(n, dtype=np.float32) / sr
@@ -528,6 +557,51 @@ def _oscillator(sound: Sound, osc, which: str, note: int, n: int, sr: int,
     out /= float(voices)
     return out
 
+def _fm_voice(sound: Sound, note: int, n: int, rate: int,
+              pitch_mod: np.ndarray, mod: dict, level_a: np.ndarray,
+              level_b: np.ndarray) -> np.ndarray:
+    """Le moteur FM du Deluge : deux porteuses, deux modulateurs.
+
+    Les porteuses sont des sinusoïdes accordées comme les oscillateurs A et
+    B ; chaque modulateur, accordé à part (``<modulator1>``,
+    ``<modulator2>``), module la phase de sa porteuse — ou, si
+    ``toModulator1`` est posé, celle du premier modulateur. C'est l'accord
+    des modulateurs qui fait le timbre : l'ancien rendu modulait avec
+    l'oscillateur B et rendait tous les presets FM semblables.
+    """
+    vib = (2.0 ** (pitch_mod / 12.0)).astype(np.float32)
+
+    def _phase(semis: float) -> np.ndarray:
+        hz = 440.0 * 2.0 ** ((note + sound.transpose + semis - 69) / 12.0)
+        hz = float(np.clip(hz, 1.0, rate * 0.45))
+        return np.cumsum(hz * vib / rate, dtype=np.float64)
+
+    two_pi = 2.0 * np.pi
+    m1 = getattr(sound, "modulator1", None)
+    m2 = getattr(sound, "modulator2", None)
+    m1_semis = (m1.transpose + m1.cents / 100.0) if m1 else 0.0
+    m2_semis = (m2.transpose + m2.cents / 100.0) if m2 else -12.0
+    to_m1 = bool(m2 and m2.to_modulator1)
+
+    # Indice de modulation : jusqu'à ~6 radians à fond, ce qui va du timbre
+    # doux au métal sans tomber dans le bruit.
+    depth1 = _modulated(sound.display("modulator1Amount"),
+                        mod.get("modulator1Amount"), n) * 6.0
+    depth2 = _modulated(sound.display("modulator2Amount"),
+                        mod.get("modulator2Amount"), n) * 6.0
+
+    m2_out = np.sin(two_pi * _phase(m2_semis)).astype(np.float32)
+    m1_out = np.sin(two_pi * _phase(m1_semis)
+                    + (m2_out * depth2 if to_m1 else 0.0)).astype(np.float32)
+    c1 = np.sin(two_pi * _phase(sound.osc1.transpose
+                                + sound.osc1.cents / 100.0)
+                + m1_out * depth1).astype(np.float32)
+    c2 = np.sin(two_pi * _phase(sound.osc2.transpose
+                                + sound.osc2.cents / 100.0)
+                + (0.0 if to_m1 else m2_out * depth2)).astype(np.float32)
+    return (c1 * level_a + c2 * level_b).astype(np.float32)
+
+
 def _graine(nom: str) -> int:
     """Graine stable du bruit, tirée du nom du son.
 
@@ -565,16 +639,27 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
         rng = np.random.default_rng(_graine(sound.name))
 
         # -- enveloppes et LFO ------------------------------------------- #
+        # Un échantillon en mode ONCE se joue jusqu'au bout : le Deluge
+        # ignore alors la fin de la note. Relâcher l'enveloppe à la fin de
+        # la note (release 0 sur une rangée de kit) coupait le son net.
+        osc1 = sound.osc1
+        if (osc1 is not None and osc1.is_sample
+                and int(getattr(osc1, "loop_mode", 0)) == 1):
+            gate = 1.0
         a1, d1, s1, r1 = _env_times(sound.env1)
         a2, d2, s2, r2 = _env_times(sound.env2)
         env1 = _adsr(n, rate, a1, d1, s1, r1, gate)
         env2 = _adsr(n, rate, a2, d2, s2, r2, gate)
+        def _lfo_hz(lfo, key):
+            # Un LFO synchronisé bat au tempo : sa vitesse libre est ignorée.
+            if getattr(lfo, "sync_level", 0):
+                return synced_hz(lfo.sync_level)
+            return _exp_map(_unit(sound, key), LFO_MIN_HZ, LFO_MAX_HZ)
+
         lfo1 = _lfo(n, rate, sound.lfo1.type,
-                    _exp_map(_unit(sound, "lfo1Rate"), LFO_MIN_HZ, LFO_MAX_HZ),
-                    rng)
+                    _lfo_hz(sound.lfo1, "lfo1Rate"), rng)
         lfo2 = _lfo(n, rate, sound.lfo2.type,
-                    _exp_map(_unit(sound, "lfo2Rate"), LFO_MIN_HZ, LFO_MAX_HZ),
-                    rng)
+                    _lfo_hz(sound.lfo2, "lfo2Rate"), rng)
 
         sources = {
             "envelope1": env1,
@@ -584,7 +669,7 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
             "velocity": np.full(n, float(velocity), dtype=np.float32),
             "note": np.full(n, note / 127.0, dtype=np.float32),
             "aftertouch": np.full(n, 0.3, dtype=np.float32),
-            "random": _lfo(n, rate, "randomWalk", 3.0, rng),
+            "random": _lfo(n, rate, "rwalk", 3.0, rng),
         }
         mod = _modulations(sound, n, rate, sources)
 
@@ -604,17 +689,8 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
                              mod.get("oscBVolume"), n)
 
         if sound.mode == "fm":
-            # Deux opérateurs : l'oscillateur B module la phase de A.
-            depth = _unit(sound, "modulator1Amount", 0.3) * 8.0
-            modulator = _oscillator(sound, sound.osc2, "B", note, n, rate,
-                                    pitch_mod, pw, sd, rng)
-            semis = sound.osc1.transpose + sound.transpose
-            carrier_hz = 440.0 * 2.0 ** ((note + semis - 69) / 12.0)
-            phase = np.cumsum(
-                np.full(n, carrier_hz / rate, dtype=np.float32))
-            mixed = np.sin(2.0 * np.pi * (phase + modulator * depth),
-                           dtype=np.float32)
-            mixed = mixed * level_a
+            mixed = _fm_voice(sound, note, n, rate, pitch_mod, mod,
+                              level_a, level_b)
         elif sound.mode == "ringmod":
             osc_b = _oscillator(sound, sound.osc2, "B", note, n, rate,
                                 pitch_mod, pw, sd, rng)
@@ -689,6 +765,12 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
             right = np.concatenate([np.zeros(shift, dtype=np.float32),
                                     right[:-shift]])
 
+        # Un fondu de 5 ms en fin de rendu : la fenêtre se termine parfois
+        # au milieu du son, et une coupure nette s'entend comme un clic.
+        fade = min(n, max(1, int(0.005 * rate)))
+        ramp = np.linspace(1.0, 0.0, fade, dtype=np.float32)
+        left[-fade:] *= ramp
+        right[-fade:] *= ramp
         return np.stack([left, right], axis=1).astype(np.float32)
     except Exception as exc:  # noqa: BLE001 - rempart : on rend du silence
         log.exception("rendu impossible : %s", exc)
@@ -749,6 +831,55 @@ def render_preview(preset: SynthPreset, notes: list[int] | None = None,
     return out
 
 
+def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
+                 sr: int = 44100, sd: SDCard | None = None,
+                 tail: float = 0.8) -> np.ndarray:
+    """Rend des parties d'accompagnement, chacune avec son son.
+
+    :param parts: ``{nom: [NoteEvent]}`` (cf. :mod:`delugeapp.core.accomp`),
+        positions en pas de double-croche.
+    :param sounds: ``{nom: Sound}`` ; une partie sans son est ignorée.
+    :param tail: secondes laissées à l'extinction de chaque note.
+
+    Une même note de même durée n'est rendue qu'une fois : une basse qui
+    martèle la fondamentale coûte une note, pas trente-deux.
+    """
+    from .accomp import total_steps
+
+    tempo = float(bpm) if bpm and bpm > 0 else 120.0
+    step_s = 60.0 / tempo / 4.0
+    length_s = total_steps(parts) * step_s + tail
+    n = max(1, int(length_s * sr))
+    out = np.zeros((n, 2), dtype=np.float32)
+    cache: dict[tuple, np.ndarray] = {}
+    for name, events in (parts or {}).items():
+        sound = (sounds or {}).get(name)
+        if sound is None:
+            continue
+        for event in events:
+            held = max(0.02, float(event.length) * step_s)
+            key = (name, int(event.note), round(held, 3),
+                   int(event.velocity) // 5)
+            voice = cache.get(key)
+            if voice is None:
+                seconds = held + tail
+                voice = render_sound(sound, note=int(event.note),
+                                     seconds=seconds, sr=sr,
+                                     gate=held / seconds,
+                                     velocity=max(0.05, event.velocity / 100.0),
+                                     sd=sd)
+                cache[key] = voice
+            start = int(float(event.start) * step_s * sr)
+            if start >= n:
+                continue
+            end = min(n, start + voice.shape[0])
+            out[start:end] += voice[:end - start]
+    peak = float(np.max(np.abs(out))) if out.size else 0.0
+    if peak > 0.98:
+        out *= 0.98 / peak
+    return out
+
+
 def render_kit(kit: Kit, pattern=None, bpm: float = 128, sr: int = 44100,
                sd: SDCard | None = None) -> np.ndarray:
     """Rend un kit, soit rangée par rangée, soit en jouant un motif.
@@ -786,9 +917,12 @@ def render_kit(kit: Kit, pattern=None, bpm: float = 128, sr: int = 44100,
                 key = (track.upper(), int(step_item.velocity // 16))
                 voice = cache.get(key)
                 if voice is None:
+                    # La vélocité d'un pas est un pourcentage (1 à 100) :
+                    # la diviser par 127 faisait sonner un coup plein à 79 %.
                     voice = render_sound(
                         row.sound, note=60, seconds=1.2, sr=sr, gate=0.5,
-                        velocity=max(0.2, step_item.velocity / 127.0), sd=sd)
+                        velocity=max(0.2, min(1.0, step_item.velocity
+                                              / 100.0)), sd=sd)
                     cache[key] = voice
                 start = int(float(step_item.pos) * seconds_per_step * sr)
                 end = min(total, start + voice.shape[0])
@@ -798,6 +932,198 @@ def render_kit(kit: Kit, pattern=None, bpm: float = 128, sr: int = 44100,
     peak = float(np.max(np.abs(out)))
     if peak > 0.99:
         out *= 0.99 / peak
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Batterie synthétisée
+# --------------------------------------------------------------------------- #
+#
+# Pour écouter un rythme sans carte, ou une piste à laquelle la carte n'a pas
+# d'échantillon à offrir : une boîte à rythmes analogique minimale, calculée.
+# Chaque voix suit la recette classique des TR : sinus à hauteur tombante
+# pour les fûts, bruit filtré pour les cymbales, partiels inharmoniques pour
+# le métal. Le but reste de juger un rythme, pas d'imiter une machine.
+
+#: Rôles que la batterie synthétisée sait jouer ; les autres prennent le rim.
+SYNTH_DRUM_ROLES = (
+    "Kick", "Snare", "Clap", "Rim", "HatC", "HatO", "Crash", "Ride", "China",
+    "TomL", "TomM", "TomH", "ConL", "ConM", "ConH", "Cowbell", "Block",
+    "Claves", "Shaker", "Tambourine", "Guiro", "Timpany",
+)
+
+
+def _drum_noise(n: int, role: str) -> np.ndarray:
+    rng = np.random.default_rng(_graine("batterie " + role))
+    return rng.standard_normal(n).astype(np.float32)
+
+
+def _band(noise: np.ndarray, sr: int, low: float, high: float) -> np.ndarray:
+    """Bruit limité à une bande de fréquences, crête ramenée à 1.
+
+    Un masque doux dans le domaine fréquentiel : sur des sons de quelques
+    dixièmes de seconde, c'est le filtre le plus simple qui reste juste.
+    """
+    spectrum = np.fft.rfft(noise)
+    freqs = np.fft.rfftfreq(noise.shape[0], 1.0 / sr)
+    mask = (1.0 / (1.0 + (low / np.maximum(freqs, 1.0)) ** 4)
+            / (1.0 + (freqs / high) ** 4))
+    out = np.fft.irfft(spectrum * mask, n=noise.shape[0])
+    peak = float(np.max(np.abs(out))) or 1.0
+    return (out / peak).astype(np.float32)
+
+
+@lru_cache(maxsize=256)
+def _synth_drum_mono(role: str, sr: int, level: int) -> np.ndarray:
+    velocity = level / 20.0
+    lengths = {"Kick": 0.5, "Snare": 0.3, "Clap": 0.35, "Rim": 0.08,
+               "HatC": 0.09, "HatO": 0.45, "Crash": 1.6, "Ride": 1.2,
+               "China": 1.4, "Shaker": 0.14, "Tambourine": 0.25,
+               "Guiro": 0.3, "Cowbell": 0.3, "Block": 0.1, "Claves": 0.1,
+               "Timpany": 0.9}
+    seconds = lengths.get(role, 0.45)
+    n = max(1, int(seconds * sr))
+    t = np.arange(n, dtype=np.float32) / float(sr)
+
+    def sweep(start_hz: float, end_hz: float, speed: float) -> np.ndarray:
+        freq = end_hz + (start_hz - end_hz) * np.exp(-t * speed)
+        return np.sin(2 * np.pi * np.cumsum(freq) / sr).astype(np.float32)
+
+    def partials(freqs, decay: float) -> np.ndarray:
+        tone = sum(np.sign(np.sin(2 * np.pi * f * t)) for f in freqs)
+        return (tone / len(freqs) * np.exp(-t * decay)).astype(np.float32)
+
+    noise = _drum_noise(n, role)
+
+    def bright(low: float, high: float) -> np.ndarray:
+        return _band(noise, sr, low, high)
+
+    if role == "Kick":
+        voice = sweep(160.0, 46.0, 28.0) * np.exp(-t * 6.5)
+        # L'attaque : un clic bref, qui fait entendre la frappe.
+        voice += 0.12 * bright(1500.0, 6000.0) * np.exp(-t * 300.0)
+    elif role == "Snare":
+        voice = (0.6 * bright(1200.0, 7000.0) * np.exp(-t * 16.0)
+                 + 0.55 * sweep(220.0, 180.0, 40.0) * np.exp(-t * 24.0))
+    elif role == "Clap":
+        env = np.zeros(n, dtype=np.float32)
+        for offset in (0.0, 0.011, 0.022):
+            start = int(offset * sr)
+            env[start:] += np.exp(-(t[: n - start]) * 70.0)
+        env += 0.6 * np.exp(-np.maximum(t - 0.03, 0) * 12.0) * (t > 0.03)
+        voice = bright(900.0, 3500.0) * env * 0.6
+    elif role in ("HatC", "HatO", "Shaker"):
+        decay = {"HatC": 55.0, "HatO": 8.0, "Shaker": 28.0}[role]
+        attack = 1.0 - np.exp(-t * (400.0 if role != "Shaker" else 90.0))
+        band = (7000.0, 14000.0) if role != "Shaker" else (4000.0, 11000.0)
+        voice = bright(*band) * np.exp(-t * decay) * attack * 0.7
+    elif role in ("Crash", "China", "Ride"):
+        metal = partials((3150.0, 4540.0, 5950.0, 7340.0) if role != "Ride"
+                         else (2900.0, 3720.0, 5110.0), 3.0)
+        wash = bright(4000.0, 13000.0) * np.exp(-t * (2.5 if role != "Ride"
+                                                       else 4.0))
+        voice = 0.35 * metal + 0.55 * wash
+    elif role == "Tambourine":
+        voice = (0.5 * bright(5000.0, 12000.0) * np.exp(-t * 14.0)
+                 + 0.3 * partials((6200.0, 7700.0), 18.0))
+    elif role == "Guiro":
+        scrape = (np.sin(2 * np.pi * 45.0 * t) > 0).astype(np.float32)
+        voice = bright(2000.0, 6000.0) * scrape * np.exp(-t * 8.0) * 0.5
+    elif role == "Cowbell":
+        voice = partials((540.0, 800.0), 11.0) * 0.6
+    elif role in ("Block", "Claves"):
+        freq = 1000.0 if role == "Block" else 2500.0
+        voice = np.sin(2 * np.pi * freq * t) * np.exp(-t * 55.0)
+    elif role in ("TomL", "TomM", "TomH", "ConL", "ConM", "ConH",
+                  "Timpany"):
+        base = {"TomL": 95.0, "TomM": 135.0, "TomH": 185.0, "ConL": 210.0,
+                "ConM": 290.0, "ConH": 370.0, "Timpany": 75.0}[role]
+        decay = 7.0 if role.startswith("Tom") or role == "Timpany" else 15.0
+        voice = sweep(base * 1.35, base, 18.0) * np.exp(-t * decay)
+    else:                                                   # Rim
+        voice = (np.sin(2 * np.pi * 1700.0 * t) * 0.6
+                 + np.sin(2 * np.pi * 620.0 * t) * 0.5) * np.exp(-t * 110.0)
+    voice = np.asarray(voice, dtype=np.float32)
+    peak = float(np.max(np.abs(voice))) or 1.0
+    voice = voice * (0.9 / peak) * (0.35 + 0.65 * velocity)
+    fade = min(n, max(1, int(0.004 * sr)))
+    voice[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    voice.flags.writeable = False
+    return voice
+
+
+def synth_drum(role: str, sr: int = 44100, velocity: float = 1.0
+               ) -> np.ndarray:
+    """Un coup de batterie synthétisé, en stéréo, prêt à mixer."""
+    name = role if role in SYNTH_DRUM_ROLES else "Rim"
+    level = int(round(max(0.0, min(1.0, float(velocity))) * 20))
+    mono = _synth_drum_mono(name, int(sr), level)
+    return np.repeat(mono[:, None], 2, axis=1)
+
+
+def render_pattern(pattern, bpm: float = 120.0, sr: int = 44100,
+                   kit: Kit | None = None, sd: SDCard | None = None,
+                   bars: int | None = None, tail: float = 0.8) -> np.ndarray:
+    """Rend un motif rythmique, bouclé sur ``bars`` mesures.
+
+    Chaque piste est jouée par la rangée du kit qui porte son nom — un
+    échantillon de la carte — ou, à défaut, par la batterie synthétisée :
+    une piste euclidienne ou un rôle sans échantillon sonne quand même.
+    """
+    steps_total = int(pattern.steps)
+    loops = 1
+    if bars:
+        loops = max(1, int(np.ceil(bars * 16 / max(1, steps_total))))
+        steps_total = int(bars * 16)
+    tempo = max(20.0, float(bpm))
+    step_s = 60.0 / tempo / 4.0
+    n = max(1, int((steps_total * step_s + tail) * sr))
+    out = np.zeros((n, 2), dtype=np.float32)
+    rows = {row.name.upper(): row for row in (kit.rows if kit else [])}
+    cache: dict[tuple[str, int], np.ndarray] = {}
+    for track, steps in pattern.tracks.items():
+        row = rows.get(track.upper())
+        for step in steps:
+            level = int(max(1, min(100, step.velocity)) // 5)
+            key = (track, level)
+            voice = cache.get(key)
+            if voice is None:
+                if row is not None:
+                    voice = render_sound(row.sound, note=60, seconds=1.2,
+                                         sr=sr, gate=0.5,
+                                         velocity=max(0.2, level / 20.0),
+                                         sd=sd)
+                else:
+                    voice = synth_drum(track, sr, level / 20.0)
+                cache[key] = voice
+            for loop in range(loops):
+                position = float(step.pos) + loop * pattern.steps
+                if position >= steps_total:
+                    break
+                start = int(position * step_s * sr)
+                end = min(n, start + voice.shape[0])
+                if end > start:
+                    out[start:end] += voice[:end - start]
+    peak = float(np.max(np.abs(out))) if out.size else 0.0
+    if peak > 0.98:
+        out *= 0.98 / peak
+    return out
+
+
+def mix(*tracks: np.ndarray, levels: tuple[float, ...] | None = None
+        ) -> np.ndarray:
+    """Additionne des rendus stéréo de longueurs différentes, sans saturer."""
+    tracks = tuple(t for t in tracks if t is not None and t.size)
+    if not tracks:
+        return np.zeros((1, 2), dtype=np.float32)
+    n = max(t.shape[0] for t in tracks)
+    out = np.zeros((n, 2), dtype=np.float32)
+    for index, track in enumerate(tracks):
+        gain = levels[index] if levels and index < len(levels) else 1.0
+        out[: track.shape[0]] += track * gain
+    peak = float(np.max(np.abs(out)))
+    if peak > 0.98:
+        out *= 0.98 / peak
     return out
 
 

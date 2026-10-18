@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.scan import scan_card
-from .. import icons
 from ..theme import (
     GOLD,
     GREY,
@@ -34,7 +33,6 @@ from ..theme import (
     PAD_GREEN,
     PAD_MAGENTA,
     PANEL_HI,
-    _rgb,
     pad_color,
     page_color,
     severity_color,
@@ -44,6 +42,11 @@ from ..widgets.common import (
     BusyBar,
     Card,
     ElidedLabel,
+    GrilleAdaptative,
+    LitPad,
+    RangeeAdaptative,
+    ScoreRing,
+    SegmentMeter,
     StatTile,
     human_datetime,
     human_duration,
@@ -106,6 +109,9 @@ class DashboardPage(Page):
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
         self._worker = None
+        #: Vrai pendant la mise à jour automatique du démarrage : son bilan
+        #: dit ce qui a été relu, pas le contenu entier de la carte.
+        self._auto_scan = False
         self._tiles: dict[str, StatTile] = {}
 
     # -- construction ------------------------------------------------------- #
@@ -158,6 +164,14 @@ class DashboardPage(Page):
         column.addWidget(self._build_folders())
         column.addStretch(1)
 
+        # La page s'adapte à la place **visible**, pas à sa propre largeur :
+        # un contenu trop large ne rétrécit jamais de lui-même, il pousse la
+        # page sous une barre de défilement horizontale. Mesuré à 980 px.
+        self._grille_tuiles = GrilleAdaptative(
+            scroll.viewport(), self._tiles_grid,
+            [self._tiles[cle] for cle in self._tile_order], 3, 2, 930)
+        self._rangee_sante = RangeeAdaptative(scroll.viewport(), row, 900)
+
     def _build_next_step(self) -> QWidget:
         """Le bandeau « et maintenant ? », caché quand il n'a rien à dire."""
         self._next_card = Card("À faire maintenant", color=self.color)
@@ -166,9 +180,10 @@ class DashboardPage(Page):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        self._next_icon = QLabel()
-        self._next_icon.setFixedSize(34, 34)
-        self._next_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Le pad de la suggestion, allumé à la couleur de l'endroit où elle
+        # mène : sauvegarder est orange comme la santé, générer est magenta
+        # comme le générateur.
+        self._next_icon = LitPad("refresh", self.color, 34, halo=8)
         row.addWidget(self._next_icon)
 
         self._next_text = QLabel("—")
@@ -211,12 +226,8 @@ class DashboardPage(Page):
         self._next_target = cible
         self._next_text.setText(texte)
         self._next_button.setText(bouton)
-        self._next_icon.setPixmap(icons.icon(icone, teinte, 22).pixmap(22, 22))
-        rouge, vert, bleu = _rgb(teinte)
-        self._next_icon.setStyleSheet(
-            "background-color: rgba(%d,%d,%d,32);"
-            " border: 1px solid rgba(%d,%d,%d,110);"
-            " border-radius: 9px;" % (rouge, vert, bleu, rouge, vert, bleu))
+        self._next_icon.set_icon(icone)
+        self._next_icon.set_color(teinte)
         self._next_card.setVisible(True)
 
     def _next_suggestion(self, stats: dict, report=None):
@@ -296,6 +307,8 @@ class DashboardPage(Page):
             ("audio", "Durée d'audio", "wave", pad_color(5), ""),
             ("space", "Espace libre", "backup", pad_color(7), ""),
         )
+        self._tiles_grid = grid
+        self._tile_order = [definition[0] for definition in definitions]
         for index, (key, label, icon, colour, target) in enumerate(definitions):
             tile = StatTile(label, "—", colour, icon)
             tile.set_clickable(bool(target))
@@ -324,6 +337,11 @@ class DashboardPage(Page):
 
         self._card_detail = QLabel("—")
         self._card_detail.setProperty("role", "subtitle")
+        # Retour à la ligne : sans lui, la phrase sur la copie dans un
+        # dossier imposait sa longueur entière (900 px) comme largeur
+        # minimale, et tout le tableau de bord partait sous une barre de
+        # défilement horizontale dès 980 px.
+        self._card_detail.setWordWrap(True)
         body.addWidget(self._card_detail)
 
         row = QHBoxLayout()
@@ -353,8 +371,8 @@ class DashboardPage(Page):
         body = card.body()
 
         row = QHBoxLayout()
-        self._score = QLabel("—")
-        self._score.setProperty("role", "value")
+        row.setSpacing(14)
+        self._score = ScoreRing(size=84)
         row.addWidget(self._score)
         self._verdict = QLabel("Analyse non lancée")
         self._verdict.setProperty("role", "subtitle")
@@ -405,7 +423,7 @@ class DashboardPage(Page):
                                  color=page_color(target.split("#")[0]))
             button.setSizePolicy(QSizePolicy.Policy.Expanding,
                                  QSizePolicy.Policy.Fixed)
-            button.setMinimumHeight(34)
+            button.setMinimumHeight(42)
             button.clicked.connect(
                 self.guard(lambda _c=False, t=target:
                            self.navigateRequested.emit(t)))
@@ -422,6 +440,25 @@ class DashboardPage(Page):
         return card
 
     # -- analyse ------------------------------------------------------------ #
+
+    def update_index(self) -> bool:
+        """Relit les fichiers modifiés depuis la dernière analyse.
+
+        Appelé au démarrage par la fenêtre : une analyse **incrémentale**,
+        qui ne fait que lire la carte. Rend ``False`` s'il n'y a rien à faire
+        — pas de carte, index vide (la première analyse reste un geste de
+        l'utilisateur), ou analyse déjà en cours.
+        """
+        if self.sd is None or self._worker is not None:
+            return False
+        self._ensure_built()
+        stats = self._stats()
+        if not any(int(stats.get(cle, 0) or 0)
+                   for cle in ("samples", "synths", "kits", "songs")):
+            return False
+        self._auto_scan = True
+        self._start_scan(full=False)
+        return self._worker is not None
 
     def _start_scan(self, full: bool = True) -> None:
         """Lance l'analyse de la carte dans un fil séparé."""
@@ -475,17 +512,32 @@ class DashboardPage(Page):
         self._progress_label.setVisible(False)
 
     def _scan_done(self, result) -> None:
+        automatique, self._auto_scan = self._auto_scan, False
         self._scan_end()
         if result is None:
             return
-        self.say(result.summary())
+        if automatique:
+            relus = (result.samples + result.presets + result.kits
+                     + result.songs - result.skipped)
+            self.say("Index à jour : rien n'a changé sur la carte."
+                     if relus <= 0 else
+                     f"Index à jour : {relus} fichier(s) relu(s) depuis la "
+                     f"dernière analyse.")
+        else:
+            self.say(result.summary())
         if result.errors:
             log.warning("analyse terminée avec %d erreur(s)",
                         len(result.errors))
-        self._refresh()
+        # La fenêtre répond à ``scanFinished`` en rafraîchissant la page
+        # visible — celle-ci, le plus souvent. Se rafraîchir aussi soi-même
+        # coûtait un second diagnostic de santé après chaque analyse ; on ne
+        # le fait que si personne n'écoute.
+        if self.receivers(self.scanFinished) == 0:
+            self._refresh()
         self.scanFinished.emit()
 
     def _scan_failed(self, message: str) -> None:
+        self._auto_scan = False
         self._scan_end()
         self.say(f"Analyse impossible : {message}")
 
@@ -522,6 +574,11 @@ class DashboardPage(Page):
             except Exception as exc:  # noqa: BLE001
                 log.debug("espace disque indisponible : %s", exc)
         self._tiles["space"].set_value(human_size(free) if total else "—")
+        # Sur une copie dans un dossier, ces chiffres sont ceux du disque de
+        # l'ordinateur, pas ceux d'une carte.
+        sur_carte = self.sd is None or self.sd.is_volume
+        self._tiles["space"].set_label(
+            "Espace libre" if sur_carte else "Libre sur le disque")
 
     def _fill_card_info(self, stats: dict) -> None:
         if self.sd is None:
@@ -539,10 +596,17 @@ class DashboardPage(Page):
             used = total - free
             self._space_bar.setRange(0, 100)
             self._space_bar.setValue(int(round(used / total * 100)))
-            self._card_detail.setText(
-                f"{human_size(used)} utilisés sur {human_size(total)} — "
-                f"dont {human_size(stats.get('sample_bytes', 0))} "
-                f"d'échantillons")
+            echantillons = human_size(stats.get('sample_bytes', 0))
+            if self.sd.is_volume:
+                self._card_detail.setText(
+                    f"{human_size(used)} utilisés sur {human_size(total)} — "
+                    f"dont {echantillons} d'échantillons")
+            else:
+                self._card_detail.setText(
+                    f"Copie dans un dossier : {echantillons} d'échantillons. "
+                    f"Le disque qui la contient a {human_size(free)} libres "
+                    f"sur {human_size(total)} — une carte SD, elle, fait "
+                    f"souvent 32 Gio.")
         else:
             self._space_bar.setRange(0, 100)
             self._space_bar.setValue(0)
@@ -566,8 +630,11 @@ class DashboardPage(Page):
         Rend le rapport, dont le bandeau « à faire maintenant » se sert :
         le calculer une seconde fois pour lui serait absurde.
 
-        Le diagnostic lit l'index, il est donc instantané : inutile de le
-        reporter dans un fil séparé.
+        Le diagnostic reste dans le fil de l'interface : 0,21 s sur la carte
+        de l'utilisateur. Il ne l'a pas toujours été — 0,96 s, lancé deux fois
+        à chaque visite, soit deux secondes de fenêtre figée — avant que le
+        repérage des fichiers parasites ne passe à ``os.scandir`` et que la
+        fenêtre ne cesse de rafraîchir deux fois chaque page affichée.
 
         **Tant que la carte n'a pas été analysée, aucun score n'est affiché.**
         Sur un index vide, les contrôles ne trouvent rien à signaler et la
@@ -583,7 +650,7 @@ class DashboardPage(Page):
                       for key in ("samples", "synths", "kits", "songs"))
         if counted == 0:
             self._score.setText("—")
-            self._score.setStyleSheet(f"color: {GREY};")
+            self._score.set_color(GREY)
             self._verdict.setText(
                 "Carte pas encore analysée : l'état de santé sera calculé "
                 "après la première analyse.")
@@ -601,8 +668,7 @@ class DashboardPage(Page):
             return None
 
         self._score.setText(f"{report.score}")
-        self._score.setStyleSheet(
-            f"color: {self._score_colour(report.score)};")
+        self._score.set_color(self._score_colour(report.score))
         self._verdict.setText(report.verdict())
 
         worst = sorted(report.issues,
@@ -684,20 +750,20 @@ class DashboardPage(Page):
 
             label = ElidedLabel(name)
             label.setFixedWidth(220)
+            # Politique fixe : celle d'un libellé élidé est « ignorée », et
+            # la disposition lui donnait alors zéro pixel malgré sa largeur
+            # fixe — la barre voisine se dessinait par-dessus le nom du
+            # dossier. Le défaut datait d'avant la refonte ; il ne se voyait
+            # qu'en faisant défiler le tableau de bord.
+            label.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                QSizePolicy.Policy.Preferred)
             label.setToolTip(name)
             layout.addWidget(label)
 
-            bar = QProgressBar()
-            bar.setTextVisible(False)
-            bar.setFixedHeight(10)
-            bar.setRange(0, int(biggest))
-            bar.setValue(int(count))
-            colour = pad_color(index)
-            bar.setStyleSheet(
-                f"QProgressBar {{ background-color: {PANEL_HI};"
-                f" border: none; border-radius: 5px; }}"
-                f"QProgressBar::chunk {{ background-color: {colour};"
-                f" border-radius: 5px; }}")
+            # Une rangée de pads plutôt qu'une barre : la répartition se lit
+            # comme un niveau sur la machine.
+            bar = SegmentMeter(segments=32, color=pad_color(index))
+            bar.set_value(int(count), int(biggest))
             layout.addWidget(bar, 1)
 
             value = QLabel(str(count))

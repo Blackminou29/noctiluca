@@ -23,11 +23,12 @@ from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from ..theme import (
     GOLD,
-    GOLD_HI,
     GREY,
     PAD_CYAN,
+    PAD_WHITE,
     PANEL_HI,
     PANEL_LO,
+    mix,
 )
 
 log = logging.getLogger(__name__)
@@ -107,6 +108,12 @@ class _LogAxis(QWidget):
                              Qt.AlignmentFlag.AlignCenter, _freq_label(hz))
 
 
+def _set_accent(widget, color: str) -> None:
+    """Change la couleur de la courbe et redessine."""
+    widget._accent = color or widget._accent
+    widget.update()
+
+
 class FilterCurve(_LogAxis):
     """Réponse d'un filtre résonant, mise à jour en direct.
 
@@ -118,10 +125,18 @@ class FilterCurve(_LogAxis):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._accent = GOLD
         self._cutoff = 40
         self._resonance = 10
         self._mode = "24dB"
         self._hpf_cutoff: int | None = None
+
+    def set_accent(self, color: str) -> None:
+        """Trace la réponse à la couleur de la page qui l'accueille."""
+        _set_accent(self, color)
+
+    def accent(self) -> str:
+        return self._accent
 
     def set_filter(self, cutoff: int, resonance: int,
                    mode: str = "24dB") -> None:
@@ -188,9 +203,9 @@ class FilterCurve(_LogAxis):
             filled.closeSubpath()
 
             gradient = QLinearGradient(0.0, plot.top(), 0.0, plot.bottom())
-            top = QColor(GOLD)
+            top = QColor(self._accent)
             top.setAlphaF(0.30)
-            bottom = QColor(GOLD)
+            bottom = QColor(self._accent)
             bottom.setAlphaF(0.02)
             gradient.setColorAt(0.0, top)
             gradient.setColorAt(1.0, bottom)
@@ -198,7 +213,7 @@ class FilterCurve(_LogAxis):
             painter.setBrush(gradient)
             painter.drawPath(filled)
 
-            pen = QPen(QColor(GOLD_HI))
+            pen = QPen(QColor(mix(self._accent, PAD_WHITE, 0.30)))
             pen.setWidthF(2.0)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -209,7 +224,9 @@ class FilterCurve(_LogAxis):
 
             cutoff_hz = _cutoff_hz(self._cutoff / 50.0)
             x = self._x_of(cutoff_hz)
-            painter.setPen(QPen(QColor(PAD_CYAN), 1, Qt.PenStyle.DashLine))
+            repere = QColor(PAD_WHITE)
+            repere.setAlphaF(0.55)
+            painter.setPen(QPen(repere, 1, Qt.PenStyle.DashLine))
             painter.drawLine(int(x), int(plot.top()), int(x),
                              int(plot.bottom()))
 
@@ -236,6 +253,7 @@ class SpectrumView(_LogAxis):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._accent = PAD_CYAN
         self._freqs: np.ndarray | None = None
         self._db: np.ndarray | None = None
         # Réglable : « écoutez un échantillon » ne veut rien dire dans
@@ -243,6 +261,13 @@ class SpectrumView(_LogAxis):
         self._empty_text = ("Aucun signal analysé\n\n"
                             "Écoutez un échantillon pour voir son "
                             "spectre")
+
+    def set_accent(self, color: str) -> None:
+        """Trace le spectre à la couleur de la page qui l'accueille."""
+        _set_accent(self, color)
+
+    def accent(self) -> str:
+        return self._accent
 
     def set_empty_text(self, texte: str) -> None:
         """Change ce qui s'affiche quand aucun spectre n'est chargé."""
@@ -316,9 +341,9 @@ class SpectrumView(_LogAxis):
             filled.closeSubpath()
 
             gradient = QLinearGradient(0.0, plot.top(), 0.0, plot.bottom())
-            top = QColor(PAD_CYAN)
+            top = QColor(self._accent)
             top.setAlphaF(0.34)
-            bottom = QColor(PAD_CYAN)
+            bottom = QColor(self._accent)
             bottom.setAlphaF(0.02)
             gradient.setColorAt(0.0, top)
             gradient.setColorAt(1.0, bottom)
@@ -326,7 +351,7 @@ class SpectrumView(_LogAxis):
             painter.setBrush(gradient)
             painter.drawPath(filled)
 
-            pen = QPen(QColor(PAD_CYAN))
+            pen = QPen(QColor(self._accent))
             pen.setWidthF(1.6)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)

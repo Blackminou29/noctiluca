@@ -143,8 +143,13 @@ def _track_bytes(track: MidiTrack) -> bytes:
     return _chunk(b"MTrk", bytes(body))
 
 
-def _tempo_track(bpm: float, ppq: int, name: str = "") -> bytes:
-    """Piste de tête : tempo et métrique."""
+def _tempo_track(bpm: float, ppq: int, name: str = "",
+                 markers: list[tuple[int, str]] | None = None) -> bytes:
+    """Piste de tête : tempo, métrique, et repères de section éventuels.
+
+    Les repères (méta-événement 0x06, « marker ») s'affichent dans la ligne
+    de temps de la plupart des logiciels de MAO : Intro, Montée, Cassure…
+    """
     try:
         tempo = float(bpm)
     except (TypeError, ValueError):
@@ -159,6 +164,11 @@ def _tempo_track(bpm: float, ppq: int, name: str = "") -> bytes:
     body += b"\x00" + _meta(0x51, struct.pack(">I", micros)[1:])
     # Métrique 4/4, noire = unité, 24 impulsions MIDI par noire.
     body += b"\x00" + _meta(0x58, bytes([4, 2, 24, 8]))
+    previous = 0
+    for tick, text in sorted(markers or [], key=lambda m: m[0]):
+        tick = max(previous, int(tick))
+        body += _varlen(tick - previous) + _text_meta(0x06, text)
+        previous = tick
     body += b"\x00" + _meta(0x2F, b"")
     return _chunk(b"MTrk", bytes(body))
 
@@ -168,7 +178,8 @@ def _tempo_track(bpm: float, ppq: int, name: str = "") -> bytes:
 # --------------------------------------------------------------------------- #
 
 def write_midi(path: Path, tracks: list[MidiTrack], bpm: float = 120.0,
-               ppq: int = DEFAULT_PPQ) -> None:
+               ppq: int = DEFAULT_PPQ,
+               markers: list[tuple[int, str]] | None = None) -> None:
     """Écrit un fichier MIDI de type 1.
 
     La première piste du fichier porte le tempo ; les pistes fournies
@@ -179,7 +190,7 @@ def write_midi(path: Path, tracks: list[MidiTrack], bpm: float = 120.0,
     """
     target = Path(path)
     resolution = max(1, int(ppq))
-    blocks = [_tempo_track(bpm, resolution, target.stem)]
+    blocks = [_tempo_track(bpm, resolution, target.stem, markers)]
     blocks += [_track_bytes(t) for t in (tracks or [])]
 
     header = struct.pack(">HHH", 1, len(blocks), resolution)
@@ -258,6 +269,64 @@ def progression_to_midi(path: Path, chords: list[dict], bpm: float,
     write_midi(path, [track], bpm=bpm, ppq=resolution)
 
 
+#: Canal MIDI de chaque partie d'accompagnement (numérotés à partir de 0).
+PART_CHANNELS = {"Accords": 0, "Basse": 1, "Arpège": 2, "Mélodie": 3,
+                 "Batterie": DRUM_CHANNEL}
+
+
+def parts_to_midi(path: Path, parts: dict, bpm: float,
+                  ppq: int = DEFAULT_PPQ,
+                  markers: list[tuple[float, str]] | None = None) -> int:
+    """Exporte des parties d'accompagnement : une piste par partie.
+
+    ``parts`` est la sortie de :func:`delugeapp.core.accomp.accompany` :
+    ``{nom: [NoteEvent]}``, positions en pas de double-croche. Chaque partie
+    a son canal (:data:`PART_CHANNELS`), pour qu'un séquenceur — ou le
+    Deluge, une piste par instrument — les joue sur des sons différents.
+
+    :param markers: ``[(position en pas, nom)]`` — les sections d'une
+        esquisse, écrites comme repères.
+
+    Retourne le nombre de pistes écrites.
+    """
+    resolution = max(1, int(ppq))
+    per_step = resolution / 4.0
+    tracks: list[MidiTrack] = []
+    for index, (name, events) in enumerate((parts or {}).items()):
+        if not events:
+            continue
+        track = MidiTrack(name=name,
+                          channel=PART_CHANNELS.get(name, 3 + index))
+        for event in events:
+            velocity = max(1, min(127, int(event.velocity * 127 // 100)))
+            track.add(int(round(event.start * per_step)), int(event.note),
+                      velocity, max(1, int(round(event.length * per_step))))
+        tracks.append(track)
+    if tracks:
+        write_midi(path, tracks, bpm=bpm, ppq=resolution,
+                   markers=[(int(round(step * per_step)), text)
+                            for step, text in (markers or [])])
+    return len(tracks)
+
+
+def _ratio(clip) -> float:
+    """Facteur entre les ticks d'un clip du Deluge et ceux du fichier MIDI.
+
+    **Correction mesurée (14 octobre 2026).** Le facteur valait toujours 4,
+    comme si une noire du Deluge faisait 24 ticks. Elle en fait
+    ``24 << inputTickMagnitude`` : 48 dans les morceaux 3.x, 96 dans les
+    morceaux c1.2.1. Les exports de morceaux sortaient donc deux à quatre
+    fois trop lents. Un objet qui ne dit pas sa résolution garde l'ancienne
+    hypothèse (24 par noire).
+    """
+    par_noire = getattr(clip, "ticks_per_quarter", None)
+    try:
+        par_noire = float(par_noire) if par_noire else float(DELUGE_PPQ)
+    except (TypeError, ValueError):
+        par_noire = float(DELUGE_PPQ)
+    return DEFAULT_PPQ / max(1.0, par_noire)
+
+
 def song_to_midi(path: Path, song, max_clips: int = 64) -> int:
     """Exporte un morceau entier : **une piste MIDI par clip**.
 
@@ -274,7 +343,6 @@ def song_to_midi(path: Path, song, max_clips: int = 64) -> int:
     Une piste de kit part sur le canal des percussions, pour qu'un
     séquenceur General MIDI la joue avec des percussions.
     """
-    ratio = DEFAULT_PPQ / float(DELUGE_PPQ)
     tracks: list[MidiTrack] = []
 
     clips = list(getattr(song, "clips", []) or [])
@@ -289,6 +357,7 @@ def song_to_midi(path: Path, song, max_clips: int = 64) -> int:
             continue
 
         est_kit = bool(getattr(clip, "is_kit", False))
+        ratio = _ratio(clip)
         nom = (getattr(clip, "name", "") or getattr(clip, "preset_name", "")
                or "Clip %d" % index)
         track = MidiTrack(name=nom[:40],
@@ -312,9 +381,10 @@ def clip_to_midi(path: Path, clip, bpm: float) -> None:
 
     Une piste MIDI par rangée de notes, ce qui permet de retrouver la
     structure du clip dans le séquenceur d'arrivée. Les positions du Deluge
-    (24 ticks par noire) sont converties en 96, soit un facteur exact de 4.
+    sont converties à la résolution du fichier MIDI d'après celle du
+    morceau (voir :func:`_ratio`).
     """
-    ratio = DEFAULT_PPQ / float(DELUGE_PPQ)
+    ratio = _ratio(clip)
     tracks: list[MidiTrack] = []
     for row in getattr(clip, "note_rows", []) or []:
         if not row.notes:

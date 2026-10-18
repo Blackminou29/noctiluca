@@ -465,11 +465,10 @@ def retarget_zones(sd: SDCard, ratios: dict[str, float],
             if apply:
                 try:
                     obj.save(path, backup=True)
-                except Exception as exc:            # noqa: BLE001
+                except Exception:                   # noqa: BLE001
                     log.exception("recalage de %s impossible", path.name)
                     total -= moved
                     touched.pop()
-                    del exc
 
     return total, touched
 
@@ -798,12 +797,36 @@ def plan_custom(sd: SDCard, lib: Library, rels: list[str],
 
     locked = song_locked_samples(sd) if any(
         k in actions for k in LENGTH_CHANGING) else {}
+    # Le rognage retire le silence de tête : tout le contenu recule d'un
+    # nombre de trames inconnu du recalage, qui ne sait que mettre les bornes
+    # à l'échelle. Une tranche de preset ou un pad de kit découpé jouerait
+    # alors le mauvais passage : ces fichiers ne sont pas rognés.
+    cited: dict[str, list[str]] = {}
+    if "trim" in actions:
+        try:
+            from .deps import build_graph
+            graph = build_graph(sd, lib)
+            for rel in rels:
+                users = [src for _kind, src in graph.users_of(rel)]
+                if users:
+                    cited[norm_rel(rel)] = users
+        except Exception:                           # noqa: BLE001
+            log.exception("dépendances indisponibles : rognage refusé")
+            cited = {norm_rel(r): ["(dépendances inconnues)"] for r in rels}
     known = {norm_rel(r["rel"]): r for r in _rows(lib, list(rels))}
     for rel in rels:
         row = known.get(norm_rel(rel))
         info = _before(row) if row is not None else {}
         edit = Edit(rel=rel, actions=dict(actions), reason="manuel",
                     before=info)
+        users = cited.get(norm_rel(rel))
+        if users:
+            edit.skipped = (
+                "cité par %d preset(s) ou kit(s) — %s ; le rognage décale le "
+                "début du son et leurs bornes ne peuvent pas être recalées"
+                % (len(users), ", ".join(sorted(users)[:2])))
+            plan.skipped.append(edit)
+            continue
         if actions.get("mono") and info.get("channels", 0) == 1:
             # Déjà mono : inutile de réécrire le fichier pour rien.
             reste = {k: v for k, v in actions.items() if k != "mono"}
@@ -861,6 +884,9 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
 
     count = 0
     errors: list[str] = []
+    #: fichier -> trames_originales / trames_actuelles, pour défaire le
+    #: recalage des bornes fait lors de la correction.
+    ratios: dict[str, float] = {}
     for src in sorted(base.rglob("*")):
         if not src.is_file():
             continue
@@ -870,12 +896,22 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
         if not apply:
             continue
         try:
+            current = wav.probe(dest) if dest.is_file() else None
+            original = wav.probe(src)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
+            if (current is not None and current.ok and original.ok
+                    and current.frames and original.frames
+                    and current.frames != original.frames):
+                ratios[norm_rel(inner.as_posix())] = (
+                    original.frames / float(current.frames))
             if lib is not None:
                 _reindex(sd, lib, sd.rel(dest), dest)
         except OSError as exc:
             errors.append("%s : %s" % (inner, exc))
+    if apply and ratios:
+        # Sans cela, les bornes restaient à l'échelle du fichier converti.
+        retarget_zones(sd, ratios, apply=True)
     if apply and lib is not None:
         try:
             lib.commit()

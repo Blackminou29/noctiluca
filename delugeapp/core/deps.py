@@ -157,6 +157,12 @@ def _retarget_element(el, old_norm: str, new_rel: str) -> int:
     return count
 
 
+def _xml_escaped(text: str) -> str:
+    """Forme échappée d'un nom, telle qu'un attribut XML peut la contenir."""
+    return (text.replace("&", "&amp;").replace("'", "&apos;")
+            .replace('"', "&quot;"))
+
+
 def relink(sd: SDCard, old_rel: str, new_rel: str, apply: bool = False,
            progress: Callable[[str], None] | None = None,
            ) -> list[tuple[Path, int]]:
@@ -190,8 +196,11 @@ def relink(sd: SDCard, old_rel: str, new_rel: str, apply: bool = False,
             log.debug("fichier illisible %s : %s", path, exc)
             continue
         # Filtre rapide : inutile de parser un XML qui ne cite pas le nom.
-        needle = Path(old_norm).name.encode("utf-8", "replace")
-        if needle and needle.lower() not in raw.lower():
+        name = Path(old_norm).name
+        low = raw.lower()
+        if name and not any(
+                form.encode("utf-8", "replace").lower() in low
+                for form in (name, _xml_escaped(name))):
             continue
 
         try:
@@ -351,6 +360,7 @@ def find_replacement(sd: SDCard, missing_rel: str, lib: Library,
 
 def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
                 progress: Callable[[str], None] | None = None,
+                failures: list[str] | None = None,
                 ) -> list[tuple[Path, int]]:
     """Applique plusieurs réaffectations en **un seul passage par fichier**.
 
@@ -363,6 +373,10 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
 
     :param mapping: ``{ancien chemin: nouveau chemin}``.
     :param apply: ``False`` (défaut) simule sans rien écrire.
+    :param failures: reçoit, en français, chaque XML qui cite peut-être un
+        des fichiers mais n'a pas pu être lu ou réécrit. L'appelant qui
+        s'apprête à supprimer les anciens fichiers **doit** le consulter :
+        une référence non redirigée devient une référence cassée.
     :returns: ``[(fichier, nombre total de remplacements)]``.
     """
     table = {norm_rel(old): str(new or "").replace("\\", "/").strip("/")
@@ -373,8 +387,18 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
         return changes
 
     # Noms de fichiers recherchés, pour écarter vite les XML non concernés.
-    needles = {Path(k).name.encode("utf-8", "replace").lower()
-               for k in table if Path(k).name}
+    # Le nom figure parfois échappé dans le XML (``&amp;``) : on cherche les
+    # deux formes, sinon ces fichiers n'étaient jamais réécrits.
+    needles: set[bytes] = set()
+    for key in table:
+        name = Path(key).name
+        if name:
+            for form in (name, _xml_escaped(name)):
+                needles.add(form.encode("utf-8", "replace").lower())
+
+    def _fail(text: str) -> None:
+        if failures is not None:
+            failures.append(text)
 
     for path in _xml_files(sd):
         if progress is not None:
@@ -385,7 +409,8 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
         try:
             raw = path.read_bytes()
         except OSError as exc:
-            log.debug("fichier illisible %s : %s", path, exc)
+            log.warning("fichier illisible %s : %s", path, exc)
+            _fail(f"{sd.rel(path)} : illisible ({exc})")
             continue
         low = raw.lower()
         if not any(n in low for n in needles):
@@ -393,7 +418,8 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
         try:
             doc = dxml.loads(raw, path)
         except Exception as exc:  # noqa: BLE001
-            log.debug("XML illisible %s : %s", path, exc)
+            log.warning("XML illisible %s : %s", path, exc)
+            _fail(f"{sd.rel(path)} : XML illisible ({exc})")
             continue
 
         count = 0
@@ -416,6 +442,7 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
                 dxml.save(doc, path, backup=True)
             except Exception as exc:  # noqa: BLE001
                 log.error("écriture impossible dans %s : %s", path, exc)
+                _fail(f"{sd.rel(path)} : écriture impossible ({exc})")
                 continue
         changes.append((path, count))
 

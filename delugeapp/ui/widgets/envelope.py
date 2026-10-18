@@ -57,6 +57,14 @@ class EnvelopeEditor(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+    def set_accent(self, color: str) -> None:
+        """Trace l'enveloppe à la couleur de la page qui l'accueille."""
+        self._color = color or self._color
+        self.update()
+
+    def accent(self) -> str:
+        return self._color
+
     # -- valeurs ----------------------------------------------------------- #
 
     @staticmethod

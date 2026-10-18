@@ -569,6 +569,98 @@ class Library:
         except sqlite3.Error as exc:
             log.debug("suppression de %r impossible : %s", rel, exc)
 
+    def purge_absent(self, kind: str, present: list[str]) -> int:
+        """Retire de l'index les fichiers ``kind`` absents de ``present``.
+
+        Les références d'autres fichiers vers un échantillon retiré sont
+        **gardées** et marquées cassées : ce sont précisément celles que le
+        diagnostic doit signaler. Retourne le nombre de lignes retirées.
+        """
+        keep = {str(r).replace("\\", "/").strip("/") for r in present}
+        gone = [rel for rel in self.known_files(kind) if rel not in keep]
+        table = {"sample": "samples", "song": "songs"}.get(kind, "presets")
+        try:
+            for rel in gone:
+                self.con.execute(f"DELETE FROM {table} WHERE rel = ?", (rel,))
+                if kind == "sample":
+                    self.con.execute(
+                        "UPDATE links SET missing = 1 WHERE dst_norm = ?",
+                        (norm_rel(rel),))
+                else:
+                    self.con.execute(
+                        "DELETE FROM links WHERE src_kind = ? AND src_rel = ?",
+                        (kind, rel))
+                # Favoris et étiquettes restent : ils sont le travail de
+                # l'utilisateur, et le fichier peut revenir (autre carte
+                # analysée avec le même index, dossier recopié).
+            self.con.commit()
+        except sqlite3.Error as exc:
+            log.debug("purge de l'index (%s) impossible : %s", kind, exc)
+        return len(gone)
+
+    def refresh_missing_links(self) -> None:
+        """Une référence vers un échantillon revenu n'est plus cassée.
+
+        Un preset inchangé n'est pas relu par l'analyse incrémentale : sans
+        ce rattrapage, il restait « cassé » après qu'on eut recopié
+        l'échantillon manquant.
+        """
+        try:
+            self.con.execute(
+                "UPDATE links SET missing = 0 WHERE missing = 1 AND dst_norm "
+                "IN (SELECT rel_norm FROM samples)")
+            self.con.commit()
+        except sqlite3.Error as exc:
+            log.debug("mise à jour des références impossible : %s", exc)
+
+    def move(self, kind: str, old_rel: str, new_rel: str) -> None:
+        """Suit un fichier déplacé ou renommé sur la carte.
+
+        Sans cela, l'index gardait l'ancien chemin jusqu'à la prochaine
+        analyse : le diagnostic relancé juste après un rangement montrait
+        encore les anomalies qu'on venait de corriger, et un favori ou une
+        étiquette restaient attachés à un chemin vide.
+        """
+        old = str(old_rel or "").replace("\\", "/").strip("/")
+        new = str(new_rel or "").replace("\\", "/").strip("/")
+        if not old or not new or old == new:
+            return
+        table = {"sample": "samples", "song": "songs"}.get(kind, "presets")
+        name = Path(new).stem
+        try:
+            if table == "songs":
+                self.con.execute(
+                    "UPDATE songs SET rel = ?, rel_norm = ?, name = ? "
+                    "WHERE rel = ?", (new, norm_rel(new), name, old))
+            else:
+                self.con.execute(
+                    f"UPDATE {table} SET rel = ?, rel_norm = ?, name = ?, "
+                    f"folder = ? WHERE rel = ?",
+                    (new, norm_rel(new), name, str(Path(new).parent).replace(
+                        "\\", "/"), old))
+            self.con.execute("UPDATE links SET src_rel = ? WHERE src_rel = ?",
+                             (new, old))
+            self.con.execute(
+                "UPDATE links SET dst_rel = ?, dst_norm = ? WHERE dst_norm = ?",
+                (new, norm_rel(new), norm_rel(old)))
+            for appreciation in ("ratings", "item_tags"):
+                self.con.execute(
+                    f"UPDATE OR IGNORE {appreciation} SET rel = ? WHERE rel = ?",
+                    (new, old))
+        except sqlite3.Error as exc:
+            log.debug("déplacement de %r dans l'index impossible : %s", old, exc)
+
+    def retarget_links(self, old_rel: str, new_rel: str) -> None:
+        """Les références à ``old_rel`` pointent désormais vers ``new_rel``."""
+        try:
+            self.con.execute(
+                "UPDATE links SET dst_rel = ?, dst_norm = ?, missing = 0 "
+                "WHERE dst_norm = ?",
+                (str(new_rel), norm_rel(new_rel), norm_rel(old_rel)))
+        except sqlite3.Error as exc:
+            log.debug("réaffectation de %r dans l'index impossible : %s",
+                      old_rel, exc)
+
     def known_files(self, kind: str) -> dict[str, tuple[int, float]]:
         """``{chemin: (taille, mtime)}`` déjà indexés, pour l'analyse incrémentale."""
         if kind == "sample":

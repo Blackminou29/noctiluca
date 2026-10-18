@@ -23,20 +23,46 @@ import logging
 import unicodedata
 from typing import Any, Callable
 
-from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPointF,
+    QRectF,
+    Qt,
+    QVariantAnimation,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from ...config import AppContext
-from .. import icons
-from ..theme import GOLD, GREY, PAD_WHITE, _rgb, page_color, text_on
-from ..widgets.common import EmptyState
+from .. import art, icons
+from ..theme import (
+    BORDER_SOFT,
+    CARD_TOP,
+    GOLD,
+    GREY_LIGHT,
+    PAD_WHITE,
+    PANEL,
+    PANEL_LO,
+    TEXT_MUTED,
+    _rgb,
+    accent_qss,
+    lit_fill,
+    mix,
+    page_color,
+)
+from ..widgets.common import EmptyState, LitPad, glow
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +111,9 @@ class Page(QWidget):
     settingsRequested = pyqtSignal()
     #: Demande de chercher une carte sur les lecteurs branchés.
     detectRequested = pyqtSignal()
+    #: Un morceau vient d'être écrit dans SONGS (chemin relatif) : les
+    #: autres pages — Morceaux, tableau de bord — doivent se rafraîchir.
+    songWritten = pyqtSignal(str)
 
     #: Titre affiché dans la navigation, en français.
     TITLE = "Page"
@@ -108,6 +137,14 @@ class Page(QWidget):
         super().__init__(parent)
         self.ctx = ctx
         self._built = False
+
+        # La page prend sa couleur **avant** de créer le moindre enfant :
+        # boutons principaux, sélections, onglets, cases et curseurs sont
+        # teints d'emblée, au lieu d'être repeints une seconde fois.
+        try:
+            self.setStyleSheet(accent_qss(self.color))
+        except Exception as exc:        # noqa: BLE001 - une teinte ne casse rien
+            log.debug("teinte de la page %s impossible : %s", self.TITLE, exc)
 
         self._stack = QStackedWidget(self)
         outer = QVBoxLayout(self)
@@ -149,9 +186,39 @@ class Page(QWidget):
         try:
             self.build()
             self._tint_sections()
+            self._light_up()
             self._explain_controls()
         except Exception:  # noqa: BLE001 - rempart, cf. SPEC §6.3
             log.exception("construction de la page %s en échec", self.TITLE)
+
+    def _light_up(self) -> None:
+        """Allume les boutons principaux et teint les tracés de la page.
+
+        * le bouton principal est un pad allumé : il rayonne de la couleur
+          de la page, et son icône prend l'encre qui se lit sur cette
+          couleur — elle restait dorée sur fond cyan ;
+        * les widgets dessinés à la main (forme d'onde, courbes, spectre,
+          enveloppe) qui savent changer de couleur prennent celle de la page.
+        """
+        couleur = self.color
+        _haut, _bas, encre = lit_fill(couleur)
+        for bouton in self.findChildren(QPushButton):
+            try:
+                if bouton.objectName() != "Primary":
+                    continue
+                nom = bouton.property("iconName")
+                if nom:
+                    bouton.setIcon(icons.icon(str(nom), encre, 16))
+                glow(bouton, couleur, 24, 0.45)
+            except Exception as exc:        # noqa: BLE001 - simple décor
+                log.debug("bouton principal non allumé : %s", exc)
+        for widget in self.findChildren(QWidget):
+            accent = getattr(widget, "set_accent", None)
+            if callable(accent):
+                try:
+                    accent(couleur)
+                except Exception as exc:    # noqa: BLE001 - simple décor
+                    log.debug("teinte d'un tracé impossible : %s", exc)
 
     def _explain_controls(self) -> None:
         """Pose une explication sur chaque commande qui n'en a pas.
@@ -235,6 +302,20 @@ class Page(QWidget):
         """Carte SD, ou ``None`` après un avertissement à l'utilisateur."""
         return self.ctx.sd_or_warn(self)
 
+    def write_song(self, build: Callable, default_name: str) -> str:
+        """Écrit un morceau du Deluge construit par ``build(carte)``.
+
+        Le parcours est celui de :func:`delugeapp.ui.songexport.export_song`
+        : nom demandé, plan montré et confirmé, fichier **nouveau** dans
+        SONGS, indexé aussitôt. Rend le chemin écrit, ou ``""``.
+        """
+        from ..songexport import export_song
+
+        rel = export_song(self, self.ctx, build, default_name, self.say)
+        if rel:
+            self.songWritten.emit(rel)
+        return rel
+
     # -- identité visuelle de la page --------------------------------------- #
 
     @property
@@ -256,7 +337,8 @@ class Page(QWidget):
         ressemblaient donc toutes. Passer par la page évite d'avoir à répéter
         la teinte à chaque appel — et d'oublier de la mettre à jour.
         """
-        return page_header(title, subtitle, self.color, self.ICON)
+        return page_header(title, subtitle, self.color, self.ICON,
+                           seed=art.seed_of(self.key))
 
     def focus_on(self, hint: str) -> None:
         """Place la page sur la partie désignée par ``hint``.
@@ -378,7 +460,11 @@ class _ActionsCompactes(QObject):
         host.installEventFilter(self)
 
     def eventFilter(self, objet, evenement) -> bool:   # noqa: N802 - API Qt
-        if evenement.type() == QEvent.Type.Resize:
+        # À l'affichage aussi : la première taille arrive avant que la page
+        # ait montré ses enfants, et si la fenêtre ne change plus de taille
+        # ensuite, aucun autre redimensionnement ne viendrait réveiller
+        # l'ajusteur.
+        if evenement.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self.ajuster()
         return False
 
@@ -387,7 +473,11 @@ class _ActionsCompactes(QObject):
         for index in range(self._actions.count()):
             element = self._actions.itemAt(index)
             widget = element.widget() if element is not None else None
-            if isinstance(widget, QPushButton) and widget.isVisible():
+            # « Pas masqué » plutôt que « visible » : un bouton n'est visible
+            # qu'une fois sa page affichée, et l'ajusteur, qui ne comptait
+            # que ceux-là, ne trouvait rien à replier à sa première mesure —
+            # mesuré à 980 px : six boutons coupés en plein mot, état 0.
+            if isinstance(widget, QPushButton) and not widget.isHidden():
                 sortie.append(widget)
         return sortie
 
@@ -404,9 +494,18 @@ class _ActionsCompactes(QObject):
                     # s'en sert pour retrouver son explication.
                     bouton.setProperty("libelleComplet", bouton.text())
 
-            dispo = (self._host.width()
+            # Les marges de l'en-tête comptent : sans elles, la barre se
+            # croyait plus large qu'elle n'est et son dernier bouton sortait
+            # du cadre arrondi.
+            marges = 0
+            disposition = self._host.layout()
+            if disposition is not None:
+                bords = disposition.contentsMargins()
+                marges = (bords.left() + bords.right()
+                          + 2 * disposition.spacing())
+            dispo = (self._host.width() - marges
                      - self._titre.sizeHint().width() - 24)
-            marge = 6 * (len(boutons) - 1)
+            marge = self._actions.spacing() * (len(boutons) - 1)
 
             # Trois états, du plus bavard au plus serré. L'action
             # **principale** garde son nom le plus longtemps possible :
@@ -467,73 +566,199 @@ class _ActionsCompactes(QObject):
         self._compact = etat
 
 
+class PageHero(QFrame):
+    """L'en-tête d'une page : une ouverture de partie du guide.
+
+    Dans le livre, chaque partie s'ouvre sur un treillis de circuits à sa
+    couleur, un filet de cette couleur, et le titre en capitales. Chaque
+    page de l'application fait de même : le pad allumé de la page, le titre
+    en capitales, et à droite le treillis — tracé par :mod:`delugeapp.ui.art`
+    à la couleur de la page, d'une graine qui lui est propre, et qui
+    s'efface vers le titre pour ne jamais gêner sa lecture.
+
+    À chaque affichage, le treillis s'allume en une demi-seconde : la page
+    « s'ouvre ». Seul l'en-tête se repeint pendant ce temps, et son dessin
+    est en cache.
+    """
+
+    #: Durée de l'apparition du treillis, en millisecondes.
+    REVEAL_MS = 520
+
+    def __init__(self, title: str, subtitle: str = "", color: str = GOLD,
+                 icon_name: str = "", seed: int = 0,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Hero")
+        self._color = color
+        self._seed = int(seed)
+        self._reveal = 1.0
+        self.setSizePolicy(QSizePolicy.Policy.Preferred,
+                           QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 14, 6)
+        layout.setSpacing(8)
+
+        self.title_area = QWidget(self)
+        gauche = QHBoxLayout(self.title_area)
+        gauche.setContentsMargins(0, 0, 0, 0)
+        gauche.setSpacing(6)
+        self.pad: LitPad | None = None
+        if icon_name:
+            self.pad = LitPad(icon_name, color, 42, self.title_area, halo=10)
+            gauche.addWidget(self.pad)
+
+        bloc = QWidget(self.title_area)
+        colonne = QVBoxLayout(bloc)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(0)
+        colonne.addStretch(1)
+        self.heading = QLabel(title, bloc)
+        self.heading.setProperty("role", "h1")
+        colonne.addWidget(self.heading)
+        self.hint: QLabel | None = None
+        if subtitle:
+            self.hint = QLabel(subtitle, bloc)
+            self.hint.setProperty("role", "subtitle")
+            colonne.addWidget(self.hint)
+        colonne.addStretch(1)
+        gauche.addWidget(bloc)
+        layout.addWidget(self.title_area)
+        layout.addStretch(1)
+
+        self.actions = QHBoxLayout()
+        self.actions.setContentsMargins(0, 0, 0, 0)
+        self.actions.setSpacing(8)
+        layout.addLayout(self.actions)
+        self.setMinimumHeight(74)
+
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(self.REVEAL_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.valueChanged.connect(self._reveler)
+
+    def color(self) -> str:
+        return self._color
+
+    def reveal(self) -> float:
+        """Avancement de l'apparition du treillis, de 0 à 1."""
+        return self._reveal
+
+    def _reveler(self, valeur) -> None:
+        try:
+            self._reveal = max(0.0, min(1.0, float(valeur)))
+        except (TypeError, ValueError):
+            return
+        self.update()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - API Qt
+        super().showEvent(event)
+        try:
+            self._animation.stop()
+            self._animation.start()
+        except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
+            log.debug("apparition de l'en-tête impossible : %s", exc)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            cadre = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            chemin = QPainterPath()
+            chemin.addRoundedRect(cadre, 16, 16)
+
+            # Le fond : la surface d'un panneau, qui prend la couleur de la
+            # page vers la droite, là où passent les circuits.
+            fond = QLinearGradient(cadre.topLeft(), cadre.topRight())
+            fond.setColorAt(0.0, QColor(CARD_TOP))
+            fond.setColorAt(0.45, QColor(PANEL))
+            fond.setColorAt(1.0, QColor(mix(PANEL_LO, self._color, 0.10)))
+            p.fillPath(chemin, fond)
+
+            # Le treillis du guide, à la couleur de la page.
+            dessin = art.circuit(self.width(), self.height(), self._color,
+                                 self._seed, self.devicePixelRatioF(),
+                                 density=0.46, fade=(0.30, 0.74))
+            p.save()
+            p.setClipPath(chemin)
+            p.setOpacity(0.68 * self._reveal)
+            p.drawPixmap(QPointF(0, 0), dessin)
+            p.restore()
+
+            # Le filet du guide, sous le tout : franc à gauche, estompé
+            # vers la droite.
+            filet = QLinearGradient(cadre.bottomLeft(), cadre.bottomRight())
+            plein = QColor(self._color)
+            plein.setAlphaF(0.85)
+            vide = QColor(self._color)
+            vide.setAlphaF(0.0)
+            filet.setColorAt(0.0, plein)
+            filet.setColorAt(0.55, vide)
+            p.save()
+            p.setClipPath(chemin)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(filet)
+            p.drawRect(QRectF(cadre.left(), cadre.bottom() - 2.0,
+                              cadre.width(), 2.0))
+            p.restore()
+
+            p.setPen(QPen(QColor(BORDER_SOFT), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(chemin)
+            p.end()
+        except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
+            log.debug("en-tête de page non tracé : %s", exc)
+
+
 def page_header(title: str, subtitle: str = "", color: str = GOLD,
-                icon_name: str = "") -> tuple[QWidget, QHBoxLayout]:
+                icon_name: str = "",
+                seed: int = 0) -> tuple[QWidget, QHBoxLayout]:
     """En-tête de page : titre, sous-titre, et une barre d'actions à droite.
 
     Retourne le widget et la disposition dans laquelle ajouter les boutons.
 
-    **La couleur est enfin utilisée.** Elle était acceptée et ignorée ; elle
-    pose maintenant à gauche du titre le pad de la page, identique à celui de
-    la barre latérale : on reconnaît l'écran à sa teinte avant de lire son
+    L'en-tête est une « ouverture de partie » du guide (:class:`PageHero`) :
+    le pad allumé de la page à gauche du titre — identique à celui de la
+    colonne de navigation —, le titre en capitales, et le treillis à la
+    couleur de la page. On reconnaît l'écran à sa teinte avant de lire son
     titre.
     """
-    host = QWidget()
-    layout = QHBoxLayout(host)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(10)
-
-    if icon_name:
-        rouge, vert, bleu = _rgb(color)
-        pad = QLabel(host)
-        pad.setFixedSize(42, 42)
-        pad.setPixmap(icons.icon(icon_name, color, 24).pixmap(24, 24))
-        pad.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pad.setStyleSheet(
-            "background-color: rgba(%d,%d,%d,32);"
-            " border: 1px solid rgba(%d,%d,%d,110);"
-            " border-radius: 10px;" % (rouge, vert, bleu, rouge, vert, bleu))
-        layout.addWidget(pad)
-
-    bloc_titre = QWidget(host)
-    column = QVBoxLayout(bloc_titre)
-    column.setContentsMargins(0, 0, 0, 0)
-    column.setSpacing(0)
-    heading = QLabel(title)
-    heading.setProperty("role", "h1")
-    column.addWidget(heading)
-    if subtitle:
-        hint = QLabel(subtitle)
-        hint.setProperty("role", "subtitle")
-        column.addWidget(hint)
-    layout.addWidget(bloc_titre)
-    layout.addStretch(1)
-
-    actions = QHBoxLayout()
-    actions.setContentsMargins(0, 0, 0, 0)
-    actions.setSpacing(6)
-    layout.addLayout(actions)
-
+    host = PageHero(title, subtitle, color, icon_name, seed)
     # Les libellés se replient sur leur icône quand la fenêtre rétrécit,
     # plutôt que d'être coupés en plein mot.
-    host._actions_compactes = _ActionsCompactes(host, bloc_titre, actions)
-    return host, actions
+    host._actions_compactes = _ActionsCompactes(host, host.title_area,
+                                                host.actions)
+    return host, host.actions
 
 
 def tool_button(label: str, icon_name: str = "", tooltip: str = "",
                 primary: bool = False, color: str = GOLD) -> QPushButton:
     """Bouton d'action d'une barre de page.
 
-    **Une couleur donnée est réellement portée par le bouton.** Elle ne
-    servait auparavant qu'à teinter l'icône, et seulement pour un bouton
-    principal : les 22 genres du générateur passaient chacun leur teinte et
-    s'affichaient tous en gris identique. Un bouton coloré devient un pad :
-    liseré franc, fond légèrement teinté, et remplissage plein une fois
-    choisi.
+    * un bouton **principal** est un pad allumé : plein, à la couleur de la
+      page (que la feuille de la page lui donne), et il rayonne
+      (:meth:`Page._light_up`). Son icône est tracée à l'encre qui se lit
+      sur ce fond, et le nom de l'icône est gardé (``iconName``) pour la
+      retracer quand la page connaît sa couleur ;
+    * un bouton **coloré** devient un pad de la machine : sa couleur en
+      veilleuse, pleine une fois choisi (voir :func:`_pad_style`). Elle
+      ne servait auparavant qu'à teinter l'icône, et seulement pour un
+      bouton principal : les 22 genres du générateur passaient chacun leur
+      teinte et s'affichaient tous en gris identique ;
+    * les autres sont des touches de façade éteintes.
     """
     button = QPushButton(label)
     if icon_name:
-        button.setIcon(icons.icon(icon_name, color if primary else GREY, 16))
+        button.setProperty("iconName", icon_name)
+        if primary:
+            teinte = lit_fill(color)[2]
+        elif color and color != GOLD:
+            teinte = color
+        else:
+            teinte = GREY_LIGHT
+        button.setIcon(icons.icon(icon_name, teinte, 16))
     if tooltip:
         button.setToolTip(tooltip)
     if primary:
@@ -547,23 +772,36 @@ def tool_button(label: str, icon_name: str = "", tooltip: str = "",
 def _pad_style(color: str) -> str:
     """Feuille de style d'un bouton-pad, à la couleur donnée.
 
-    Les teintes passent par ``rgba(...)`` : c'est la syntaxe que le QSS
-    attend. (``QColor`` ne sait pas la lire, mais ici c'est bien du QSS.)
+    Comme sur la machine, un pad qui n'est pas joué montre déjà sa couleur
+    en veilleuse ; choisi, il s'allume en plein. Les teintes passent par
+    ``rgba(...)`` : c'est la syntaxe que le QSS attend. (``QColor`` ne sait
+    pas la lire, mais ici c'est bien du QSS.)
     """
     rouge, vert, bleu = _rgb(color)
+    haut, bas, encre = lit_fill(color)
     return (
         "QPushButton {"
-        " border: 1px solid rgba(%d,%d,%d,90);"
-        " border-left: 3px solid %s;"
-        " background-color: rgba(%d,%d,%d,20);"
-        " color: %s; padding: 6px 8px; }"
+        " border: 1px solid rgba(%d,%d,%d,105);"
+        " border-top-color: rgba(%d,%d,%d,150);"
+        " background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        " stop:0 rgba(%d,%d,%d,58), stop:1 rgba(%d,%d,%d,28));"
+        " color: %s; padding: 6px 8px; border-radius: 10px; }"
         "QPushButton:hover {"
-        " background-color: rgba(%d,%d,%d,48);"
-        " border-color: rgba(%d,%d,%d,170); }"
+        " background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        " stop:0 rgba(%d,%d,%d,82), stop:1 rgba(%d,%d,%d,42));"
+        " border-color: rgba(%d,%d,%d,215); }"
+        "QPushButton:pressed {"
+        " background-color: rgba(%d,%d,%d,120); }"
         "QPushButton:checked {"
-        " background-color: %s; color: %s; font-weight: 700;"
-        " border-color: %s; }"
-        % (rouge, vert, bleu, color,
-           rouge, vert, bleu, PAD_WHITE,
+        " background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        " stop:0 %s, stop:1 %s);"
+        " color: %s; font-weight: 700; border: 1px solid %s; }"
+        "QPushButton:disabled {"
+        " background-color: %s; color: %s; border-color: %s; }"
+        % (rouge, vert, bleu, rouge, vert, bleu,
            rouge, vert, bleu, rouge, vert, bleu,
-           color, text_on(color), color))
+           PAD_WHITE,
+           rouge, vert, bleu, rouge, vert, bleu, rouge, vert, bleu,
+           rouge, vert, bleu,
+           haut, bas, encre, haut,
+           PANEL, TEXT_MUTED, BORDER_SOFT))

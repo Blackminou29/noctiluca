@@ -11,26 +11,36 @@ Hors de Windows, :func:`available` rend ``False`` et tout le module devient
 silencieux : aucune page ne doit cesser de fonctionner parce qu'il n'y a pas
 de MIDI (SPEC §6.1).
 
-Ce que ce module fait, et ne fait pas
--------------------------------------
+Ce que ce module fait
+---------------------
 
-Il envoie et reçoit des **messages courts** : notes, pression, molette,
-changements de contrôle, horloge. C'est ce dont on a besoin pour jouer un son
-sur la machine, piloter ses paramètres en MIDI Follow et suivre son tempo.
+Il envoie et reçoit des **messages courts** — notes, pression, molette,
+contrôleurs, horloge — et des **messages exclusifs (SysEx)**, par lesquels le
+firmware communautaire donne sa version et recopie son écran
+(:mod:`delugeapp.core.delugesysex`).
 
-Il n'envoie **pas** de SysEx. Le firmware communautaire en propose (recopie
-de l'écran, transfert de fichiers), mais cela demande des tampons
-``MIDIHDR`` préparés et maintenus en vie pendant tout l'envoi : une erreur de
-cycle de vie s'y paie par un plantage du processus, pas par une exception. Ce
-sera un module à part, écrit en face d'un vrai Deluge.
+Le Deluge se présente en USB avec **trois ports** (« câbles ») dans chaque
+sens (``io/midi/r_usb_pmidi_descriptor.c``) : les deux premiers portent les
+notes, les contrôleurs et l'horloge, le troisième ne sert qu'aux SysEx
+(``upstreamUSBMIDIDevice_port3`` : « not used for channel data »). Windows
+les nomme selon son pilote — « Deluge », « MIDIOUT2 (Deluge) »,
+« MIDIIN3 (Deluge) » avec le pilote classique ; d'autres noms avec les
+services MIDI 2.0 de Windows 11. :attr:`MidiDevice.cable` lit le numéro dans
+toutes ces formes.
 
 Sûreté
 ------
 
-* le rappel d'entrée est appelé par un fil de Windows : il ne fait
-  qu'empiler un tuple dans une ``queue`` et n'appelle rien d'autre ;
-* l'objet ``CFUNCTYPE`` est gardé sur l'instance — s'il est ramassé par le
-  collecteur pendant que Windows le tient, le processus tombe ;
+* les rappels d'entrée viennent d'un fil de Windows : ils ne font que copier
+  et empiler, n'appellent aucune fonction multimédia et ne prennent aucun
+  verrou de ce module. Rendre un tampon SysEx au pilote
+  (``midiInAddBuffer``) se fait dans un fil à part : la documentation de
+  Windows l'interdit dans le rappel, qui peut sinon bloquer ;
+* l'objet ``CFUNCTYPE`` d'un rappel n'est **jamais** relâché : un pilote
+  peut encore l'appeler juste après la fermeture, et un rappel ramassé par
+  le collecteur fait tomber le processus ;
+* un tampon envoyé au pilote reste vivant jusqu'à ce que le pilote le rende
+  (``MHDR_DONE``) ; s'il ne le rend jamais, il est gardé plutôt que libéré ;
 * toutes les entrées publiques sont tolérantes : un port disparu, un appareil
   débranché en cours de route ou un numéro invalide donnent ``False``, jamais
   une exception.
@@ -40,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -47,10 +58,11 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 __all__ = [
-    "MidiDevice", "MidiOut", "MidiIn",
-    "available", "outputs", "inputs", "find",
+    "MidiDevice", "MidiOut", "MidiIn", "MidiMessage",
+    "available", "outputs", "inputs", "find", "deluge_ports", "cable_of",
+    "error_text",
     "NOTE_OFF", "NOTE_ON", "CONTROL_CHANGE", "PROGRAM_CHANGE", "PITCH_BEND",
-    "CLOCK", "START", "CONTINUE", "STOP",
+    "SYSEX", "CLOCK", "START", "CONTINUE", "STOP",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -65,6 +77,8 @@ PROGRAM_CHANGE = 0xC0
 CHANNEL_PRESSURE = 0xD0
 PITCH_BEND = 0xE0
 
+#: Début d'un message exclusif.
+SYSEX = 0xF0
 #: Messages système temps réel, sans canal.
 CLOCK = 0xF8
 START = 0xFA
@@ -74,6 +88,33 @@ STOP = 0xFC
 #: Contrôleurs utiles au-delà de la carte MIDI Follow.
 CC_ALL_SOUND_OFF = 120
 CC_ALL_NOTES_OFF = 123
+
+#: Taille et nombre des tampons de réception SysEx. Le plus long message du
+#: Deluge — une image d'écran non compressée — fait 888 octets.
+SYSEX_BUFFER_SIZE = 4096
+SYSEX_BUFFERS = 6
+
+#: Codes d'erreur de ``winmm`` que l'on sait expliquer.
+_ERREURS = {
+    1: "erreur inconnue du système MIDI",
+    2: "port introuvable — l'appareil a peut-être été débranché",
+    4: "port déjà utilisé par une autre application (fermez-la, ou "
+       "choisissez un autre port)",
+    6: "pilote MIDI absent",
+    7: "mémoire insuffisante",
+    11: "paramètre refusé par le pilote",
+    65: "un message est encore en cours d'envoi",
+    67: "le pilote n'a pas répondu",
+}
+
+
+def error_text(code: int) -> str:
+    """Explication française d'un code d'erreur ``MMRESULT``."""
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        return "erreur MIDI"
+    return _ERREURS.get(code, "erreur MIDI %d" % code)
 
 
 def _clamp7(value) -> int:
@@ -124,7 +165,7 @@ except Exception as _exc:              # noqa: BLE001 - absent hors Windows
     log.info("MIDI indisponible : %s", _exc)
 
 
-if _winmm is not None:
+if ctypes is not None:
 
     class _MIDIOUTCAPS(ctypes.Structure):
         _fields_ = [
@@ -148,11 +189,36 @@ if _winmm is not None:
             ("dwSupport", wintypes.DWORD),
         ]
 
+    class _MIDIHDR(ctypes.Structure):
+        """``MIDIHDR`` : le tampon d'un message long. 120 octets en 64 bits."""
+
+        _fields_ = [
+            ("lpData", ctypes.c_void_p),
+            ("dwBufferLength", wintypes.DWORD),
+            ("dwBytesRecorded", wintypes.DWORD),
+            ("dwUser", ctypes.c_size_t),
+            ("dwFlags", wintypes.DWORD),
+            ("lpNext", ctypes.c_void_p),
+            ("reserved", ctypes.c_size_t),
+            ("dwOffset", wintypes.DWORD),
+            ("dwReserved", ctypes.c_size_t * 8),
+        ]
+
     _CALLBACK_FUNCTION = 0x00030000
     _MIDI_IN_PROC = ctypes.WINFUNCTYPE(
         None, wintypes.HANDLE, wintypes.UINT,
         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
-    _MIM_DATA = 0x3C3
+
+_MIM_DATA = 0x3C3
+_MIM_LONGDATA = 0x3C4
+_MIM_LONGERROR = 0x3C6
+_MHDR_DONE = 0x00000001
+_MIDIERR_STILLPLAYING = 65
+
+#: Rappels jamais relâchés (voir « Sûreté » plus haut).
+_RAPPELS_GARDES: list = []
+#: Tampons qu'un pilote n'a jamais rendus : gardés, jamais libérés.
+_TAMPONS_GARDES: list = []
 
 
 def available() -> bool:
@@ -169,6 +235,33 @@ def load_error() -> str:
 # Appareils
 # --------------------------------------------------------------------------- #
 
+#: Les formes du numéro de port, de la plus sûre à la plus vague.
+_CABLE = (
+    re.compile(r"midi(?:in|out)\s*(\d+)", re.I),      # « MIDIOUT2 (Deluge) »
+    re.compile(r"\[(\d+)\]"),                          # « Deluge [2] »
+    re.compile(r"\bport\s*(\d+)", re.I),               # « Deluge Port 2 »
+    re.compile(r"\bmidi\s+(\d+)\b", re.I),             # « Deluge MIDI 2 »
+    re.compile(r"\((\d+)\)\s*$"),                      # « Deluge (2) »
+    re.compile(r"\s(\d+)\s*$"),                        # « Deluge 2 »
+)
+#: « 2- Deluge » : Windows numérote ainsi un **second appareil** identique,
+#: pas un second port.
+_INSTANCE = re.compile(r"^\s*(\d+)\s*-\s*")
+
+
+def cable_of(name: str) -> int:
+    """Numéro de port USB (« câble », à partir de 1) lu dans le nom."""
+    texte = _INSTANCE.sub("", str(name or ""))
+    for motif in _CABLE:
+        trouve = motif.search(texte)
+        if trouve:
+            try:
+                return max(1, int(trouve.group(1)))
+            except ValueError:
+                continue
+    return 1
+
+
 @dataclass(frozen=True)
 class MidiDevice:
     """Un port MIDI, tel que le système le nomme."""
@@ -182,12 +275,18 @@ class MidiDevice:
         """Vrai si le nom du port désigne un Deluge.
 
         Windows nomme un appareil USB par sa chaîne produit, tronquée à
-        31 caractères. Le Deluge s'annonce « Deluge » ; selon les pilotes on
-        voit aussi « Synthstrom » ou un nom générique précédé du port
+        31 caractères. Le Deluge s'annonce « Deluge » (fabricant
+        « Synthstrom Audible ») ; selon les pilotes on voit aussi
+        « MIDIOUT2 (Deluge) » ou un nom précédé du numéro d'appareil
         (« 2- Deluge »). On cherche donc le mot, pas l'égalité.
         """
         bas = self.name.casefold()
         return "deluge" in bas or "synthstrom" in bas
+
+    @property
+    def cable(self) -> int:
+        """Port USB de l'appareil : 1 et 2 pour les notes, 3 pour les SysEx."""
+        return cable_of(self.name)
 
     def __str__(self) -> str:
         return self.name
@@ -235,11 +334,40 @@ def inputs() -> list[MidiDevice]:
     return _devices("in")
 
 
-def find(kind: str = "out") -> MidiDevice | None:
-    """Le Deluge parmi les ports, ou ``None``."""
-    for appareil in (outputs() if kind == "out" else inputs()):
-        if appareil.is_deluge:
-            return appareil
+def deluge_ports(kind: str = "out",
+                 devices: list[MidiDevice] | None = None) -> list[MidiDevice]:
+    """Les ports du Deluge, du premier câble au dernier.
+
+    Un second Deluge branché (« 2- Deluge ») vient après le premier.
+    """
+    tous = devices if devices is not None else (
+        outputs() if kind == "out" else inputs())
+    candidats = [d for d in tous if d.is_deluge]
+
+    def cle(d: MidiDevice):
+        instance = _INSTANCE.match(d.name)
+        return (int(instance.group(1)) if instance else 1, d.cable, d.index)
+
+    return sorted(candidats, key=cle)
+
+
+def find(kind: str = "out", cable: int | None = None) -> MidiDevice | None:
+    """Le Deluge parmi les ports, ou ``None``.
+
+    Sans ``cable``, le port des notes (câble 1) s'il se distingue, sinon le
+    premier port du Deluge. Avec ``cable``, ce port-là seulement.
+    """
+    ports = deluge_ports(kind)
+    if not ports:
+        return None
+    if cable is None:
+        for port in ports:
+            if port.cable == 1:
+                return port
+        return ports[0]
+    for port in ports:
+        if port.cable == int(cable):
+            return port
     return None
 
 
@@ -261,6 +389,11 @@ class MidiOut:
         self._lock = threading.RLock()
         #: Notes en cours, pour pouvoir toutes les relâcher.
         self._sounding: set[tuple[int, int]] = set()
+        #: Vrai dès qu'un message de canal est parti : à la fermeture, il y
+        #: a peut-être quelque chose à éteindre. Sinon, rien.
+        self._canal = False
+        #: Dernière erreur d'ouverture, en clair (vide si aucune).
+        self.last_error = ""
 
     # -- état ------------------------------------------------------------- #
 
@@ -287,12 +420,16 @@ class MidiOut:
                                           None, None, 0)
             except Exception as exc:   # noqa: BLE001
                 log.warning("ouverture MIDI impossible : %s", exc)
+                self.last_error = str(exc)
                 return False
             if code != 0:
-                log.warning("ouverture du port MIDI %d refusée (code %d)",
-                            index, code)
+                self.last_error = error_text(code)
+                log.warning("ouverture du port MIDI %d refusée : %s",
+                            index, self.last_error)
                 return False
+            self.last_error = ""
             self._handle = handle
+            self._canal = False
             if isinstance(device, MidiDevice):
                 self._device = device
             else:
@@ -307,19 +444,33 @@ class MidiOut:
         return self.open(find("out"))
 
     def close(self) -> None:
-        """Ferme le port, après avoir éteint ce qui sonnait encore."""
+        """Ferme le port, après avoir éteint ce qui sonnait encore.
+
+        Un port qui n'a porté **aucun message de canal** — celui des SysEx,
+        ou un port seulement ouvert pour parler à la machine — se ferme sans
+        rien envoyer. Avant, chaque fermeture envoyait seize « All Notes
+        Off » et un ``midiOutReset`` (qui peut émettre un relâchement par
+        note et un CC 64 par canal) : du bruit pour une machine à qui l'on
+        n'avait rien joué.
+        """
         with self._lock:
             if self._handle is None:
                 return
             try:
-                self.all_notes_off()
-                _winmm.midiOutReset(self._handle)
-                _winmm.midiOutClose(self._handle)
+                if self._canal:
+                    self.all_notes_off()
+                    _winmm.midiOutReset(self._handle)
+                code = _winmm.midiOutClose(self._handle)
+                if code == _MIDIERR_STILLPLAYING:
+                    # Un tampon encore chez le pilote : il faut le reprendre.
+                    _winmm.midiOutReset(self._handle)
+                    _winmm.midiOutClose(self._handle)
             except Exception as exc:   # noqa: BLE001
                 log.debug("fermeture MIDI imparfaite : %s", exc)
             self._handle = None
             self._device = None
             self._sounding.clear()
+            self._canal = False
 
     # -- envoi ------------------------------------------------------------ #
 
@@ -337,7 +488,79 @@ class MidiOut:
             if code != 0:
                 log.debug("message MIDI refusé (code %d)", code)
                 return False
+            if int(status) < SYSEX:
+                self._canal = True
             return True
+
+    def send_sysex(self, data: bytes, timeout: float = 2.0) -> bool:
+        """Envoie un message exclusif complet (``F0 … F7``).
+
+        Le tampon est préparé, confié au pilote, puis **attendu** jusqu'à ce
+        que le pilote le rende (``MHDR_DONE``) : le libérer avant ferait
+        lire au pilote une mémoire rendue. Au-delà de ``timeout``, l'envoi est
+        abandonné (``midiOutReset``) ; un tampon jamais rendu est gardé.
+        """
+        message = bytes(data or b"")
+        if len(message) < 3 or message[0] != SYSEX or message[-1] != 0xF7:
+            return False
+        if any(b & 0x80 for b in message[1:-1]):
+            log.debug("SysEx refusé : octet de données au-dessus de 127")
+            return False
+        with self._lock:
+            if self._handle is None or _winmm is None:
+                return False
+            tampon = ctypes.create_string_buffer(message, len(message))
+            entete = _MIDIHDR()
+            entete.lpData = ctypes.cast(tampon, ctypes.c_void_p)
+            entete.dwBufferLength = len(message)
+            entete.dwBytesRecorded = len(message)
+            taille = ctypes.sizeof(entete)
+            try:
+                code = _winmm.midiOutPrepareHeader(
+                    self._handle, ctypes.byref(entete), taille)
+            except Exception as exc:   # noqa: BLE001
+                log.debug("SysEx impossible à préparer : %s", exc)
+                return False
+            if code != 0:
+                log.debug("SysEx refusé à la préparation : %s",
+                          error_text(code))
+                return False
+            envoye = False
+            try:
+                code = _winmm.midiOutLongMsg(
+                    self._handle, ctypes.byref(entete), taille)
+                if code != 0:
+                    log.debug("SysEx refusé : %s", error_text(code))
+                    return False
+                limite = time.monotonic() + max(0.05, float(timeout))
+                while not entete.dwFlags & _MHDR_DONE:
+                    if time.monotonic() > limite:
+                        log.warning("SysEx sans réponse du pilote : abandon")
+                        _winmm.midiOutReset(self._handle)
+                        break
+                    time.sleep(0.001)
+                envoye = bool(entete.dwFlags & _MHDR_DONE)
+                return envoye
+            except Exception as exc:   # noqa: BLE001
+                log.debug("SysEx interrompu : %s", exc)
+                return False
+            finally:
+                if not self._unprepare_out(entete, taille):
+                    _TAMPONS_GARDES.append((tampon, entete))
+
+    def _unprepare_out(self, entete, taille: int) -> bool:
+        """Rend le tampon ; ``False`` si le pilote le tient encore."""
+        for _ in range(400):
+            try:
+                code = _winmm.midiOutUnprepareHeader(
+                    self._handle, ctypes.byref(entete), taille)
+            except Exception as exc:   # noqa: BLE001
+                log.debug("tampon SysEx non rendu : %s", exc)
+                return False
+            if code != _MIDIERR_STILLPLAYING:
+                return code == 0
+            time.sleep(0.005)
+        return False
 
     def note_on(self, note: int, velocity: int = 100, channel: int = 1) -> bool:
         canal = _channel(channel)
@@ -421,12 +644,25 @@ class MidiOut:
 
 @dataclass(frozen=True)
 class MidiMessage:
-    """Un message reçu, avec l'instant où Windows l'a horodaté."""
+    """Un message reçu.
+
+    ``millis`` : l'instant de réception, en millisecondes (horloge monotone
+    du processus). ``stamp`` : l'horodatage du pilote, en millisecondes
+    depuis l'ouverture du port — plus fiable pour mesurer un tempo, parce
+    qu'il ne dépend pas de l'ordonnancement des fils. ``data`` : le message
+    entier pour un SysEx (``status`` vaut alors ``0xF0``). ``arrived`` :
+    l'instant de réception en secondes de :func:`time.perf_counter`, pour
+    mesurer un aller-retour sans compter l'attente dans la file (``0.0``
+    quand il n'est pas connu).
+    """
 
     status: int
     data1: int
     data2: int
     millis: int
+    stamp: int = 0
+    data: bytes = b""
+    arrived: float = 0.0
 
     @property
     def kind(self) -> int:
@@ -447,21 +683,43 @@ class MidiMessage:
         return self.kind == NOTE_OFF or (self.kind == NOTE_ON
                                          and self.data2 == 0)
 
+    @property
+    def is_sysex(self) -> bool:
+        return self.status == SYSEX
+
 
 class MidiIn:
     """Écoute un port d'entrée et empile ce qui arrive.
 
     Le rappel vient d'un fil de Windows : il ne fait qu'empiler. L'interface
     vide la file quand elle veut, avec :meth:`poll`.
+
+    Les SysEx arrivent dans des tampons confiés d'avance au pilote. Le rappel
+    copie le tampon rempli puis le signale à un fil de recyclage, qui le rend
+    au pilote : ``midiInAddBuffer`` n'a pas sa place dans le rappel.
     """
 
-    def __init__(self, maxsize: int = 4096) -> None:
+    def __init__(self, maxsize: int = 4096, sysex: bool = True) -> None:
         self._handle = None
         self._device: MidiDevice | None = None
         self._queue: "queue.Queue[MidiMessage]" = queue.Queue(maxsize=maxsize)
-        self._proc = None              # doit survivre tant que le port est ouvert
+        self._proc = None
         self._lock = threading.RLock()
         self._perdus = 0
+        self._sysex = bool(sysex)
+        self._entetes: list = []
+        self._tampons: list = []
+        self._adresses: dict[int, int] = {}
+        self._a_rendre: "queue.Queue[int | None]" = queue.Queue()
+        self._recycleur: threading.Thread | None = None
+        #: Signal de fin de la session ouverte : le fil de recyclage d'une
+        #: session ne touche jamais aux tampons d'une autre.
+        self._fin = threading.Event()
+        #: SysEx en cours de réassemblage (un message peut couvrir plusieurs
+        #: tampons).
+        self._morceau = bytearray()
+        #: Dernière erreur d'ouverture, en clair.
+        self.last_error = ""
 
     @property
     def is_open(self) -> bool:
@@ -480,40 +738,52 @@ class MidiIn:
         if _winmm is None or device is None:
             return False
         index = device.index if isinstance(device, MidiDevice) else int(device)
+        # Fermer **avant** de prendre le verrou : la fermeture attend le fil
+        # de recyclage, qui peut attendre ce verrou.
+        self.close()
         with self._lock:
-            self.close()
 
-            def _rappel(_hmi, msg, _inst, param1, _param2):
-                # Appelé par un fil de Windows. Rien d'autre qu'un empilement,
+            def _rappel(_hmi, msg, _inst, param1, param2):
+                # Appelé par un fil de Windows. Copier, empiler, rien d'autre,
                 # et surtout aucune exception qui remonterait dans du code C.
                 try:
                     if msg == _MIM_DATA:
                         brut = int(param1 or 0) & 0xFFFFFFFF
-                        self._push(brut & 0xFF, (brut >> 8) & 0x7F,
-                                   (brut >> 16) & 0x7F)
+                        self._push(brut & 0xFF, (brut >> 8) & 0xFF,
+                                   (brut >> 16) & 0xFF,
+                                   int(param2 or 0) & 0xFFFFFFFF)
+                    elif msg in (_MIM_LONGDATA, _MIM_LONGERROR):
+                        self._long(msg, int(param1 or 0),
+                                   int(param2 or 0) & 0xFFFFFFFF)
                 except Exception:      # noqa: BLE001 - jamais vers le C
                     pass
 
-            self._proc = _MIDI_IN_PROC(_rappel)
+            proc = _MIDI_IN_PROC(_rappel)
+            _RAPPELS_GARDES.append(proc)
+            self._proc = proc
             handle = ctypes.c_void_p()
             try:
                 code = _winmm.midiInOpen(ctypes.byref(handle), index,
-                                         self._proc, None,
-                                         _CALLBACK_FUNCTION)
+                                         proc, None, _CALLBACK_FUNCTION)
             except Exception as exc:   # noqa: BLE001
                 log.warning("ouverture de l'entrée MIDI impossible : %s", exc)
-                self._proc = None
+                self.last_error = str(exc)
                 return False
             if code != 0:
-                log.warning("entrée MIDI %d refusée (code %d)", index, code)
-                self._proc = None
+                self.last_error = error_text(code)
+                log.warning("entrée MIDI %d refusée : %s", index,
+                            self.last_error)
                 return False
+            self.last_error = ""
             self._handle = handle
+            self._fin = threading.Event()
             self._device = (device if isinstance(device, MidiDevice)
                             else next((d for d in inputs()
                                        if d.index == index),
                                       MidiDevice(index, "port %d" % index,
                                                  "in")))
+            if self._sysex:
+                self._prepare_buffers()
             try:
                 _winmm.midiInStart(self._handle)
             except Exception as exc:   # noqa: BLE001
@@ -526,10 +796,98 @@ class MidiIn:
     def open_deluge(self) -> bool:
         return self.open(find("in"))
 
-    def _push(self, status: int, data1: int, data2: int) -> None:
+    # -- tampons SysEx ------------------------------------------------------ #
+
+    def _prepare_buffers(self) -> None:
+        """Confie les tampons au pilote et lance le fil de recyclage."""
+        taille = ctypes.sizeof(_MIDIHDR)
+        for numero in range(SYSEX_BUFFERS):
+            tampon = ctypes.create_string_buffer(SYSEX_BUFFER_SIZE)
+            entete = _MIDIHDR()
+            entete.lpData = ctypes.cast(tampon, ctypes.c_void_p)
+            entete.dwBufferLength = SYSEX_BUFFER_SIZE
+            entete.dwUser = numero
+            try:
+                code = _winmm.midiInPrepareHeader(
+                    self._handle, ctypes.byref(entete), taille)
+                if code == 0:
+                    code = _winmm.midiInAddBuffer(
+                        self._handle, ctypes.byref(entete), taille)
+            except Exception as exc:   # noqa: BLE001
+                log.debug("tampon SysEx refusé : %s", exc)
+                code = -1
+            self._tampons.append(tampon)
+            self._entetes.append(entete)
+            self._adresses[ctypes.addressof(entete)] = numero
+            if code != 0:
+                log.debug("tampon SysEx %d refusé : %s", numero,
+                          error_text(code))
+        self._a_rendre = queue.Queue()
+        self._recycleur = threading.Thread(
+            target=self._recycler,
+            args=(self._a_rendre, self._fin, self._handle, self._entetes),
+            name="midi-sysex", daemon=True)
+        self._recycleur.start()
+
+    def _long(self, msg: int, adresse: int, stamp: int) -> None:
+        """Rappel : un tampon SysEx est revenu du pilote."""
+        numero = self._adresses.get(adresse)
+        if numero is None:
+            return
+        entete = self._entetes[numero]
+        recus = int(entete.dwBytesRecorded)
+        if recus and msg == _MIM_LONGDATA:
+            self._assemble(ctypes.string_at(entete.lpData, recus), stamp)
+        self._a_rendre.put_nowait(numero)
+
+    def _assemble(self, morceau: bytes, stamp: int) -> None:
+        """Recolle un SysEx réparti sur plusieurs tampons."""
+        if morceau[:1] == bytes((SYSEX,)):
+            self._morceau = bytearray(morceau)
+        elif self._morceau:
+            self._morceau.extend(morceau)
+        else:
+            return                       # suite d'un message perdu
+        if self._morceau and self._morceau[-1] == 0xF7:
+            complet = bytes(self._morceau)
+            self._morceau = bytearray()
+            self._push(SYSEX, 0, 0, stamp, complet)
+        elif len(self._morceau) > 64 * SYSEX_BUFFER_SIZE:
+            self._morceau = bytearray()  # jamais terminé : abandon
+
+    def _recycler(self, file, fin, handle, entetes) -> None:
+        """Fil de recyclage : rend au pilote les tampons lus.
+
+        Il ne connaît que **sa** session (file, signal, poignée, tampons) :
+        un fil en retard ne peut pas rendre un tampon à un port rouvert.
+        """
+        taille = ctypes.sizeof(_MIDIHDR)
+        while True:
+            numero = file.get()
+            if numero is None or fin.is_set():
+                return
+            with self._lock:
+                if fin.is_set():
+                    return
+                entete = entetes[numero]
+                entete.dwBytesRecorded = 0
+                try:
+                    code = _winmm.midiInAddBuffer(
+                        handle, ctypes.byref(entete), taille)
+                except Exception as exc:   # noqa: BLE001
+                    log.debug("tampon SysEx non rendu : %s", exc)
+                    continue
+                if code != 0:
+                    log.debug("tampon SysEx non rendu : %s", error_text(code))
+
+    # -- file ----------------------------------------------------------------- #
+
+    def _push(self, status: int, data1: int, data2: int, stamp: int = 0,
+              data: bytes = b"") -> None:
         try:
-            self._queue.put_nowait(
-                MidiMessage(status, data1, data2, int(time.monotonic() * 1000)))
+            self._queue.put_nowait(MidiMessage(
+                status, data1, data2, int(time.monotonic() * 1000),
+                int(stamp), data, time.perf_counter()))
         except queue.Full:
             self._perdus += 1
 
@@ -544,20 +902,48 @@ class MidiIn:
         return recus
 
     def close(self) -> None:
+        """Ferme le port : stop, reset (le pilote rend les tampons), fil de
+        recyclage arrêté, tampons libérés, port fermé — dans cet ordre."""
         with self._lock:
             if self._handle is None:
-                self._proc = None
                 return
+            handle = self._handle
+            self._fin.set()
+        try:
+            _winmm.midiInStop(handle)
+            _winmm.midiInReset(handle)
+        except Exception as exc:       # noqa: BLE001
+            log.debug("arrêt de l'entrée MIDI imparfait : %s", exc)
+        recycleur = self._recycleur
+        if recycleur is not None:
+            self._a_rendre.put(None)
+            recycleur.join(2.0)
+            if recycleur.is_alive():
+                log.warning("le fil de recyclage SysEx ne s'arrête pas")
+        with self._lock:
+            taille = ctypes.sizeof(_MIDIHDR) if ctypes is not None else 0
+            for entete, tampon in zip(self._entetes, self._tampons):
+                try:
+                    code = _winmm.midiInUnprepareHeader(
+                        handle, ctypes.byref(entete), taille)
+                except Exception as exc:   # noqa: BLE001
+                    log.debug("tampon SysEx non libéré : %s", exc)
+                    code = -1
+                if code != 0:
+                    _TAMPONS_GARDES.append((tampon, entete))
             try:
-                _winmm.midiInStop(self._handle)
-                _winmm.midiInReset(self._handle)
-                _winmm.midiInClose(self._handle)
+                _winmm.midiInClose(handle)
             except Exception as exc:   # noqa: BLE001
                 log.debug("fermeture de l'entrée MIDI imparfaite : %s", exc)
             self._handle = None
             self._device = None
-            # Le rappel n'est relâché qu'après la fermeture : Windows pourrait
-            # encore l'appeler entre le stop et le close.
+            self._entetes = []
+            self._tampons = []
+            self._adresses = {}
+            self._recycleur = None
+            self._morceau = bytearray()
+            # Le rappel, lui, reste dans ``_RAPPELS_GARDES`` : un pilote peut
+            # encore l'appeler après la fermeture.
             self._proc = None
 
     def __enter__(self) -> "MidiIn":

@@ -214,8 +214,6 @@ class PianoKeys(QWidget):
             log.debug("tracé du clavier impossible : %s", exc)
 
     def _draw_white(self, painter: QPainter) -> None:
-        from ..theme import FONT_UI
-
         whites = self._white_notes()
         for index, note in enumerate(whites):
             rect = self._white_rect(index)

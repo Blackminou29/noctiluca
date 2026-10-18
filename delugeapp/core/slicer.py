@@ -42,6 +42,7 @@ import numpy as np
 
 from . import analysis, wav
 from .db import Library
+from .dxml import DelugeXMLError
 from .model import Kit, Zone
 from .sdcard import SDCard, safe_deluge_name
 
@@ -344,10 +345,13 @@ def slices_to_kit(sliceset: SliceSet, name: str = "") -> Kit:
     titre = safe_deluge_name(name or Path(sliceset.rel).stem)[:20] or "SLICES"
     kit = Kit.new(titre)
     for tranche in sliceset.slices:
-        row = kit.add_row(tranche.label or "SLICE", sliceset.rel)
+        # Une tranche courte se joue jusqu'au bout quelle que soit la note,
+        # comme le fait le découpeur du Deluge (``slicer.cpp`` : ONCE sous
+        # 2,002 s). L'ancien ``loopMode`` 0 était CUT : la tranche s'arrêtait
+        # avec la note, contrairement à ce qu'annonçait le commentaire.
+        row = kit.add_row(tranche.label or "SLICE", sliceset.rel,
+                          seconds=tranche.seconds(sliceset.sr))
         row.sound.osc1.zone = tranche.zone()
-        # Une tranche se joue d'un coup : pas de bouclage.
-        row.sound.osc1.loop_mode = 0
     return kit
 
 
@@ -383,7 +387,8 @@ def save_sliced_kit(sd: SDCard, sliceset: SliceSet, name: str = "",
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         kit.save(path, backup=False)
-    except OSError as exc:
+    except (OSError, DelugeXMLError) as exc:
+        # ``dxml.save`` traduit toute erreur d'écriture en DelugeXMLError.
         log.exception("écriture du kit impossible : %s", rel)
         return "", "Écriture impossible : %s" % exc
     return rel, "%d tranches écrites dans %s." % (len(sliceset), rel)

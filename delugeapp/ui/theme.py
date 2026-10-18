@@ -1,15 +1,31 @@
 # -*- coding: utf-8 -*-
-"""Identité graphique de Deluge Companion.
+"""Identité graphique de Deluge Companion : « la façade ».
 
-Reprend la palette du « Guide du Synthstrom Deluge » : fond `PANEL_LO`,
-panneaux `PANEL`, surfaces relevées `PANEL_HI`, accent unique **or**,
-carrés arrondis façon pads et trait doré sous les titres.
+Reprend le *Guide du Synthstrom Deluge* de l'utilisateur, et cette fois
+ses signatures, pas seulement sa palette :
+
+* **une couleur par page**, comme chaque partie du livre a la sienne
+  (I cyan, II ambre, III vert…). La page ne se contente plus d'un liseré :
+  ses boutons principaux, ses sélections, ses onglets, ses cases et ses
+  curseurs prennent **sa** teinte. :func:`accent_qss` fabrique cette
+  feuille, que chaque page pose sur elle-même ;
+* **la façade** de la machine : barre du haut et colonne de pads un cran
+  plus sombres que les pages (``CHROME``), où les pads s'allument ;
+* **l'écran OLED** du Deluge (figure o01 du guide) : noir profond, cyan
+  vif — pour l'afficheur de la barre du haut et les infobulles ;
+* **les pads** : carrés arrondis pleins, halo de leur couleur, reflet en
+  haut ; au repos, cadre à l'or sourd et quatre points (voir
+  :mod:`delugeapp.ui.art`).
+
+La couleur d'accent choisie dans les réglages est désormais celle de la
+**façade** : barre du haut, menus, fenêtres de dialogue ouvertes hors des
+pages.
 
 Le module fournit la palette, quelques utilitaires de couleur, la feuille de
-style complète (`qss`) et son application à une `QApplication` (`apply_theme`).
-Les petites images nécessaires au QSS (chevrons, coches, puces) sont dessinées
-au vol en QPainter et mises en cache sur disque — aucun fichier externe n'est
-livré avec l'application.
+style complète (:func:`qss`), sa partie colorée seule (:func:`accent_qss`)
+et son application à une ``QApplication`` (:func:`apply_theme`). Les petites
+images du QSS (chevrons, coches, puces) sont dessinées au vol et mises en
+cache sur disque — aucun fichier externe n'est livré avec l'application.
 """
 from __future__ import annotations
 
@@ -17,9 +33,8 @@ import hashlib
 import logging
 from string import Template
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPen, QPolygonF
-from PyQt6.QtCore import QPointF
 
 from delugeapp.config import CONFIG_DIR
 
@@ -72,6 +87,10 @@ PAD_OFF = "#262A33"
 PAD_DIM = "#3A404C"
 PAD_WHITE = "#F2F4F8"
 
+#: Pad éteint de la couverture du guide (``figs_couverture.PAD_ETEINT``) :
+#: plus sombre que ``PAD_OFF``, il laisse briller les pads allumés.
+PAD_ETEINT = "#191D25"
+
 PAD_CYCLE = [PAD_RED, PAD_ORANGE, PAD_AMBER, PAD_YELLOW, PAD_GREEN, PAD_MINT,
              PAD_CYAN, PAD_BLUE, PAD_INDIGO, PAD_PURPLE, PAD_MAGENTA, PAD_PINK]
 
@@ -100,6 +119,11 @@ WASH_2 = "#F6EEE4"
 BORDER = "#333B48"          # bordure standard
 BORDER_SOFT = "#2A3240"     # bordure discrète (panneaux) — visible, elle
 BORDER_HI = "#444E5F"       # bordure survolée
+#: Arête haute d'un panneau, un peu plus claire : le chanfrein d'une façade
+#: éclairée d'en haut.
+BORDER_TOP = "#323B4A"
+#: Haut d'un panneau : le dégradé vers ``PANEL`` donne du relief sans ombre.
+CARD_TOP = "#1B212B"
 ALT_ROW = "#1C222C"         # ligne alternée des tables
 INPUT_BG = "#111620"        # fond des champs de saisie
 INPUT_FOCUS = "#19202B"
@@ -108,11 +132,24 @@ TEXT_DIM = GREY_LIGHT
 TEXT_MUTED = "#5A6270"
 GRID = "#23272F"
 
+#: **La façade** : barre du haut, colonne de pads, barre d'état. Un cran
+#: sous les panneaux et au-dessus du fond, pour que la machine encadre les
+#: pages sans les écraser.
+CHROME = "#0E1218"
+CHROME_EDGE = "#1E2530"
+
+#: L'écran OLED du Deluge, tel que le guide le dessine (``figs_oled.py``).
+OLED_BG = "#04060A"
+OLED_FG = "#FFFFFF"
+OLED_DIM = "#8FB6CC"
+OLED_HI = "#7FE3FF"
+OLED_EDGE = "#1B3E52"
+
 FONT_UI = "Segoe UI"
 FONT_MONO = "Consolas"
 FONT_UI_FALLBACK = "DejaVu Sans"
 FONT_MONO_FALLBACK = "Cascadia Mono"
-RADIUS = 8
+RADIUS = 9
 PAD = 12
 
 #: Dossier de cache des micro-images du QSS (chevrons, coches…).
@@ -124,13 +161,16 @@ __all__ = [
     "PANEL", "PANEL_HI", "PANEL_LO", "GOLD", "GOLD_HI", "GOLD_LO",
     "PAD_RED", "PAD_ORANGE", "PAD_AMBER", "PAD_YELLOW", "PAD_GREEN", "PAD_MINT",
     "PAD_CYAN", "PAD_BLUE", "PAD_INDIGO", "PAD_PURPLE", "PAD_MAGENTA", "PAD_PINK",
-    "PAD_OFF", "PAD_DIM", "PAD_WHITE", "PAD_CYCLE",
+    "PAD_OFF", "PAD_DIM", "PAD_WHITE", "PAD_ETEINT", "PAD_CYCLE",
+    "CHROME", "CHROME_EDGE", "OLED_BG", "OLED_FG", "OLED_DIM", "OLED_HI",
+    "OLED_EDGE",
     "luminance", "contrast", "readable",
     "PAGE_COLORS", "page_color",
     "ACCENT", "ACCENT_2", "WASH", "WASH_2",
     "FONT_UI", "FONT_MONO", "RADIUS", "PAD",
-    "qss", "apply_theme", "pad_color", "category_color", "severity_color",
-    "mix", "with_alpha", "text_on", "palette",
+    "qss", "accent_qss", "accent_values", "lit_fill", "apply_theme",
+    "pad_color", "category_color",
+    "severity_color", "mix", "with_alpha", "text_on", "palette",
 ]
 
 
@@ -185,12 +225,6 @@ def with_alpha(c: str, a: float) -> str:
     return "rgba({}, {}, {}, {})".format(r, g, b, alpha_i)
 
 
-def luminance(c: str) -> float:
-    """Luminance perçue 0..1 (pondération ITU-R BT.601)."""
-    r, g, b = _rgb(c)
-    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-
-
 def luminance(color: str) -> float:
     """Luminance relative, au sens de la norme WCAG."""
     composantes = []
@@ -241,8 +275,16 @@ def readable(color: str, on: str = "", minimum: float = 4.5) -> str:
 
 
 def text_on(bg: str) -> str:
-    """Couleur de texte lisible sur le fond donné (encre ou blanc de pad)."""
-    return INK if luminance(bg) > 0.58 else PAD_WHITE
+    """Couleur de texte lisible sur le fond donné (encre ou blanc de pad).
+
+    On garde celle des deux qui contraste le plus. Un seuil fixe de
+    luminance ne convient pas : celui d'avant (0,58) avait été réglé pour
+    une luminance perçue, et appliqué à la luminance WCAG il mettait du
+    blanc sur le vert, le cyan ou l'or des pages (contraste 1,7 à 2,4).
+    """
+    if contrast(INK, bg) >= contrast(PAD_WHITE, bg):
+        return INK
+    return PAD_WHITE
 
 
 def page_color(key: str) -> str:
@@ -372,10 +414,25 @@ def _asset(kind: str, color: str, size: int = 12) -> str:
 # ---------------------------------------------------------------------------
 # Feuille de style
 # ---------------------------------------------------------------------------
-_QSS = Template(r"""
+#
+# Elle est en **deux parties**, et la séparation n'est pas cosmétique.
+#
+# Chaque page pose sur elle-même la partie colorée, à sa couleur. Or Qt ne
+# départage pas deux feuilles par la spécificité de leurs sélecteurs : la
+# feuille d'un parent l'emporte **toujours** sur celle de l'application.
+# Si la page fixait le fond des boutons sans fixer celui des boutons
+# désactivés, un bouton éteint garderait le fond vif de la page — le
+# survol, l'appui et l'état coché disparaîtraient de même.
+#
+# D'où la règle : **toute propriété de couleur d'un contrôle vit dans la
+# partie colorée, avec tous ses états** ; la base ne garde que la géométrie
+# (marges, rayons, polices) et la couleur des conteneurs, que la page ne
+# touche pas.
+
+_QSS_BASE = Template(r"""
 /* ======================================================================
-   Deluge Companion — feuille de style
-   Fond PANEL_LO, panneaux PANEL, accent unique or, coins arrondis.
+   Deluge Companion — feuille de style, partie commune
+   Façade CHROME, fond PANEL_LO, panneaux PANEL, coins arrondis de pads.
    ====================================================================== */
 
 * { outline: 0; }
@@ -384,8 +441,6 @@ QWidget {
     color: ${TEXT};
     font-family: "${FONT_UI}", "${FONT_UI_FALLBACK}", "Noto Sans", sans-serif;
     font-size: 10pt;
-    selection-background-color: ${SEL_STRONG};
-    selection-color: ${TEXT};
 }
 QMainWindow, QDialog, QMessageBox, QFileDialog, QInputDialog, QWizard {
     background-color: ${PANEL_LO};
@@ -397,105 +452,344 @@ QScrollArea, QToolBox, QWidget#Page {
 QScrollArea > QWidget > QWidget { background: transparent; }
 QLabel:disabled { color: ${TEXT_MUTED}; }
 
-/* --- Typographie applicative ---------------------------------------- */
-QLabel[role="h1"]        { font-size: 23pt; font-weight: 700; color: ${TEXT};
-                           letter-spacing: -0.5px; }
-QLabel[role="title"]     { font-size: 14pt; font-weight: 600; color: ${TEXT}; }
-QLabel[role="section"]   { font-size: 10pt; font-weight: 700; color: ${ACC_HI};
-                           letter-spacing: 1.4px; text-transform: uppercase; }
+/* --- Typographie : capitales espacées du guide ------------------------ */
+QLabel[role="h1"]        { font-size: 19pt; font-weight: 800; color: ${TEXT};
+                           letter-spacing: 1px; text-transform: uppercase; }
+QLabel[role="eyebrow"]   { font-size: 7.5pt; font-weight: 700; color: ${TEXT_SOFT};
+                           letter-spacing: 3px; text-transform: uppercase; }
+QLabel[role="title"]     { font-size: 13.5pt; font-weight: 700; color: ${TEXT}; }
+QLabel[role="section"]   { font-size: 8.5pt; font-weight: 800;
+                           letter-spacing: 2px; text-transform: uppercase; }
 QLabel[role="subtitle"], QLabel[role="hint"] { font-size: 9pt;
                                               color: ${TEXT_SOFT}; }
-QLabel[role="value"]     { font-size: 30pt; font-weight: 700; color: ${TEXT};
-                           letter-spacing: -1px; }
-QLabel[role="accent"]    { color: ${ACC_HI}; font-weight: 600; }
-QLabel[role="mono"], QLabel#Mono, QTextEdit#Mono, QPlainTextEdit#Mono {
+QLabel[role="caption"]   { font-size: 7.8pt; font-weight: 700; color: ${TEXT_SOFT};
+                           letter-spacing: 1.5px; text-transform: uppercase; }
+QLabel[role="value"]     { font-size: 24pt; font-weight: 800; color: ${TEXT};
+                           letter-spacing: -0.5px; }
+QLabel[role="mono"], QLabel#Mono, QTextEdit#Mono, QPlainTextEdit#Mono,
+QTextEdit[role="mono"], QPlainTextEdit[role="mono"] {
     font-family: "${FONT_MONO}", "${FONT_MONO_FALLBACK}", monospace; font-size: 9pt;
 }
 
 /* --- Conteneurs ------------------------------------------------------ */
 QFrame#Card, QFrame[card="true"], QGroupBox {
-    background-color: ${PANEL};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                      stop:0 ${CARD_TOP}, stop:1 ${PANEL});
     border: 1px solid ${BORDER_SOFT};
+    border-top-color: ${BORDER_TOP};
     border-radius: ${R_LG}px;
 }
-QFrame#Card:hover, QFrame[card="true"]:hover { border-color: ${BORDER}; }
+QFrame#Card:hover, QFrame[card="true"]:hover {
+    border-color: ${BORDER}; border-top-color: ${BORDER_HI};
+}
 QFrame#Tile, QFrame[tile="true"] {
     background-color: ${PANEL};
     border: 1px solid ${BORDER_SOFT};
-    border-left: 3px solid ${ACC};
     border-radius: ${R_LG}px;
 }
 QFrame#Header, QWidget#Header {
-    background-color: ${PANEL};
+    background-color: ${CHROME};
     border: none;
-    border-bottom: 1px solid ${BORDER_SOFT};
+    border-bottom: 1px solid ${CHROME_EDGE};
 }
 QFrame#Sidebar, QWidget#Sidebar {
-    background-color: ${PANEL};
+    background-color: ${CHROME};
     border: none;
-    border-right: 1px solid ${BORDER_SOFT};
+    border-right: 1px solid ${CHROME_EDGE};
 }
+QFrame[frameShape="4"] { background-color: ${BORDER}; border: none; min-height: 1px; max-height: 1px; }
+QFrame[frameShape="5"] { background-color: ${BORDER}; border: none; min-width: 1px; max-width: 1px; }
+QGroupBox {
+    margin-top: 18px;
+    padding: 16px 10px 10px 10px;
+    font-weight: 700;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 14px; padding: 0 6px;
+}
+
+/* --- Boutons : la géométrie (les couleurs sont dans la partie colorée) */
+QPushButton {
+    border-radius: ${R}px;
+    padding: 6px 14px;
+    min-height: 20px;
+    font-weight: 600;
+}
+QPushButton#Primary, QPushButton[accent="true"] {
+    border-radius: ${R_BTN}px;
+    padding: 6px 18px;
+    font-weight: 700;
+}
+QToolButton {
+    border-radius: ${R}px;
+    padding: 4px 6px;
+}
+QToolButton::menu-indicator { image: ${IMG_DOWN}; width: 9px; height: 9px;
+                              subcontrol-position: right center; right: 3px; }
+QToolButton[popupMode="1"] { padding-right: 16px; }
+QPushButton#NavButton, QToolButton#NavButton,
+QPushButton[nav="true"], QToolButton[nav="true"] {
+    border-radius: ${R}px;
+    padding: 9px 10px;
+    text-align: left;
+    font-weight: 500;
+}
+
+/* --- Saisie ---------------------------------------------------------- */
+QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit, QPlainTextEdit, QTextBrowser,
+QDateEdit, QTimeEdit, QDateTimeEdit, QKeySequenceEdit {
+    border-radius: ${R}px;
+    padding: 5px 10px;
+}
+QLineEdit#Search, QLineEdit[search="true"] {
+    padding-left: 30px; border-radius: 17px; min-height: 22px;
+}
+QTextBrowser { padding: 10px; }
+
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QDateEdit::up-button, QTimeEdit::up-button {
+    subcontrol-origin: border; subcontrol-position: top right;
+    width: 18px; margin: 3px 3px 0 0;
+    border: none; border-radius: 5px; background: transparent;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button,
+QDateEdit::down-button, QTimeEdit::down-button {
+    subcontrol-origin: border; subcontrol-position: bottom right;
+    width: 18px; margin: 0 3px 3px 0;
+    border: none; border-radius: 5px; background: transparent;
+}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow, QTimeEdit::up-arrow {
+    image: ${IMG_TRI_UP}; width: 8px; height: 8px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow, QTimeEdit::down-arrow {
+    image: ${IMG_TRI_DOWN}; width: 8px; height: 8px;
+}
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled,
+QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::down-arrow:disabled { image: none; }
+
+/* --- Listes déroulantes ---------------------------------------------- */
+QComboBox {
+    border-radius: ${R}px;
+    padding: 5px 10px;
+    padding-right: 28px;
+    min-height: 20px;
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding; subcontrol-position: top right;
+    width: 26px; border: none; background: transparent;
+}
+QComboBox QAbstractItemView {
+    border-radius: ${R_LG}px;
+    padding: 5px;
+    margin-top: 3px;
+    outline: 0;
+}
+QComboBox QAbstractItemView::item { min-height: 24px; padding: 3px 10px; border-radius: 7px; }
+
+/* --- Vues (tables, arbres, listes) ----------------------------------- */
+QAbstractItemView { outline: 0; border-radius: ${R_LG}px; }
+QTableView, QTreeView, QListView { show-decoration-selected: 1; }
+QTableView::item, QTreeView::item, QListView::item {
+    padding: 4px 8px; border: none;
+}
+QListView::item { border-radius: 8px; margin: 1px 3px; }
+QTreeView::item { border-radius: 6px; }
+QTreeView::branch { background: transparent; }
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings { image: ${IMG_RIGHT}; }
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings { image: ${IMG_DOWN}; }
+QHeaderView { background: transparent; border: none; }
+QHeaderView::section {
+    padding: 8px 8px 7px 8px;
+    font-weight: 700;
+    font-size: 8.5pt;
+}
+QHeaderView::section:first   { border-top-left-radius: ${R_LG}px; }
+QHeaderView::section:last    { border-top-right-radius: ${R_LG}px; }
+QTableCornerButton::section { background-color: ${PANEL}; border: none; }
+
+/* --- Barres de défilement (fines, sans flèche) ------------------------ */
+QScrollBar:vertical   { background: transparent; width: 10px; margin: 3px 2px 3px 0; border: none; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0 3px 2px 3px; border: none; }
+QScrollBar::handle:vertical   { border-radius: 4px; min-height: 30px; margin: 0 2px; }
+QScrollBar::handle:horizontal { border-radius: 4px; min-width: 30px; margin: 2px 0; }
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0; height: 0; border: none; background: transparent;
+}
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+QAbstractScrollArea::corner { background: transparent; border: none; }
+
+/* --- Curseurs et jauges ---------------------------------------------- */
+QSlider { background: transparent; }
+QSlider::groove:horizontal { height: 4px; border-radius: 2px; }
+QSlider::sub-page:horizontal, QSlider::add-page:horizontal { border-radius: 2px; }
+QSlider::handle:horizontal { width: 16px; height: 16px; margin: -6px 0; border-radius: 8px; }
+QSlider::groove:vertical { width: 4px; border-radius: 2px; }
+QSlider::add-page:vertical, QSlider::sub-page:vertical { border-radius: 2px; }
+QSlider::handle:vertical { width: 16px; height: 16px; margin: 0 -6px; border-radius: 8px; }
+
+QProgressBar {
+    border: none;
+    border-radius: 6px;
+    min-height: 10px; max-height: 18px;
+    text-align: center;
+    font-size: 8pt;
+}
+QProgressBar::chunk { border-radius: 6px; }
+QProgressBar[thin="true"] { min-height: 6px; max-height: 6px; border-radius: 3px; }
+QProgressBar[thin="true"]::chunk { border-radius: 3px; }
+
+/* --- Onglets : des pastilles, comme les boutons de mode de la machine - */
+QTabWidget::pane {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                      stop:0 ${CARD_TOP}, stop:1 ${PANEL});
+    border: 1px solid ${BORDER_SOFT};
+    border-top-color: ${BORDER_TOP};
+    border-radius: ${R_LG}px;
+    top: 0px;
+}
+QTabWidget::tab-bar { alignment: left; left: 2px; }
+QTabBar { background: transparent; qproperty-drawBase: 0; }
+QTabBar::tab {
+    border-radius: 15px;
+    padding: 6px 16px;
+    margin: 0 4px 8px 0;
+    min-width: 40px;
+    font-weight: 600;
+}
+QTabBar::tab:left, QTabBar::tab:right { padding: 12px 7px; margin: 0 8px 4px 0; }
+
+/* --- Séparateurs ------------------------------------------------------ */
+QSplitter { background: transparent; }
+QSplitter::handle { background: transparent; }
+QSplitter::handle:horizontal { width: 8px; }
+QSplitter::handle:vertical   { height: 8px; }
+
+/* --- Menus et barres -------------------------------------------------- */
+QMenuBar { border: none; padding: 0 2px; spacing: 2px; }
+QMenuBar::item { padding: ${MENU_ITEM_PAD}px 11px; border-radius: 8px; margin: 0; }
+QMenu {
+    border-radius: ${R_LG}px;
+    padding: 6px;
+}
+QMenu::item { padding: 7px 28px 7px 28px; border-radius: 7px; }
+QMenu::separator { height: 1px; margin: 5px 10px; }
+QMenu::icon { left: 8px; }
+QMenu::indicator { width: 14px; height: 14px; left: 9px; }
+QMenu::right-arrow { image: ${IMG_RIGHT}; width: 9px; height: 9px; right: 8px; }
+QToolBar {
+    background-color: ${CHROME};
+    border: none;
+    border-bottom: 1px solid ${CHROME_EDGE};
+    spacing: 4px; padding: 4px;
+}
+QToolBar::separator { background-color: ${BORDER}; width: 1px; margin: 5px 6px; }
+QStatusBar {
+    background-color: ${CHROME};
+    color: ${TEXT_SOFT};
+    border: none;
+    border-top: 1px solid ${CHROME_EDGE};
+    font-family: "${FONT_MONO}", "${FONT_MONO_FALLBACK}", monospace;
+    font-size: 8.5pt;
+    min-height: 24px;
+}
+QStatusBar::item { border: none; }
+QStatusBar QLabel { color: ${TEXT_SOFT}; padding: 0 6px; font-size: 8.5pt; }
+QSizeGrip { background: transparent; width: 12px; height: 12px; }
+
+/* --- Cases et boutons radio : des petits pads ------------------------- */
+QCheckBox, QRadioButton { spacing: 8px; padding: 2px; color: ${TEXT}; }
+QCheckBox:disabled, QRadioButton:disabled { color: ${TEXT_MUTED}; }
+QCheckBox::indicator, QRadioButton::indicator { width: 17px; height: 17px; }
+QCheckBox::indicator { border-radius: 5px; }
+QRadioButton::indicator { border-radius: 9px; }
+
+/* --- Divers ----------------------------------------------------------- */
+QDockWidget {
+    color: ${GREY_LIGHT};
+    titlebar-close-icon: none; titlebar-normal-icon: none;
+}
+QDockWidget::title {
+    background-color: ${PANEL_HI}; padding: 6px 10px;
+    border-top-left-radius: ${R}px; border-top-right-radius: ${R}px;
+}
+QDialogButtonBox { button-layout: 3; }
+QDialogButtonBox QPushButton { min-width: 88px; }
+QMessageBox QLabel { color: ${TEXT}; }
+QToolBox::tab { border-radius: ${R}px; padding: 6px; }
+QListWidget#Variations::item { margin: 3px; padding: 6px; border-radius: ${R}px; }
+""")
+
+
+_QSS_ACCENT = Template(r"""
+/* ======================================================================
+   Partie colorée : tout ce qui prend la teinte de la page (ou de la
+   façade). Chaque propriété y figure avec TOUS ses états — voir la note
+   en tête des feuilles.
+   ====================================================================== */
+
+QWidget {
+    selection-background-color: ${SEL_STRONG};
+    selection-color: ${TEXT};
+}
+QLabel[role="section"]   { color: ${ACC_TEXT}; }
+QLabel[role="accent"]    { color: ${ACC_TEXT}; font-weight: 600; }
 QFrame#Rule, QFrame[role="rule"] {
     background-color: ${ACC};
     border: none;
     min-height: 2px; max-height: 2px;
     border-radius: 1px;
 }
-QFrame[frameShape="4"] { background-color: ${BORDER}; border: none; min-height: 1px; max-height: 1px; }
-QFrame[frameShape="5"] { background-color: ${BORDER}; border: none; min-width: 1px; max-width: 1px; }
-QGroupBox {
-    margin-top: 16px;
-    padding: 14px 10px 10px 10px;
-    font-weight: 600;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    left: 12px; padding: 0 6px;
-    color: ${ACC_HI};
-}
+QGroupBox::title { color: ${ACC_TEXT}; }
 
-/* --- Boutons --------------------------------------------------------- */
+/* --- Boutons : des touches de façade --------------------------------- */
 QPushButton {
-    background-color: ${BTN_BG};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                      stop:0 ${BTN_TOP}, stop:1 ${BTN_BOTTOM});
     color: ${TEXT};
     border: 1px solid ${BORDER};
-    border-radius: ${R}px;
-    padding: 6px 14px;
-    min-height: 18px;
-    font-weight: 500;
+    border-top-color: ${BTN_EDGE};
 }
-QPushButton:hover     { background-color: ${BTN_HOVER}; border-color: ${ACC_LO}; }
+QPushButton:hover {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                      stop:0 ${BTN_HOVER_TOP}, stop:1 ${BTN_HOVER_BOTTOM});
+    border-color: ${ACC_DIM};
+}
 QPushButton:pressed   { background-color: ${BTN_PRESS}; border-color: ${ACC}; }
-QPushButton:checked   { background-color: ${SEL_MED}; border-color: ${ACC}; color: ${ACC_HI}; }
+QPushButton:checked   { background-color: ${SEL_MED}; border-color: ${ACC}; color: ${ACC_TEXT}; }
 QPushButton:checked:hover { background-color: ${SEL_STRONG}; }
-QPushButton:focus     { border-color: ${ACC}; }
-QPushButton:default   { border-color: ${ACC_LO}; }
-QPushButton:disabled  { background-color: ${PANEL}; color: ${TEXT_MUTED}; border-color: ${BORDER_SOFT}; }
+QPushButton:focus     { border-color: ${ACC_DIM}; }
+QPushButton:default   { border-color: ${ACC_DIM}; }
+QPushButton:disabled  {
+    background-color: ${PANEL}; color: ${TEXT_MUTED};
+    border-color: ${BORDER_SOFT};
+}
 QPushButton:flat      { background: transparent; border-color: transparent; }
 QPushButton:flat:hover { background-color: ${SEL_SOFT}; }
 
-/* Action principale : pleine, plus grande, impossible à confondre avec
-   les actions secondaires. C'est le défaut qui manquait — six boutons de
-   poids identique ne guident personne. */
-QPushButton#Primary, QPushButton[accent="true"] {
-    font-size: 10.5pt;
-    min-height: 32px;
-    padding: 7px 18px;
-}
+/* Action principale : un pad allumé. Pleine, à la couleur de la page,
+   impossible à confondre avec les touches éteintes qui l'entourent. */
 QPushButton#Primary, QPushButton[accent="true"] {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                      stop:0 ${ACC_HI}, stop:1 ${ACC});
-    color: ${INK};
-    border: 1px solid ${ACC_LO};
-    font-weight: 600;
+                      stop:0 ${PRI_TOP}, stop:1 ${PRI_BOTTOM});
+    color: ${ACC_INK};
+    border: 1px solid ${ACC};
+    border-top-color: ${PRI_EDGE};
 }
 QPushButton#Primary:hover, QPushButton[accent="true"]:hover {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                      stop:0 ${ACC_LIGHT}, stop:1 ${ACC_HI});
+                      stop:0 ${PRI_HOVER_TOP}, stop:1 ${PRI_TOP});
+    border-color: ${PRI_EDGE};
 }
 QPushButton#Primary:pressed, QPushButton[accent="true"]:pressed {
-    background-color: ${ACC_LO}; color: ${PAD_WHITE};
+    background-color: ${ACC_LO}; color: ${PAD_WHITE}; border-color: ${ACC_LO};
+}
+QPushButton#Primary:focus, QPushButton[accent="true"]:focus { border-color: ${PRI_EDGE}; }
+QPushButton#Primary:checked, QPushButton[accent="true"]:checked {
+    background-color: ${PRI_BOTTOM}; color: ${ACC_INK};
 }
 QPushButton#Primary:disabled, QPushButton[accent="true"]:disabled {
     background-color: ${PANEL_HI}; color: ${TEXT_MUTED}; border-color: ${BORDER_SOFT};
@@ -505,33 +799,25 @@ QPushButton[danger="true"] {
 }
 QPushButton[danger="true"]:hover  { background-color: ${DANGER_HOVER}; border-color: ${PAD_RED}; }
 QPushButton[danger="true"]:pressed { background-color: ${PAD_RED}; color: ${INK}; }
+QPushButton[danger="true"]:disabled {
+    background-color: ${PANEL}; color: ${TEXT_MUTED}; border-color: ${BORDER_SOFT};
+}
 
 QToolButton {
     background: transparent;
     color: ${GREY_LIGHT};
     border: 1px solid transparent;
-    border-radius: ${R}px;
-    padding: 4px 6px;
 }
 QToolButton:hover   { background-color: ${SEL_SOFT}; color: ${TEXT}; border-color: ${ACC_DIM}; }
 QToolButton:pressed { background-color: ${SEL_MED}; }
-QToolButton:checked { background-color: ${SEL_MED}; color: ${ACC_HI}; border-color: ${ACC}; }
+QToolButton:checked { background-color: ${SEL_MED}; color: ${ACC_TEXT}; border-color: ${ACC}; }
 QToolButton:disabled { color: ${TEXT_MUTED}; }
-QToolButton::menu-indicator { image: ${IMG_DOWN}; width: 9px; height: 9px;
-                              subcontrol-position: right center; right: 3px; }
-QToolButton[popupMode="1"] { padding-right: 16px; }
 
-/* --- Rail de navigation --------------------------------------------- */
 QPushButton#NavButton, QToolButton#NavButton,
 QPushButton[nav="true"], QToolButton[nav="true"] {
     background: transparent;
-    color: ${GREY_LIGHT};
+    color: ${TEXT_SOFT};
     border: none;
-    border-left: 3px solid transparent;
-    border-radius: ${R}px;
-    padding: 9px 10px;
-    text-align: left;
-    font-weight: 500;
 }
 QPushButton#NavButton:hover, QToolButton#NavButton:hover,
 QPushButton[nav="true"]:hover, QToolButton[nav="true"]:hover {
@@ -539,10 +825,7 @@ QPushButton[nav="true"]:hover, QToolButton[nav="true"]:hover {
 }
 QPushButton#NavButton:checked, QToolButton#NavButton:checked,
 QPushButton[nav="true"]:checked, QToolButton[nav="true"]:checked {
-    background-color: ${SEL_MED};
-    color: ${ACC_HI};
-    border-left: 3px solid ${ACC};
-    font-weight: 600;
+    background-color: ${SEL_MED}; color: ${TEXT};
 }
 
 /* --- Saisie ---------------------------------------------------------- */
@@ -551,8 +834,6 @@ QDateEdit, QTimeEdit, QDateTimeEdit, QKeySequenceEdit {
     background-color: ${INPUT_BG};
     color: ${TEXT};
     border: 1px solid ${BORDER};
-    border-radius: ${R}px;
-    padding: 5px 9px;
     selection-background-color: ${SEL_STRONG};
     selection-color: ${TEXT};
 }
@@ -567,67 +848,29 @@ QTextEdit:disabled, QPlainTextEdit:disabled {
     background-color: ${PANEL}; color: ${TEXT_MUTED}; border-color: ${BORDER_SOFT};
 }
 QLineEdit[readOnly="true"] { background-color: ${PANEL}; color: ${GREY_LIGHT}; }
-QLineEdit#Search, QLineEdit[search="true"] {
-    padding-left: 30px; border-radius: 15px; min-height: 22px;
-}
-QTextBrowser { padding: 10px; }
-
-QSpinBox::up-button, QDoubleSpinBox::up-button,
-QDateEdit::up-button, QTimeEdit::up-button {
-    subcontrol-origin: border; subcontrol-position: top right;
-    width: 17px; margin: 2px 2px 0 0;
-    border: none; border-radius: 4px; background: transparent;
-}
-QSpinBox::down-button, QDoubleSpinBox::down-button,
-QDateEdit::down-button, QTimeEdit::down-button {
-    subcontrol-origin: border; subcontrol-position: bottom right;
-    width: 17px; margin: 0 2px 2px 0;
-    border: none; border-radius: 4px; background: transparent;
-}
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
     background-color: ${SEL_MED};
 }
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow, QTimeEdit::up-arrow {
-    image: ${IMG_TRI_UP}; width: 8px; height: 8px;
-}
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow, QTimeEdit::down-arrow {
-    image: ${IMG_TRI_DOWN}; width: 8px; height: 8px;
-}
-QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled,
-QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::down-arrow:disabled { image: none; }
 
 /* --- Listes déroulantes ---------------------------------------------- */
 QComboBox {
     background-color: ${INPUT_BG};
     color: ${TEXT};
     border: 1px solid ${BORDER};
-    border-radius: ${R}px;
-    padding: 5px 9px;
-    padding-right: 26px;
-    min-height: 18px;
 }
 QComboBox:hover { border-color: ${BORDER_HI}; }
 QComboBox:focus, QComboBox:on { border-color: ${ACC}; background-color: ${INPUT_FOCUS}; }
 QComboBox:disabled { background-color: ${PANEL}; color: ${TEXT_MUTED}; border-color: ${BORDER_SOFT}; }
-QComboBox::drop-down {
-    subcontrol-origin: padding; subcontrol-position: top right;
-    width: 24px; border: none; background: transparent;
-}
 QComboBox::down-arrow { image: ${IMG_DOWN}; width: 11px; height: 11px; }
 QComboBox::down-arrow:on, QComboBox::down-arrow:hover { image: ${IMG_DOWN_HI}; }
 QComboBox::down-arrow:disabled { image: none; }
 QComboBox QAbstractItemView {
     background-color: ${PANEL};
     border: 1px solid ${BORDER_HI};
-    border-radius: ${R}px;
-    padding: 4px;
-    margin-top: 2px;
-    outline: 0;
     selection-background-color: ${SEL_MED};
-    selection-color: ${ACC_HI};
+    selection-color: ${ACC_TEXT};
 }
-QComboBox QAbstractItemView::item { min-height: 22px; padding: 3px 8px; border-radius: 5px; }
 QComboBox QAbstractItemView::item:hover { background-color: ${SEL_SOFT}; }
 
 /* --- Vues (tables, arbres, listes) ----------------------------------- */
@@ -636,16 +879,11 @@ QAbstractItemView {
     alternate-background-color: ${ALT_ROW};
     color: ${TEXT};
     border: 1px solid ${BORDER_SOFT};
-    border-radius: ${R}px;
     gridline-color: ${GRID};
     selection-background-color: ${SEL_STRONG};
     selection-color: ${TEXT};
-    outline: 0;
 }
-QTableView, QTreeView, QListView { show-decoration-selected: 1; }
-QTableView::item, QTreeView::item, QListView::item {
-    padding: 4px 6px; border: none; color: ${TEXT};
-}
+QTableView::item, QTreeView::item, QListView::item { color: ${TEXT}; }
 QTableView::item:hover, QTreeView::item:hover, QListView::item:hover {
     background-color: ${SEL_SOFT};
 }
@@ -655,284 +893,273 @@ QTableView::item:selected, QTreeView::item:selected, QListView::item:selected {
 QTableView::item:selected:!active, QTreeView::item:selected:!active,
 QListView::item:selected:!active { background-color: ${SEL_MED}; color: ${TEXT}; }
 QTableView::item:disabled, QTreeView::item:disabled { color: ${TEXT_MUTED}; }
-QListView::item { border-radius: 6px; margin: 1px 2px; }
-QTreeView::item { border-radius: 5px; }
-QTreeView::branch { background: transparent; }
-QTreeView::branch:has-children:!has-siblings:closed,
-QTreeView::branch:closed:has-children:has-siblings { image: ${IMG_RIGHT}; }
-QTreeView::branch:open:has-children:!has-siblings,
-QTreeView::branch:open:has-children:has-siblings { image: ${IMG_DOWN}; }
-QHeaderView { background: transparent; border: none; }
 QHeaderView::section {
-    background-color: ${PANEL_HI};
-    color: ${GREY_LIGHT};
-    padding: 6px 8px;
+    background-color: ${PANEL};
+    color: ${TEXT_SOFT};
     border: none;
-    border-right: 1px solid ${PANEL_LO};
-    border-bottom: 2px solid ${ACC_LO};
-    font-weight: 600;
+    border-bottom: 1px solid ${BORDER};
 }
 QHeaderView::section:hover   { background-color: ${HDR_HOVER}; color: ${TEXT}; }
-QHeaderView::section:checked { color: ${ACC_HI}; border-bottom-color: ${ACC}; }
-QHeaderView::section:first   { border-top-left-radius: ${R}px; }
-QHeaderView::section:last    { border-right: none; border-top-right-radius: ${R}px; }
+QHeaderView::section:checked { color: ${ACC_TEXT}; border-bottom: 2px solid ${ACC}; }
 QHeaderView::section:vertical {
-    border-right: 2px solid ${ACC_LO}; border-bottom: 1px solid ${PANEL_LO};
+    border-bottom: 1px solid ${PANEL_LO}; border-right: 2px solid ${ACC_LO};
 }
 QHeaderView::down-arrow { image: ${IMG_DOWN_HI}; width: 9px; height: 9px;
                           subcontrol-position: center right; right: 6px; }
 QHeaderView::up-arrow   { image: ${IMG_UP_HI}; width: 9px; height: 9px;
                           subcontrol-position: center right; right: 6px; }
-QTableCornerButton::section { background-color: ${PANEL_HI}; border: none; }
 
-/* --- Barres de défilement (fines, sans flèche) ------------------------ */
-QScrollBar:vertical   { background: transparent; width: 11px; margin: 2px 2px 2px 0; border: none; }
-QScrollBar:horizontal { background: transparent; height: 11px; margin: 0 2px 2px 2px; border: none; }
-QScrollBar::handle:vertical {
-    background-color: ${SCROLL}; border-radius: 4px; min-height: 30px; margin: 0 2px;
+/* --- Barres de défilement --------------------------------------------- */
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background-color: ${SCROLL}; }
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+    background-color: ${SCROLL_HI};
 }
-QScrollBar::handle:horizontal {
-    background-color: ${SCROLL}; border-radius: 4px; min-width: 30px; margin: 2px 0;
+QScrollBar::handle:vertical:pressed, QScrollBar::handle:horizontal:pressed {
+    background-color: ${ACC};
 }
-QScrollBar::handle:hover   { background-color: ${SCROLL_HI}; }
-QScrollBar::handle:pressed { background-color: ${ACC}; }
-QScrollBar::add-line, QScrollBar::sub-line {
-    width: 0; height: 0; border: none; background: transparent;
-}
-QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
-QAbstractScrollArea::corner { background: transparent; border: none; }
 
 /* --- Curseurs et jauges ---------------------------------------------- */
-QSlider { background: transparent; }
-QSlider::groove:horizontal { height: 5px; background-color: ${PANEL_HI}; border-radius: 2px; }
+QSlider::groove:horizontal, QSlider::groove:vertical { background-color: ${PANEL_HI}; }
 QSlider::sub-page:horizontal {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 ${ACC_LO}, stop:1 ${ACC});
-    border-radius: 2px;
 }
-QSlider::add-page:horizontal { background-color: ${PANEL_HI}; border-radius: 2px; }
-QSlider::handle:horizontal {
-    width: 14px; height: 14px; margin: -5px 0; border-radius: 7px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 ${ACC_HI}, stop:1 ${ACC});
-    border: 1px solid ${ACC_LO};
-}
-QSlider::handle:horizontal:hover { background: ${ACC_HI}; border-color: ${ACC_HI}; }
-QSlider::groove:vertical { width: 5px; background-color: ${PANEL_HI}; border-radius: 2px; }
+QSlider::add-page:horizontal { background-color: ${PANEL_HI}; }
 QSlider::add-page:vertical {
     background: qlineargradient(x1:0, y1:1, x2:0, y2:0, stop:0 ${ACC_LO}, stop:1 ${ACC});
-    border-radius: 2px;
 }
-QSlider::sub-page:vertical { background-color: ${PANEL_HI}; border-radius: 2px; }
-QSlider::handle:vertical {
-    width: 14px; height: 14px; margin: 0 -5px; border-radius: 7px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 ${ACC_HI}, stop:1 ${ACC});
-    border: 1px solid ${ACC_LO};
+QSlider::sub-page:vertical { background-color: ${PANEL_HI}; }
+QSlider::handle:horizontal, QSlider::handle:vertical {
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.4, fy:0.35,
+                stop:0 ${ACC_LIGHT}, stop:0.55 ${ACC}, stop:1 ${ACC_LO});
+    border: 2px solid ${PANEL_LO};
 }
-QSlider::handle:disabled { background: ${PANEL_HI}; border-color: ${BORDER}; }
+QSlider::handle:horizontal:hover, QSlider::handle:vertical:hover {
+    background: ${ACC_HI}; border-color: ${ACC_DIM};
+}
+QSlider::handle:horizontal:disabled, QSlider::handle:vertical:disabled {
+    background: ${PANEL_HI}; border-color: ${BORDER};
+}
 
 QProgressBar {
     background-color: ${PANEL_HI};
-    border: none;
-    border-radius: 6px;
-    min-height: 12px; max-height: 18px;
-    text-align: center;
     color: ${GREY_LIGHT};
-    font-size: 8pt;
 }
 QProgressBar::chunk {
-    border-radius: 6px;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                 stop:0 ${ACC_LO}, stop:0.55 ${ACC}, stop:1 ${ACC_HI});
 }
-QProgressBar[thin="true"] { min-height: 6px; max-height: 6px; border-radius: 3px; }
-QProgressBar[thin="true"]::chunk { border-radius: 3px; }
 
 /* --- Onglets ---------------------------------------------------------- */
-QTabWidget::pane {
-    border: 1px solid ${BORDER_SOFT};
-    border-radius: ${R_LG}px;
-    background-color: ${PANEL};
-    top: -1px;
-}
-QTabWidget::tab-bar { alignment: left; left: 6px; }
-QTabBar { background: transparent; qproperty-drawBase: 0; }
 QTabBar::tab {
     background: transparent;
-    color: ${GREY};
-    border: none;
-    border-bottom: 2px solid transparent;
-    border-top-left-radius: ${R}px;
-    border-top-right-radius: ${R}px;
-    padding: 7px 16px;
-    margin-right: 2px;
-    min-width: 40px;
+    color: ${TEXT_SOFT};
+    border: 1px solid transparent;
 }
-QTabBar::tab:hover    { color: ${TEXT}; background-color: ${SEL_SOFT}; }
-QTabBar::tab:selected { color: ${ACC_HI}; background-color: ${PANEL};
-                        border-bottom: 2px solid ${ACC}; font-weight: 600; }
+QTabBar::tab:hover    { color: ${TEXT}; background-color: ${SEL_SOFT}; border-color: ${BORDER_SOFT}; }
+QTabBar::tab:selected { color: ${ACC_TEXT}; background-color: ${SEL_MED}; border-color: ${ACC_DIM}; }
 QTabBar::tab:disabled { color: ${TEXT_MUTED}; }
-QTabBar::tab:left, QTabBar::tab:right { padding: 12px 7px; }
 
 /* --- Séparateurs ------------------------------------------------------ */
-QSplitter { background: transparent; }
-QSplitter::handle { background: transparent; }
-QSplitter::handle:horizontal { width: 6px; }
-QSplitter::handle:vertical   { height: 6px; }
-QSplitter::handle:hover      { background-color: ${SEL_SOFT}; }
-QSplitter::handle:pressed    { background-color: ${SEL_MED}; }
+QSplitter::handle:hover   { background-color: ${SEL_SOFT}; }
+QSplitter::handle:pressed { background-color: ${SEL_MED}; }
 
 /* --- Menus et barres -------------------------------------------------- */
 QMenuBar {
-    background-color: ${PANEL};
-    color: ${GREY_LIGHT};
-    border: none;
-    border-bottom: 1px solid ${BORDER_SOFT};
-    padding: 2px 4px;
+    background-color: ${CHROME};
+    color: ${TEXT_SOFT};
 }
-QMenuBar::item { background: transparent; padding: 5px 10px; border-radius: 6px; }
-QMenuBar::item:selected { background-color: ${SEL_MED}; color: ${ACC_HI}; }
-QMenuBar::item:pressed  { background-color: ${SEL_STRONG}; color: ${ACC_HI}; }
+QMenuBar::item { background: transparent; color: ${TEXT_SOFT}; }
+QMenuBar::item:selected { background-color: ${SEL_MED}; color: ${TEXT}; }
+QMenuBar::item:pressed  { background-color: ${SEL_STRONG}; color: ${TEXT}; }
 QMenu {
     background-color: ${PANEL};
     color: ${TEXT};
     border: 1px solid ${BORDER_HI};
-    border-radius: ${R_LG}px;
-    padding: 6px;
 }
-QMenu::item { background: transparent; padding: 6px 26px 6px 28px; border-radius: 6px; }
-QMenu::item:selected { background-color: ${SEL_MED}; color: ${ACC_HI}; }
+QMenu::item { background: transparent; color: ${TEXT}; }
+QMenu::item:selected { background-color: ${SEL_MED}; color: ${ACC_TEXT}; }
 QMenu::item:disabled { color: ${TEXT_MUTED}; }
-QMenu::separator { height: 1px; background-color: ${BORDER}; margin: 5px 10px; }
-QMenu::icon { left: 8px; }
-QMenu::indicator { width: 14px; height: 14px; left: 9px; }
-QMenu::indicator:checked { image: ${IMG_CHECK_GOLD}; }
-QMenu::right-arrow { image: ${IMG_RIGHT}; width: 9px; height: 9px; right: 8px; }
-QToolBar {
-    background-color: ${PANEL};
-    border: none;
-    border-bottom: 1px solid ${BORDER_SOFT};
-    spacing: 4px; padding: 4px;
-}
-QToolBar::separator { background-color: ${BORDER}; width: 1px; margin: 5px 6px; }
-QStatusBar {
-    background-color: ${PANEL};
-    color: ${GREY_LIGHT};
-    border: none;
-    border-top: 1px solid ${BORDER_SOFT};
-}
-QStatusBar::item { border: none; }
-QStatusBar QLabel { color: ${GREY_LIGHT}; padding: 0 4px; }
-QSizeGrip { background: transparent; width: 12px; height: 12px; }
+QMenu::separator { background-color: ${BORDER}; }
+QMenu::indicator:checked { image: ${IMG_CHECK_ACC}; }
 QToolTip {
-    background-color: ${PANEL_HI};
+    background-color: ${OLED_BG};
     color: ${TEXT};
-    border: 1px solid ${ACC_LO};
-    border-radius: 6px;
-    padding: 5px 8px;
+    border: 1px solid ${ACC_DIM};
+    border-radius: 8px;
+    padding: 6px 9px;
     font-size: 9pt;
-    opacity: 240;
+    opacity: 245;
 }
 
 /* --- Cases et boutons radio ------------------------------------------- */
-QCheckBox, QRadioButton { spacing: 8px; padding: 2px; color: ${TEXT}; }
-QCheckBox:disabled, QRadioButton:disabled { color: ${TEXT_MUTED}; }
-QCheckBox::indicator, QRadioButton::indicator { width: 16px; height: 16px; }
-QCheckBox::indicator {
-    border: 1px solid ${BORDER_HI}; border-radius: 5px; background-color: ${INPUT_BG};
+QCheckBox::indicator, QRadioButton::indicator {
+    border: 1px solid ${BORDER_HI}; background-color: ${INPUT_BG};
 }
-QCheckBox::indicator:hover { border-color: ${ACC}; }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: ${ACC}; }
 QCheckBox::indicator:checked {
-    background-color: ${ACC}; border-color: ${ACC}; image: ${IMG_CHECK_DARK};
+    background-color: ${ACC}; border-color: ${ACC}; image: ${IMG_CHECK_INK};
 }
 QCheckBox::indicator:checked:hover { background-color: ${ACC_HI}; border-color: ${ACC_HI}; }
 QCheckBox::indicator:indeterminate {
-    background-color: ${ACC_LO}; border-color: ${ACC_LO}; image: ${IMG_DASH_DARK};
+    background-color: ${ACC_LO}; border-color: ${ACC_LO}; image: ${IMG_DASH_INK};
 }
-QCheckBox::indicator:disabled { background-color: ${PANEL}; border-color: ${BORDER_SOFT}; }
-QRadioButton::indicator {
-    border: 1px solid ${BORDER_HI}; border-radius: 8px; background-color: ${INPUT_BG};
-}
-QRadioButton::indicator:hover { border-color: ${ACC}; }
 QRadioButton::indicator:checked {
-    background-color: ${ACC}; border-color: ${ACC}; image: ${IMG_DOT_DARK};
+    background-color: ${ACC}; border-color: ${ACC}; image: ${IMG_DOT_INK};
 }
-QRadioButton::indicator:disabled { background-color: ${PANEL}; border-color: ${BORDER_SOFT}; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {
+    background-color: ${PANEL}; border-color: ${BORDER_SOFT};
+}
 
-/* --- Divers ----------------------------------------------------------- */
-QDockWidget {
-    color: ${GREY_LIGHT};
-    titlebar-close-icon: none; titlebar-normal-icon: none;
-}
-QDockWidget::title {
-    background-color: ${PANEL_HI}; padding: 6px 10px;
-    border-top-left-radius: ${R}px; border-top-right-radius: ${R}px;
-}
-QDialogButtonBox { button-layout: 3; }
-QDialogButtonBox QPushButton { min-width: 88px; }
-QMessageBox QLabel { color: ${TEXT}; }
 QToolBox::tab {
     background-color: ${PANEL_HI}; color: ${GREY_LIGHT};
-    border: 1px solid ${BORDER_SOFT}; border-radius: ${R}px; padding: 6px;
+    border: 1px solid ${BORDER_SOFT};
 }
-QToolBox::tab:selected { color: ${ACC_HI}; border-color: ${ACC_LO}; }
-QListWidget#Variations::item { margin: 3px; padding: 6px; border-radius: ${R}px; }
+QToolBox::tab:selected { color: ${ACC_TEXT}; border-color: ${ACC_LO}; }
 """)
 
 
-def _theme_values(accent: str) -> dict[str, str]:
-    """Calcule toutes les valeurs injectées dans la feuille de style."""
-    acc = accent if accent and accent.startswith("#") else GOLD
-    acc_hi = mix(acc, PAPER, 0.32)
-    acc_light = mix(acc, PAPER, 0.55)
-    acc_lo = mix(acc, INK, 0.45)
-    acc_dim = mix(acc, PANEL, 0.62)
+def _valid_accent(accent: str) -> str:
+    """L'accent demandé s'il est utilisable, l'or sinon."""
+    texte = str(accent or "").strip()
+    if texte.startswith("#") and QColor(texte).isValid():
+        return texte
+    return GOLD
+
+
+def _lisible_sous(fond: str, encre: str, minimum: float = 4.5) -> str:
+    """Pousse ``fond`` juste assez pour que ``encre`` s'y lise.
+
+    Mesuré : le bas du bouton violet tombait à 4,43, le haut du bouton
+    indigo à 4,42. On éclaircit un fond sous l'encre noire, on fonce un
+    fond sous le blanc, par pas de 2 %, et un fond déjà lisible ne bouge
+    pas.
+    """
+    if contrast(encre, fond) >= minimum:
+        return fond
+    cible = PAPER if encre == INK else INK
+    for pas in range(1, 31):
+        candidat = mix(fond, cible, pas * 0.02)
+        if contrast(encre, candidat) >= minimum:
+            return candidat
+    return fond
+
+
+def lit_fill(color: str) -> tuple[str, str, str]:
+    """Remplissage d'un pad allumé : ``(haut, bas, encre)`` du dégradé.
+
+    Sur une teinte claire, l'encre est noire et le dégradé s'éclaircit vers
+    le haut ; sur une teinte sombre, l'encre est blanche et le dégradé fonce
+    vers le bas. Les deux extrémités sont poussées juste assez pour que
+    l'encre s'y lise à 4,5.
+    """
+    teinte = _valid_accent(color)
+    encre = text_on(teinte)
+    if encre == INK:
+        return (_lisible_sous(mix(teinte, PAPER, 0.28), encre),
+                _lisible_sous(teinte, encre), encre)
+    return (_lisible_sous(teinte, encre),
+            _lisible_sous(mix(teinte, INK, 0.22), encre), encre)
+
+
+def _base_values() -> dict[str, str]:
+    """Valeurs de la partie commune : palette, géométrie, micro-images."""
     return {
-        # palette de base
         "INK": INK, "GREY": GREY, "GREY_LIGHT": GREY_LIGHT,
         "TEXT_SOFT": TEXT_SOFT,
         "PANEL": PANEL, "PANEL_HI": PANEL_HI, "PANEL_LO": PANEL_LO,
-        "PAD_WHITE": PAD_WHITE, "PAD_RED": PAD_RED,
+        "PAD_WHITE": PAD_WHITE,
         "TEXT": TEXT, "TEXT_MUTED": TEXT_MUTED,
         "BORDER": BORDER, "BORDER_SOFT": BORDER_SOFT, "BORDER_HI": BORDER_HI,
-        "ALT_ROW": ALT_ROW, "GRID": GRID,
-        "INPUT_BG": INPUT_BG, "INPUT_FOCUS": INPUT_FOCUS,
-        # accent
-        "ACC": acc, "ACC_HI": acc_hi, "ACC_LIGHT": acc_light,
-        "ACC_LO": acc_lo, "ACC_DIM": acc_dim,
-        "SEL_SOFT": with_alpha(acc, 0.10),
-        "SEL_MED": with_alpha(acc, 0.20),
-        "SEL_STRONG": with_alpha(acc, 0.34),
-        # surfaces dérivées
-        "BTN_BG": PANEL_HI,
-        "BTN_HOVER": mix(PANEL_HI, acc, 0.16),
-        "BTN_PRESS": mix(PANEL_LO, acc, 0.10),
-        "HDR_HOVER": mix(PANEL_HI, acc, 0.14),
-        "SCROLL": mix(PANEL_HI, PAD_WHITE, 0.10),
-        "SCROLL_HI": mix(PANEL_HI, acc, 0.45),
-        "DANGER_BG": mix(PANEL_HI, PAD_RED, 0.12),
-        "DANGER_HOVER": mix(PANEL_HI, PAD_RED, 0.28),
-        "DANGER_BORDER": mix(BORDER, PAD_RED, 0.40),
-        # typographie et géométrie
+        "BORDER_TOP": BORDER_TOP, "CARD_TOP": CARD_TOP,
+        "CHROME": CHROME, "CHROME_EDGE": CHROME_EDGE,
         "FONT_UI": FONT_UI, "FONT_UI_FALLBACK": FONT_UI_FALLBACK,
         "FONT_MONO": FONT_MONO, "FONT_MONO_FALLBACK": FONT_MONO_FALLBACK,
-        "R": str(RADIUS), "R_LG": str(RADIUS + 2),
-        # micro-images
+        "R": str(RADIUS), "R_BTN": str(RADIUS + 1), "R_LG": str(RADIUS + 5),
+        "MENU_ITEM_PAD": "6",
         "IMG_DOWN": _asset("chevron-down", GREY_LIGHT, 12),
-        "IMG_DOWN_HI": _asset("chevron-down", acc_hi, 12),
-        "IMG_UP_HI": _asset("chevron-up", acc_hi, 12),
         "IMG_RIGHT": _asset("chevron-right", GREY_LIGHT, 12),
         "IMG_TRI_UP": _asset("tri-up", GREY_LIGHT, 10),
         "IMG_TRI_DOWN": _asset("tri-down", GREY_LIGHT, 10),
-        "IMG_CHECK_DARK": _asset("check", PANEL_LO, 14),
-        "IMG_CHECK_GOLD": _asset("check", acc_hi, 14),
-        "IMG_DASH_DARK": _asset("dash", PANEL_LO, 14),
-        "IMG_DOT_DARK": _asset("dot", PANEL_LO, 10),
     }
+
+
+def accent_values(accent: str) -> dict[str, str]:
+    """Toutes les teintes dérivées d'un accent, celles de la partie colorée.
+
+    Le bouton principal se lit dans les deux sens : sur une teinte claire
+    (or, cyan, vert) il écrit à l'encre et son dégradé s'éclaircit vers le
+    haut ; sur une teinte sombre (indigo) il écrit en blanc, et le dégradé
+    **fonce** au lieu d'éclaircir — sans quoi le haut du bouton perdait le
+    contraste que le bas avait.
+    """
+    acc = _valid_accent(accent)
+    acc_hi = mix(acc, PAPER, 0.28)
+    acc_light = mix(acc, PAPER, 0.50)
+    acc_lo = mix(acc, INK, 0.45)
+    pri_top, pri_bottom, encre = lit_fill(acc)
+    if encre == INK:
+        pri_hover_top = _lisible_sous(acc_light, encre)
+        pri_edge = acc_light
+    else:
+        pri_hover_top = _lisible_sous(mix(acc, PAPER, 0.10), encre)
+        pri_edge = acc_hi
+    return {
+        "ACC": acc, "ACC_HI": acc_hi, "ACC_LIGHT": acc_light,
+        "ACC_LO": acc_lo, "ACC_DIM": mix(acc, PANEL, 0.55),
+        "ACC_TEXT": readable(acc, PANEL),
+        "ACC_INK": encre,
+        "PRI_TOP": pri_top, "PRI_BOTTOM": pri_bottom,
+        "PRI_HOVER_TOP": pri_hover_top, "PRI_EDGE": pri_edge,
+        "SEL_SOFT": with_alpha(acc, 0.10),
+        "SEL_MED": with_alpha(acc, 0.20),
+        "SEL_STRONG": with_alpha(acc, 0.32),
+        "BTN_TOP": "#272E3A", "BTN_BOTTOM": "#1F2530", "BTN_EDGE": "#3A4352",
+        "BTN_HOVER_TOP": mix("#272E3A", acc, 0.16),
+        "BTN_HOVER_BOTTOM": mix("#1F2530", acc, 0.10),
+        "BTN_PRESS": mix(PANEL_LO, acc, 0.12),
+        "HDR_HOVER": mix(PANEL, acc, 0.10),
+        "SCROLL": mix(PANEL_HI, PAD_WHITE, 0.10),
+        "SCROLL_HI": mix(PANEL_HI, acc, 0.50),
+        "DANGER_BG": mix(PANEL_HI, PAD_RED, 0.12),
+        "DANGER_HOVER": mix(PANEL_HI, PAD_RED, 0.28),
+        "DANGER_BORDER": mix(BORDER, PAD_RED, 0.40),
+        "INK": INK, "GREY_LIGHT": GREY_LIGHT, "TEXT": TEXT,
+        "TEXT_SOFT": TEXT_SOFT, "TEXT_MUTED": TEXT_MUTED,
+        "PANEL": PANEL, "PANEL_HI": PANEL_HI, "PANEL_LO": PANEL_LO,
+        "PAD_WHITE": PAD_WHITE, "PAD_RED": PAD_RED,
+        "BORDER": BORDER, "BORDER_SOFT": BORDER_SOFT, "BORDER_HI": BORDER_HI,
+        "ALT_ROW": ALT_ROW, "GRID": GRID,
+        "INPUT_BG": INPUT_BG, "INPUT_FOCUS": INPUT_FOCUS,
+        "CHROME": CHROME, "OLED_BG": OLED_BG,
+        "IMG_DOWN": _asset("chevron-down", GREY_LIGHT, 12),
+        "IMG_DOWN_HI": _asset("chevron-down", acc_hi, 12),
+        "IMG_UP_HI": _asset("chevron-up", acc_hi, 12),
+        "IMG_CHECK_INK": _asset("check", encre if encre == INK else PAD_WHITE, 14),
+        "IMG_CHECK_ACC": _asset("check", acc_hi, 14),
+        "IMG_DASH_INK": _asset("dash", PANEL_LO, 14),
+        "IMG_DOT_INK": _asset("dot", encre if encre == INK else PAD_WHITE, 10),
+    }
+
+
+def accent_qss(accent: str) -> str:
+    """La seule partie colorée de la feuille, à la teinte donnée.
+
+    C'est ce que chaque page pose sur elle-même : ses boutons, sélections,
+    onglets, cases et curseurs prennent alors **sa** couleur, et l'on sait
+    où l'on est même sans regarder la navigation.
+    """
+    try:
+        return _QSS_ACCENT.substitute(accent_values(accent))
+    except Exception:  # pragma: no cover - modèle incohérent : ne jamais casser l'UI
+        log.exception("Partie colorée du QSS impossible (%s)", accent)
+        return ""
 
 
 def qss(accent: str = GOLD) -> str:
     """Feuille de style complète de l'application, pour l'accent donné."""
     try:
-        return _QSS.substitute(_theme_values(accent))
+        return (_QSS_BASE.substitute(_base_values())
+                + _QSS_ACCENT.substitute(accent_values(accent)))
     except Exception:  # pragma: no cover - modèle incohérent : ne jamais casser l'UI
         log.exception("Construction du QSS impossible — style minimal appliqué")
         return "QWidget {{ background-color: {}; color: {}; }}".format(PANEL_LO, PAD_WHITE)
@@ -940,14 +1167,14 @@ def qss(accent: str = GOLD) -> str:
 
 def palette(accent: str = GOLD) -> QPalette:
     """Palette Qt assortie au thème (pour ce que le QSS ne peint pas)."""
-    acc = QColor(accent if accent.startswith("#") else GOLD)
+    acc = QColor(_valid_accent(accent))
     p = QPalette()
     roles = QPalette.ColorRole
     p.setColor(roles.Window, QColor(PANEL_LO))
     p.setColor(roles.WindowText, QColor(PAD_WHITE))
     p.setColor(roles.Base, QColor(PANEL))
     p.setColor(roles.AlternateBase, QColor(ALT_ROW))
-    p.setColor(roles.ToolTipBase, QColor(PANEL_HI))
+    p.setColor(roles.ToolTipBase, QColor(OLED_BG))
     p.setColor(roles.ToolTipText, QColor(PAD_WHITE))
     p.setColor(roles.Text, QColor(PAD_WHITE))
     p.setColor(roles.PlaceholderText, QColor(GREY))
@@ -955,7 +1182,7 @@ def palette(accent: str = GOLD) -> QPalette:
     p.setColor(roles.ButtonText, QColor(PAD_WHITE))
     p.setColor(roles.BrightText, QColor(PAD_AMBER))
     p.setColor(roles.Link, acc)
-    p.setColor(roles.LinkVisited, QColor(mix(accent, INK, 0.35)))
+    p.setColor(roles.LinkVisited, QColor(mix(acc.name(), INK, 0.35)))
     p.setColor(roles.Highlight, acc)
     p.setColor(roles.HighlightedText, QColor(INK))
     p.setColor(roles.Light, QColor(PANEL_HI))
@@ -974,7 +1201,7 @@ def palette(accent: str = GOLD) -> QPalette:
 
 def apply_theme(app, accent: str = GOLD) -> None:
     """Applique le thème complet (style Fusion + palette + QSS + police)."""
-    acc = accent if accent and accent.startswith("#") else GOLD
+    acc = _valid_accent(accent)
     try:
         app.setStyle("Fusion")
     except Exception:  # pragma: no cover - style indisponible

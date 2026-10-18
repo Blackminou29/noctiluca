@@ -255,7 +255,7 @@ def check_card(sd: SDCard, lib: Library,
                 pass
         try:
             issue = fn()
-        except Exception as exc:  # noqa: BLE001 - un contrôle ne bloque rien
+        except Exception:  # noqa: BLE001 - un contrôle ne bloque rien
             log.exception("contrôle « %s » en échec", label)
             return
         if issue is not None and issue.items:
@@ -659,12 +659,9 @@ def _check_mac_junk(sd: SDCard) -> Issue | None:
     plan = organize.plan_purge_junk(sd)
     if not plan.ops:
         return None
-    total = 0
-    for op in plan.ops:
-        try:
-            total += op.src.stat().st_size
-        except OSError:
-            pass
+    # Les tailles sont comptées par le plan lui-même : les redemander au
+    # disque coûtait un second ``stat`` par fichier (1 564 sur la carte).
+    total = plan.size
     return Issue(
         "MAC_JUNK", "warn",
         "Fichiers parasites",
@@ -868,7 +865,7 @@ def _plan_relink_missing(sd: SDCard, lib: Library) -> Plan:
     plan = Plan(title="Réaffectation des références cassées")
     try:
         candidates = deps.find_replacements_bulk(sd, lib)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         log.exception("recherche de remplaçants en échec")
         return plan
 

@@ -22,6 +22,7 @@ from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
+from .. import art
 from ..theme import GOLD, PAD_DIM, PAD_OFF, pad_color
 
 log = logging.getLogger(__name__)
@@ -236,35 +237,54 @@ class PadGrid(QWidget):
     # -- tracé -------------------------------------------------------------- #
 
     def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        """Trois passes, comme la matrice de la couverture du guide.
+
+        Les pads éteints d'abord, puis le halo des pads allumés — qui déborde
+        sur leurs voisins éteints, comme la lumière d'un vrai pad —, enfin
+        leur corps, avec le reflet du silicone éclairé. Le halo n'est tracé
+        qu'au-delà de dix pixels : sur une vignette de 18×8, il brouillerait
+        la grille au lieu de l'éclairer.
+        """
         try:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             pad, _gap, _ox, _oy = self._metrics()
             radius = pad * self._radius_ratio
+            halo = pad >= 10
+            allumes: list[tuple[QRectF, str]] = []
 
+            painter.setPen(Qt.PenStyle.NoPen)
             for y in range(self._rows):
                 for x in range(self._cols):
                     rect = self._cell_rect(x, y)
                     colour = self._colors[y][x]
+                    lu = self._playhead is not None and x == self._playhead
                     if colour and colour != "#000000":
-                        base = QColor(colour)
-                    else:
-                        base = QColor(PAD_OFF)
-
-                    if self._playhead is not None and x == self._playhead:
-                        # Colonne lue : on éclaircit sans changer la teinte.
-                        base = base.lighter(150)
-
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(base)
+                        if lu:
+                            # Colonne lue : on éclaircit sans changer la
+                            # teinte.
+                            colour = QColor(colour).lighter(150).name()
+                        allumes.append((rect, colour))
+                        continue
+                    painter.setBrush(QColor(PAD_DIM if lu else PAD_OFF))
                     painter.drawRoundedRect(rect, radius, radius)
 
-                    if self._hover == (x, y):
-                        pen = QPen(QColor(GOLD))
-                        pen.setWidthF(max(1.0, pad * 0.09))
-                        painter.setPen(pen)
-                        painter.setBrush(Qt.BrushStyle.NoBrush)
-                        painter.drawRoundedRect(rect, radius, radius)
+            if halo:
+                for rect, colour in allumes:
+                    art.paint_glow(painter, rect, colour, 0.22, 0.55)
+            for rect, colour in allumes:
+                art.paint_pad(painter, rect, colour, glow=0.0, radius=radius,
+                              sheen=pad >= 8)
+
+            if self._hover is not None:
+                x, y = self._hover
+                if 0 <= x < self._cols and 0 <= y < self._rows:
+                    rect = self._cell_rect(x, y)
+                    pen = QPen(QColor(GOLD))
+                    pen.setWidthF(max(1.0, pad * 0.09))
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawRoundedRect(rect, radius, radius)
             painter.end()
         except Exception as exc:  # noqa: BLE001 - un tracé ne doit rien casser
             log.debug("tracé de la grille impossible : %s", exc)
@@ -333,8 +353,10 @@ class StepSequencer(PadGrid):
         matrix = [[""] * self._cols for _ in range(self._rows)]
         for y, track in enumerate(self._tracks):
             colour = pad_color(y)
+            from ...core.rhythm import cell
+
             for step in self._pattern.tracks.get(track, ()):
-                x = int(round(float(step.pos)))
+                x = cell(step)
                 if not 0 <= x < self._cols:
                     continue
                 if step.probability < 100:
@@ -350,11 +372,11 @@ class StepSequencer(PadGrid):
         """Ajoute ou retire un coup au pad cliqué."""
         if self._pattern is None or not 0 <= y < len(self._tracks):
             return
-        from ...core.rhythm import Step
+        from ...core.rhythm import Step, cell
 
         track = self._tracks[y]
         steps = self._pattern.tracks.setdefault(track, [])
-        existing = [s for s in steps if int(round(float(s.pos))) == x]
+        existing = [s for s in steps if cell(s) == x]
         if existing:
             for step in existing:
                 steps.remove(step)

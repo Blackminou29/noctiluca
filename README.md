@@ -54,8 +54,8 @@ DELUGE_COMPANION_CONFIG=/media/cle/deluge-companion python main.py
 ## Premier démarrage
 
 **L'application s'ouvre même sans carte.** Si aucune carte n'est connue, elle
-ouvre la page *Réglages* et affiche en haut « Aucune carte — cliquez pour
-choisir ». Le chemin de la carte se change à tout moment, dans *Réglages* ou
+ouvre la page *Réglages*, et l'écran de la barre du haut affiche « AUCUNE
+CARTE — CLIQUEZ POUR CHOISIR ». Le chemin de la carte se change à tout moment, dans *Réglages* ou
 par `Ctrl+O` : il n'est écrit nulle part dans le code. Les cartes utilisées
 récemment sont proposées, et les lecteurs branchés sont repérés tout seuls :
 est reconnu comme carte Deluge tout emplacement portant au moins deux des
@@ -89,45 +89,81 @@ actions qui écrivent sur la carte le disent avant d'être cliquées.
 
 ## Se repérer
 
-Chaque page a **sa couleur**, prise dans les pads de la machine : ambre pour
-le tableau de bord, cyan pour les échantillons, violet pour les presets, vert
-pour les kits, bleu pour les morceaux, magenta pour le générateur, menthe
-pour la boîte à outils, orange pour la santé, indigo pour les réglages.
+L'interface reprend le *Guide du Deluge* : la façade sombre de la machine,
+ses pads lumineux, son écran, et le treillis de circuits des ouvertures de
+partie.
 
-Cette couleur se retrouve partout de la même façon : l'icône et le liseré du
-bouton dans la barre de gauche, la bande sous l'en-tête, le pad à côté du
-titre, les traits des panneaux. Un raccourci montre la couleur de **sa
-destination** — le bouton « Sauvegarder la carte » du tableau de bord est
-orange parce qu'il mène à la page *Santé*, et il y mène **directement sur
-l'onglet des sauvegardes**.
+- **Chaque page a sa couleur**, prise dans les pads de la machine : ambre
+  pour le tableau de bord, cyan pour les échantillons, violet pour les
+  presets, vert pour les kits, bleu pour les morceaux, magenta pour le
+  générateur, menthe pour la boîte à outils, orange pour la santé, indigo
+  pour les réglages. Comme chaque partie du guide a la sienne, la page la
+  porte partout : son pad allumé dans la colonne de gauche, le filet
+  lumineux sous la barre du haut, l'en-tête et son treillis, le bouton
+  principal, les sélections, les onglets, les cases et les curseurs.
+- **La colonne de gauche est une rangée de pads.** Éteints, ils montrent leur
+  couleur en veilleuse ; celui de la page affichée s'allume. Le chiffre à
+  droite est son raccourci (`Ctrl+1` à `Ctrl+9`), et `Ctrl+B` réduit la
+  colonne à ses pads.
+- **L'écran en haut** est celui du Deluge : la carte ouverte et ce qu'elle
+  contient. Chaque message de l'application y passe quelques secondes, et
+  défile s'il est trop long, comme sur la machine. Un clic mène aux réglages
+  de la carte.
+- **La pastille « Deluge »** s'allume en or quand la machine est branchée, en
+  vert quand elle est connectée ; verte, un clic ouvre *Deluge en direct*.
+
+Un raccourci montre la couleur de **sa destination** — le bouton
+« Sauvegarder la carte » du tableau de bord est orange parce qu'il mène à la
+page *Santé*, et il y mène **directement sur l'onglet des sauvegardes**.
 
 Un bouton éteint attend quelque chose de vous : la plupart du temps, une
-ligne choisie dans la liste.
+ligne choisie dans la liste. Sur une fenêtre étroite, les boutons d'une page
+se replient sur leur icône ; laissez la souris dessus pour lire leur nom.
+
+La couleur choisie dans *Réglages → Apparence* est celle de la façade : la
+barre du haut, les menus, et les fenêtres ouvertes hors des pages.
 
 ---
 
 ## Brancher le Deluge
 
 Reliez le Deluge au PC en USB : la pastille **Deluge** de la barre du haut
-passe au vert, et l'application peut alors travailler avec la machine.
+passe au vert — l'application se connecte d'elle-même si la case en est
+cochée dans *Réglages › Deluge branché* — et la machine dit sa version
+(firmware communautaire c1.2.1 sur la vôtre, aller-retour de 0,3 ms).
 
 | | |
 |---|---|
+| **Voir la machine** | *Deluge en direct* (Ctrl+D, ou un clic sur la pastille verte) recopie son écran au moment où il change |
+| **Suivre son tempo** | l'horloge qu'elle envoie en jouant donne son tempo aux outils de composition |
+| **Lire le son sélectionné** | avec le retour MIDI Follow, ses réglages s'affichent quand vous changez d'instrument ou tournez un bouton |
 | **Écouter pour de vrai** | les presets sonnent sur le Deluge, avec son moteur, au lieu de l'approximation calculée par l'ordinateur |
 | **Régler à distance** | 52 paramètres de l'instrument sélectionné, par le mode MIDI Follow du firmware communautaire |
 | **Envoyer un motif** | le motif d'essai d'un kit part en mesure, avec l'horloge MIDI |
 | **Tout éteindre** | un bouton de secours qui relâche toutes les notes, sur tous les canaux |
 
-Deux choses à savoir :
+**Une fois, sur le Deluge** : MIDI ▸ Follow ▸ **Channel A** = le canal de
+l'application (1 par défaut) — sans ce réglage, la machine ignore ce que
+l'application lui joue —, puis **Feedback** = Channel A, pour que le son
+sélectionné revienne à l'application. L'horloge, elle, sort d'elle-même
+(MIDI ▸ Clock ▸ Out). La fenêtre *Deluge en direct* coche ces réglages à
+mesure qu'elle les constate.
+
+Trois choses à savoir :
 
 * **le Deluge joue l'instrument sélectionné sur lui.** Aucun message MIDI ne
   permet de lui dire « charge ce preset » ; c'est une limite de la machine ;
 * l'écoute sur le Deluge ne s'active pas toute seule. Elle se coche dans
   *Réglages › Deluge branché* : envoyer du son dans une machine reliée à un
-  ampli ne doit pas être une surprise.
+  ampli ne doit pas être une surprise ;
+* **se connecter ne joue rien.** L'application demande à la machine sa
+  version et l'image de son écran — des messages de lecture —, rien
+  d'autre. Les fichiers passent toujours par la carte : le firmware c1.2.1
+  ne les ouvre pas en USB.
 
 La correspondance des contrôleurs est lue dans `MIDIFollow.XML`, à la racine
-de votre carte. Si vous la modifiez sur le Deluge, l'application suit.
+de votre carte ; sans ce fichier, ce sont les assignations d'usine, et la
+page *Réglages* le dit.
 
 ---
 
@@ -282,6 +318,40 @@ manquerait est signalé.
 
 ---
 
+## Écrire un morceau pour le Deluge
+
+Chaque outil de création sait écrire ce qu'il a produit en **morceau du
+Deluge** : un fichier neuf dans `SONGS`, que la machine charge comme les
+autres, avec ses instruments, ses clips et, pour une esquisse, ses sections.
+
+| Où | Bouton | Ce que contient le morceau |
+|---|---|---|
+| Outils › Théorie | **En morceau** | un clip par partie — accords, basse, arpège, mélodie, batterie — avec les sons entendus à l'écoute ; tout boucle ensemble dès PLAY |
+| Outils › Rythme | **En morceau** | le motif affiché, joué par un kit de vos échantillons |
+| Outils › Arrangement | **Esquisse en morceau** | une section du Deluge par section du modèle, chacune avec ses clips et son nombre de répétitions |
+| Kits | **Motif en morceau** | le kit choisi, tel qu'il est sur la carte, et le motif d'essai |
+| Générateur | **Essayer en morceau** | le son en situation : une phrase faite pour son rôle et la batterie du genre |
+| Générateur › Kit | **Kit en morceau** | le kit construit et le rythme de son genre |
+| Échantillons › Découper | **Écrire en morceau** | le kit des tranches et un clip qui rejoue la boucle |
+
+Le nom est demandé, puis le plan s'affiche — fichier, instruments, clips,
+échantillons absents — avant toute écriture. **Aucun fichier existant n'est
+remplacé** : un nom déjà pris est numéroté.
+
+Une esquisse se joue de deux façons : **PLAY** fait tourner l'intro en
+boucle, et lancer la section suivante déroule toute la suite jusqu'à la fin ;
+la vue arrangement joue le morceau entier d'un trait. Les parties qui se
+répètent tiennent dans des clips courts — quatre mesures d'accords, une
+mesure de batterie — comme on les construit sur la machine.
+
+Le format est celui qu'écrit le firmware communautaire c1.2.1. Un kit ou un
+preset ancien de la carte reçoit les conversions que la machine ferait en le
+chargeant ; elles ont été comparées aux morceaux que vous avez enregistrés
+sur la machine. **Ces morceaux n'ont pas encore été chargés sur un Deluge** :
+le premier essai sur la machine reste à faire.
+
+---
+
 ## Génération de presets
 
 Le générateur part d'un **profil de genre** — 22 sont fournis, de la techno
@@ -320,16 +390,25 @@ delugeapp/
     health.py backup.py  diagnostic, réparation, sauvegarde
     genres.py synthgen.py kitgen.py   génération
     theory.py rhythm.py midifile.py   théorie, rythme, export MIDI
+    songwriter.py        écriture de morceaux du Deluge depuis les outils
+    midiport.py          MIDI et SysEx par winmm, sans dépendance
+    midifollow.py        les 52 contrôleurs du mode MIDI Follow
+    delugelink.py delugesysex.py      le lien vivant avec la machine
     render.py audio_out.py            moteur d'écoute et sortie audio
   ui/
     mainwindow.py        assemblage des neuf pages
     theme.py icons.py    identité graphique, icônes dessinées à la main
+    art.py               treillis de circuits et pads du guide, au QPainter
     tasks.py             travaux longs hors du fil de l'interface
+    songexport.py        parcours commun des boutons « en morceau »
+    livewindow.py        « Deluge en direct » : écran, tempo, son sélectionné
     pages/               une page par domaine
-    widgets/             potentiomètre, enveloppe, forme d'onde, pads, piano…
+    widgets/             façade (écran, pads de navigation), potentiomètre,
+                         enveloppe, forme d'onde, pads, piano…
 tests/
-  test_core.py           233 tests du cœur
-  test_ui.py             147 tests d'interface
+  test_core.py           583 tests du cœur
+  test_ui.py             319 tests d'interface
+  deluge_simule.py       un Deluge simulé, qui répond comme la vraie machine
 SPEC.md                  contrat d'architecture : formats, règles, budgets
 ```
 
@@ -345,18 +424,21 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-576 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+902 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a
 bien eu lieu. Les tests d'interface se sautent d'eux-mêmes
 si PyQt6 est absent ; sans serveur graphique, `QT_QPA_PLATFORM=offscreen`
-suffit.
+suffit. **Aucun ne touche au Deluge branché** : les ports MIDI sont masqués,
+et la liaison s'éprouve face à un Deluge simulé qui répond comme la vraie
+machine, mesurée.
 
 Ils couvrent aussi les deux détails qui ont coûté le plus cher : l'échelle
 d'un câble de modulation vaut la **moitié** de celle des autres paramètres
 (`0x40000000`), et le tempo se calcule sur **24** ticks par noire — ce qui
-donne bien 120,000 BPM pour `DEFAULT.XML`.
+donne bien 120,000 BPM pour `DEFAULT.XML` — alors que les notes, elles,
+comptent `96 << inputTickMagnitude` ticks par mesure.
 
 ---
 
@@ -373,7 +455,9 @@ Mesuré sur une carte réelle — 1741 échantillons, 911 presets, 43 kits,
   minimum, `0x00000000` au milieu, `0x7FFFFFFF` au maximum, affichés de 0 à
   50 — sauf les câbles de modulation, pleine échelle `0x40000000`, affichés
   de −50 à +50 ;
-* la grille rythmique compte **24 ticks par noire**, 96 par mesure ;
-  `length=1536` fait donc 16 mesures ;
+* la grille des notes compte **`96 << inputTickMagnitude` ticks par
+  mesure** : 192 dans un morceau 3.x, 384 dans un morceau c1.2.1, où
+  `length=1536` fait donc 4 mesures (les 24 ticks par noire sont ceux de
+  l'horloge, pour le tempo) ;
 * une note tient en 22 caractères hexadécimaux :
   `position(8) durée(8) vélocité(2) relâché(2) condition(2)`.

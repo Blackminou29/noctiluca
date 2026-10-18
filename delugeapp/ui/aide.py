@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 __all__ = ["COMMUNES", "EXPLICATIONS", "expliquer", "manquantes"]
 
 
+#: Ce que disent toutes les commandes qui écrivent un morceau.
+_PLAN = ("Le nom est demandé et le plan montré avant d'écrire ; aucun "
+         "fichier existant n'est remplacé")
+
 #: Libellés présents sur plusieurs pages.
 COMMUNES: dict[str, str] = {
     "Arrêter": "Coupe l'écoute en cours  (Espace)",
@@ -86,6 +90,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                       "leur dossier et de leur contenu",
         "Dupliquer": "Copie le preset sous un nouveau nom, dans le même "
                      "dossier de la carte — l'original n'est pas touché",
+        "Varier dans le générateur": "Ouvre ce preset dans le générateur "
+                                     "pour le muter ou en tirer des "
+                                     "variantes — l'original n'est jamais "
+                                     "réécrit",
     },
 
     # ---------------------------------------------------------------- #
@@ -100,6 +108,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                    "rangées que ce kit possède",
         "Motif en MIDI": "Écrit le motif d'essai dans un fichier .mid, à "
                          "l'endroit que vous choisirez — hors de la carte",
+        "Motif en morceau": "**Écrit sur la carte.** Crée dans SONGS un "
+                            "morceau neuf : ce kit, tel qu'il est sur la "
+                            "carte, et un clip qui joue le motif d'essai. "
+                            + _PLAN,
     },
 
     # ---------------------------------------------------------------- #
@@ -130,6 +142,15 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "Enregistrer dans SYNTHS": "Écrit le preset sur la carte, dans "
                                    "SYNTHS/ — avec confirmation, et sans "
                                    "jamais écraser un fichier existant",
+        "Essayer en morceau": "**Écrit sur la carte.** Crée dans SONGS un "
+                              "morceau neuf où le son joue une phrase faite "
+                              "pour son rôle (basse, accords, arpège, "
+                              "mélodie), sur une progression et la batterie "
+                              "du genre : de quoi l'essayer en situation sur "
+                              "la machine. " + _PLAN,
+        "Kit en morceau": "**Écrit sur la carte.** Crée dans SONGS un "
+                          "morceau neuf : ce kit et un clip qui joue le "
+                          "rythme de son genre. " + _PLAN,
         "@_role": "Ce que le son doit faire dans un morceau : une basse ne "
                   "se règle pas comme une nappe",
         "@_mode": "Moteur de synthèse. « Choisi par le genre » laisse le "
@@ -139,15 +160,26 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                   "réglages donnent exactement le même son",
         "Produire 8 variantes": "Crée huit cousins du son actuel ; un clic "
                                 "les écoute, un double-clic en adopte un",
+        "Fondre": "Mélange le son courant avec celui choisi dans "
+                  "l'historique : les réglages se mélangent selon le "
+                  "dosage, les formes d'onde basculent à mi-chemin",
+        "@_morph_amount": "Dosage du fondu : à gauche le son courant, à "
+                          "droite le son choisi dans l'historique",
         "Générer un lot dans un dossier…": "Fabrique plusieurs presets d'un "
                                            "coup et les écrit dans un "
                                            "dossier de la carte que vous "
                                            "choisirez",
-        "Construire le kit": "Assemble un kit en piochant dans les "
-                             "échantillons de la carte, selon le genre "
-                             "choisi  (rien n'est encore écrit)",
+        "Construire le kit": "Assemble un kit autour d'une machine ou d'une "
+                             "banque de la carte (909, Linndrum, un kit "
+                             "d'artiste…), choisie selon le genre, puis "
+                             "complète les rôles manquants  (rien n'est "
+                             "encore écrit)",
         "Enregistrer dans KITS": "Écrit le kit sur la carte, dans KITS/ — "
                                  "avec confirmation",
+        "Autre son": "Remplace le son de la rangée choisie dans la liste "
+                     "par un autre du même rôle — de la même machine "
+                     "d'abord, puis d'une machine voisine — sans toucher au "
+                     "reste du kit  (rien n'est encore écrit)",
         "@_kit_genre": "Oriente le choix des sons : une grosse caisse techno "
                        "ne ressemble pas à une grosse caisse funk",
         "@_kit_seed": "Même graine, même kit : de quoi retrouver un "
@@ -168,8 +200,81 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "@_progression_kind": "Ambiance de la suite d'accords proposée",
         "@_progression_bars": "Nombre de mesures de la progression",
         "Proposer": "Tire une suite d'accords dans la gamme choisie",
-        "En MIDI": "Écrit la progression dans un fichier .mid, à l'endroit "
-                   "que vous choisirez",
+        "En MIDI": "Écrit un fichier .mid à l'endroit que vous choisirez",
+        "@_export_prog_button": "Écrit la progression et son "
+                                "accompagnement dans un fichier .mid : une "
+                                "piste par partie (accords, basse, arpège, "
+                                "mélodie), chacune sur son canal",
+        "@_export_beat_button": "Écrit le motif affiché dans un fichier .mid, "
+                                "percussions sur le canal 10",
+        "@_listen_prog_button": "Joue la progression avec son "
+                                "accompagnement, sur des sons générés pour le "
+                                "genre choisi — rien n'est écrit",
+        "@_acc_genre": "Choisit le rythme des accords, le style de basse, "
+                       "l'arpège et le tempo — ainsi que les sons de "
+                       "l'écoute",
+        "@_acc_chords": "Façon de poser les accords dans la mesure : tenus, "
+                        "en blanches, sur les contretemps, en stabs "
+                        "syncopés, ou en « charleston »",
+        "@_acc_bass": "Style de la ligne de basse tirée des accords : "
+                      "fondamentale, croches, contretemps, roulante, "
+                      "octaves, syncopée ou marche",
+        "@_acc_arp": "Ajoute un arpège des accords, joué au-dessus d'eux",
+        "@_acc_melody": "Ajoute une mélodie : un motif repris puis varié, "
+                        "les notes de l'accord sur les temps forts, une "
+                        "fin sur la fondamentale ; son allure suit le genre",
+        "@_melody_button": "Tire une autre mélodie sur les mêmes accords et "
+                           "la fait écouter — rien n'est écrit",
+        "@_prog_color": "Ce qu'on empile sur chaque degré : triades, "
+                        "septièmes, neuvièmes (jouées sans fondamentale, que "
+                        "tient la basse) ou accords suspendus ; « selon "
+                        "l'ambiance » met des septièmes au jazz et à la "
+                        "house, des neuvièmes à la deep et à l'ambient",
+        "@_acc_bpm": "Tempo de l'écoute et du fichier MIDI ; il suit le "
+                     "genre choisi",
+        "@_acc_drums": "Ajoute la batterie : le rythme de l'onglet Rythme, "
+                       "ou à défaut celui du genre, joué par des sons de la "
+                       "carte — et en piste 10 dans le fichier MIDI",
+        "@_chord_button": "Remplace l'accord choisi dans la liste par un "
+                          "autre de même fonction (tonique, sous-dominante, "
+                          "dominante) — le reste de la progression ne bouge "
+                          "pas",
+        "@_variation_button": "Varie le motif sans toucher à son ossature : "
+                              "grosse caisse, caisse claire et clap restent ; "
+                              "notes fantômes, charleys, percussion ou "
+                              "charleston ouvert changent",
+        "@_listen_beat_button": "Joue le motif deux fois, avec les "
+                                "échantillons de la carte quand elle en a, "
+                                "sinon une batterie synthétisée — rien "
+                                "n'est écrit",
+        "@_beat_bpm": "Tempo de l'écoute et du fichier MIDI du motif ; il "
+                      "suit le genre choisi",
+        "@_listen_section_button": "Joue le début de la section choisie "
+                                   "dans le tableau (huit mesures au plus), "
+                                   "avec les seules parties de son rôle",
+        "@_export_sketch_button": "Écrit le morceau entier dans un fichier "
+                                  ".mid : une piste par partie, la batterie "
+                                  "en piste 10, le nom des sections en "
+                                  "repères",
+        "@_song_prog_button": "**Écrit sur la carte.** Crée dans SONGS un "
+                              "morceau neuf : un instrument et un clip par "
+                              "partie (accords, basse, arpège, mélodie, "
+                              "batterie), avec les sons de l'écoute ; les "
+                              "clips bouclent ensemble dès qu'on appuie sur "
+                              "PLAY. " + _PLAN,
+        "@_song_beat_button": "**Écrit sur la carte.** Crée dans SONGS un "
+                              "morceau neuf : un kit de la carte et un clip "
+                              "qui joue le motif affiché ; une piste sans "
+                              "son, comme une piste euclidienne, reçoit une "
+                              "percussion de la bibliothèque. " + _PLAN,
+        "@_song_sketch_button": "**Écrit sur la carte.** Crée dans SONGS un "
+                                "morceau à sections : chaque section du "
+                                "modèle devient une section du Deluge, avec "
+                                "ses clips et son nombre de répétitions. PLAY "
+                                "joue la première en boucle ; lancez la "
+                                "suivante et le reste s'enchaîne jusqu'à la "
+                                "fin. L'arrangement (touche SONG) joue tout "
+                                "le morceau d'un trait. " + _PLAN,
         "@_beat_genre": "Style du motif rythmique engendré",
         "@_beat_bars": "Longueur du motif, en mesures",
         "Motif du genre": "Engendre un rythme typique du genre choisi",
@@ -180,10 +285,12 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                       "ses coups",
         "Ajouter la piste": "Ajoute ce motif euclidien au rythme en cours, "
                             "sur une nouvelle piste",
-        "@_groove": "Imite le décalage rythmique des vieilles boîtes à "
-                    "rythmes : les contretemps arrivent un peu plus tard",
-        "@_swing": "Force du décalage, de droit à très balancé",
-        "Appliquer": "Applique le groove au motif affiché",
+        "@_groove": "Swing d'échantillonneur en pourcentage (58 % léger, "
+                    "66 % ternaire), ou jeu derrière / devant le temps. Le "
+                    "même pourcentage se règle dans le swing du Deluge",
+        "@_swing": "Swing libre ajouté au groove, de droit à ternaire",
+        "Appliquer": "Applique le groove au motif affiché, toujours depuis "
+                     "le motif droit : un second clic ne cumule pas",
         "@_bpm": "Tempo servant à tous les calculs de cette page",
         "@_mem_rate": "Fréquence d'échantillonnage supposée pour le calcul "
                       "de place",
@@ -262,6 +369,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "@_scan_analyze": "Mesure tempo, tonalité et niveaux de chaque "
                      "échantillon : beaucoup plus lent, mais c'est ce qui "
                      "alimente la recherche par ressemblance",
+        "@_index_on_start": "À chaque démarrage, relit seulement les "
+                            "fichiers de la carte modifiés depuis la "
+                            "dernière analyse, en arrière-plan — la carte "
+                            "n'est que lue",
         "Réinitialiser l'index": "Vide l'index de l'application. **La carte "
                                  "n'est pas touchée** ; il faudra relancer "
                                  "une analyse",
@@ -281,8 +392,19 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                            "calculée ici",
         "@_midi_out_box": "Port par lequel l'application parle au Deluge",
         "@_midi_in_box": "Port par lequel elle l'écoute ; facultatif",
-        "@_midi_channel": "Canal que le Deluge écoute en mode MIDI Follow",
-        "Connecter": "Ouvre les ports MIDI choisis",
+        "@_midi_channel": "Canal que le Deluge écoute en mode MIDI Follow : "
+                          "il doit être réglé sur la machine aussi "
+                          "(MIDI ▸ Follow ▸ Channel A)",
+        "@_midi_follow_tempo": "Quand la machine joue, son horloge donne "
+                               "le tempo des outils : écoutes, fichiers "
+                               "MIDI et morceaux de la boîte à outils",
+        "@_midi_live": "Ouvre une fenêtre à garder à côté : l'écran du "
+                       "Deluge recopié, son tempo, les notes tenues et les "
+                       "réglages du son sélectionné — rien n'est écrit sur "
+                       "la machine",
+        "Connecter": "Ouvre les ports du Deluge : notes et contrôleurs par "
+                     "le premier, SysEx par le troisième ; la machine dit "
+                     "alors sa version",
         "Jouer un do": "Envoie une note au Deluge pour vérifier le câble",
         "Tout éteindre": "Relâche toutes les notes, sur tous les canaux : "
                          "le bouton de secours si un son reste coincé",

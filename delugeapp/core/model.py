@@ -15,6 +15,7 @@ from typing import Iterable
 import xml.etree.ElementTree as ET
 
 from . import dxml
+from . import theory as _theory
 from .dxml import DelugeDoc
 from .fixedpoint import (
     INT32_MAX,
@@ -30,10 +31,13 @@ log = logging.getLogger(__name__)
 __all__ = [
     "PARAM_KEYS", "PARAM_BIPOLAR", "DEFAULT_PARAMS", "DEFAULT_MOD_KNOBS",
     "EQ_KEYS", "ENV_KEYS", "TICKS_PER_BAR", "TICKS_PER_QUARTER",
+    "ticks_per_bar",
     "PATCH_CABLE_FULL",
     "Zone", "SampleRange", "Osc", "Envelope", "LFO", "PatchCable",
-    "Arpeggiator", "ModKnob", "Sound", "SynthPreset", "KitRow", "Kit",
+    "Arpeggiator", "Modulator", "ModKnob", "Sound", "SynthPreset", "KitRow", "Kit",
     "Note", "NoteRow", "Clip", "Song", "tempo_from_song_attrs",
+    "REPEAT_CUT", "REPEAT_ONCE", "REPEAT_LOOP", "REPEAT_STRETCH",
+    "repeat_mode_for",
     "decode_notes", "encode_notes", "read_params", "write_params",
 ]
 
@@ -41,9 +45,26 @@ __all__ = [
 # Constantes de format
 # --------------------------------------------------------------------------
 
-#: Résolution rythmique du Deluge : une noire = 24 ticks, une mesure 4/4 = 96.
+#: Résolution de l'horloge **extérieure** : 24 ticks par noire, comme une
+#: horloge MIDI. C'est elle qu'emploie la formule du tempo.
 TICKS_PER_QUARTER = 24
+#: Une mesure 4/4 à magnitude nulle.
 TICKS_PER_BAR = 96
+
+
+def ticks_per_bar(input_tick_magnitude: int) -> int:
+    """Ticks d'une mesure 4/4 dans un morceau de cette magnitude.
+
+    **Correction mesurée (14 octobre 2026).** Les positions et longueurs de
+    notes ne sont pas en 24e de noire : le firmware compte une mesure comme
+    ``96 << inputTickMagnitude`` (``Song::getBarLength``, tag
+    ``release_1_2_1``). Vérifié sur les notes des 46 morceaux de la carte :
+    à magnitude 1 (les 40 morceaux 3.0.4) les clips font 192, 384, 768
+    ticks et la double croche vaut 12 ; à magnitude 2 (les 6 morceaux
+    c1.2.1) 384, 1 536, 3 072 et la double croche vaut 24.
+    """
+    m = int(input_tick_magnitude)
+    return TICKS_PER_BAR << m if m >= 0 else max(1, TICKS_PER_BAR >> -m)
 
 #: Échelle pleine d'un câble de modulation : ``0x40000000``, soit la moitié
 #: de l'échelle des autres paramètres. Mesuré sur les 7 025 câbles de la
@@ -175,36 +196,53 @@ _DEFAULT_PARAMS_HEX: dict[str, str] = {
     "waveFold": "0x80000000",
 }
 
+#: Paramètres dont le nom de **destination de câble** diffère du nom de
+#: stockage dans ``<defaultParams>``. Table ``paramNameForFile`` du firmware
+#: (``modulation/params/param.cpp``), confirmée par la carte : 295 câbles
+#: visent ``oscAPhaseWidth``, aucun ``oscAPulseWidth`` ; 151 visent
+#: ``modulator1Volume``. Un câble écrit avec le nom de stockage désigne une
+#: destination inconnue du firmware.
+CABLE_DESTINATIONS: dict[str, str] = {
+    "oscAPulseWidth": "oscAPhaseWidth",
+    "oscBPulseWidth": "oscBPhaseWidth",
+    "bitCrush": "bitcrushAmount",
+    "modulator1Amount": "modulator1Volume",
+    "modulator2Amount": "modulator2Volume",
+    "arpeggiatorRate": "arpRate",
+    "arpeggiatorGate": "arpGate",
+    "bassFrequency": "bassFreq",
+    "trebleFrequency": "trebleFreq",
+}
+_PARAM_OF_DESTINATION = {v: k for k, v in CABLE_DESTINATIONS.items()}
+
+
+def cable_destination(name: str) -> str:
+    """Nom qu'un câble doit porter pour viser le paramètre ``name``."""
+    return CABLE_DESTINATIONS.get(name, name)
+
+
+def param_of_destination(name: str) -> str:
+    """Paramètre visé par la destination de câble ``name``."""
+    return _PARAM_OF_DESTINATION.get(name, name)
+
+
 #: Valeurs neutres d'un preset vierge (volume au maximum, filtre ouvert).
 DEFAULT_PARAMS: dict[str, int] = {k: parse_fixed(v) for k, v in _DEFAULT_PARAMS_HEX.items()}
 
-_NOTE_NAMES_FR = ("Do", "Do#", "Ré", "Mib", "Mi", "Fa",
-                  "Fa#", "Sol", "Sol#", "La", "Sib", "Si")
-
-#: Gammes reconnues par ``Song.scale_name()`` (intervalles depuis la tonique).
-_SCALE_TABLE: tuple[tuple[tuple[int, ...], str], ...] = (
-    ((0, 2, 4, 5, 7, 9, 11), "majeur"),
-    ((0, 2, 3, 5, 7, 8, 10), "mineur"),
-    ((0, 2, 3, 5, 7, 9, 10), "dorien"),
-    ((0, 1, 3, 5, 7, 8, 10), "phrygien"),
-    ((0, 2, 4, 6, 7, 9, 11), "lydien"),
-    ((0, 2, 4, 5, 7, 9, 10), "mixolydien"),
-    ((0, 1, 3, 5, 6, 8, 10), "locrien"),
-    ((0, 2, 3, 5, 7, 8, 11), "mineur harmonique"),
-    ((0, 2, 3, 5, 7, 9, 11), "mineur mélodique"),
-    ((0, 1, 4, 5, 7, 8, 11), "hongroise"),
-    ((0, 2, 4, 7, 9), "pentatonique majeure"),
-    ((0, 3, 5, 7, 10), "pentatonique mineure"),
-    ((0, 3, 5, 6, 7, 10), "blues"),
-    ((0, 2, 4, 6, 8, 10), "par tons"),
-    ((0, 2, 3, 5, 6, 8, 9, 11), "diminuée"),
-    ((0, 1, 5, 7, 8), "in sen"),
-    ((0, 1, 4, 5, 7, 8, 10), "hijaz"),
-    (tuple(range(12)), "chromatique"),
-)
-
 #: Correspondance des anciennes valeurs numériques de ``polyphonic``.
-_POLY_BY_NUM = {0: "auto", 1: "poly", 2: "choke", 3: "mono", 4: "legato"}
+#: Anciennes valeurs numériques (firmware d'avant juin 2017). Le firmware
+#: ne connaît que ``0`` (auto) et ``2`` (choke) ; tout autre nombre vaut
+#: ``poly`` (``stringToPolyphonyMode``). La table d'avant inventait
+#: ``3`` = mono et ``4`` = legato.
+_POLY_BY_NUM = {0: "auto", 2: "choke"}
+
+
+def _poly_mode(raw: str) -> str:
+    """Polyphonie lisible, depuis le texte ou l'ancien numéro du fichier."""
+    poly = (raw or "").strip()
+    if poly.lstrip("-").isdigit():
+        poly = _POLY_BY_NUM.get(int(poly), "poly")
+    return poly or "poly"
 
 
 # --------------------------------------------------------------------------
@@ -397,11 +435,14 @@ class SampleRange:
 
     def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
         """Écrit la tranche dans l'élément fourni."""
-        _set(el, "rangeTopNote", self.top_note, dialect)
+        # La dernière tranche n'a pas de note haute : 127 est la valeur lue
+        # en son absence, on ne l'ajoute donc pas.
+        if self.top_note != 127 or _has(el, "rangeTopNote"):
+            _set(el, "rangeTopNote", self.top_note, dialect)
         _set(el, "fileName", self.file_name, dialect)
-        if self.transpose:
+        if self.transpose or _has(el, "transpose"):
             _set(el, "transpose", self.transpose, dialect)
-        if self.cents:
+        if self.cents or _has(el, "cents"):
             _set(el, "cents", self.cents, dialect)
         self.zone.to_xml(dxml.ensure_child(el, "zone"), dialect)
 
@@ -478,10 +519,16 @@ class Osc:
             self.zone.to_xml(dxml.ensure_child(el, "zone"), dialect)
         if self.ranges:
             holder = dxml.ensure_child(el, "sampleRanges")
+            # Tranches existantes réutilisées, appariées par fichier.
+            anciens: dict[str, list[ET.Element]] = {}
             for old in list(holder):
+                anciens.setdefault(_txt(old, "fileName", ""), []).append(old)
                 holder.remove(old)
             for rng in self.ranges:
-                rng.to_xml(ET.SubElement(holder, "sampleRange"), dialect)
+                pool = anciens.get(rng.file_name)
+                sub = pool.pop(0) if pool else ET.Element("sampleRange")
+                holder.append(sub)
+                rng.to_xml(sub, dialect)
 
     def sample_paths(self) -> list[str]:
         """Tous les fichiers référencés par cet oscillateur."""
@@ -552,7 +599,10 @@ class PatchCable:
     source: str = ""
     destination: str = ""
     amount: int = 0
-    range_amount: int | None = None
+    #: Sources qui font varier la profondeur de ce câble
+    #: (``<depthControlledBy>``) : ``[(source, profondeur)]``. Il peut y en
+    #: avoir plusieurs — « 5. Boc Pad » en a deux, ``lfo2`` et ``random``.
+    depth_cables: list[tuple[str, int]] = field(default_factory=list)
 
     @classmethod
     def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "PatchCable":
@@ -564,24 +614,36 @@ class PatchCable:
         )
         depth = dxml.get_child(el, "depthControlledBy")
         if depth is not None:
-            inner = dxml.get_child(depth, "patchCable")
-            if inner is not None:
-                cable.range_amount = _fx(inner, "amount", 0)
+            cable.depth_cables = [
+                (_txt(inner, "source", ""), _fx(inner, "amount", 0))
+                for inner in dxml.iter_children(depth, "patchCable")]
         return cable
 
     def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
-        """Écrit le câble dans l'élément fourni."""
+        """Écrit le câble dans l'élément fourni.
+
+        Les câbles de profondeur déjà présents sont réutilisés, appariés par
+        source, pour que leurs attributs inconnus du modèle survivent.
+        """
         _set(el, "source", self.source, dialect)
         if self.destination:
-            _set(el, "destination", self.destination, dialect)
+            _set(el, "destination", cable_destination(self.destination),
+                 dialect)
         _set(el, "amount", format_fixed(self.amount), dialect)
-        if self.range_amount is None:
+        if not self.depth_cables:
             dxml.remove_child(el, "depthControlledBy")
-        else:
-            depth = dxml.ensure_child(el, "depthControlledBy")
-            inner = dxml.ensure_child(depth, "patchCable")
-            _set(inner, "source", self.source, dialect)
-            _set(inner, "amount", format_fixed(self.range_amount), dialect)
+            return
+        depth = dxml.ensure_child(el, "depthControlledBy")
+        anciens: dict[str, list[ET.Element]] = {}
+        for inner in list(depth):
+            anciens.setdefault(_txt(inner, "source", ""), []).append(inner)
+            depth.remove(inner)
+        for source, amount in self.depth_cables:
+            pool = anciens.get(source)
+            inner = pool.pop(0) if pool else ET.Element("patchCable")
+            depth.append(inner)
+            _set(inner, "source", source, dialect)
+            _set(inner, "amount", format_fixed(amount), dialect)
 
     def display(self) -> int:
         """Profondeur affichée par le Deluge : -50..+50.
@@ -609,6 +671,43 @@ class PatchCable:
     def set_display(self, depth: int) -> None:
         """Règle la profondeur depuis la valeur affichée par le Deluge."""
         self.amount = self.amount_from_display(depth)
+
+
+@dataclass
+class Modulator:
+    """Un modulateur du moteur FM (``<modulator1>``/``<modulator2>``).
+
+    En FM, le Deluge ne lit plus les formes d'onde des oscillateurs : deux
+    porteuses sinusoïdales sont modulées par deux modulateurs, dont
+    l'**accord** fait tout le timbre. Mesuré sur les 145 presets FM de la
+    carte : le premier modulateur est à l'unisson dans 54 cas, et sinon à
+    l'octave (±12), à la double octave (±24) ou sur un rapport inharmonique
+    (+28, +7) ; le second envoie sa sortie dans le premier
+    (``toModulator1``) dans 57 cas.
+    """
+
+    transpose: int = 0
+    cents: int = 0
+    retrig_phase: int = -1
+    to_modulator1: int = 0
+
+    @classmethod
+    def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "Modulator":
+        """Lit un ``<modulator1>`` ou un ``<modulator2>``."""
+        return cls(transpose=_int(el, "transpose", 0),
+                   cents=_int(el, "cents", 0),
+                   retrig_phase=_int(el, "retrigPhase", -1),
+                   to_modulator1=_int(el, "toModulator1", 0))
+
+    def to_xml(self, el: ET.Element, dialect: str = "attr",
+               second: bool = False) -> None:
+        """Écrit le modulateur ; ``second`` pour ``<modulator2>``."""
+        _set(el, "transpose", self.transpose, dialect)
+        _set(el, "cents", self.cents, dialect)
+        if self.retrig_phase != -1 or _has(el, "retrigPhase"):
+            _set(el, "retrigPhase", self.retrig_phase, dialect)
+        if second:
+            _set(el, "toModulator1", self.to_modulator1, dialect)
 
 
 @dataclass
@@ -750,6 +849,8 @@ class Sound:
     patch_cables: list[PatchCable] = field(default_factory=list)
     eq: dict[str, int] = field(default_factory=dict)
     arp: Arpeggiator = field(default_factory=Arpeggiator)
+    modulator1: Modulator = field(default_factory=Modulator)
+    modulator2: Modulator = field(default_factory=Modulator)
     mod_knobs: list[ModKnob] = field(default_factory=list)
     delay_ping_pong: int = 1
     delay_analog: int = 0
@@ -790,10 +891,7 @@ class Sound:
         snd = cls()
         snd.name = _txt(el, "name", "") or _txt(el, "presetName", "")
         snd.mode = _txt(el, "mode", "subtractive") or "subtractive"
-        poly = _txt(el, "polyphonic", "poly")
-        if poly.lstrip("-").isdigit():
-            poly = _POLY_BY_NUM.get(int(poly), "poly")
-        snd.polyphonic = poly or "poly"
+        snd.polyphonic = _poly_mode(_txt(el, "polyphonic", "poly"))
         snd.voice_priority = _int(el, "voicePriority", 1)
         snd.lpf_mode = _txt(el, "lpfMode", "24dB") or "24dB"
         snd.hpf_mode = _txt(el, "hpfMode", "")
@@ -838,6 +936,12 @@ class Sound:
         if arp is not None:
             snd.arp = Arpeggiator.from_xml(arp, dialect)
 
+        for attr, tag in (("modulator1", "modulator1"),
+                          ("modulator2", "modulator2")):
+            sub = dxml.get_child(el, tag)
+            if sub is not None:
+                setattr(snd, attr, Modulator.from_xml(sub, dialect))
+
         knobs = dxml.get_child(el, "modKnobs")
         if knobs is not None:
             snd.mod_knobs = [ModKnob.from_xml(k, dialect)
@@ -872,7 +976,11 @@ class Sound:
         """Écrit le son dans l'élément fourni (les clés inconnues survivent)."""
         if self.name and dxml.get(el, "presetName") is None:
             _set(el, "name", self.name, dialect)
-        _set(el, "polyphonic", self.polyphonic, dialect)
+        # Les vieux fichiers écrivent ``0``/``1`` : on ne les traduit que si
+        # la polyphonie a réellement changé.
+        ancien = dxml.get(el, "polyphonic")
+        if ancien is None or _poly_mode(ancien) != self.polyphonic:
+            _set(el, "polyphonic", self.polyphonic, dialect)
         _set(el, "voicePriority", self.voice_priority, dialect)
         _set(el, "mode", self.mode, dialect)
         _set(el, "lpfMode", self.lpf_mode, dialect)
@@ -919,6 +1027,14 @@ class Sound:
         self.write_param_element(_ensure_params_element(el), dialect)
         self.arp.to_xml(dxml.ensure_child(el, "arpeggiator"), dialect)
 
+        # Les modulateurs ne s'écrivent que si le son est en FM ou s'ils
+        # existaient déjà : un preset soustractif n'en a pas besoin.
+        for attr, tag, second in (("modulator1", "modulator1", False),
+                                  ("modulator2", "modulator2", True)):
+            if self.mode == "fm" or dxml.get_child(el, tag) is not None:
+                getattr(self, attr).to_xml(dxml.ensure_child(el, tag),
+                                           dialect, second=second)
+
         if self.mod_knobs:
             holder = dxml.ensure_child(el, "modKnobs")
             for old in list(holder):
@@ -932,10 +1048,21 @@ class Sound:
         self.env1.to_xml(dxml.ensure_child(pel, "envelope1"), dialect)
         self.env2.to_xml(dxml.ensure_child(pel, "envelope2"), dialect)
         holder = dxml.ensure_child(pel, "patchCables")
+        # On réutilise les câbles existants, appariés par source et
+        # destination : repartir d'éléments vierges perdait ce que le modèle
+        # ignore (``rangeAdjustable`` sur 151 presets de la carte).
+        anciens: dict[tuple[str, str], list[ET.Element]] = {}
         for old in list(holder):
+            key = (_txt(old, "source", ""), _txt(old, "destination", ""))
+            anciens.setdefault(key, []).append(old)
             holder.remove(old)
         for cable in self.patch_cables:
-            cable.to_xml(ET.SubElement(holder, "patchCable"), dialect)
+            pool = (anciens.get((cable.source, cable.destination))
+                    or anciens.get((cable.source,
+                                    cable_destination(cable.destination))))
+            el = pool.pop(0) if pool else ET.Element("patchCable")
+            holder.append(el)
+            cable.to_xml(el, dialect)
         if self.eq:
             eq = dxml.ensure_child(pel, "equalizer")
             for key in EQ_KEYS:
@@ -975,8 +1102,9 @@ class Sound:
         fx: list[str] = []
         if self.mod_fx_type and self.mod_fx_type != "none":
             fx.append({"flanger": "flanger", "chorus": "chorus",
-                       "phaser": "phaser", "stereoChorus": "chorus stéréo",
-                       "warble": "warble", "grain": "granulaire",
+                       "phaser": "phaser", "StereoChorus": "chorus stéréo",
+                       "TapeWarble": "warble", "grainFX": "granulaire",
+                       "dimension": "dimension",
                        }.get(self.mod_fx_type, self.mod_fx_type))
         if self.display("reverbAmount") >= 3:
             fx.append("réverbération")
@@ -1240,10 +1368,21 @@ class SynthPreset:
         return self.sound.sample_paths()
 
     def copy(self, name: str = "") -> "SynthPreset":
-        """Duplique le preset en mémoire (sans chemin ni document)."""
+        """Duplique le preset en mémoire (sans chemin).
+
+        Le document d'origine est copié avec le son : le modèle ne connaît
+        qu'une partie du format, et repartir d'un document vierge perdait le
+        reste. Mesuré sur la carte : 516 presets sur 911 sortaient abîmés
+        d'une duplication — accord des modulateurs FM, synchro d'oscillateur,
+        affectations MIDI, compresseur.
+        """
         import copy as _copy
+        doc = None
+        if self.doc is not None:
+            doc = _copy.deepcopy(self.doc)
+            doc.path = None
         clone = SynthPreset(path=None, name=name or self.name, folder=self.folder,
-                            sound=_copy.deepcopy(self.sound), doc=None)
+                            sound=_copy.deepcopy(self.sound), doc=doc)
         clone.sound.name = clone.name
         return clone
 
@@ -1275,6 +1414,31 @@ _DEFAULT_KIT_PARAMS_HEX: dict[str, str] = {
 DEFAULT_KIT_PARAMS: dict[str, int] = {
     k: parse_fixed(v) for k, v in _DEFAULT_KIT_PARAMS_HEX.items()
 }
+
+
+#: Modes de lecture d'un échantillon (``loopMode``), dans l'ordre de
+#: l'énumération ``SampleRepeatMode`` du firmware : ``CUT`` s'arrête avec la
+#: note, ``ONCE`` joue jusqu'au bout, ``LOOP`` boucle, ``STRETCH`` étire.
+REPEAT_CUT, REPEAT_ONCE, REPEAT_LOOP, REPEAT_STRETCH = 0, 1, 2, 3
+
+#: Durée sous laquelle le firmware joue un échantillon jusqu'au bout quand
+#: on le charge dans un kit (``sample_browser.cpp`` et ``slicer.cpp`` :
+#: ``mSec < 2002 ? ONCE : CUT``).
+ONCE_MAX_SECONDS = 2.002
+
+
+def repeat_mode_for(seconds: float | None) -> int:
+    """Mode de lecture qu'adopterait le Deluge pour un échantillon de cette durée.
+
+    Une percussion courte se joue jusqu'au bout quelle que soit la longueur
+    de la note ; un son long s'arrête avec elle. Durée inconnue : jusqu'au
+    bout, le cas des percussions.
+    """
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return REPEAT_ONCE
+    return REPEAT_ONCE if value < ONCE_MAX_SECONDS else REPEAT_CUT
 
 
 @dataclass
@@ -1380,8 +1544,23 @@ class Kit:
         kit.to_xml(doc.root, "attr")
         return kit
 
-    def add_row(self, name: str, file_name: str = "") -> KitRow:
-        """Ajoute une rangée jouant l'échantillon donné."""
+    def add_row(self, name: str, file_name: str = "",
+                seconds: float | None = None,
+                frames: int | None = None) -> KitRow:
+        """Ajoute une rangée jouant l'échantillon donné, comme le Deluge la crée.
+
+        Mesuré sur les 523 rangées des 43 kits de la carte : enveloppe grande
+        ouverte (attaque 0, sustain 50, release 0) dans la quasi-totalité,
+        ``velocity → volume`` à pleine échelle sur 505, et l'échantillon joué
+        jusqu'au bout (``loopMode`` 1) dans 83 % des cas.
+
+        :param seconds: durée de l'échantillon, si on la connaît. Elle fixe
+            le mode de lecture selon la règle du firmware
+            (:func:`repeat_mode_for`) ; à défaut, la rangée joue l'échantillon
+            jusqu'au bout.
+        :param frames: longueur en trames, écrite comme fin de zone — c'est ce
+            que fait le Deluge en chargeant un échantillon.
+        """
         snd = Sound()
         snd.name = name
         snd.polyphonic = "auto"
@@ -1399,12 +1578,17 @@ class Kit:
         snd.mod_knobs = [ModKnob(k.controls_param, k.patch_amount_from_source)
                          for k in DEFAULT_MOD_KNOBS]
         if file_name:
-            snd.osc1 = Osc(type="sample", file_name=file_name, loop_mode=0,
-                           zone=Zone(start=0, end=-1, unit="samples"))
+            end = int(frames) if frames and int(frames) > 0 else -1
+            snd.osc1 = Osc(type="sample", file_name=file_name,
+                           loop_mode=repeat_mode_for(seconds),
+                           zone=Zone(start=0, end=end, unit="samples"))
         else:
             snd.osc1 = Osc(type="square")
         snd.osc2 = Osc(type="sample")
         snd.set_param("oscBVolume", INT32_MIN)
+        # Sans ce câble, la vélocité ne change rien au volume d'un pad.
+        snd.patch_cables = [PatchCable("velocity", "volume",
+                                       PatchCable.amount_from_display(50))]
         row = KitRow(name=name, sound=snd)
         self.rows.append(row)
         return row
@@ -1422,7 +1606,8 @@ def _s32(value: int) -> int:
 
 @dataclass
 class Note:
-    """Une note d'un clip. ``pos``/``length`` sont en ticks (96 par mesure)."""
+    """Une note d'un clip. ``pos``/``length`` sont en ticks du morceau :
+    ``96 << inputTickMagnitude`` par mesure (voir :func:`ticks_per_bar`)."""
 
     pos: int = 0
     length: int = 24
@@ -1543,11 +1728,19 @@ class Clip:
     preset_folder: str = ""
     is_kit: bool = False
     note_rows: list[NoteRow] = field(default_factory=list)
+    #: Ticks d'une mesure dans le morceau qui contient ce clip : le morceau
+    #: le pose à la lecture, d'après son ``inputTickMagnitude``.
+    ticks_per_bar: int = TICKS_PER_BAR
 
     @property
     def bars(self) -> float:
-        """Longueur en mesures 4/4 (96 ticks)."""
-        return self.length / float(TICKS_PER_BAR)
+        """Longueur en mesures 4/4, à la résolution du morceau."""
+        return self.length / float(max(1, self.ticks_per_bar))
+
+    @property
+    def ticks_per_quarter(self) -> float:
+        """Ticks d'une noire dans ce clip."""
+        return max(1, self.ticks_per_bar) / 4.0
 
     @property
     def note_count(self) -> int:
@@ -1609,28 +1802,19 @@ class Clip:
 # Morceaux
 # --------------------------------------------------------------------------
 
-#: Noms de notes en français, par demi-ton depuis Do.
-NOTE_NAMES_FR = ("Do", "Do#", "Ré", "Ré#", "Mi", "Fa", "Fa#",
-                 "Sol", "Sol#", "La", "La#", "Si")
+#: Noms de notes en français, par demi-ton depuis Do — ceux de
+#: :mod:`~delugeapp.core.theory`, pour que l'application n'écrive pas
+#: « Ré# » ici et « Mib » ailleurs.
+NOTE_NAMES_FR = _theory.NOTE_NAMES_FR
 
-#: Gammes reconnues, par intervalles depuis la tonique (cf. écran du Deluge).
-SCALE_MODES: dict[tuple[int, ...], str] = {
-    (0, 2, 4, 5, 7, 9, 11): "majeur",
-    (0, 2, 3, 5, 7, 8, 10): "mineur",
-    (0, 2, 3, 5, 7, 9, 10): "dorien",
-    (0, 1, 3, 5, 7, 8, 10): "phrygien",
-    (0, 2, 4, 6, 7, 9, 11): "lydien",
-    (0, 2, 4, 5, 7, 9, 10): "mixolydien",
-    (0, 1, 3, 5, 6, 8, 10): "locrien",
-    (0, 2, 3, 5, 7, 8, 11): "mineur harmonique",
-    (0, 2, 3, 5, 7, 9, 11): "mineur mélodique",
-    (0, 1, 4, 5, 7, 8, 11): "hongrois mineur",
-    (0, 2, 4, 7, 9): "pentatonique majeure",
-    (0, 3, 5, 7, 10): "pentatonique mineure",
-    (0, 3, 5, 6, 7, 10): "blues",
-    (0, 2, 4, 6, 8, 10): "par tons",
-    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11): "chromatique",
-}
+#: Gammes reconnues, par intervalles depuis la tonique. Construite depuis
+#: :data:`~delugeapp.core.theory.SCALES`, seule table de l'application : deux
+#: copies avaient divergé (une « hongroise » et un « in sen » faux). Quand deux
+#: noms partagent les mêmes intervalles, le premier de la table l'emporte.
+SCALE_MODES: dict[tuple[int, ...], str] = {}
+for _nom, _intervalles in _theory.SCALES.items():
+    SCALE_MODES.setdefault(tuple(sorted(set(_intervalles))), _nom)
+del _nom, _intervalles
 
 #: Tags XML pouvant contenir les instruments d'un morceau (fw 2.x : ``tracks``).
 _INSTRUMENT_HOLDERS = ("instruments", "tracks")
@@ -1724,6 +1908,9 @@ class Song:
     tempo_bpm: float = TEMPO_FALLBACK
     root_note: int = 0
     mode_notes: list[int] = field(default_factory=list)
+    #: ``inputTickMagnitude`` : fixe la résolution des notes (voir
+    #: :func:`ticks_per_bar`). 1 pour les morceaux 3.x, 2 pour c1.2.1.
+    input_tick_magnitude: int = 0
     swing_amount: int = 0
     swing_interval: int = 7
     clips: list[Clip] = field(default_factory=list)
@@ -1748,6 +1935,7 @@ class Song:
             swing_amount=_int(el, "swingAmount", 0),
             swing_interval=_int(el, "swingInterval", 7),
             preview=_txt(el, "preview", ""),
+            input_tick_magnitude=_int(el, "inputTickMagnitude", 0),
         )
 
         modes = dxml.get_child(el, "modeNotes")
@@ -1771,7 +1959,18 @@ class Song:
 
         song.clips = cls._read_clips(el, _SESSION_HOLDERS, dialect)
         song.arrangement_clips = cls._read_clips(el, _ARRANGEMENT_HOLDERS, dialect)
+        # Un clip ne connaît pas sa résolution : c'est le morceau qui la
+        # porte. Sans elle, un clip de 1 536 ticks passait pour 16 mesures
+        # dans un morceau c1.2.1, où il en fait 4.
+        mesure = song.ticks_per_bar
+        for clip in song.clips + song.arrangement_clips:
+            clip.ticks_per_bar = mesure
         return song
+
+    @property
+    def ticks_per_bar(self) -> int:
+        """Ticks d'une mesure 4/4 dans ce morceau."""
+        return ticks_per_bar(self.input_tick_magnitude)
 
     @staticmethod
     def _read_clips(el: ET.Element, holders: Iterable[str],
@@ -1870,6 +2069,14 @@ class Song:
         Le Deluge écrit ``previewNumPads="144"`` pads de 3 octets (6 caractères
         hexadécimaux), rangée par rangée : 8 rangées de 16 pads plus les
         2 colonnes de la barre latérale.
+
+        **La première rangée écrite est celle du bas** (``imageStore[0]``),
+        comme partout dans le firmware. Mesuré sur la carte : « Truc 1 », 3
+        clips et ``yScrollSongView`` −5, allume les rangées 5 à 7 — ses clips
+        sont en haut de l'écran ; « Nimp1 », 5 clips à −2, allume les
+        rangées 2 à 6. La matrice rendue est donc **retournée**, première
+        ligne en haut, comme la dessine :class:`~delugeapp.ui.widgets.padgrid.PadGrid`.
+        Avant le 15 octobre 2026, les vignettes s'affichaient à l'envers.
         """
         rows, cols = 8, 18
         blank = "#000000"
@@ -1887,5 +2094,5 @@ class Song:
                     int(chunk, 16)
                 except ValueError:
                     continue
-                grid[r][c] = "#" + chunk.upper()
+                grid[rows - 1 - r][c] = "#" + chunk.upper()
         return grid

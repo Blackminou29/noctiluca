@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from ... import __version__
 from ...config import CONFIG_DIR
 from ...core import sdcard as sdmod
+from ...core.delugelink import latency_text
 from ..theme import (
     GOLD,
     GREY,
@@ -77,6 +78,8 @@ class SettingsPage(Page):
     accentChanged = pyqtSignal(str)
     #: L'index doit être remis à zéro.
     resetIndexRequested = pyqtSignal()
+    #: Demande d'ouvrir la fenêtre « Deluge en direct ».
+    liveRequested = pyqtSignal()
 
     def build(self) -> None:
         outer = QVBoxLayout(self.content())
@@ -344,6 +347,10 @@ class SettingsPage(Page):
         self._midi_state.setWordWrap(True)
         body.addWidget(self._midi_state)
 
+        self._midi_machine = QLabel("")
+        self._midi_machine.setWordWrap(True)
+        body.addWidget(self._midi_machine)
+
         hint = QLabel(
             "Branchez le Deluge en USB. L'application peut alors jouer les "
             "sons <b>sur la machine</b> plutôt qu'avec son moteur approché, "
@@ -393,6 +400,15 @@ class SettingsPage(Page):
             self.guard(self._apply_midi_audition))
         body.addWidget(self._midi_audition)
 
+        self._midi_follow_tempo = QCheckBox(
+            "Les outils suivent le tempo du Deluge")
+        self._midi_follow_tempo.setToolTip(
+            "Quand la machine joue, son horloge donne le tempo des écoutes, "
+            "des fichiers MIDI et des morceaux de la boîte à outils")
+        self._midi_follow_tempo.toggled.connect(
+            self.guard(self._apply_midi_follow_tempo))
+        body.addWidget(self._midi_follow_tempo)
+
         row = QHBoxLayout()
         row.setSpacing(6)
         self._midi_connect = tool_button(
@@ -411,6 +427,12 @@ class SettingsPage(Page):
                             "Relâcher toutes les notes, sur tous les canaux")
         panic.clicked.connect(self.guard(self._panic_midi))
         row.addWidget(panic)
+
+        self._midi_live = tool_button(
+            "Deluge en direct…", "wave",
+            "Écran de la machine, tempo, notes et son sélectionné")
+        self._midi_live.clicked.connect(self.guard(self._open_live))
+        row.addWidget(self._midi_live)
         row.addStretch(1)
         holder = QWidget()
         holder.setLayout(row)
@@ -420,6 +442,14 @@ class SettingsPage(Page):
         self._midi_follow.setProperty("role", "subtitle")
         self._midi_follow.setWordWrap(True)
         body.addWidget(self._midi_follow)
+
+        # Le mode MIDI Follow est éteint sur une machine neuve : sans ces
+        # réglages, rien de ce que l'application envoie n'est joué.
+        self._midi_guide = QLabel("")
+        self._midi_guide.setProperty("role", "subtitle")
+        self._midi_guide.setWordWrap(True)
+        self._midi_guide.setTextFormat(Qt.TextFormat.RichText)
+        body.addWidget(self._midi_guide)
 
         self._column.addWidget(card)
         self._refresh_midi()
@@ -444,7 +474,9 @@ class SettingsPage(Page):
         self._midi_channel.setValue(int(reglages.midi_channel))
         self._midi_channel.blockSignals(False)
         for case, valeur in ((self._midi_auto, reglages.midi_autoconnect),
-                             (self._midi_audition, reglages.midi_audition)):
+                             (self._midi_audition, reglages.midi_audition),
+                             (self._midi_follow_tempo,
+                              reglages.midi_follow_tempo)):
             case.blockSignals(True)
             case.setChecked(bool(valeur))
             case.blockSignals(False)
@@ -455,14 +487,31 @@ class SettingsPage(Page):
             bool(etat.supported) and (etat.connected or bool(etat.ports_out)))
         self._midi_audition.setEnabled(bool(etat.supported))
 
+        self._midi_machine.setText(self._texte_machine(etat))
+        self._midi_guide.setText(
+            "<b>Sur le Deluge</b>, une fois : MIDI ▸ Follow ▸ "
+            "<b>Channel A = %d</b> — sans ce réglage, la machine ignore ce "
+            "que l'application joue — puis <b>Feedback = Channel A</b>, pour "
+            "que le son sélectionné revienne à l'application. L'horloge, "
+            "elle, sort d'elle-même (MIDI ▸ Clock ▸ Out). Un kit répond à "
+            "partir de la note 36 (Follow ▸ Kit Root Note)."
+            % int(reglages.midi_channel))
+
         if not midiport.available():
             self._midi_follow.setText(
                 "Cette machine n'expose pas de MIDI : %s"
                 % (midiport.load_error() or "cause inconnue"))
         else:
-            self._midi_follow.setText(
-                "MIDI Follow : %d paramètres pilotables, lus dans "
-                "MIDIFollow.XML sur la carte." % etat.follow_count)
+            n = int(etat.follow_count)
+            pilotables = "%d paramètre%s pilotable%s" % (
+                n, "s" if n > 1 else "", "s" if n > 1 else "")
+            if etat.follow_source:
+                origine = "table lue dans %s sur la carte" % etat.follow_source
+            else:
+                origine = ("table d'usine du firmware : aucun "
+                           "MIDIFollow.XML lu sur la carte")
+            self._midi_follow.setText("MIDI Follow : %s — %s."
+                                      % (pilotables, origine))
 
     @staticmethod
     def _remplir_ports(boite, noms: list, choisi: str) -> None:
@@ -494,9 +543,37 @@ class SettingsPage(Page):
         self.ctx.settings.midi_channel = int(value)
         self.ctx.save()
         self.ctx.ensure_link().set_channel(int(value))
+        # Le guide cite le canal : il doit dire le nouveau.
+        self._refresh_midi()
 
     def _apply_midi_auto(self, checked: bool) -> None:
         self.ctx.settings.midi_autoconnect = bool(checked)
+        self.ctx.save()
+
+    @staticmethod
+    def _texte_machine(etat) -> str:
+        """Ce que la machine a dit d'elle-même, en une ligne."""
+        if not etat.connected:
+            return ""
+        morceaux = []
+        if etat.firmware:
+            morceaux.append("Firmware %s" % etat.firmware)
+        else:
+            morceaux.append("Pas de réponse SysEx (firmware officiel, ou "
+                            "port SysEx occupé)")
+        if etat.latency_ms is not None:
+            morceaux.append("aller-retour %s" % latency_text(etat.latency_ms))
+        if etat.sysex_name and etat.sysex_name != etat.out_name:
+            morceaux.append("SysEx par « %s »" % etat.sysex_name)
+        return " — ".join(morceaux) + "."
+
+    def _open_live(self) -> None:
+        """Ouvre la fenêtre « Deluge en direct » (la fenêtre principale la
+        possède)."""
+        self.liveRequested.emit()
+
+    def _apply_midi_follow_tempo(self, checked: bool) -> None:
+        self.ctx.settings.midi_follow_tempo = bool(checked)
         self.ctx.save()
 
     def _apply_midi_audition(self, checked: bool) -> None:
@@ -557,6 +634,16 @@ class SettingsPage(Page):
             self.guard(self._apply_scan_analyze))
         body.addWidget(self._scan_analyze)
 
+        self._index_on_start = QCheckBox(
+            "Mettre l'index à jour au démarrage")
+        self._index_on_start.setToolTip(
+            "Relit seulement les fichiers modifiés depuis la dernière "
+            "analyse : une fraction de seconde. Sans cela, ce que montre "
+            "l'application peut dater d'avant vos dernières modifications.")
+        self._index_on_start.toggled.connect(
+            self.guard(self._apply_index_on_start))
+        body.addWidget(self._index_on_start)
+
         row = QHBoxLayout()
         reset = tool_button("Réinitialiser l'index", "trash",
                             "Vide l'index SQLite. Les étiquettes, notes et "
@@ -581,6 +668,10 @@ class SettingsPage(Page):
         self.ctx.settings.scan_analyze = bool(checked)
         self.ctx.save()
 
+    def _apply_index_on_start(self, checked: bool) -> None:
+        self.ctx.settings.index_on_start = bool(checked)
+        self.ctx.save()
+
     def _reset_index(self) -> None:
         answer = QMessageBox.question(
             self, "Réinitialiser l'index",
@@ -594,6 +685,9 @@ class SettingsPage(Page):
             return
         try:
             self.lib.clear()
+            # Sans quoi l'accueil annonçait encore une analyse disparue.
+            self.lib.set_meta("last_scan", "")
+            self.lib.set_meta("last_scan_root", "")
             self.lib.vacuum()
         except Exception:  # noqa: BLE001
             log.exception("remise à zéro de l'index impossible")
@@ -681,8 +775,10 @@ class SettingsPage(Page):
         body = card.body()
 
         hint = QLabel(
-            "La palette est reprise du Guide du Deluge. Seule la couleur "
-            "d'accent se change.")
+            "La palette est celle du Guide du Deluge. Chaque page porte sa "
+            "couleur, celle de son pad dans la colonne de gauche. La couleur "
+            "choisie ici est celle de la façade : la barre du haut, les "
+            "menus et les fenêtres de dialogue.")
         hint.setProperty("role", "subtitle")
         hint.setWordWrap(True)
         body.addWidget(hint)
@@ -792,6 +888,7 @@ class SettingsPage(Page):
         for widget, value in ((self._autoplay, settings.autoplay),
                               (self._scan_hash, settings.scan_hash),
                               (self._scan_analyze, settings.scan_analyze),
+                              (self._index_on_start, settings.index_on_start),
                               (self._confirm, settings.confirm_writes),
                               (self._backup,
                                settings.always_backup_before_write)):

@@ -844,9 +844,16 @@ def _encode(block: np.ndarray, kind: str, bits: int, big: bool,
     raise ValueError("profondeur de bits non gérée : %d" % bits)
 
 
-def _write_wav(fp, data: np.ndarray, sample_rate: int, kind: str, bits: int) -> None:
-    """Écrit un flux RIFF/WAVE little-endian."""
+def _write_wav(fp, data: np.ndarray, sample_rate: int, kind: str, bits: int,
+               extra: list[tuple[bytes, bytes]] | None = None) -> None:
+    """Écrit un flux RIFF/WAVE little-endian.
+
+    ``extra`` : blocs de métadonnées ``(identifiant, contenu)`` placés entre
+    ``fmt `` et ``data`` — l'emplacement que tous les lecteurs parcourent.
+    """
     frames, ch = data.shape
+    extra = [(cid, body) for cid, body in (extra or ())
+             if len(cid) == 4 and cid not in (b"fmt ", b"data", b"fact")]
     sb = (bits + 7) // 8
     block_align = ch * sb
     data_bytes = frames * block_align
@@ -856,13 +863,19 @@ def _write_wav(fp, data: np.ndarray, sample_rate: int, kind: str, bits: int) -> 
                       sample_rate * block_align, block_align, bits)
     if fmt_size == 18:
         fmt += struct.pack("<H", 0)
-    extra = (8 + 4) if kind == "float" else 0          # chunk 'fact'
-    riff_size = 4 + (8 + fmt_size) + extra + (8 + data_bytes) + (data_bytes & 1)
+    fact = (8 + 4) if kind == "float" else 0           # chunk 'fact'
+    meta = sum(8 + len(body) + (len(body) & 1) for _cid, body in extra)
+    riff_size = (4 + (8 + fmt_size) + fact + meta + (8 + data_bytes)
+                 + (data_bytes & 1))
 
     fp.write(b"RIFF" + struct.pack("<I", riff_size) + b"WAVE")
     fp.write(b"fmt " + struct.pack("<I", fmt_size) + fmt)
     if kind == "float":
         fp.write(b"fact" + struct.pack("<II", 4, frames))
+    for cid, body in extra:
+        fp.write(cid + struct.pack("<I", len(body)) + body)
+        if len(body) & 1:
+            fp.write(b"\x00")
     fp.write(b"data" + struct.pack("<I", data_bytes))
     step = max(1, _BLOCK_BYTES // max(1, block_align))
     for i in range(0, frames, step):
@@ -906,13 +919,16 @@ def _write_aiff(fp, data: np.ndarray, sample_rate: int, kind: str, bits: int) ->
         fp.write(b"\x00")
 
 
-def write(path: Path, data: np.ndarray, sample_rate: int, bit_depth: int = 16) -> None:
+def write(path: Path, data: np.ndarray, sample_rate: int, bit_depth: int = 16,
+          extra_chunks: list[tuple[bytes, bytes]] | None = None) -> None:
     """Écrit un fichier WAV (ou AIFF/AIFC si l'extension le demande).
 
     ``data`` : tableau ``(frames,)`` ou ``(frames, channels)``, flottant dans
     [-1, 1] ou entier. ``bit_depth`` : 8/16/24/32 pour le PCM entier,
     ``'float32'``/``'float64'`` (ou -32/-64/64) pour l'IEEE flottant.
     Écriture atomique : fichier temporaire puis ``os.replace``.
+
+    ``extra_chunks`` : blocs de métadonnées à reporter (WAV seulement).
     """
     p = Path(path)
     kind, bits = _resolve_out_format(bit_depth)
@@ -931,7 +947,7 @@ def write(path: Path, data: np.ndarray, sample_rate: int, bit_depth: int = 16) -
             if aiff:
                 _write_aiff(fp, arr, sr, kind, bits)
             else:
-                _write_wav(fp, arr, sr, kind, bits)
+                _write_wav(fp, arr, sr, kind, bits, extra_chunks)
             fp.flush()
         os.replace(tmp, p)
     except BaseException:
@@ -952,16 +968,100 @@ def _db_to_amp(db: float) -> float:
     return float(10.0 ** (float(db) / 20.0))
 
 
-def _trim_silence(a: np.ndarray, threshold_db: float) -> np.ndarray:
-    """Retire le silence de tête et de queue sous le seuil donné."""
+def _trim_bounds(a: np.ndarray, threshold_db: float) -> tuple[int, int]:
+    """``(début, fin)`` du signal utile : ce que garde :func:`_trim_silence`."""
     if a.shape[0] == 0:
-        return a
+        return 0, 0
     thr = _db_to_amp(threshold_db)
     env = np.abs(a).max(axis=1)
     idx = np.flatnonzero(env > thr)
     if idx.size == 0:
-        return a                                       # tout est silencieux
-    return a[int(idx[0]):int(idx[-1]) + 1]
+        return 0, a.shape[0]                           # tout est silencieux
+    return int(idx[0]), int(idx[-1]) + 1
+
+
+def _trim_silence(a: np.ndarray, threshold_db: float) -> np.ndarray:
+    """Retire le silence de tête et de queue sous le seuil donné."""
+    start, end = _trim_bounds(a, threshold_db)
+    return a[start:end]
+
+
+#: Blocs de métadonnées WAV reportés par :func:`convert`. Les autres (aperçus
+#: de forme d'onde, données propres à un logiciel) décriraient un signal qui
+#: n'existe plus : ils sont abandonnés, comme avant.
+_KEPT_CHUNKS = (b"smpl", b"inst", b"cue ", b"acid", b"LIST", b"bext",
+                b"iXML", b"cart", b"umid", b"ID3 ", b"id3 ")
+
+
+def _wav_meta_chunks(path: Path) -> list[tuple[bytes, bytes]]:
+    """Blocs de métadonnées d'un WAV, dans l'ordre du fichier."""
+    out: list[tuple[bytes, bytes]] = []
+    try:
+        with open(path, "rb") as fp:
+            head = fp.read(12)
+            if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+                return out
+            for _ in range(_MAX_CHUNKS):
+                hdr = fp.read(8)
+                if len(hdr) < 8:
+                    break
+                cid, size = hdr[:4], struct.unpack("<I", hdr[4:])[0]
+                if cid in _KEPT_CHUNKS and size <= 4 * 1024 * 1024:
+                    body = fp.read(size)
+                    if len(body) < size:
+                        break
+                    out.append((cid, body))
+                    if size & 1:
+                        fp.seek(1, 1)
+                else:
+                    fp.seek(size + (size & 1), 1)
+    except (OSError, struct.error) as exc:
+        log.debug("métadonnées illisibles dans %s : %s", path, exc)
+    return out
+
+
+def _retime_chunks(chunks: list[tuple[bytes, bytes]], offset: int,
+                   ratio: float, frames: int,
+                   sample_rate: int) -> list[tuple[bytes, bytes]]:
+    """Recale les positions des blocs ``smpl`` et ``cue `` sur le nouveau signal.
+
+    ``position nouvelle = (ancienne - offset) × ratio``, bornée au fichier :
+    ``offset`` est le silence de tête retiré, ``ratio`` le rapport des
+    fréquences. Sans recalage, une boucle intégrée au fichier pointerait au
+    mauvais endroit après une conversion de fréquence.
+    """
+    last = max(0, frames - 1)
+
+    def _at(value: int) -> int:
+        return max(0, min(last, int(round((value - offset) * ratio))))
+
+    out: list[tuple[bytes, bytes]] = []
+    for cid, body in chunks:
+        try:
+            if cid == b"smpl" and len(body) >= 36:
+                head = list(struct.unpack("<9I", body[:36]))
+                head[2] = int(round(1e9 / sample_rate)) if sample_rate else head[2]
+                loops = bytearray(body[36:])
+                for i in range(min(head[7], len(loops) // 24)):
+                    base = i * 24
+                    lp = list(struct.unpack("<6I", loops[base:base + 24]))
+                    lp[2], lp[3] = _at(lp[2]), _at(lp[3])
+                    loops[base:base + 24] = struct.pack("<6I", *lp)
+                body = struct.pack("<9I", *head) + bytes(loops)
+            elif cid == b"cue " and len(body) >= 4:
+                count = struct.unpack("<I", body[:4])[0]
+                points = bytearray(body[4:])
+                for i in range(min(count, len(points) // 24)):
+                    base = i * 24
+                    pt = list(struct.unpack("<6I", points[base:base + 24]))
+                    pt[1], pt[5] = _at(pt[1]), _at(pt[5])
+                    points[base:base + 24] = struct.pack("<6I", *pt)
+                body = body[:4] + bytes(points)
+        except struct.error as exc:
+            log.debug("bloc %r non recalé : %s", cid, exc)
+            continue
+        out.append((cid, body))
+    return out
 
 
 def _to_channels(a: np.ndarray, mono: bool) -> np.ndarray:
@@ -1075,8 +1175,10 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
         if sr <= 0:
             return AudioInfo(path=dst_p, ok=False, error="source illisible")
 
+        offset = 0
         if trim_silence_db is not None:
-            a = _trim_silence(a, float(trim_silence_db))
+            offset, end = _trim_bounds(a, float(trim_silence_db))
+            a = a[offset:end]
         if mono is not None:
             a = _to_channels(a, bool(mono))
         if remove_dc:
@@ -1087,6 +1189,16 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
         if normalize_db is not None:
             a = _normalize(a, float(normalize_db))
         else:
+            # Recentrer un signal qui frôlait le plein niveau d'un côté le
+            # fait déborder de l'autre (5 des 17 fichiers à continu de la
+            # carte), et un rééchantillonnage peut faire de même. La page
+            # Santé s'en garde dans son plan ; le traitement par lot de la
+            # page Échantillons, non. Écrêter ajoutait la distorsion que la
+            # page Santé dénonce : on abaisse plutôt le gain, juste sous le
+            # plein niveau.
+            peak = float(np.max(np.abs(a))) if a.size else 0.0
+            if peak > 1.0 and (remove_dc or target_sr != sr):
+                a = a * (0.99 / peak)
             a = np.clip(a, -1.0, 1.0).astype(np.float32)
         if fade_ms and float(fade_ms) > 0.0:
             a = _fade(a, target_sr, float(fade_ms))
@@ -1100,7 +1212,14 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
             depth = 16
         if a.shape[0] == 0:
             a = np.zeros((1, max(1, a.shape[1])), dtype=np.float32)
-        write(dst_p, a, target_sr, depth)
+        # Note de référence, boucles et repères intégrés au fichier : la
+        # conversion les effaçait, sur 228 fichiers de la carte dont 184
+        # bouclés.
+        extra = None
+        if dst_p.suffix.lower() not in _EXT_AIFF:
+            extra = _retime_chunks(_wav_meta_chunks(src_p), offset,
+                                   target_sr / float(sr), a.shape[0], target_sr)
+        write(dst_p, a, target_sr, depth, extra_chunks=extra)
         out = probe(dst_p)
         if not out.ok:
             return AudioInfo(path=dst_p, ok=False,

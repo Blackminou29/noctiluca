@@ -322,8 +322,13 @@ class SDCard:
         # lettre de lecteur diffère (``c:\\`` contre ``C:\\``).
         try:
             rp, rr = str(p.resolve()), str(self.root.resolve())
-            if rp.lower().startswith(rr.lower()):
-                return rp[len(rr):].replace("\\", "/").strip("/")
+            # Frontière de dossier exigée : sans elle, « SDCARD Deluge 2 »
+            # passait pour un sous-dossier de « SDCARD Deluge ».
+            if rp.lower() == rr.lower():
+                return ""
+            prefix = rr.rstrip("\\/") + os.sep
+            if rp.lower().startswith(prefix.lower()):
+                return rp[len(prefix):].replace("\\", "/").strip("/")
         except OSError:
             pass
         return p.name
@@ -360,6 +365,10 @@ class SDCard:
         """
         clean = str(rel or "").replace("\\", "/").strip("/")
         if not clean:
+            return None
+        # Un ``fileName`` ne sort jamais de la carte : « .. » ou un lecteur
+        # désigneraient un fichier que les réparations pourraient réécrire.
+        if ".." in clean.split("/") or ":" in clean:
             return None
 
         # Le chemin peut déjà être correct : un seul appel système suffit alors.
@@ -482,6 +491,20 @@ class SDCard:
         except OSError:
             return list(STD_DIRS)
         return [d for d in STD_DIRS if d not in present]
+
+    @property
+    def is_volume(self) -> bool:
+        """Vrai si la carte est la racine d'un lecteur : une vraie carte SD,
+        ou le Deluge branché en stockage USB.
+
+        Faux pour une copie dans un dossier de l'ordinateur — le cas de la
+        carte de référence. L'espace libre est alors celui du disque entier
+        (474,7 Gio), qu'il ne faut pas présenter comme celui d'une carte.
+        """
+        try:
+            return os.path.ismount(str(self.root))
+        except (OSError, ValueError):
+            return False
 
     def free_space(self) -> tuple[int, int]:
         """``(octets libres, octets totaux)``. ``(0, 0)`` si indisponible."""

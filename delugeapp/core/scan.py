@@ -248,8 +248,12 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
             row.update({"ok": 0, "error": info.error})
             result.errors.append(f"{rel} : {info.error}")
 
-        if compute_hash:
-            row["hash"] = file_hash(path, quick=True)
+        # Le fichier a changé (ou n'était pas indexé) : ses empreintes
+        # anciennes ne valent plus rien. Gardée, l'empreinte complète le
+        # déclarait encore identique à son ancien jumeau, et la déduplication
+        # proposait de supprimer un fichier devenu différent.
+        row["hash_full"] = ""
+        row["hash"] = file_hash(path, quick=True) if compute_hash else ""
 
         if analyze and info.ok and info.frames > 0:
             row.update(_analyze_sample(path, result, rel))
@@ -344,13 +348,27 @@ def sr_limit() -> int:
 
 def _sample_category(rel: str) -> str:
     """Catégorie déduite de l'emplacement : ``SAMPLES/DRUMS/Kick/…`` -> ``Kick``."""
-    parts = [p for p in norm_rel(rel).split("/") if p]
-    if len(parts) >= 3 and parts[0] == "samples":
-        if parts[1] == "drums":
-            return parts[2].title() if len(parts) > 3 else Path(parts[2]).stem.title()
-        if parts[1] in ("multisamples", "artists"):
-            return parts[2].title()
-    if len(parts) >= 2 and parts[0] == "samples":
+    # Seuls les dossiers comptent : un fichier posé à même ``SAMPLES/`` ou
+    # ``SAMPLES/DRUMS/`` prenait son propre nom pour catégorie (« Kick01.Wav »).
+    parts = [p for p in norm_rel(rel).split("/") if p][:-1]
+    if len(parts) >= 3 and parts[0] == "samples" and parts[1] == "drums":
+        # Les catégories de percussion gardent l'orthographe du Deluge :
+        # « HatC », pas « Hatc » — ``title()`` sur le chemin en minuscules
+        # écrivait « Hatc », « Toml », et une recherche par catégorie (exacte)
+        # ne les retrouvait plus.
+        from .analysis import DRUM_CATEGORIES
+
+        for category in DRUM_CATEGORIES:
+            if category.lower() == parts[2]:
+                return category
+        return parts[2].title()
+    if len(parts) >= 3 and parts[0] == "samples" \
+            and parts[1] in ("multisamples", "artists"):
+        return parts[2].title()
+    if len(parts) == 2 and parts[0] == "samples" \
+            and parts[1] not in ("drums", "multisamples", "artists"):
+        return parts[1].title()
+    if len(parts) > 2 and parts[0] == "samples":
         return parts[1].title()
     return ""
 
@@ -446,12 +464,92 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
     return True
 
 
+def _same_root(a: str, b: str) -> bool:
+    import os
+
+    def _norm(p: str) -> str:
+        return os.path.normcase(os.path.abspath(str(p))).rstrip("\\/")
+
+    return _norm(a) == _norm(b)
+
+
+def forget_other_card(sd: SDCard, lib: Library) -> bool:
+    """Vide l'index s'il décrit une **autre** carte que ``sd``.
+
+    L'index est unique : changer de carte laissait celui de l'ancienne en
+    place. Les pages montraient alors ses fichiers, et les plans de
+    rangement appliquaient ses empreintes aux fichiers de **même chemin**
+    de la nouvelle carte — une sauvegarde de la carte et la carte elle-même
+    ont justement les mêmes chemins, avec des contenus qui ont pu diverger.
+
+    Favoris, notes et étiquettes sont conservés. Retourne ``True`` si
+    l'index a été vidé.
+    """
+    racine = lib.get_meta("last_scan_root", "") or ""
+    if not racine or _same_root(racine, str(sd.root)):
+        return False
+    log.info("index de %s écarté : la carte est désormais %s",
+             racine, sd.root)
+    lib.clear()
+    lib.set_meta("last_scan_root", "")
+    lib.set_meta("last_scan", "")
+    return True
+
+
+def index_presets(sd: SDCard, lib: Library, paths: list[Path]) -> None:
+    """Indexe tout de suite des presets ou kits qu'on vient d'écrire.
+
+    Sans cela, un preset dupliqué ou généré n'apparaissait dans aucune liste
+    avant la prochaine analyse complète, alors que l'application venait
+    d'annoncer « Copie créée ». La nature se déduit du dossier.
+    """
+    synths, kits = [], []
+    for path in paths or ():
+        top = norm_rel(sd.rel(Path(path))).split("/", 1)[0]
+        (kits if top == "kits" else synths).append(Path(path))
+    result = ScanResult()
+    for kind, group in (("synth", synths), ("kit", kits)):
+        if group:
+            _scan_presets(sd, lib, group, kind, full=True, result=result,
+                          progress=None, should_stop=None)
+    lib.recompute_usage()
+
+
+def index_songs(sd: SDCard, lib: Library, paths: list[Path]) -> None:
+    """Indexe tout de suite des morceaux qu'on vient d'écrire.
+
+    Ne touche pas à la version de lecture enregistrée dans l'index : elle
+    dit que **tous** les morceaux ont été relus, ce qu'une poignée de
+    fichiers neufs ne prouve pas.
+    """
+    result = ScanResult()
+    _scan_songs(sd, lib, [Path(p) for p in paths or ()], full=True,
+                result=result, progress=None, should_stop=None,
+                mark_reader=False)
+    lib.recompute_usage()
+
+
+#: Version de la lecture des morceaux. Quand elle change, les morceaux déjà
+#: indexés sont relus une fois, même inchangés : le 14 octobre 2026, leur
+#: nombre de mesures était faux d'un facteur 2 à 4 (résolution des notes,
+#: voir ``model.ticks_per_bar``), et l'analyse incrémentale ne relit pas un
+#: fichier qui n'a pas bougé.
+SONG_READER = "2"
+
+
 def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
                 result: ScanResult,
                 progress: Callable[[ScanProgress], None] | None,
-                should_stop: Callable[[], bool] | None) -> bool:
-    """Indexe les morceaux."""
-    known = {} if full else lib.known_files("song")
+                should_stop: Callable[[], bool] | None,
+                mark_reader: bool = True) -> bool:
+    """Indexe les morceaux.
+
+    ``mark_reader`` : noter dans l'index que les morceaux ont été lus par la
+    lecture actuelle (:data:`SONG_READER`) — seulement quand on les a tous
+    vus.
+    """
+    relire = lib.get_meta("song_reader") != SONG_READER
+    known = {} if (full or relire) else lib.known_files("song")
     total = len(paths)
     lib.begin()
     for i, path in enumerate(paths, 1):
@@ -505,6 +603,8 @@ def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
             lib.begin()
             _emit(progress, "songs", i, total, f"Morceaux — {path.name}")
     lib.commit()
+    if mark_reader:
+        lib.set_meta("song_reader", SONG_READER)
     _emit(progress, "songs", total, total, "Morceaux analysés")
     return True
 
@@ -551,6 +651,9 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
         result.seconds = time.monotonic() - started
         return result
 
+    if forget_other_card(sd, lib):
+        full = True
+
     try:
         _emit(progress, "listing", 0, 0, "Inventaire de la carte…")
         sd.invalidate_cache()
@@ -576,6 +679,23 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
             if not step():
                 result.stopped = True
                 break
+
+        if not result.stopped:
+            # Ce qui a disparu de la carte quitte l'index : sans cela, un
+            # fichier effacé restait « inutilisé », « en double »… pour
+            # toujours.
+            present = {
+                "sample": [sd.rel(p) for p in samples],
+                "synth": [sd.rel(p) for p in synths],
+                "kit": [sd.rel(p) for p in kits],
+                "song": [sd.rel(p) for p in songs],
+            }
+            for kind, rels in present.items():
+                gone = lib.purge_absent(kind, rels)
+                if gone:
+                    log.info("%d %s disparu(s) retiré(s) de l'index",
+                             gone, kind)
+            lib.refresh_missing_links()
 
         _emit(progress, "usage", 0, 0, "Calcul des dépendances…")
         lib.recompute_usage()

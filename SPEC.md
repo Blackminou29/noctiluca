@@ -101,30 +101,53 @@ Champs entiers bruts (pas hex) : `transpose`, `cents`, `num`, `detune`, `spread`
 ```
 osc type      : sine square triangle saw analogSquare analogSaw sample wavetable
                 inLeft inRight dx7 (dx7 = firmware communautaire c1.x)
-lfo type      : sine triangle square saw sampleAndHold randomWalk
+lfo type      : sine triangle square saw sah rwalk warbler
 mode (sound)  : subtractive fm ringmod
-polyphonic    : poly mono legato choke auto
-lpfMode       : 24dB 12dB 24dBDrive SVF_Bandpass SVF_Notch (c1.x ajoute les SVF)
-hpfMode       : HPLadder SVF_Bandpass SVF_Notch
-filterRoute   : HighToLow (« H2L ») LowToHigh (« L2H ») Parallel
-modFXType     : none flanger chorus phaser stereoChorus warble grain (grain = c1.x)
+polyphonic    : poly mono legato choke auto (anciens fichiers : 0 = auto, 2 = choke,
+                tout autre nombre = poly)
+lpfMode       : 24dB 12dB 24dBDrive SVF_Band SVF_Notch (c1.x ajoute les SVF)
+hpfMode       : HPLadder SVF_Band SVF_Notch
+filterRoute   : H2L L2H PARA
+modFXType     : none flanger chorus phaser StereoChorus TapeWarble dimension grainFX
 arp mode      : off up down both random  (c1.x : arpMode off/arp + noteMode + octaveMode)
-noteMode      : up down upDown downUp random asPlayed
-octaveMode    : up down upDown downUp random alternate
+noteMode      : up down upDown asPlayed random   (c1.2.1 ; pas de « downUp »)
+octaveMode    : up down upDown alt random        (c1.2.1 ; « alt » et non « alternate »)
 patchCable source      : envelope1 envelope2 lfo1 lfo2 velocity note aftertouch random
                          compressor sidechain x y
 patchCable destination : volume pitch lpfFrequency lpfResonance hpfFrequency hpfResonance
-                         oscAVolume oscBVolume oscAPitch oscBPitch oscAPulseWidth oscBPulseWidth
+                         oscAVolume oscBVolume oscAPitch oscBPitch oscAPhaseWidth oscBPhaseWidth
                          oscAWavetablePosition oscBWavetablePosition noiseVolume
-                         modulator1Amount modulator2Amount modulator1Pitch modulator2Pitch
+                         modulator1Volume modulator2Volume modulator1Pitch modulator2Pitch
                          carrier1Feedback carrier2Feedback modFXRate modFXDepth modFXFeedback
-                         modFXOffset delayRate delayFeedback reverbAmount arpeggiatorRate
-                         arpeggiatorGate stutterRate sampleRateReduction bitCrush pan
+                         modFXOffset delayRate delayFeedback reverbAmount arpRate
+                         arpGate stutterRate sampleRateReduction bitcrushAmount pan range
                          portamento env1Attack env1Decay env1Sustain env1Release
                          env2Attack env2Decay env2Sustain env2Release lfo1Rate lfo2Rate
                          lpfMorph hpfMorph waveFold compressorThreshold
 ```
 `syncLevel` : 0 = off, 1..9 = 2^n divisions (7 ≈ noire/16ᵉ selon contexte).
+
+> **Correction mesurée (12 octobre 2026).** Cette liste donnait des noms que le firmware
+> ne connaît pas : `SVF_Bandpass`, `stereoChorus`, `warble`, `grain`, `sampleAndHold`,
+> `randomWalk`. Les bons noms viennent du code du firmware communautaire
+> (`util/functions.cpp`, `filters/filter_config.cpp`, `modulation/params/param.cpp`).
+> Une chaîne inconnue est lue comme la valeur par défaut (LFO triangle, aucun effet…).
+> Surtout, **une destination de câble ne porte pas toujours le nom du paramètre** :
+> `oscAPulseWidth` se vise par `oscAPhaseWidth` (295 câbles sur la carte, aucun
+> autrement), `modulator1Amount` par `modulator1Volume`, `bitCrush` par
+> `bitcrushAmount`. La table est `model.CABLE_DESTINATIONS`.
+
+> **Correction mesurée (15 octobre 2026) — trois noms que le firmware lit mal.**
+> Lus dans le code de la machine (tag `release_1_2_1`, `util/functions.cpp` et
+> `filters/filter_config.cpp`) :
+> * `octaveMode="upDown"` est **relu comme `random`** (`stringToArpOctaveMode`), alors
+>   que la machine l'écrit pour le mode aller-retour : ce mode ne survit pas à un
+>   enregistrement ;
+> * le mode de filtre **éteint** n'a pas de nom (`filterMap` s'arrête avant `OFF`) : la
+>   machine écrit ce qui suit en mémoire — `lpfMode="flanger"`, six fois dans quatre
+>   morceaux de la carte — et relit **tout nom inconnu comme éteint**. `"off"` s'écrit donc sans risque ;
+> * l'ancien câble `destination="range"` + `rangeAdjustable="1"` (avant 3.2) est relu par
+>   toutes les versions ; la machine le réécrit en `<depthControlledBy>`.
 
 ### 1.6 Notes des morceaux
 `<noteRow y="81" noteDataWithLift="0x…" />` ou `noteData="0x…"`.
@@ -132,8 +155,10 @@ Blob hexadécimal, **une note par groupe fixe de caractères** :
 - `noteData` → **20 caractères** : `pos(8) length(8) velocity(2) condition(2)`
 - `noteDataWithLift` → **22 caractères** : `pos(8) length(8) velocity(2) lift(2) condition(2)`
   — **le lift précède la condition** (corrigé le 10/10/2026, cf. encadré ci-dessous).
-Valeurs signées 32 bits pour `pos` et `length`. Résolution : **une noire = 24 ticks**,
-donc une mesure 4/4 = 96 ticks ; `length="1536"` d'un clip = 16 mesures.
+Valeurs signées 32 bits pour `pos` et `length`. Résolution : **une mesure 4/4 vaut
+`96 << inputTickMagnitude` ticks** (`Song::getBarLength`) — 192 dans les morceaux 3.x
+(magnitude 1), **384 dans les morceaux c1.2.1** (magnitude 2), où une double-croche vaut
+24 ticks. `length="1536"` fait donc 8 mesures en 3.x, **4 en c1.2.1**.
 `y` = numéro de ligne (note MIDI pour un clip mélodique, index de rangée pour un kit).
 `condition` : 0x14 (20) = toujours ; valeurs < 20 = probabilité (×5 %) ; ≥ 0x80 = itération.
 Des valeurs 21 à 26 existent aussi sur la carte (conditions spéciales du firmware) :
@@ -148,6 +173,21 @@ les traiter comme « toujours » plutôt que comme une probabilité.
 > itération (134). L'ordre retenu dans `core/model.py` est donc
 > `pos(8) length(8) velocity(2) lift(2) condition(2)`, couvert par le test
 > `TestNotes.test_blob_22_caracteres`.
+
+> **Correction mesurée (14 octobre 2026) — la résolution dépend du morceau.** Ce
+> paragraphe disait « une noire = 24 ticks, une mesure = 96 » : c'est l'horloge
+> **extérieure** (celle de la formule du tempo, §4.5), pas celle des notes. Mesuré sur
+> les notes des 46 morceaux de la carte : à magnitude 1, les clips font 192, 384, 768
+> ticks et l'écart minimal entre deux notes est 12 (la double-croche) ; à magnitude 2,
+> 384, 1 536, 3 072 et 24. Conséquences corrigées : la page Morceaux comptait 2 à 4 fois
+> trop de mesures, et les exports « Clip en MIDI » / « Morceau en MIDI » sortaient 2 à 4
+> fois trop lents. `model.ticks_per_bar(m)`, `Clip.ticks_per_bar` (posé par le morceau),
+> `midifile._ratio` ; l'index relit une fois les morceaux déjà analysés
+> (`scan.SONG_READER`).
+>
+> Autre règle du lecteur (`NoteRow::readFromFile`) : sur une même rangée, une note qui
+> commence **avant la fin de la précédente est ignorée**. Un écrivain doit raccourcir la
+> première (`songwriter._clean_notes`).
 
 ### 1.7 Chemins d'échantillons
 `fileName` est relatif à la racine SD, séparateur `/`, **casse non fiable**
@@ -204,6 +244,36 @@ façon pads. L'emblème = grille 4×4 de pads colorés dans un disque sombre cer
    l'intérêt.
 Police : `Segoe UI` puis `DejaVu Sans` en repli ; monospace `Cascadia Mono`/`Consolas`.
 
+**Troisième temps : la façade** (14 octobre 2026, voir §5.22). L'utilisateur
+jugeait l'interface « trop classique » et « manquant cruellement de fun ».
+Elle reprenait la palette du guide, pas ses signatures. Elle les reprend
+désormais, tracées par `ui/art.py` d'après `build/figs_schema.py` et
+`build/style.py` du guide :
+
+* **le treillis** des ouvertures de partie — blocs de traitement (gain,
+  oscillateur, filtre, mélange, modulation, matrice, retard) reliés par des
+  pistes orthogonales à l'or sourd — en tête de chaque page, à sa couleur ;
+* **le pad allumé** (halo de sa couleur, reflet en haut) et **le pad au
+  repos** (cadre à l'or sourd et quatre points, « comme une diode au
+  repos ») ;
+* **l'écran OLED** de la machine (`figs_oled.py`) dans la barre du haut ;
+* **la typographie de la couverture** : « DELUGE » en magenta, capitales
+  espacées pour les étiquettes, titres de page en capitales.
+
+Teintes ajoutées, toutes mesurées (§5.22) :
+```python
+CHROME="#0E1218"  CHROME_EDGE="#1E2530"     # la façade : barre du haut, colonne, barre d'état
+OLED_BG="#04060A" OLED_FG="#FFFFFF" OLED_DIM="#8FB6CC" OLED_HI="#7FE3FF" OLED_EDGE="#1B3E52"
+PAD_ETEINT="#191D25"                         # pad éteint de la couverture
+CARD_TOP="#1B212B" BORDER_TOP="#323B4A"      # chanfrein des panneaux
+```
+
+La couleur d'une page ne se limite plus au décor : **ses contrôles la
+prennent** — bouton principal, sélections, onglets, cases, curseurs,
+jauges, jusqu'aux fenêtres de dialogue qu'elle ouvre. La couleur d'accent
+des réglages devient celle de **la façade** (barre du haut, menus, fenêtres
+ouvertes hors des pages).
+
 ---
 
 ## 3. Arborescence des fichiers à produire
@@ -236,26 +306,39 @@ delugeapp/
     kitgen.py
     theory.py
     rhythm.py
+    accomp.py
+    sketch.py
     midifile.py
     render.py
     samplefix.py
     similarity.py
     slicer.py
     songpack.py
+    songwriter.py               # écrire un morceau du Deluge (§4.31)
+    midiport.py                 # MIDI et SysEx par winmm (§4.28)
+    midifollow.py               # la carte des contrôleurs (§4.29)
+    delugelink.py               # le lien vivant avec la machine (§4.30)
+    delugesysex.py              # identité, ping, écran (§4.32)
   ui/
     __init__.py
     theme.py
     icons.py
     tasks.py
+    aide.py                     # ce que fait chaque commande (§5.18)
+    art.py
+    songexport.py               # nommer, montrer le plan, écrire (§5.23)
+    livewindow.py               # « Deluge en direct » (§5.17)
     widgets/
       __init__.py
       common.py
+      chrome.py
       padgrid.py
       waveform.py
       envelope.py
       knob.py
       piano.py
       filtercurve.py
+      delugescreen.py           # l'écran de la machine, pixel pour pixel
     pages/
       __init__.py
       dashboard.py
@@ -270,6 +353,8 @@ delugeapp/
     mainwindow.py
 tests/
   test_core.py
+  test_ui.py
+  deluge_simule.py              # un Deluge simulé, fidèle aux mesures
 ```
 
 ---
@@ -297,6 +382,8 @@ class Settings:
     language: str = "fr"
     scan_hash: bool = True         # calculer les empreintes (doublons)
     scan_analyze: bool = False     # analyse BPM/tonalité au scan (lent)
+    index_on_start: bool = True    # au démarrage, analyse incrémentale en arrière-plan
+                                   # (lecture seule ; 0,2 s sur la carte de référence)
 
 def load_settings() -> Settings
 def save_settings(s: Settings) -> None
@@ -389,6 +476,9 @@ class SDCard:
     def firmware_files(self) -> list[Path]
     def is_valid(self) -> bool               # au moins 2 des STD_DIRS présents
     def free_space(self) -> tuple[int, int]  # (libre, total) en octets
+    is_volume: bool                          # racine d'un lecteur (vraie carte, Deluge en USB) ;
+                                             # faux pour une copie dans un dossier : l'espace
+                                             # libre est alors celui du disque, et l'interface le dit
 
 def norm_rel(rel: str) -> str        # casse basse + '/' — clé de comparaison
 def detect_sd_cards() -> list[Path]  # lecteurs amovibles Windows contenant SONGS+SYNTHS
@@ -492,7 +582,8 @@ class Clip:
     preset_name:str; preset_folder:str; is_kit:bool
     note_rows:list[NoteRow]
     @property
-    def bars(self) -> float          # length / 96
+    def bars(self) -> float          # length / ticks_per_bar (96 << inputTickMagnitude,
+                                     # posé par le morceau : 384 en c1.2.1)
     @property
     def note_count(self) -> int
 @dataclass
@@ -509,7 +600,9 @@ class Song:
     def sample_paths(self) -> list[str]
     def scale_name(self) -> str      # 'Do majeur', 'La mineur', 'Ré dorien'…
     def stats(self) -> dict          # {'clips':…, 'notes':…, 'bars':…, 'sections':…, 'density':…}
-    def preview_colors(self) -> list[list[str]]   # matrice 8x18 de couleurs hex depuis `preview`
+    def preview_colors(self) -> list[list[str]]   # matrice 8x18 de couleurs hex depuis `preview`,
+                                                  # première ligne = rangée du HAUT (le fichier
+                                                  # commence par celle du bas, cf. §5.23)
 
 def tempo_from_song_attrs(time_per_timer_tick: int, timer_tick_fraction: int,
                           input_tick_magnitude: int) -> float
@@ -530,7 +623,9 @@ def tempo_from_song_attrs(time_per_timer_tick: int, timer_tick_fraction: int,
 >    Deluge) au lieu de 60, et les 46 morceaux donnent **tous** un BPM entier, dans une plage
 >    de 69 à 124 BPM. Avec 48, la plage était 34–62 BPM, invraisemblable pour ce répertoire.
 >
-> Un clip de `length=1536` à 96 ticks/mesure fait 16 mesures. Si le calcul donne une valeur hors
+> Ces 24 ticks sont ceux de l'horloge extérieure : **les notes**, elles, comptent
+> `96 << inputTickMagnitude` ticks par mesure (§1.6, corrigé le 14 octobre 2026) — un clip
+> de `length=1536` fait 4 mesures en c1.2.1. Si le calcul donne une valeur hors
 > de [20, 400], retourner 120.0 et journaliser le rejet.
 > Couvert par les tests `TestTempo.*`.
 
@@ -744,6 +839,7 @@ class Op:   kind:str; src:Path; dst:Path|None; note:str      # kind: 'move'|'ren
 @dataclass
 class Plan:
     ops: list[Op]
+    size: int = 0      # octets concernés quand le plan les a comptés (parasites)
     def summary(self) -> str
     def apply(self, sd: SDCard, lib: Library, progress=None) -> tuple[int, list[str]]
         """Exécute. Déplace d'abord, puis relink les XML. Retourne (réussies, erreurs)."""
@@ -754,7 +850,9 @@ def plan_rename(sd, items: list[str], pattern: str, apply_case: str = "") -> Pla
     """pattern accepte {name} {n} {n:03} {folder} {cat} {bpm} {key} {sr} {dur}"""
 def plan_flatten(sd, folder: str) -> Plan
 def plan_group_by(sd, lib, key: str) -> Plan          # key: 'category'|'bpm'|'key'|'duration'|'artist'
-def plan_purge_junk(sd) -> Plan                       # ._*, .DS_Store, Thumbs.db, corbeilles
+def plan_purge_junk(sd) -> Plan                       # ._*, .DS_Store, Thumbs.db ; corbeilles et
+                                                      # dossiers système élagués du parcours (os.scandir :
+                                                      # 0,82 s -> 0,04 s sur 16 936 fichiers)
 def plan_archive_unused(sd, lib, dest: str = "_UNUSED") -> Plan
 def plan_fix_names(sd, lib) -> Plan                   # noms non compatibles FAT32/Deluge
 def suggest_folder(name: str, category: str) -> str
@@ -857,18 +955,64 @@ au moins un oscillateur audible, enveloppe 1 avec un sustain ou un decay non nul
 totalement fermé sans modulation qui l'ouvre. Toute génération est **reproductible** à partir
 de `seed`. `generate()` doit utiliser `random.Random(seed)` — jamais le `random` global.
 
+> **Correction mesurée (13 octobre 2026) — ce que le firmware et la carte imposent.**
+> - **Arpégiateur** : un fichier qui se déclare c1.2.0 ou plus récent n'a plus son attribut
+>   `mode` lu (`sound.cpp` de la 1.2.1). Il faut écrire `arpMode="arp"`, `noteMode`
+>   (`up`, `down`, `upDown`, `random`, `asPlayed`) et `octaveMode` (`up`, `down`, `upDown`,
+>   `alt`, `random`). Le générateur écrit les deux, `mode` restant pour les vieux firmwares.
+> - **`syncLevel`** (valeur du fichier) : `2^(3 − niveau)` mesures — 5 = noire,
+>   7 = double-croche. Les arpèges se tirent en 6, 7 ou 8, jamais 9 (quadruple-croche).
+> - **Playabilité** : `velocity → volume` est posé sur **tous** les presets (778 réels sur 911).
+> - **Recalage** : les plages par rôle visent l'écart interquartile des 911 presets de la carte.
+>   Plausibilité mesurée (médiane générée dans l'écart interquartile réel) : **56 % → 97 %**,
+>   les six signatures de genre contrôlées tenant toujours.
+> - **FM** : `Sound.modulator1`/`modulator2` (accord en demi-tons et cents, `toModulator1`),
+>   tirés dans la distribution des 145 presets FM de la carte ; écrits seulement en FM.
+
+> **Correction mesurée (14 octobre 2026) — les traits que le générateur ignorait.**
+> Relevés par rôle sur les 911 presets, et tenus à quelques points près (880 tirages par rôle) :
+> portamento (33 % des basses, 25 % des leads ; facteur de genre `GenreProfile.glide` :
+> 70 % des basses acid, 20 % des basses house), saturation `clippingAmount` 2 à 5 (27 à 56 %
+> selon le rôle, modulée par le curseur de saleté), synchro du délai (croche pour les sons
+> joués, double-croche pour nappes et bourdons), passe-haut, effet de modulation (11 à 38 %
+> selon le rôle, chorus pour basses et claviers, phaser pour leads et nappes), mode de jeu des
+> basses et leads (un tiers poly, un tiers legato, un quart mono), variantes « analog » des
+> formes d'onde. **La graine du tirage mêle graine, genre et rôle** (`"{seed}|{genre}|{rôle}"`) :
+> une même graine ne fait plus les mêmes choix dans tous les genres. Une graine donne donc un
+> autre son qu'avant ce recalage — la reproductibilité vaut à version égale du générateur.
+
 ### 4.17 `delugeapp/core/kitgen.py`
 ```python
 @dataclass
-class KitSlot: role:str; rel:str; name:str        # role: 'Kick','Snare','HatC',…
+class KitSlot: role:str; rel:str; name:str; family:str   # role: 'Kick','Snare','HatC',…
 def build_kit(sd: SDCard, lib: Library, name: str, genre: str = "techno",
               seed: int | None = None, slots: list[str] | None = None,
               prefer_folder: str = "") -> Kit
-    """Choisit un échantillon par rôle dans la bibliothèque, règle enveloppe et volume par rôle."""
+    """Kit bâti autour d'une famille principale (machine ou banque), complété ailleurs."""
+def family_of(rel: str) -> str        # '909', 'Linndrum', 'SAMPLES/Artists/…/Y2K', 'Synthstrom n°'
+def library_families(lib: Library) -> dict[str, dict[str, list]]   # famille -> rôle -> lignes
 def kit_from_folder(sd: SDCard, folder: str, name: str = "") -> Kit
 def suggest_slots(genre: str) -> list[str]
+def row_role(row: KitRow) -> str      # rôle d'une rangée : son nom (« HATC ») ou son fichier
+def reroll_row(kit: Kit, index: int, lib: Library, genre: str = "techno",
+               seed=None, avoid=()) -> KitSlot | None
+    """Autre échantillon du même rôle pour une rangée : même famille d'abord, puis les
+    familles du genre ; jamais un fichier du kit ni un de `avoid` (déjà essayés).
+    None s'il n'y a plus de candidat — la rangée reste alors telle quelle."""
 DEFAULT_SLOTS: tuple[str, ...]
+GENRE_AFFINITY: dict[str, tuple[str, ...]]   # machines qu'un genre appelle ('909' pour la techno…)
+ROLE_VOLUME: dict[str, int]                  # médianes réelles : grosse caisse 38, ride 30…
+ROLE_PAN: dict[str, int]                     # médianes réelles : TomL +9, TomH −12, ride +5…
 ```
+Les rangées sont réglées comme le Deluge les crée (`Kit.add_row`) : enveloppe ouverte
+(attaque 0, sustain 50, release 0), `velocity → volume` à pleine échelle, fin de zone = longueur
+réelle, et `loopMode` selon `model.repeat_mode_for(secondes)` : `ONCE` (1) sous 2,002 s,
+`CUT` (0) au-delà — la règle du firmware (`sample_browser.cpp`, `slicer.cpp`). Mesuré sur les
+523 rangées des 43 kits de la carte : `loopMode` 1 dans 83 %, `velocity → volume` sur 505.
+Familles par kit : 9,9 → **1,9** ; rôle confirmé par le nom ou le dossier : 100 %.
+Volume et panoramique par rôle : médianes des 523 rangées réelles (41 kits sur 43 règlent leurs
+rangées une à une). Pas de compensation selon le niveau des fichiers : la loi du paramètre
+`volume` du firmware n'a pas été établie, et rien ne se code sur une loi supposée.
 
 ### 4.18 `delugeapp/core/theory.py`
 ```python
@@ -881,18 +1025,41 @@ SCALES: dict[str, tuple[int, ...]]        # >=20 gammes : majeur, mineur naturel
 CHORDS: dict[str, tuple[int, ...]]        # maj, min, dim, aug, 6, m6, 7, maj7, m7, m7b5, dim7,
                                           # sus2, sus4, 9, maj9, m9, add9, 11, 13, 7b9, 7#9…
 PROGRESSIONS: dict[str, list[list[str]]]  # par genre/humeur : ['i','VI','III','VII'] …
+CHORD_COLORS: dict[str, str]              # triades, septièmes, neuvièmes, suspendus
+AMBIANCE_COLORS: dict[str, str]           # jazz/house -> septièmes, deep/ambient -> neuvièmes
 
 def scale_notes(root: int, scale: str, octaves: int = 1) -> list[int]
 def chord_notes(root: int, chord: str, inversion: int = 0, voicing: str = "close") -> list[int]
 def diatonic_chords(root: int, scale: str, sevenths: bool = False) -> list[tuple[str, list[int]]]
-def progression(root: int, scale: str, name: str = "", seed=None, bars: int = 4) -> list[dict]
-    """[{'degree':'i','symbol':'Am','notes':[57,60,64],'bars':1}, …]"""
+def colored_chord(root: int, scale: str, degree: int, color: str = "triades"
+                  ) -> tuple[list[int], list[int], str]   # (empilement, notes jouées, suffixe)
+    """Neuvièmes jouées SANS fondamentale (tierce, quinte, septième, neuvième : la basse tient
+    la fondamentale) ; pas de neuvième mineure, pas de « sus4 » sur une quarte augmentée."""
+def progression(root: int, scale: str, name: str = "", seed=None, bars: int = 4,
+                color: str = "") -> list[dict]
+    """[{'degree':'i','symbol':'i','name':'Lam','root':57,'quality':'min',
+         'notes':[57,60,64],'bass':45,'bars':1,'color':'triades',
+         'function':'tonique'}, …]
+    Le nom vient de la fondamentale et de la qualité AVANT conduite des voix (le VI de la
+    mineur s'appelait « La » quand on le lisait sur la note grave déplacée)."""
+FUNCTIONS: dict[int, str]       # degré -> tonique (I, iii, vi), sous-dominante (ii, IV), dominante (V, vii°)
+def substitute(progression, position, root, scale, seed=None) -> list[dict]
+    """Nouvelle progression où l'accord `position` prend un autre degré de même fonction,
+    même couleur, ni égal à lui ni (sauf faute d'autre choix) à ses voisins ; l'accord
+    suivant est reconduit depuis lui. L'originale n'est pas modifiée."""
 def circle_of_fifths() -> list[tuple[str, str]]          # (majeur, relatif mineur)
 def camelot(key_name: str) -> str                        # '8A', '5B'… pour le mixage harmonique
 def compatible_keys(key_name: str) -> list[str]
 def note_to_name(midi: int, french: bool = True, with_octave: bool = True) -> str
 def name_to_note(name: str) -> int
-def deluge_mode_notes(scale: str) -> list[int]           # pour <modeNotes> d'un morceau
+def deluge_mode_notes(scale: str, official: bool = False) -> list[int]
+    """<modeNotes> : la gamme telle quelle (c1.x accepte 5, 6 ou 7 notes) ; official=True
+    donne sept valeurs, une gamme courte étant complétée par son mode parent."""
+def deluge_scale_name(scale: str) -> str      # 'PENTATONIC MINOR', … ou 'USER'
+def scale_spelling(root: int, scale: str, french: bool = True) -> dict[int, str]
+    """Orthographe selon la tonalité : do mineur = Do Ré Mib Fa Sol Lab Sib."""
+def spell(midi: int, spelling: dict | None, with_octave: bool = True, french: bool = True) -> str
+def chord_quality(notes: list[int]) -> str     # clé de CHORDS d'après les intervalles réels
 def transpose(notes: list[int], semis: int) -> list[int]
 def voice_leading(a: list[int], b: list[int]) -> list[int]  # b réagencé pour minimiser le mouvement
 def frequency(midi: int, a4: float = 440.0) -> float
@@ -901,7 +1068,9 @@ def frequency(midi: int, a4: float = 440.0) -> float
 ### 4.19 `delugeapp/core/rhythm.py`
 ```python
 @dataclass
-class Step: pos:int; velocity:int; length:int; probability:int = 100   # pos en pas (0..steps-1)
+class Step: pos:int; velocity:int; length:int; probability:int = 100; grid:int|None = None
+    # pos en pas, fractionnaire après swing/groove ; velocity et probability en POUR-CENT
+    # (1..100) ; grid = case d'origine, pour réappliquer un groove depuis le motif droit
 @dataclass
 class Pattern:
     name:str; steps:int; ppq:int = 24              # 24 ticks par noire -> pas de 1/16 = 6 ticks
@@ -916,8 +1085,18 @@ def genre_beat(genre: str, bars: int = 1, seed=None, fills: bool = True) -> Patt
 def humanize(p: Pattern, timing: float = 0.0, velocity: float = 0.0, seed=None) -> Pattern
 def swing(p: Pattern, amount: float) -> Pattern
 def polyrhythm(a: int, b: int, steps: int) -> list[bool]
-GROOVES: dict[str, list[int]]                       # décalages en ticks (MPC 16A/16B/54/62…)
+GROOVES: dict[str, list[float]]                     # ticks de retard : 'MPC 54 %'…'MPC 71 %',
+                                                    # 'laid-back', 'en avant', 'droit'
+def swing_offsets(percent: float) -> list[float]    # swing MPC : (2·p/100 − 1)·6 ticks
+def deluge_swing(groove: str) -> int | None         # réglage de swing du Deluge équivalent
 def apply_groove(p: Pattern, groove: str, strength: float = 1.0) -> Pattern
+def straighten(p: Pattern) -> Pattern               # chaque pas remis à sa case d'origine
+BACKBONE = ("Kick", "Snare", "Clap")                # jamais un coup retiré par une variation
+VARIATIONS: dict[str, str]                          # fantômes, charleys, percussion, grosse caisse, ouverture
+def variation(p: Pattern, genre: str = "", seed=None, amount: float = 0.5) -> Pattern
+    """Ornements tirés (1 à 3 selon amount), ossature intacte ; pas de charleys serrés
+    pour ambient, downtempo, dubstep, Boards of Canada."""
+def loop(p: Pattern, bars: int) -> Pattern           # motif répété sur `bars` mesures
 def delay_times(bpm: float) -> list[dict]
     """Table des temps de delay/LFO : [{'div':'1/8','ms':…,'hz':…,'dotted_ms':…,'triplet_ms':…}, …]"""
 def bars_to_ticks(bars: float) -> int               # 96 ticks / mesure 4/4
@@ -927,11 +1106,64 @@ def bars_to_ticks(bars: float) -> int               # 96 ticks / mesure 4/4
 ```python
 @dataclass
 class MidiTrack: name:str; channel:int; events:list[tuple[int,int,int,int]]  # (tick, note, vel, dur)
-def write_midi(path: Path, tracks: list[MidiTrack], bpm: float = 120.0, ppq: int = 96) -> None
+def write_midi(path: Path, tracks: list[MidiTrack], bpm: float = 120.0, ppq: int = 96,
+               markers: list[tuple[int, str]] | None = None) -> None   # repères (méta 0x06)
 def pattern_to_midi(path: Path, pattern: Pattern, row_map: dict[str,int], bpm: float) -> None
 def progression_to_midi(path: Path, chords: list[dict], bpm: float, ppq: int = 96) -> None
+def parts_to_midi(path: Path, parts: dict[str, list[NoteEvent]], bpm: float,
+                  ppq: int = 96, markers=None) -> int   # une piste par partie, chacune
+                                                        # sur son canal ; repères en pas
 def clip_to_midi(path: Path, clip: Clip, bpm: float) -> None
 ```
+
+### 4.20 bis `delugeapp/core/accomp.py` — accompagnement d'une progression
+```python
+@dataclass
+class NoteEvent: start:float; length:float; note:int; velocity:int = 90   # pas de 1/16, pour-cent
+CHORD_STYLES: dict[str, tuple[tuple[float, float], ...]]  # tenu, blanches, contretemps, stabs, charleston
+BASS_STYLES: dict[str, str]          # fondamentale, pulsée, contretemps, roulante, octaves, syncopée,
+                                     # marche, acide (303 : silences, accents, octaves, glissés)
+GENRE_STYLES: dict[str, tuple[str, str, bool]]            # genre -> (accords, basse, arpège ?)
+def chord_part(progression, style="tenu", velocity=80) -> list[NoteEvent]
+def bass_part(progression, style="fondamentale", velocity=92) -> list[NoteEvent]
+def arp_part(progression, order="montant", rate=2, octaves=1, velocity=76, seed=None) -> list[NoteEvent]
+MELODY_STYLES: dict[str, str]        # posée, chantante, syncopée
+GENRE_MELODY: dict[str, str]         # genre -> allure
+def melody_part(progression, root=None, scale="", style="", genre="", seed=None,
+                velocity=92) -> list[NoteEvent]
+    """Phrases de quatre mesures A A B fin ; notes de l'accord sur les temps forts ; la
+    mesure 2 reprend la 1 en marche ; mouvement surtout conjoint ; fin sur la fondamentale."""
+def drum_part(pattern, bars=None) -> list[NoteEvent]  # motif -> notes General MIDI (GM_DRUMS)
+def accompany(progression, genre="", chords="", bass="", arp=None, arp_order="montant",
+              arp_rate=1, seed=None, melody=False, melody_style="", root=None, scale="",
+              drums=None) -> dict[str, list[NoteEvent]]   # + 'Batterie' si drums (un Pattern)
+def total_steps(parts) -> float
+```
+Canaux MIDI (`midifile.PART_CHANNELS`) : accords 1, basse 2, arpège 3, mélodie 4, batterie 10
+(0 à 3 et 9 dans le fichier). Un glissé de la basse acide chevauche la note suivante, toujours
+d'une autre hauteur : deux notes identiques qui se chevauchent se couperaient en MIDI.
+
+### 4.20 ter `delugeapp/core/sketch.py` — esquisse d'un morceau
+```python
+ARRANGEMENTS: dict[str, tuple[tuple[str, int], ...]]   # modèle de structure par genre
+SECTION_KINDS: dict[str, str]        # intro, montée, pic, cassure, fin
+SECTION_PARTS: dict[str, tuple[str, ...]]
+    # intro/fin : batterie légère + accords ; montée : + basse, arpège ;
+    # pic : tout, mélodie comprise ; cassure : accords, arpège, mélodie
+LIGHT_DRUMS = ("Kick", "HatC", "HatO", "Shaker", "Ride", "Rim")
+GENRE_AMBIANCE: dict[str, str]       # ambiance de progression par défaut d'un genre
+def section_kind(name: str) -> str   # « Refrain final » -> pic (les mots du sommet d'abord)
+def plan(genre, arp=None, melody=True) -> list[Section]   # Section(name, kind, start, bars, parts)
+def default_progression(genre, seed=None, root=57, scale="mineur") -> list[dict]
+def sketch(progression, genre="techno", pattern=None, root=None, scale="", arp=None,
+           melody=True, seed=None) -> Sketch    # Sketch(parts, sections, drums, bars) ; .markers()
+def excerpt(result, index, max_bars=8) -> tuple[dict, Pattern | None, int]   # début d'une section, ramené à 0
+```
+La progression tourne sur toute la structure ; chaque section ne garde que les parties de son
+rôle ; les sections au sommet jouent une variation du rythme (`rhythm.variation`) et une crash
+marque leur entrée.
+Écoute : `render.render_parts(parts, sounds, bpm, sr, sd)` — chaque partie jouée par un son généré
+pour le genre ; une même note de même durée n'est rendue qu'une fois (quatre mesures : ~1 s).
 
 ### 4.21 `delugeapp/core/render.py` — moteur d'écoute hors-ligne (approximation du Deluge)
 ```python
@@ -948,6 +1180,15 @@ def render_preview(preset: SynthPreset, notes: list[int] | None = None, sr: int 
     """Petite phrase (par défaut accord/arpège selon la catégorie) pour l'audition."""
 def render_kit(kit: Kit, pattern: Pattern | None = None, bpm: float = 128, sr: int = 44100,
                sd: SDCard | None = None) -> np.ndarray
+SYNTH_DRUM_ROLES: tuple[str, ...]    # les 22 rôles de la batterie synthétisée
+def synth_drum(role: str, sr: int = 44100, velocity: float = 1.0) -> np.ndarray
+    """Coup de batterie calculé (sinus tombants, bruit filtré par bande, partiels
+    inharmoniques) : grosse caisse ~47 Hz, toms graves → aigus, charleys ~12 kHz."""
+def render_pattern(pattern, bpm=120.0, sr=44100, kit=None, sd=None, bars=None,
+                   tail=0.8) -> np.ndarray
+    """Motif bouclé sur `bars` mesures ; chaque piste jouée par la rangée du kit de même nom,
+    sinon par la batterie synthétisée (une piste euclidienne sonne aussi)."""
+def mix(*tracks, levels=None) -> np.ndarray   # somme de rendus de longueurs différentes
 def spectrum(data: np.ndarray, sr: int, n: int = 4096) -> tuple[np.ndarray, np.ndarray]
 ```
 Qualité attendue : plausible, pas exact. Aucune dépendance hors numpy. Doit rendre 2,5 s
@@ -1344,11 +1585,20 @@ le noyau peut s'en servir sans toucher à Qt.
 def available() -> bool                      # winmm chargé ?
 def outputs() -> list[MidiDevice]            # ports de sortie
 def inputs() -> list[MidiDevice]
-def find(kind: str = "out") -> MidiDevice | None       # le Deluge
+def cable_of(name: str) -> int               # « MIDIOUT3 (Deluge) » -> 3
+def deluge_ports(kind="out", devices=None) -> list[MidiDevice]   # par câble
+def find(kind="out", cable=None) -> MidiDevice | None            # le Deluge
+def error_text(code: int) -> str             # MMSYSERR_* en clair
 def short_message(status, data1=0, data2=0) -> int
-class MidiOut:  open/close/send/note_on/note_off/control_change/
-                program_change/pitch_bend/realtime/all_notes_off/play_note
-class MidiIn:   open/close/poll -> list[MidiMessage]
+class MidiDevice: index, name, kind ; is_deluge, cable
+class MidiOut:  open/close/send/send_sysex(data, timeout=2.0)/note_on/
+                note_off/control_change/program_change/pitch_bend/realtime/
+                all_notes_off/play_note ; last_error
+class MidiIn(maxsize=4096, sysex=True):  open/close/poll -> list[MidiMessage]
+                                          ; dropped
+@dataclass(frozen=True)
+class MidiMessage: status, data1, data2, millis, stamp=0, data=b"",
+                   arrived=0.0               # kind, channel, is_sysex
 ```
 
 **Aucune bibliothèque tierce.** Ni `mido`, ni `python-rtmidi`, ni `pygame` :
@@ -1367,9 +1617,37 @@ Règles non négociables :
   ouvert : s'il est ramassé pendant que Windows le tient, le processus tombe ;
 * `all_notes_off` envoie un `note off` pour **chaque note réellement
   allumée**, en plus du CC 123 que certains appareils ignorent ;
-* **pas de SysEx** : les tampons `MIDIHDR` demandent une gestion de cycle de
-  vie qui se paie par un plantage, pas par une exception. À écrire en face
-  d'un vrai Deluge, dans un module à part.
+* **SysEx en entrée** : six tampons `MIDIHDR` de 4 096 octets, préparés à
+  l'ouverture. Le rappel ne fait que recoller les morceaux et noter le
+  tampon à rendre : `midiInAddBuffer` est **interdit dans le rappel**
+  (documentation WinMM). Un fil de recyclage le rend, et il ne connaît que
+  *sa* session : un fil en retard ne peut pas rendre un tampon à un port
+  rouvert. Fermeture dans cet ordre : `midiInStop`, `midiInReset` (qui rend
+  tous les tampons), fin du fil, `midiInUnprepareHeader` de chacun,
+  `midiInClose`. Les rappels d'une session close, et un tampon que Windows
+  refuse de rendre, sont **gardés** (`_RAPPELS_GARDES`, `_TAMPONS_GARDES`) :
+  un rappel tardif sur une mémoire libérée tue le processus ;
+* **SysEx en sortie** : `midiOutLongMsg`, puis attente de `MHDR_DONE` (deux
+  secondes au plus) avant `midiOutUnprepareHeader` ; `MIDIERR_STILLPLAYING`
+  (65) veut dire « attendre », pas « échouer » ;
+* **`arrived`** est l'instant de réception (`perf_counter`), posé par le
+  rappel : un aller-retour se mesure avec lui, pas au moment où la file est
+  vidée ;
+* **fermer un port qui n'a rien joué n'envoie rien.** `close()` n'éteint —
+  seize CC 123, puis `midiOutReset`, qui peut émettre un relâchement par note
+  et un CC 64 par canal — que si le port a porté un message de canal pendant
+  la session. Avant, chaque fermeture le faisait, port des SysEx compris :
+  du bruit pour une machine à qui l'on n'avait rien joué. Mesuré ensuite,
+  l'application entière face au Deluge : connexion, écran recopié, fermeture
+  — **0 message court, 7 SysEx de lecture**.
+
+> **Mesuré sur le Deluge branché** (15 octobre 2026, firmware c1.2.1,
+> Windows 11). Trois câbles dans chaque sens : `Deluge`,
+> `MIDIOUT2 (Deluge)`, `MIDIOUT3 (Deluge)` en sortie ; `Deluge`,
+> `MIDIIN2 (Deluge)`, `MIDIIN3 (Deluge)` en entrée. Identité reçue en
+> 2,8 ms ; aller-retour d'un ping **0,3 ms**, compté à l'arrivée ; image de
+> l'écran en 110 octets compressée, 888 brute, les deux décodages
+> identiques ; aucune perte ; ports refermés, **aucun tampon gardé**.
 
 ### 4.29 `delugeapp/core/midifollow.py` — la carte des contrôleurs
 
@@ -1377,10 +1655,32 @@ Règles non négociables :
 DEFAULT_CC: dict[str, int]            # noms du firmware -> CC (mesurés)
 FOLLOW_TO_PARAM: dict[str, str]       # noms du firmware -> clés du modèle
 SANS_EQUIVALENT: frozenset[str]
+HALF_RANGE = {"oscAPulseWidth", "oscBPulseWidth"}
+PARAM_LABELS: dict[str, str]          # clé -> libellé français (les 52)
 def load_map(card=None, path=None) -> dict[str, int]   # clé app -> CC
-def cc_value(raw: int) -> int                          # 32 bits -> 0..127
+def load_map_with_source(card=None, path=None) -> tuple[dict[str, int], str]
+                                      # "" : valeurs d'usine du firmware
+def reverse_map(mapping) -> dict[int, str]             # CC -> clé
+def cc_value(raw: int, key: str = "") -> int           # 32 bits -> 0..127
+def raw_from_cc(value: int, key: str = "") -> int      # 0..127 -> 32 bits
+def label_of(key: str) -> str
 def sound_messages(sound, mapping=None, keys=None) -> list[tuple[int, int]]
 ```
+
+**La conversion est celle du firmware, à l'unité près** (`release_1_2_1`) :
+une valeur reçue devient la position de bouton `cc − 64`, et 127 vaut le
+maximum (`INT32_MAX`) ; dans l'autre sens, `((v + 2^24) >> 25) + 64`, et
+tout ce qui dépasse `0x7F000000` vaut 127. Les largeurs d'impulsion
+(`HALF_RANGE`) n'occupent que la moitié positive : `v >> 24`.
+
+**Sur une machine neuve, MIDI Follow est éteint** — canaux A, B et C non
+réglés (`resetMidiFollowSettings`) — **et son retour aussi**. Rien ne revient
+tant que l'utilisateur n'a pas réglé MIDI ▸ Follow ▸ Channel A, puis
+Feedback. Retour actif, la machine envoie chaque paramètre appris au
+changement d'instrument, puis à chaque bouton tourné. Un kit répond à partir
+de la note 36 (Follow ▸ Kit Root Note). L'interface dit d'où vient la table
+(`load_map_with_source`) : sans `MIDIFollow.XML` lu, ce sont les valeurs
+d'usine, et l'annoncer « lue sur la carte » serait faux.
 
 **Mesuré sur la carte de l'utilisateur** (firmware communautaire c1.2.1,
 `MIDIFollow.XML`, 56 entrées) :
@@ -1400,16 +1700,57 @@ défaut écraserait sur la machine un réglage que l'application ne connaît pas
 ### 4.30 `delugeapp/core/delugelink.py` — jouer sur la machine
 
 ```python
+SYSEX_CABLE = 3; CLOCK_TIMEOUT = 1.0; CLOCK_WINDOW = 24; SCREEN_REFRESH = 1.0
+IDENTITY_RETRY = 2.0; IDENTITY_TRIES = 3
+def tempo_from_ticks(stamps) -> float | None   # horodatages du pilote, en ms
+def latency_text(ms) -> str                    # « 0,3 ms », « 41 ms »
+
 class DelugeLink:
-    connect(out_name="", in_name="", card=None) -> bool
+    connect(out_name="", in_name="", card=None) -> bool   # câbles 1 et 3
     disconnect() / close()
     state() -> LinkState                 # ports, noms, résumé en français
+    service() -> set[str]                # identity, ping, screen, tempo,
+                                         # transport, params, notes
+    identify() / ping() / hello() / set_screen(on) -> bool   # SysEx
+    identity, latency_ms, screen, segments, tempo, running, machine, held,
+    follow_source                        # ce que la machine a dit
+    machine_values() -> dict[str, int]   # comme son écran : 0..50, ±25
     send_sound(sound, keys=None) -> int  # nombre de contrôleurs envoyés
     send_param(key, raw) -> bool         # un bouton qui tourne
     play_notes(notes, velocity, seconds, gap, sound) -> bool   # sans bloquer
     play_pattern(pattern, bpm, row_notes, repeats, clock, channel) -> bool
     stop_playing() / panic() / poll_input()
+
+@dataclass
+class LinkState: supported, out_name, in_name, deluge_out, deluge_in,
+                 ports_out, ports_in, follow_count, follow_source, sysex_name,
+                 firmware, latency_ms, tempo, running, clock_alive, screen_on,
+                 screen_frames, feedback, error   # connected, verified, summary()
 ```
+
+**Les notes par le premier câble, les SysEx par le troisième.** Le firmware
+ne fait rien d'autre du troisième, et chaque réponse repart par le câble de
+la demande (`MIDIDeviceUSB::sendSysex`) : la recopie de l'écran n'encombre
+donc pas les notes. Sans troisième câble, les SysEx passent par le premier.
+`connect` n'envoie que deux SysEx de lecture — identité, ping —, jamais une
+note ni un contrôleur.
+
+**Le service.** Ce qui arrive s'accumule dans des files ; `service()` les
+vide, met l'état à jour, renouvelle l'abonnement à l'écran avant ses deux
+secondes et redemande l'identité (trois fois au plus) tant que la machine se
+tait. La fenêtre principale l'appelle toutes les 40 ms et réagit aux
+évènements rendus. Le tempo se lit sur les horodatages **du pilote**, sur une
+noire d'impulsions ; une horloge muette depuis une seconde vaut « arrêté ».
+
+> **Mesuré sur la machine** (15 octobre 2026). Connexion en 82 ms, identité
+> présente dès le premier service, pings de 0,31 à 0,39 ms. L'abonnement
+> forcé (mode 3) ne répond **pas par une image** mais par une différence qui
+> couvre tout l'écran (début 0, 96 blocs) : `OledScreen.complete` la compte
+> comme une image. Écran immobile : rien n'est envoyé (un seul message en
+> six secondes). « Faire signe » : une différence 3 ms plus tard (blocs 19
+> à 76), une autre à 801 ms quand le message s'efface, et l'écran revient à
+> l'identique. Machine à l'arrêt : ni horloge ni rien d'autre sur le premier
+> câble.
 
 **Le Deluge joue l'instrument sélectionné sur lui.** Aucun message MIDI
 standard ne permet de lui dire « charge ce preset » : c'est une limite de la
@@ -1422,6 +1763,159 @@ dans `pattern.steps`, `pattern.ppq` et `pattern.ticks_per_step`. Mesuré :
 16 pas, 24 ppq, 6 ticks par pas, soit une double-croche par pas et deux
 secondes la mesure à 120 BPM. Le séquenceur vise des instants **absolus**
 depuis le départ, sinon l'erreur s'accumule : mesuré à ±11 ms sur 4 secondes.
+
+### 4.31 `delugeapp/core/songwriter.py` — écrire un morceau du Deluge
+
+Fait d'une création de l'application un fichier `SONGS/*.XML` neuf, au format qu'écrit
+la machine (c1.2.1, `Song::writeToFile`), relevé sur `DEFAULT.XML` et les cinq autres
+morceaux c1.2.1 de la carte.
+
+```python
+FIRMWARE = "c1.2.1"; MAGNITUDE = 2; BAR = 384; STEP = 24; MAX_SECTIONS = 12
+
+@dataclass
+class Track:      kind: str; name: str; folder: str; body: Element; params: Element
+                  arp: dict; drum_params: list[Element]; samples: list[str]
+                  unconverted: list[str]
+@dataclass
+class ClipSpec:   track: int; length: int; rows: dict[int, list[Note]]
+                  section: int = 0; name: str = ""; playing: bool = True
+@dataclass
+class SectionSpec: name: str; length: int
+@dataclass
+class SongSpec:   name: str; bpm: float; root: int; mode_notes: tuple
+                  tracks: list[Track]; clips: list[ClipSpec]
+                  sections: list[SectionSpec] = []; summary: list[str] = []
+
+synth_track(source, name="", folder="SYNTHS", version=None, sd=None, arp=None) -> Track
+kit_track(source, name="", folder="KITS", version=None, sd=None) -> Track
+upgrade_sound(sound, version, sd=None) -> list[str]     # conversions d'époque
+upgrade_kit(kit, version, sd=None) -> list[str]
+events_to_rows(events, length, offset=0.0) -> dict[int, list[Note]]
+pattern_rows(pattern, row_map, length=None, start=0.0, end=None) -> (rows, length)
+fold(rows, length) -> (rows, length)                    # plus courte boucle exacte
+tempo_attrs(bpm, magnitude=2) -> (timePerTimerTick, timerTickFraction)
+build(spec) -> DelugeDoc
+write_song(sd, spec, apply=False) -> SongWrite          # simule par défaut
+free_song_name(sd, name) -> str                         # jamais un nom pris, ni DEFAULT
+
+# Recettes, une par outil
+progression_song(parts, *, name, bpm, genre, root, scale, sounds=None,
+                 drums=None, kit=None, row_map=None) -> SongSpec
+pattern_song(pattern, kit, row_map, *, name, bpm, version=None, kit_name="",
+             folder="KITS") -> SongSpec
+sketch_song(result, *, name, bpm, genre, root, scale, sounds=None, kit=None,
+            row_map=None) -> SongSpec
+preset_song(preset, *, name, bpm, genre, role, seed=1, root=57, scale="mineur",
+            drums=None, kit=None, row_map=None) -> SongSpec
+slices_song(sliceset, *, name, bpm=None) -> SongSpec
+part_presets(parts, genre, seed=7) -> dict        # les sons de l'écoute, arpège éteint
+drum_kit_for(sd, lib, genre, tracks, base=None, seed=1) -> (Kit|None, {piste: rangée}, perdues)
+drum_rows(tracks, kit) -> dict[str, int]          # même nom, sinon même rôle
+```
+
+**Ce qui va où.** Un instrument est **intégré** : le `<sound>` ou le `<kit>` du preset
+sans ses paramètres. Ses `<defaultParams>` deviennent le `<soundParams>` de **chaque**
+clip (synthé), le `<kitParams>` (kit) et un `<soundParams>` par rangée de kit
+(`<noteRow drumIndex=…>`, une rangée par son, dans l'ordre des sons). L'arpégiateur d'un
+synthé passe dans le clip, son `syncLevel` en **valeur interne** (fichier + 1 −
+magnitude : 7 devient 6 — `DEFAULT.XML`) ; celui d'une rangée de kit reste dans le son.
+Attributs propres au morceau devant l'instrument : `presetName`, `presetFolder`,
+`defaultVelocity="64"`, `isArmedForRecording`, `activeModFunction`, `clipInstances`,
+`colour`. Un clip retrouve son instrument par type, nom et dossier **sans la casse**
+(`getInstrumentFromPresetSlot`) : les noms sont rendus uniques.
+
+**Sections.** Une section passe à la suivante après `numRepeats` boucles de son **plus
+long clip** (`armNextSection`, quantification sur le plus long clip actif) ; 0 = sans fin.
+En disposition « rangées » (`sessionLayout="0"`, celle des six morceaux c1.2.1), la
+suivante est la section du clip **d'en dessous** : les clips de la première section ont
+les index les plus élevés. La dernière section arrête la lecture. L'enchaînement ne part
+qu'après le **lancement** d'une section pendant la lecture : PLAY joue la première en
+boucle, lancer la deuxième déroule la suite. L'arrangement (`clipInstances` : position,
+longueur, index de session ; bit 31 pour un clip réservé à l'arrangement) place les mêmes
+clips ; une instance plus longue que son clip le fait boucler.
+
+**Un preset ancien ne s'intègre pas tel quel.** Le morceau entier est lu avec la version
+de `<song>` ; **un `firmwareVersion` laissé dans un `<sound>` ou un `<kit>` change la
+version de lecture de tout ce qui suit** (`tryReadingFirmwareTagFromFile` est appelé par
+les lecteurs de son et de kit). Les déclarations de version sont retirées à toute
+profondeur, et les conversions que fait la machine en chargeant un preset ancien sont
+appliquées :
+
+| avant | conversion |
+|---|---|
+| c1.2.0 | ancien `mode` d'arpège éclaté en `arpMode`/`noteMode`/`octaveMode` (`off`, `up`, `down`, `both` → arp/up/alt, `random`) ; son FM : `lpfMode`/`hpfMode` éteints |
+| 4.0.0-beta | câbles d'expression si aucun câble ne part d'aftertouch, x ou y : aftertouch → volume `0x2A3D7094`, y → lpfFrequency `0x19999990` (FM : y → modulator1Volume `0x1333332C`), rangés après les câbles de même destination |
+| 2.1.0-beta | bornes `start/endMilliseconds` → trames (`ms × fréquence / 1000`, entier ; une fin qui dépasse la longueur d'au plus 45 trames vaut la longueur ; inversé : bornes retournées) |
+| 1.2.0 | compensation de résonance (`oldResonanceCompensation`, `shiftVolumeByDB` avec son défaut) puis résonance à mi-course ramenée à 0 si le filtre est ouvert ; au niveau du kit, la règle du passe-haut teste la résonance du **passe-bas** (comme le firmware) |
+
+Polyphonie numérique (`0`, `2`) réécrite en clair ; `<compressor>` renommé
+`<sidechain>` (les deux sont lus) ; `maxVoices="0"` — que les premiers presets générés
+écrivaient pour les sons non polyphoniques — remis à 8, la valeur que la machine écrit pour
+**tous** ses sons (94 sur 94 dans les morceaux de la carte, legato et auto compris) et
+qu'elle lirait comme un plafond de zéro voix (`AudioEngine::solicitVoice`).
+
+**Mesure.** Chaque instrument des six morceaux c1.2.1 a été reconstruit depuis son preset
+d'origine et comparé à ce que la machine a écrit : TB01 (3.1.5) dans `DEFAULT.XML`
+ressort **à l'identique** ; le TR-808 sans version de `SONG1.XML` aussi pour ce qui
+dépend des conversions — bornes à la trame près, résonances, câbles. Les écarts restants
+sont des retouches de l'utilisateur (valeurs de potentiomètre, multiples de 2^25 ;
+automatisations ; types d'oscillateur changés).
+
+**Notes.** Positions et durées en ticks du morceau (24 par double-croche) ; vélocités en
+pourcentage ramenées à 1–127 comme `Pattern.to_notes` ; notes triées, coupées au bout
+du clip, chevauchements raccourcis. `fold` replie une partie sur sa plus courte boucle
+exacte (période qui divise la longueur, aucune note à cheval) : les accords d'une
+progression de quatre mesures sur une section de seize tiennent dans un clip de quatre.
+Une crash à l'entrée d'une section au sommet empêche ce repli : la batterie de cette
+section garde sa longueur entière (32 mesures pour un thème techno), plutôt qu'une
+boucle d'une mesure qui frapperait la crash à chaque tour.
+Un clip de synthé n'est « dans la gamme » (`inKeyMode="1"`) que si toutes ses notes y
+sont ; un clip de kit l'est toujours, comme les écrit la machine.
+
+**Non-destruction.** `write_song` simule sans `apply` et rend le plan (fichier, tempo,
+instruments, clips, sections, échantillons absents, bornes non converties). Le fichier
+est toujours **nouveau** : nom assaini, numéroté s'il est pris (`Essai 2`), jamais
+`DEFAULT` (le morceau de départ de la machine) ; un fichier apparu entre la simulation et
+l'écriture n'est pas remplacé.
+
+**Non vérifié sur la machine.** Tout ce qui précède vient du code du firmware et des
+fichiers de la carte ; aucun morceau écrit ici n'a encore été chargé sur le Deluge.
+
+### 4.32 `delugeapp/core/delugesysex.py` — ce que le firmware dit en SysEx
+
+Lu dans le code de la machine (`release_1_2_1` : `io/midi/midi_engine.cpp`,
+`hid/hid_sysex.cpp`, `util/pack.c`), puis vérifié sur elle.
+
+```python
+DELUGE_ID = b"\x00\x21\x7b\x01"
+CMD_PING = 0x00; CMD_POPUP = 0x01; CMD_HID = 0x02; CMD_DEBUG = 0x03; CMD_PONG = 0x7F
+OLED_WIDTH = 128; OLED_HEIGHT = 48; OLED_BYTES = 768
+DISPLAY_FULL = 0; DISPLAY_FULL_RLE = 1; DISPLAY_STREAM = 2; DISPLAY_STREAM_FORCE = 3
+STREAM_SECONDS = 2.0
+def identity_request() -> bytes            # F0 7E 7F 06 01 F7
+def ping(token=0) -> bytes                 # le pong rend le même octet
+def popup() -> bytes                       # « HELLO SYSEX », un instant
+def display_request(mode=DISPLAY_STREAM_FORCE) -> bytes   # mode 4 : ValueError
+def seven_segment_request() -> bytes
+def parse(message) -> Identity | Pong | OledFrame | OledDelta | SevenSegment
+                      | DebugText | None
+class OledScreen: pixels, frames, complete ; apply(event), clear(),
+                  pixel(x, y), lit_count(), text()
+pack_8bit_to_7bit / unpack_7bit_to_8bit / pack_8to7_rle / unpack_7to8_rle
+```
+
+* **Lecture seule.** Le mode 4 (`swapDisplayType`) change le type d'écran de
+  la machine : `display_request(4)` lève, il ne part jamais.
+* **L'écran** : 128 × 48, six pages de huit lignes, 128 octets par page, bit
+  0 = pixel du haut. Une différence porte un début et une longueur en blocs
+  de huit octets.
+* **Le firmware c1.2.1 n'ouvre pas ses fichiers en USB** : pas de transfert
+  par SysEx, la carte reste le seul chemin pour les fichiers.
+* Les tests gardent **des octets venus de la machine** — l'image « SYNTH /
+  TB01 » (110 octets) et la réponse d'identité : un portage fautif et des
+  vecteurs qu'il aurait produits seraient d'accord entre eux. Notre codeur
+  redonne exactement les 110 octets émis.
 
 ---
 
@@ -1439,7 +1933,13 @@ def category_color(name: str) -> str        # couleur stable par nom de catégor
 def severity_color(sev: str) -> str
 def mix(c1: str, c2: str, t: float) -> str
 def with_alpha(c: str, a: float) -> str     # 'rgba(…)'
+def accent_qss(accent: str) -> str          # la seule partie colorée, que chaque page pose sur elle
+def accent_values(accent: str) -> dict      # teintes dérivées d'un accent
+def lit_fill(color: str) -> tuple[str, str, str]   # (haut, bas, encre) d'un pad allumé, lisible à 4,5
 ```
+`qss(accent)` = partie commune + `accent_qss(accent)`. **Toute propriété de
+couleur d'un contrôle vit dans la partie colorée, avec tous ses états** —
+voir §5.22.
 Le QSS doit couvrir : `QMainWindow`, `QWidget`, `QLineEdit`, `QPushButton` (normal/hover/pressed/
 checked/disabled), `QToolButton`, `QComboBox` + vue déroulante, `QTableView`/`QTreeView` +
 `QHeaderView` (lignes alternées, sélection en or translucide), `QScrollBar` fins, `QSlider`,
@@ -1452,7 +1952,8 @@ def icon(name: str, color: str = PAD_WHITE, size: int = 20) -> QIcon
     """Icônes dessinées en QPainter (aucun fichier externe). Noms requis :
        dashboard, samples, synth, kit, song, wand, tools, health, settings, play, stop, search,
        refresh, folder, save, export, import, trash, star, tag, wave, dice, copy, link, warning,
-       check, chevron-right, chevron-down, plus, minus, filter, grid, list, info, backup, midi."""
+       check, chevron-right, chevron-down, chevron-left, plus, minus, filter, grid, list, info,
+       backup, midi."""
 def app_icon(size: int = 256) -> QIcon      # emblème : 4x4 pads colorés, disque sombre, anneau or
 def pad_pixmap(colors, size=64) -> QPixmap
 ```
@@ -1490,6 +1991,30 @@ class BusyBar(QProgressBar)
 class ElidedLabel(QLabel)
 class StarRating(QWidget)   # 0..5 étoiles, signal changed(int)
 class KeyValueTable(QTableWidget)   # affichage clé/valeur en lecture seule
+class LitPad(QWidget)       # icône sur un pad allumé, halo compris
+class PadEmblem(QWidget)    # l'emblème du guide, qui joue tant qu'il est visible
+class ScoreRing(QLabel)     # note de santé dans une couronne d'encodeur (setText comme un QLabel)
+class SegmentMeter(QWidget) # jauge en segments, comme une rangée de pads
+class GrilleAdaptative(QObject)  # grille qui passe de N à M colonnes selon la place visible
+class RangeeAdaptative(QObject)  # rangée de panneaux qui s'empile quand la place manque
+def glow(widget, color, blur=26, alpha=0.55)  # halo d'un pad allumé, éteint avec son bouton
+def pad_dot(color, size=11) -> QPixmap        # pastille d'une ligne de liste, en cache
+# RowTableModel : colonne (libellé, extracteur, largeur, alignement[, formateur[, pastille]]),
+# `pastille(valeur brute) -> couleur` pose un petit pad devant le texte (DecorationRole).
+
+# chrome.py — la façade
+class Wordmark(QWidget)     # emblème, « DELUGE » magenta, « COMPANION » espacé ; set_compact
+class OledDisplay(QPushButton)   # l'écran : set_display(étiquette, ligne, ton), flash(message)
+class NavPad(QPushButton)   # pad de navigation cochable : veilleuse, allumage animé, raccourci
+class LedButton(QPushButton)     # bouton rond qui s'allume : set_state(couleur, allumé)
+class LedStrip(QWidget)     # filet lumineux à la couleur de la page
+
+# art.py (ui/) — dessins du guide, QtGui seul
+def circuit(w, h, color, seed=0, dpr=1.0, density=0.42, fade=(0.20, 0.62)) -> QPixmap  # en cache
+def paint_pad(p, rect, color, glow=0.30, radius=None, sheen=True)
+def paint_off_pad(p, rect, diode=True, radius=None, tint="", alpha=1.0)
+def paint_glow(p, rect, color, strength=0.35, spread=0.9)
+def palette_for(color) -> list[str]   # la couleur de la page cinq fois sur neuf
 
 # padgrid.py
 class PadGrid(QWidget)
@@ -1635,10 +2160,13 @@ le guide de l'utilisateur), bouton « Réinitialiser l'index ».
 class MainWindow(QMainWindow):
     def __init__(self, ctx: AppContext)
 ```
-- Barre latérale gauche (rail d'icônes + libellés, largeur 200 px, repliable à 64 px) avec les
-  9 pages ; l'élément actif est marqué par une barre dorée.
-- En-tête : emblème + « Deluge Companion », chemin de la carte SD cliquable (ouvre les réglages),
-  barre de recherche globale, bouton Scanner, bouton Écouter/Stop.
+- Colonne de gauche : une rangée de `NavPad` (212 px, repliable à 64 px) avec les 9 pages ;
+  la page affichée s'allume à sa couleur, les autres restent en veilleuse.
+- **Une seule barre du haut** (56 px, `CHROME`) : logotype, **barre de menus intégrée**
+  (`menuBar()` rend celle-ci), écran OLED de la carte (cliquable : ouvre les réglages ; reprend
+  chaque message de la barre d'état), pastille du Deluge, recherche globale, « Analyser »,
+  touche de lecture ronde. Elle se resserre sous 1 360 et 1 180 px. Dessous, un filet lumineux
+  à la couleur de la page.
 - `QStackedWidget` pour les pages, création paresseuse (page instanciée au premier affichage).
 - Barre d'état : message, barre de progression des tâches, indicateur de lecture, espace libre.
 - Menus : Fichier (Choisir la carte, Scanner, Sauvegarder, Quitter), Édition, Outils, Aide (À propos, Raccourcis).
@@ -1874,19 +2402,93 @@ que des icônes — et l'infobulle nomme toujours le bouton. Le seuil dépend
 de la police, donc il ne se teste pas sous la plateforme « offscreen » : le
 test porte sur le mécanisme, la mesure du seuil se fait à la main.
 
+### 5.22 La façade : le guide, pas seulement sa palette
+
+L'interface reprenait la palette du guide et restait un tableau de bord de
+bureautique : barre de menus Windows, rail de texte, cartes identiques,
+tableaux partout. Elle reprend maintenant ses signatures (§2).
+
+**Chaque page pose sa couleur sur elle-même** : `Page.__init__` appelle
+`setStyleSheet(accent_qss(self.color))` avant de créer le moindre enfant.
+Piège de Qt, et règle qui en découle : la feuille d'un parent l'emporte
+**toujours** sur celle de l'application, quelle que soit la spécificité des
+sélecteurs. Si la page fixait le fond des boutons sans fixer celui des
+boutons désactivés, un bouton éteint garderait le fond vif de la page — et
+de même pour le survol, l'appui, l'état coché. Toute propriété de couleur
+d'un contrôle vit donc dans la partie colorée, **avec tous ses états** ; la
+partie commune ne garde que la géométrie et les conteneurs.
+
+**`Page._light_up()`** suit `build()` : chaque bouton `#Primary` rayonne de la
+couleur de la page (`glow`, éteint avec le bouton) et son icône est retracée
+à l'encre qui se lit sur elle (`iconName`) ; chaque widget qui a
+`set_accent` (forme d'onde, courbe de filtre, spectre, enveloppe) prend la
+couleur de la page. Les encodeurs restent dorés, comme sur la machine.
+
+**Les listes portent la couleur de leurs catégories** : une pastille devant
+la catégorie d'un échantillon ou d'un preset, comme la couleur d'un clip sur
+la machine (`category_color`, stable d'une session à l'autre).
+
+**L'en-tête de page est une ouverture de partie** (`PageHero`) : pad allumé,
+titre en capitales, treillis à la couleur de la page tiré d'une graine
+propre (`art.seed_of(clé)`), qui s'efface vers le titre et apparaît en une
+demi-seconde à chaque affichage. Le contrat `page_header() -> (hôte,
+actions)` est inchangé.
+
+**Mesuré, et corrigé :**
+
+| défaut | mesure | correction |
+|---|---|---|
+| bouton principal violet, indigo | bas 4,43, haut 4,42 | `lit_fill` pousse chaque extrémité à 4,5 |
+| barre d'actions à 980 px | 6 boutons coupés, ajusteur à l'état 0 | réveil à l'affichage, boutons « non masqués » |
+| tableau de bord à 980 px | 900 px demandés pour 720 | tuiles sur 2 colonnes, panneaux empilés, phrase repliée |
+| répartition des échantillons | jauge dessinée sur le nom | politique fixe du libellé élidé |
+| questions de `QMessageBox` | « Yes », « No » | traduction `qtbase_fr` chargée au lancement |
+
+Tous, sauf le premier, dataient d'avant la refonte : ils ne se voyaient
+qu'à 980 px, en faisant défiler le tableau de bord, ou en ouvrant une
+question.
+
+**Les adaptations observent la place visible**, pas leur propre largeur : un
+contenu trop large ne rétrécit jamais de lui-même, il pousse la page sous
+une barre de défilement horizontale. `GrilleAdaptative` et
+`RangeeAdaptative` écoutent donc la zone visible du défilement.
+
+**Ce qui ne change pas** : l'ordre et les clés des pages, les raccourcis,
+les menus et leurs actions, les adresses `Page#Partie`, le registre
+d'explications, les attributs que les tests lisent (`_card_button.text()`,
+`_score.text()`, `_tiles[…]._value`…). L'écran OLED est un `QPushButton` dont
+le texte garde le chemin complet ; l'anneau de note est un `QLabel`.
+
 ### 5.17 Le Deluge branché
 
 * **Pastille dans l'en-tête** : grise s'il est absent, or s'il est détecté
-  mais pas connecté, verte s'il est connecté. Un clic connecte quand c'est
-  le geste évident, et mène aux réglages sinon.
+  mais pas connecté, verte s'il est connecté (infobulle : firmware, tempo).
+  Un clic connecte quand c'est le geste évident, ouvre « Deluge en direct »
+  quand la machine est connectée, et mène aux réglages sinon.
+* **« Deluge en direct »** (`ui/livewindow.py` ; Outils ▸ Deluge en direct,
+  Ctrl+D ; Réglages ; pastille) : une fenêtre à garder à côté. L'écran de la
+  machine recopié — la recopie part à l'ouverture —, « Faire signe »,
+  « Vérifier », « Tout éteindre » ; le tempo et la lecture lus dans
+  l'horloge ; les notes tenues et leur accord ; le son sélectionné, d'après
+  le retour MIDI Follow ; les réglages à faire sur la machine, cochés à
+  mesure que le lien les constate. Recopie arrêtée : un message, **jamais
+  une image figée** qu'on prendrait pour la machine. Déconnectée : le
+  bouton se décoche ; reconnectée fenêtre ouverte : la recopie reprend.
+  Fermer la fenêtre arrête l'abonnement.
+* **Le tempo de la machine passe aux outils** (`midi_follow_tempo`, actif
+  par défaut) : les trois tempos de la boîte à outils suivent l'horloge
+  quand son arrondi change ; une page ouverte pendant que la machine joue le
+  prend une fois, à sa première visite — ensuite l'utilisateur décide.
 * **Surveillance au battement de seconde** : énumérer les ports coûte
   quelques microsecondes, moins cher qu'un bouton « rafraîchir ». Le
   branchement et le débranchement sont annoncés dans la barre d'état ; un
   débranchement referme le port, qui pointerait sinon sur un appareil
   disparu.
-* **Réglages** : section « Deluge branché » — état, ports, canal,
-  connexion automatique, écoute sur la machine, « Jouer un do », « Tout
-  éteindre ».
+* **Réglages** : section « Deluge branché » — état, ce que la machine a
+  dit d'elle (firmware, aller-retour, port SysEx), ports, canal, connexion
+  automatique, écoute sur la machine, suivi du tempo, « Jouer un do »,
+  « Tout éteindre », « Deluge en direct… », et les réglages à faire **sur**
+  le Deluge (Follow ▸ Channel A, Feedback).
 * **Écoute** : `Page.audition(sound)` rend `True` quand la machine a pris le
   relais ; la page retombe sinon sur son rendu habituel. Le réglage est
   explicite (`midi_audition`), parce qu'envoyer du son dans une machine
@@ -1941,6 +2543,35 @@ lui-même au premier affichage (il lit l'index, ne touche pas à la carte,
 0,7 s sur la carte réelle) plutôt que d'attendre un clic devant deux cadres
 vides.
 
+### 5.23 Des morceaux du Deluge depuis les outils de création
+
+Un bouton par outil, tous sur le même parcours (`ui/songexport.export_song`,
+`Page.write_song`) : construire le morceau (une erreur d'usage s'annonce avant toute
+question), demander le nom (`QInputDialog.getText`), montrer le plan et le faire
+confirmer si « Confirmer chaque écriture » est coché (`QMessageBox.question`), écrire,
+indexer (`scan.index_songs`, qui **ne marque pas** la relecture des morceaux comme faite),
+émettre `Page.songWritten(rel)` — la fenêtre rafraîchit alors toutes les pages.
+
+| page | bouton | morceau |
+|---|---|---|
+| Outils › Théorie | `_song_prog_button` « En morceau » | une piste et un clip par partie (accords, basse, arpège, mélodie) avec **les sons de l'écoute** (`part_presets`), plus la batterie si cochée ; tout boucle ensemble |
+| Outils › Rythme | `_song_beat_button` « En morceau » | le motif affiché, joué par le kit de l'écoute complété (`drum_kit_for`) : une piste sans son reçoit une percussion |
+| Outils › Arrangement | `_song_sketch_button` « Esquisse en morceau » | une section du Deluge par section du modèle, répétitions calculées, arrangement complet |
+| Kits | « Motif en morceau » | le kit de la carte **tel qu'il est dans son fichier** (conversions d'époque) et le motif d'essai |
+| Générateur › Preset | « Essayer en morceau » | le son, une phrase faite pour son rôle et la batterie du genre ; son arpège est gardé |
+| Générateur › Kit | « Kit en morceau » | le kit construit et le rythme de son genre |
+| Échantillons › Découper | « Écrire en morceau » (dialogue) | le kit des tranches et un clip qui rejoue chaque tranche à sa place |
+
+Les explications de l'aide annoncent toutes « **Écrit sur la carte.** ». Tests :
+`TestMorceauxDepuisLesOutils` et `TestBoucleDecoupeeEnMorceau` cliquent chaque bouton sur
+une carte jetable et relisent le fichier ; `TestSongWriter` couvre le module.
+
+**Vignettes.** La première rangée du `preview` d'un morceau est celle **du bas**
+(`imageStore[0]`) ; `Song.preview_colors` rend désormais la matrice première ligne en
+haut. Avant le 15 octobre 2026, la page Morceaux montrait les vignettes à l'envers. Les
+morceaux écrits ici portent une vignette de leur vue Morceau : une rangée par clip, la
+section et l'état dans la barre latérale.
+
 ---
 
 ## 6. Contraintes de robustesse
@@ -1982,6 +2613,19 @@ Pourquoi tant de soin : mes propres essais ont trois fois modifié les
 réglages réels de l'utilisateur, dont une fois en éteignant `confirm_writes`
 et `always_backup_before_write`, les deux filets qui protègent une carte
 contenant des mois de travail.
+
+**Remplacer une méthode héritée : `mock.patch.object`.** Sauvegarder
+`PlanDialog.exec` lit la méthode **héritée** de `QDialog` — le rempart de
+la suite — et la réaffecter ensuite l'épingle sur `PlanDialog` : les tests
+suivants qui neutralisent `QDialog.exec` ne touchent plus ce dialogue. Vu le
+15 octobre 2026 sous pytest, qui suit l'ordre du fichier ; `unittest`, qui
+trie les classes, le masquait. `WidgetCase._aucun_rempart_epingle` échoue
+désormais dès qu'un test l'oublie, dans n'importe quel ordre.
+
+**Éprouver un correctif en le retirant : sans `.pyc`.** Python juge un
+`.pyc` à jour sur la taille et la *seconde* du source. Une mutation de même
+longueur, restaurée dans la même seconde, laisse le code mutilé en cache :
+lancer les essais avec `PYTHONDONTWRITEBYTECODE=1`.
 
 `unittest` (stdlib). Doit passer sans carte SD (créer une carte factice dans un `tempfile.TemporaryDirectory`).
 Couvrir : conversions fixed-point (aller-retour), réparation XML des 3 anomalies de §1.3,

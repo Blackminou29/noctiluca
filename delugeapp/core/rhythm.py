@@ -5,8 +5,10 @@ Module arithmétique, sans dépendance. Les motifs se traduisent en notes de
 clip Deluge par :meth:`Pattern.to_notes`, ce qui permet de fabriquer une
 boucle depuis l'application et de l'écrire dans un morceau.
 
-Unité de temps : le **tick** du Deluge, 24 par noire, donc 96 par mesure 4/4
-(cf. SPEC §1.6). Un pas de double-croche vaut 6 ticks.
+Unité de temps : une grille **interne** de 24 ticks par noire, 96 par mesure
+4/4 ; un pas de double-croche vaut 6 ticks. Un morceau du Deluge compte, lui,
+``96 << inputTickMagnitude`` ticks par mesure — 384 en c1.2.1 (SPEC §1.6,
+corrigé le 14 octobre 2026) : :mod:`delugeapp.core.songwriter` convertit.
 """
 
 from __future__ import annotations
@@ -14,6 +16,10 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:                  # import circulaire à l'exécution
+    from .model import Note
 
 log = logging.getLogger(__name__)
 
@@ -27,12 +33,34 @@ STEPS_PER_BAR = 16
 
 @dataclass
 class Step:
-    """Un déclenchement dans un motif. ``pos`` est un numéro de pas."""
+    """Un déclenchement dans un motif.
+
+    ``pos`` est un numéro de pas, éventuellement fractionnaire (swing,
+    groove) ; ``velocity`` et ``probability`` sont des **pourcentages**,
+    1 à 100. ``to_notes`` et l'export MIDI les ramènent à 1–127.
+    """
 
     pos: int
     velocity: int = 100
     length: int = 1
     probability: int = 100
+    #: Case de la grille avant tout décalage (swing, groove, humanisation).
+    #: Un pas décalé de plus d'un demi-pas ne se ramène plus à sa case par
+    #: un arrondi ; c'est ce champ qui permet de réappliquer un groove depuis
+    #: le motif droit, et à la grille d'afficher le pas à sa place.
+    grid: int | None = None
+
+
+def cell(step: Step) -> int:
+    """Case de grille d'un pas, décalage éventuel ignoré."""
+    if step.grid is not None:
+        return int(step.grid)
+    return int(round(float(step.pos)))
+
+
+def _remember_cell(step: Step) -> None:
+    if step.grid is None:
+        step.grid = int(round(float(step.pos)))
 
 
 @dataclass
@@ -125,7 +153,7 @@ class Pattern:
                 # ``pos`` peut être fractionnaire après un groove ou un
                 # swing : il faut l'arrondir à la case la plus proche, comme
                 # le fait ``to_notes``. Sans cela, indexer la liste lève.
-                index = int(round(float(step.pos)))
+                index = cell(step)
                 if not 0 <= index < self.steps:
                     continue
                 if step.probability < 100:
@@ -240,11 +268,13 @@ def polyrhythm(a: int, b: int, steps: int) -> list[bool]:
         return []
     if count <= 0 or first <= 0 or second <= 0:
         return [False] * max(0, count)
+    # Chaque cycle place exactement ``a`` (ou ``b``) coups, répartis au plus
+    # juste : l'ancien calcul par division entière en mettait quatre au lieu
+    # de trois pour « 3 contre 4 » sur 16 pas.
     out = [False] * count
-    for index in range(count):
-        if index % max(1, count // first) == 0 or \
-           index % max(1, count // second) == 0:
-            out[index] = True
+    for pulses in (first, second):
+        for i in range(pulses):
+            out[int(round(i * count / float(pulses))) % count] = True
     return out
 
 
@@ -280,10 +310,53 @@ _BEATS: dict[str, dict[str, str]] = {
         "Snare": "....x.......x...",
         "HatC": "..o...o...o...o.",
     },
+    # Les deux premières mesures du break des Winstons (« Amen, Brother »),
+    # celles que la jungle a bouclées : grosse caisse sur 1, 1& et 3&-3a,
+    # caisse claire sur 2 et 4 avec ses notes fantômes.
     "amen": {
-        "Kick": "x.....x.........",
-        "Snare": "....x..o..x.o...",
+        "Kick": "x.x.......xx....",
+        "Snare": "....x..o.o..x..o",
         "Ride": "o.o.o.o.o.o.o.o.",
+    },
+    # Le « two-step » de la drum and bass : grosse caisse sur 1 et 3&,
+    # caisse claire sur 2 et 4.
+    "dnb": {
+        "Kick": "x.........x.....",
+        "Snare": "....x.......x...",
+        "HatC": "o.o.o.o.o.o.o.o.",
+        "Ride": "..o...o...o...o.",
+    },
+    "trance": {
+        "Kick": "x...x...x...x...",
+        "Clap": "....x.......x...",
+        "HatC": "oo.ooo.ooo.ooo.o",
+        "HatO": "..x...x...x...x.",
+    },
+    "psytrance": {
+        "Kick": "x...x...x...x...",
+        "HatC": "o.ooo.ooo.ooo.oo",
+        "HatO": "..o...o...o...o.",
+        "Clap": "....o.......o...",
+    },
+    # Le rythme motorik du krautrock (Neu!, et après lui l'école de Berlin).
+    "motorik": {
+        "Kick": "x.......x.x.....",
+        "Snare": "....x.......x...",
+        "HatC": "o.o.o.o.o.o.o.o.",
+    },
+    # La synthwave reprend la boîte à rythmes des années 80 : grosse caisse
+    # sur 1 et 3, caisse claire massive sur 2 et 4.
+    "synthwave": {
+        "Kick": "x.......x.......",
+        "Snare": "....x.......x...",
+        "HatC": "o.o.o.o.o.o.o.o.",
+        "Tambourine": "....o.......o...",
+    },
+    # Boom bap : le hip-hop d'échantillonneur dont vient le lo-fi.
+    "boom_bap": {
+        "Kick": "x......x..x.....",
+        "Snare": "....x.......x...",
+        "HatC": "o.o.o.o.o.o.o.oo",
     },
     "half_time": {
         "Kick": "x.......x.......",
@@ -322,12 +395,12 @@ _BEATS: dict[str, dict[str, str]] = {
 GENRE_BEATS: dict[str, str] = {
     "acid": "four_on_floor", "techno": "techno", "detroit": "four_on_floor",
     "minimal": "techno", "house": "house", "deep_house": "house",
-    "trance": "four_on_floor", "psytrance": "four_on_floor",
-    "dnb": "amen", "jungle": "amen", "dubstep": "half_time",
-    "ambient": "dub", "berlin_school": "four_on_floor",
-    "synthwave": "four_on_floor", "lofi": "breakbeat", "idm": "breakbeat",
+    "trance": "trance", "psytrance": "psytrance",
+    "dnb": "dnb", "jungle": "amen", "dubstep": "half_time",
+    "ambient": "dub", "berlin_school": "motorik",
+    "synthwave": "synthwave", "lofi": "boom_bap", "idm": "breakbeat",
     "industrial": "techno", "electro": "electro", "hardcore": "gabber",
-    "downtempo": "dub", "funk": "funk", "boards_of_canada": "breakbeat",
+    "downtempo": "dub", "funk": "funk", "boards_of_canada": "boom_bap",
 }
 
 #: Remplissages ajoutés en fin de motif quand ``fills=True``.
@@ -362,10 +435,13 @@ def genre_beat(genre: str, bars: int = 1, seed: int | None = None,
                 if cell == ".":
                     continue
                 pos = bar * STEPS_PER_BAR + index
-                velocity = 105 if cell == "x" else 78
-                # Légère variation de vélocité : un rythme aux vélocités
-                # strictement égales sonne mécanique.
-                velocity = max(1, min(127, velocity + rng.randint(-6, 6)))
+                # Vélocités en pour-cent : 92 à 100 pour un coup fort, 64 à
+                # 80 pour un coup faible. L'ancien 105 ± 6 dépassait 100 et
+                # finissait écrêté à 127 : tous les accents se valaient.
+                if cell == "x":
+                    velocity = rng.randint(92, 100)
+                else:
+                    velocity = rng.randint(64, 80)
                 pattern.add(track, Step(pos=pos, velocity=velocity))
 
     if fills and count >= 1:
@@ -394,20 +470,198 @@ def _add_fill(pattern: Pattern, grid: dict[str, str], rng: random.Random,
 # Expression
 # --------------------------------------------------------------------------- #
 
-#: Grooves de référence, en ticks de décalage par pas de double-croche.
-#: Reprise des grilles des échantillonneurs MPC, qui sont la référence du
-#: domaine : un décalage positif retarde le pas.
-GROOVES: dict[str, list[int]] = {
-    "droit": [0] * 16,
-    "MPC 16A": [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-    "MPC 16B": [0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2],
-    "MPC 16C": [0, 3, 0, 3, 0, 3, 0, 3, 0, 3, 0, 3, 0, 3, 0, 3],
-    "MPC 54": [0, -1, 1, 0, 0, -1, 1, 0, 0, -1, 1, 0, 0, -1, 1, 0],
-    "MPC 62": [0, 2, -1, 1, 0, 2, -1, 1, 0, 2, -1, 1, 0, 2, -1, 1],
-    "MPC 66": [0, 3, -1, 2, 0, 3, -1, 2, 0, 3, -1, 2, 0, 3, -1, 2],
+# --------------------------------------------------------------------------- #
+# Variations
+# --------------------------------------------------------------------------- #
+
+#: Pistes qui font l'ossature d'un rythme : une variation ne leur retire
+#: jamais un coup. Ce sont elles qui disent le genre.
+BACKBONE = ("Kick", "Snare", "Clap")
+
+#: Percussion d'appoint qu'une variation peut ajouter, par genre.
+_EXTRA_PERC: dict[str, tuple[str, ...]] = {
+    "house": ("Shaker", "Tambourine", "Cowbell"),
+    "deep_house": ("Shaker", "ConH", "Rim"),
+    "techno": ("Rim", "Cowbell", "Shaker"),
+    "minimal": ("Rim", "Block", "Claves"),
+    "funk": ("Tambourine", "Cowbell", "ConH"),
+    "lofi": ("Shaker", "Rim", "Tambourine"),
+    "electro": ("Cowbell", "Rim", "Claves"),
+}
+
+#: Genres au rythme clairsemé : des charleys en doubles-croches y
+#: trahiraient le style (mesuré : la densité d'un motif dub y était
+#: multipliée par 4,6).
+_SPARSE_GENRES = ("ambient", "downtempo", "dubstep", "boards_of_canada")
+
+#: Variations proposées, avec leur libellé.
+VARIATIONS: dict[str, str] = {
+    "fantômes": "notes fantômes de caisse claire autour des temps",
+    "charleys": "charleys plus serrés, accentués à contretemps",
+    "percussion": "une percussion euclidienne en plus",
+    "grosse caisse": "une grosse caisse syncopée en fin de mesure",
+    "ouverture": "un charleston ouvert qui respire en fin de phrase",
+}
+
+
+def loop(pattern: Pattern, bars: int) -> Pattern:
+    """Le motif répété (ou tronqué) pour couvrir ``bars`` mesures."""
+    total = max(1, int(bars)) * STEPS_PER_BAR
+    out = Pattern(name=pattern.name, steps=total, ppq=pattern.ppq)
+    length = max(1, int(pattern.steps))
+    for track, steps in pattern.tracks.items():
+        out.tracks[track] = []
+        for offset in range(0, total, length):
+            for step in steps:
+                position = float(step.pos) + offset
+                if position < total:
+                    copy = Step(pos=position, velocity=step.velocity,
+                                length=step.length,
+                                probability=step.probability)
+                    out.tracks[track].append(copy)
+    return out
+
+
+def variation(pattern: Pattern, genre: str = "", seed: int | None = None,
+              amount: float = 0.5) -> Pattern:
+    """Une variation du motif qui garde son ossature.
+
+    Les coups de grosse caisse, de caisse claire et de clap restent tous en
+    place (:data:`BACKBONE`) : c'est ce qui fait reconnaître le genre. La
+    variation joue sur l'ornement — notes fantômes, charleys, une
+    percussion euclidienne, une grosse caisse syncopée, un charleston
+    ouvert —, d'autant plus que ``amount`` est grand (0 à 1).
+    """
+    rng = random.Random(seed if seed is not None
+                        else random.randrange(1 << 30))
+    out = _copy(straighten(pattern), " (variation)")
+    total = int(out.steps)
+    bars = max(1, total // STEPS_PER_BAR)
+    count = 1 + int(round(max(0.0, min(1.0, float(amount))) * 2))
+    possible = [v for v in VARIATIONS
+                if not (v == "charleys"
+                        and str(genre or "").strip().lower() in _SPARSE_GENRES)]
+    choices = rng.sample(possible, k=min(count, len(possible)))
+    occupied = {track: {cell(s) for s in steps}
+                for track, steps in out.tracks.items()}
+
+    def free(track: str, position: int) -> bool:
+        return position not in occupied.setdefault(track, set())
+
+    def add(track: str, position: int, velocity: int) -> None:
+        if 0 <= position < total and free(track, position):
+            out.add(track, Step(pos=position, velocity=velocity))
+            occupied[track].add(position)
+
+    snare = "Snare" if "Snare" in out.tracks else (
+        "Clap" if "Clap" in out.tracks else "Snare")
+    for choice in choices:
+        if choice == "fantômes":
+            for bar in range(bars):
+                for offset in rng.sample([3, 6, 9, 11, 14, 15], k=2):
+                    add(snare, bar * STEPS_PER_BAR + offset,
+                        rng.randint(30, 48))
+        elif choice == "charleys":
+            hats = out.tracks.setdefault("HatC", [])
+            for position in range(total):
+                strong = position % 4 == 2
+                if free("HatC", position) and (strong or position % 2 == 1
+                                               or rng.random() < 0.5):
+                    add("HatC", position,
+                        rng.randint(84, 96) if strong
+                        else rng.randint(46, 64))
+            hats.sort(key=lambda s: float(s.pos))
+        elif choice == "percussion":
+            extra = [t for t in _EXTRA_PERC.get(
+                str(genre or "").strip().lower(),
+                ("Rim", "Shaker", "Cowbell")) if t not in out.tracks]
+            track = extra[0] if extra else "Block"
+            hits = euclid(rng.choice((3, 5, 7)), STEPS_PER_BAR,
+                          rng.randrange(STEPS_PER_BAR))
+            for bar in range(bars):
+                for index, on in enumerate(hits):
+                    if on:
+                        add(track, bar * STEPS_PER_BAR + index,
+                            rng.randint(58, 80))
+        elif choice == "grosse caisse":
+            for bar in range(bars):
+                if bar % 2 == 1 or bars == 1:
+                    add("Kick", bar * STEPS_PER_BAR + rng.choice((14, 15, 11)),
+                        rng.randint(70, 86))
+        elif choice == "ouverture":
+            last = (bars - 1) * STEPS_PER_BAR
+            add("HatO", last + rng.choice((10, 14)), rng.randint(76, 92))
+    for steps in out.tracks.values():
+        steps.sort(key=lambda s: float(s.pos))
+    out.name = pattern.name.split(" (")[0] + " — " + ", ".join(choices)
+    return out
+
+
+def swing_offsets(percent: float) -> list[float]:
+    """Décalages d'un swing « à la MPC », en ticks, pour 16 doubles-croches.
+
+    Le swing d'une MPC se règle en pourcentage : la seconde double-croche de
+    chaque croche tombe à ``percent`` % de la croche (50 % = droit, 66,7 % =
+    ternaire exact). Une croche vaut 12 ticks à 24 par noire, d'où un retard
+    de ``(2 × percent / 100 − 1) × 6`` ticks sur les pas impairs.
+    """
+    try:
+        value = max(50.0, min(75.0, float(percent)))
+    except (TypeError, ValueError):
+        value = 50.0
+    late = (2.0 * value / 100.0 - 1.0) * 6.0
+    return [0.0 if i % 2 == 0 else round(late, 3) for i in range(16)]
+
+
+#: Grooves de référence, en ticks de décalage par pas de double-croche ; un
+#: décalage positif retarde le pas. Les « MPC » sont les réglages de swing
+#: des échantillonneurs Akai, en pourcentage — les anciens noms (« MPC 16B »,
+#: « MPC 54 »…) ne correspondaient à aucun réglage réel, et « MPC 54 »
+#: avançait même certains pas.
+GROOVES: dict[str, list[float]] = {
+    "droit": [0.0] * 16,
+    "MPC 54 %": swing_offsets(54),
+    "MPC 58 %": swing_offsets(58),
+    "MPC 62 %": swing_offsets(62),
+    "MPC 66 %": swing_offsets(66),
+    "MPC 71 %": swing_offsets(71),
+    # Jeu « derrière le temps » : les contretemps traînent, de plus en plus
+    # dans la croche.
     "laid-back": [0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2],
+    # Jeu « devant le temps » : les contretemps anticipent.
     "en avant": [0, -1, -1, -2, 0, -1, -1, -2, 0, -1, -1, -2, 0, -1, -1, -2],
 }
+
+
+def deluge_swing(groove: str) -> int | None:
+    """Réglage de swing du Deluge équivalent à un groove MPC, ou ``None``.
+
+    Le Deluge affiche son swing de 1 à 99, 50 étant droit : c'est le
+    pourcentage lui-même.
+    """
+    name = str(groove or "")
+    if name == "droit":
+        return 50
+    if name.startswith("MPC "):
+        try:
+            return int(round(float(name[4:].replace("%", "").strip())))
+        except ValueError:
+            return None
+    return None
+
+
+def straighten(pattern: Pattern) -> Pattern:
+    """Copie du motif remise sur la grille : chaque pas à sa case entière.
+
+    Sert à appliquer un groove **depuis le motif droit** : appliquer deux
+    fois un groove l'aurait sinon cumulé.
+    """
+    clone = _copy(pattern)
+    for steps in clone.tracks.values():
+        for step in steps:
+            step.pos = cell(step)
+            step.grid = None
+    return clone
 
 
 def groove_names() -> list[str]:
@@ -420,7 +674,8 @@ def _copy(pattern: Pattern, name_suffix: str = "") -> Pattern:
     clone = Pattern(name=pattern.name + name_suffix, steps=pattern.steps,
                     ppq=pattern.ppq)
     for track, steps in pattern.tracks.items():
-        clone.tracks[track] = [Step(s.pos, s.velocity, s.length, s.probability)
+        clone.tracks[track] = [Step(s.pos, s.velocity, s.length, s.probability,
+                                    s.grid)
                                for s in steps]
     return clone
 
@@ -442,7 +697,12 @@ def apply_groove(pattern: Pattern, groove: str,
     per_step = pattern.ticks_per_step
     for steps in clone.tracks.values():
         for step in steps:
-            shift = offsets[step.pos % len(offsets)] * factor
+            # La case de grille du pas, même s'il a déjà été décalé : indexer
+            # avec une position fractionnaire levait une TypeError, et le
+            # bouton « Appliquer » de la boîte à outils plantait au second
+            # clic.
+            _remember_cell(step)
+            shift = offsets[cell(step) % len(offsets)] * factor
             # On reste en pas : le décalage est une fraction de pas.
             step.pos = step.pos + shift / per_step
     return clone
@@ -460,7 +720,8 @@ def swing(pattern: Pattern, amount: float) -> Pattern:
         return clone
     for steps in clone.tracks.values():
         for step in steps:
-            if int(step.pos) % 2 == 1:
+            _remember_cell(step)
+            if cell(step) % 2 == 1:
                 step.pos = step.pos + factor / 3.0
     return clone
 
@@ -478,12 +739,13 @@ def humanize(pattern: Pattern, timing: float = 0.0, velocity: float = 0.0,
     clone = _copy(pattern)
     for steps in clone.tracks.values():
         for step in steps:
+            _remember_cell(step)
             if timing:
                 step.pos = max(0.0, step.pos
                                + rng.gauss(0.0, float(timing)))
             if velocity:
                 shift = rng.gauss(0.0, 25.0 * float(velocity))
-                step.velocity = max(1, min(127,
+                step.velocity = max(1, min(100,
                                            int(round(step.velocity + shift))))
     return clone
 

@@ -28,10 +28,10 @@ from ..theme import (
     GOLD,
     GOLD_HI,
     GREY,
-    PAD_CYAN,
     PAD_WHITE,
     PANEL_HI,
     PANEL_LO,
+    mix,
 )
 
 log = logging.getLogger(__name__)
@@ -61,6 +61,9 @@ class WaveformView(QWidget):
         #: Marqueurs multiples, en secondes — les coupes d'un découpage.
         self._markers: list[float] = []
         self._marker_active = -1
+        #: Couleur du signal : l'or des encodeurs par défaut, celle de la
+        #: page qui l'accueille sinon (:meth:`set_accent`).
+        self._accent = GOLD
 
         # Fenêtre visible, en fraction de la durée totale.
         self._view = (0.0, 1.0)
@@ -112,6 +115,20 @@ class WaveformView(QWidget):
         self._marker_active = -1
         self._view = (0.0, 1.0)
         self.update()
+
+    def set_accent(self, color: str) -> None:
+        """Trace le signal à la couleur donnée : celle de la page.
+
+        Une forme d'onde dorée sur la page cyan des échantillons parlait
+        d'un autre écran ; elle prend désormais la teinte de celui où elle
+        s'affiche.
+        """
+        self._accent = color or GOLD
+        self.update()
+
+    def accent(self) -> str:
+        """Couleur du signal."""
+        return self._accent
 
     def set_empty_text(self, message: str, hint: str = "") -> None:
         """Change ce qui s'affiche quand le cadre est vide."""
@@ -405,10 +422,11 @@ class WaveformView(QWidget):
 
         # Une colonne de pixels par pixel : on agrège l'enveloppe par tranche.
         indices = np.linspace(0, window.shape[0], width + 1).astype(np.int64)
+        clair = mix(self._accent, PAD_WHITE, 0.38)
         gradient = QLinearGradient(0.0, 0.0, 0.0, float(self.height()))
-        gradient.setColorAt(0.0, QColor(GOLD_HI))
-        gradient.setColorAt(0.5, QColor(GOLD))
-        gradient.setColorAt(1.0, QColor(GOLD_HI))
+        gradient.setColorAt(0.0, QColor(clair))
+        gradient.setColorAt(0.5, QColor(self._accent))
+        gradient.setColorAt(1.0, QColor(clair))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(gradient)
 
@@ -428,8 +446,8 @@ class WaveformView(QWidget):
             return
         start, end = self._selection
         x1, x2 = self._time_to_x(start), self._time_to_x(end)
-        colour = QColor(PAD_CYAN)
-        colour.setAlphaF(0.18)
+        colour = QColor(PAD_WHITE)
+        colour.setAlphaF(0.12)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(colour)
         painter.drawRect(QRectF(x1, 0, max(1.0, x2 - x1), self.height()))
@@ -498,5 +516,5 @@ class WaveformView(QWidget):
         x = self._time_to_x(self._position)
         if not 0 <= x <= self.width():
             return
-        painter.setPen(QPen(QColor(PAD_CYAN), 2))
+        painter.setPen(QPen(QColor(PAD_WHITE), 2))
         painter.drawLine(int(x), 0, int(x), self.height())

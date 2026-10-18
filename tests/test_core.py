@@ -42,10 +42,11 @@ BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
 _os.environ["DELUGE_COMPANION_CONFIG"] = str(BAC_A_SABLE)
 
 
-from delugeapp.core import (analysis, backup, db, deps, dxml, genres, health,
-                            kitgen, midifile, organize, render, rhythm,
-                            samplefix, scan, sdcard, similarity, slicer,
-                            songpack, synthgen, theory, units, wav)
+from delugeapp.core import (accomp, analysis, backup, db, deps, dxml, genres,
+                            health, kitgen, midifile, organize, render,
+                            rhythm, samplefix, scan, sdcard, similarity,
+                            sketch, slicer, songpack, synthgen, theory,
+                            units, wav)
 from delugeapp.core import fixedpoint
 from delugeapp.core.fixedpoint import (
     INT32_MAX,
@@ -415,11 +416,43 @@ class TestSong(unittest.TestCase):
         self.assertEqual(self._song().scale_name(), "La mineur")
 
     def test_statistiques(self):
-        """Le clip de 384 ticks fait 4 mesures."""
+        """Le clip de 384 ticks fait **2** mesures à magnitude 1.
+
+        Ce test affirmait 4, d'après la SPEC qui comptait 96 ticks par
+        mesure. Le firmware en compte ``96 << inputTickMagnitude``
+        (``Song::getBarLength``) : 192 ici. Mesuré sur les 40 morceaux 3.0.4
+        de la carte, dont la double croche vaut 12 ticks.
+        """
         stats = self._song().stats()
         self.assertEqual(stats["clips"], 1)
-        self.assertEqual(stats["bars"], 4.0)
+        self.assertEqual(stats["bars"], 2.0)
         self.assertEqual(stats["instruments"], 2)
+
+    def test_la_resolution_suit_la_magnitude(self):
+        """Une mesure vaut 96 << inputTickMagnitude ticks."""
+        from delugeapp.core.model import ticks_per_bar
+
+        self.assertEqual([ticks_per_bar(m) for m in (0, 1, 2, 3)],
+                         [96, 192, 384, 768])
+        song = self._song()
+        self.assertEqual(song.input_tick_magnitude, 1)
+        self.assertEqual(song.clips[0].ticks_per_bar, 192)
+
+    def test_un_morceau_c1_2_1_compte_384_ticks_par_mesure(self):
+        """Le format de la machine : magnitude 2, 1 536 ticks = 4 mesures."""
+        texte = self.SONG.decode("utf-8").replace(
+            'inputTickMagnitude="1"', 'inputTickMagnitude="2"').replace(
+            'timePerTimerTick="459"', 'timePerTimerTick="229"').replace(
+            'timerTickFraction="1610612736"',
+            'timerTickFraction="-1342177280"').replace(
+            'length="384"', 'length="1536"')
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "C121.XML"
+            chemin.write_text(texte, encoding="utf-8")
+            song = Song.load(chemin)
+        self.assertAlmostEqual(song.tempo_bpm, 120.0, places=1)
+        self.assertEqual(song.clips[0].bars, 4.0)
+        self.assertEqual(song.stats()["bars"], 4.0)
 
     def test_presets_references(self):
         """Les presets utilisés doivent être retrouvés sans doublon."""
@@ -433,6 +466,16 @@ class TestSong(unittest.TestCase):
         grid = self._song().preview_colors()
         self.assertEqual(len(grid), 8)
         self.assertTrue(all(len(row) == 18 for row in grid))
+
+    def test_la_vignette_commence_par_la_rangee_du_bas(self):
+        """Le firmware écrit d'abord la rangée du bas : allumée seule, elle
+        doit finir en dernière ligne de la matrice, qui se dessine de haut
+        en bas."""
+        song = self._song()
+        song.preview = "FF0000" * 18 + "000000" * 18 * 7
+        grid = song.preview_colors()
+        self.assertEqual(set(grid[7]), {"#FF0000"})
+        self.assertEqual(set(grid[0]), {"#000000"})
 
 
 # --------------------------------------------------------------------------- #
@@ -689,6 +732,27 @@ class TestLibraryAndScan(unittest.TestCase):
         # 2 échantillons + 1 preset + 1 kit + 1 morceau.
         self.assertEqual(again.skipped, 5)
         self.assertEqual(again.errors, [])
+
+    def test_les_morceaux_sont_relus_une_fois_apres_correction(self):
+        """Un index écrit par l'ancienne lecture garde des mesures fausses.
+
+        L'analyse incrémentale ne relit pas un fichier inchangé : sans
+        version de lecture, le nombre de mesures d'un morceau resterait
+        celui de l'ancienne résolution jusqu'à une analyse complète.
+        """
+        self._scan()
+        rel = "SONGS/M.XML"
+        # On simule l'index d'avant la correction.
+        self.lib.con.execute("UPDATE songs SET bars = 4.0 WHERE rel = ?",
+                             (rel,))
+        self.lib.con.commit()
+        self.lib.set_meta("song_reader", "1")
+        again = self._scan(full=False)
+        self.assertEqual(again.skipped, 4, "le morceau aurait dû être relu")
+        self.assertEqual(self.lib.get("song", rel)["bars"], 2.0)
+        self.assertEqual(self.lib.get_meta("song_reader"), scan.SONG_READER)
+        # Une seule fois : l'analyse suivante le saute de nouveau.
+        self.assertEqual(self._scan(full=False).skipped, 5)
 
     def test_analyse_interruptible(self):
         """``should_stop`` doit arrêter l'analyse proprement."""
@@ -1286,6 +1350,26 @@ class TestOrganize(unittest.TestCase):
         self.assertEqual(victime.read_bytes(), b"CONTENU A NE PAS PERDRE")
 
     # -- plans individuels -------------------------------------------------- #
+
+    def test_parasites_hors_des_dossiers_ignores_et_taille_comptee(self):
+        """Le parcours élague les corbeilles et compte les octets lui-même.
+
+        Il parcourait tout, corbeilles comprises, et interrogeait le disque
+        pour chaque fichier : 0,82 s sur la carte de l'utilisateur, 90 % du
+        diagnostic de santé.
+        """
+        corbeille = self.root / ".Trashes" / "501"
+        corbeille.mkdir(parents=True)
+        (corbeille / "._jete.wav").write_bytes(b"x" * 10)
+        (self.root / "SAMPLES" / "Thumbs.db").write_bytes(b"y" * 7)
+        plan = organize.plan_purge_junk(self.sd)
+        chemins = {self.sd.rel(op.src) for op in plan.ops}
+        self.assertIn("SAMPLES/Thumbs.db", chemins)
+        self.assertFalse(any(".Trashes" in c for c in chemins))
+        self.assertEqual(plan.size, sum(op.src.stat().st_size
+                                        for op in plan.ops))
+        self.assertEqual([op.src for op in plan.ops],
+                         sorted(op.src for op in plan.ops))
 
     def test_nettoyage_des_parasites(self):
         """Seuls les parasites doivent être visés."""
@@ -2350,17 +2434,129 @@ class TestKitGen(unittest.TestCase):
         self.assertGreater(len(kicks), 1)
 
     def test_reglages_par_role(self):
-        """Une cymbale doit durer plus longtemps qu'un charleston fermé."""
+        """Les rangées sont réglées comme celles des vrais kits de la carte.
+
+        Mesuré sur les 523 rangées des 43 kits : enveloppe ouverte
+        (attaque 0, sustain 50, release 0), ``velocity → volume`` à pleine
+        échelle, échantillon joué jusqu'au bout (``loopMode`` 1). Ce test
+        exigeait autrefois un decay plus court pour le charleston que pour la
+        cymbale, avec un sustain nul : c'est ce qui coupait chaque coup au
+        bout de quelques dixièmes de seconde.
+        """
         from delugeapp.core.fixedpoint import to_display
+        from delugeapp.core.model import REPEAT_ONCE
 
         kit = kitgen.build_kit(self.sd, self.lib, "K",
                                slots=["Kick", "HatC", "Crash"], seed=1)
         par_role = {r.name: r.sound for r in kit.rows}
-        self.assertLess(to_display(par_role["HATC"].env1.decay),
-                        to_display(par_role["CRASH"].env1.decay))
+        for nom, son in par_role.items():
+            with self.subTest(rangee=nom):
+                self.assertEqual(to_display(son.env1.sustain), 50)
+                self.assertEqual(to_display(son.env1.release), 0)
+                self.assertEqual(son.osc1.loop_mode, REPEAT_ONCE)
+                self.assertIn(("velocity", "volume", 50),
+                              [(c.source, c.destination, c.display())
+                               for c in son.patch_cables])
+                # La fin de zone est la longueur réelle du fichier.
+                self.assertGreater(son.osc1.zone.end, 0)
         self.assertGreater(par_role["KICK"].display("volume"),
                            par_role["HATC"].display("volume"))
         self.assertEqual(par_role["HATC"].polyphonic, "choke")
+        self.assertEqual(par_role["KICK"].polyphonic, "auto")
+
+    def test_panoramique_comme_les_vrais_kits(self):
+        """Médianes des 523 rangées réelles : toms en éventail, le grave à
+        droite et l'aigu à gauche ; grosse caisse et charleys au centre.
+        Le générateur mettait tout au centre."""
+        t = np.linspace(0, 0.3, 13230, endpoint=False, dtype=np.float32)
+        for role in ("TomL", "TomH"):
+            dossier = self.root / "SAMPLES" / "DRUMS" / role
+            dossier.mkdir(parents=True, exist_ok=True)
+            wav.write(dossier / f"{role} 0.wav",
+                      (0.4 * np.sin(2 * np.pi * 120 * t)).astype(np.float32),
+                      44100)
+        scan.scan_card(self.sd, self.lib, compute_hash=False, full=True)
+        kit = kitgen.build_kit(self.sd, self.lib, "K", seed=1,
+                               slots=["Kick", "HatC", "TomL", "TomH", "Crash"])
+        pan = {r.name: r.sound.display("pan") for r in kit.rows}
+        self.assertEqual(pan["KICK"], 0)
+        self.assertEqual(pan["HATC"], 0)
+        self.assertGreater(pan["TOML"], 0)
+        self.assertLess(pan["TOMH"], 0)
+        self.assertLess(pan["CRASH"], 0)
+
+    def test_autre_son_pour_une_rangee(self):
+        """Un seul son change ; il garde son rôle et ne revient pas."""
+        kit = kitgen.build_kit(self.sd, self.lib, "K", seed=1,
+                               slots=["Kick", "Snare", "HatC"])
+        avant = [r.file_name for r in kit.rows]
+        index = [r.name for r in kit.rows].index("SNARE")
+        essayes = {avant[index]}
+        vus = []
+        for tour in range(2):
+            slot = kitgen.reroll_row(kit, index, self.lib, "techno",
+                                     seed=tour, avoid=essayes)
+            with self.subTest(tour=tour):
+                self.assertIsNotNone(slot)
+                self.assertEqual(slot.role, "Snare")
+                self.assertNotIn(slot.rel, essayes)
+                self.assertEqual(kit.rows[index].name, "SNARE")
+                self.assertEqual(kit.rows[index].file_name, slot.rel)
+            essayes.add(slot.rel)
+            vus.append(slot.rel)
+        # Les autres rangées n'ont pas bougé.
+        apres = [r.file_name for r in kit.rows]
+        self.assertEqual([f for i, f in enumerate(apres) if i != index],
+                         [f for i, f in enumerate(avant) if i != index])
+        # Les trois caisses claires ont été essayées : plus de candidat, et
+        # la rangée reste telle quelle.
+        self.assertIsNone(kitgen.reroll_row(kit, index, self.lib, "techno",
+                                            seed=9, avoid=essayes))
+        self.assertEqual(kit.rows[index].file_name, vus[-1])
+
+    def test_un_kit_se_construit_autour_d_une_machine(self):
+        """Avant : dix rangées venues de dix dossiers différents."""
+        t = np.linspace(0, 0.2, 8820, endpoint=False, dtype=np.float32)
+        for role, mot in (("Kick", "Kick"), ("Snare", "Snare"),
+                          ("HatC", "Closed hihat"), ("HatO", "Open hihat"),
+                          ("Clap", "Clap")):
+            for machine in ("909", "Linndrum"):
+                wav.write(self.root / "SAMPLES" / "DRUMS" / role
+                          / f"{machine} {mot}.wav",
+                          (0.4 * np.sin(2 * np.pi * 200 * t)).astype(
+                              np.float32), 44100)
+        scan.scan_card(self.sd, self.lib, compute_hash=False, full=True)
+        for seed in range(5):
+            kit = kitgen.build_kit(self.sd, self.lib, "K", genre="techno",
+                                   seed=seed,
+                                   slots=["Kick", "Snare", "HatC", "HatO",
+                                          "Clap"])
+            familles = {kitgen.family_of(r.file_name) for r in kit.rows}
+            with self.subTest(graine=seed):
+                self.assertEqual(len(familles), 1, familles)
+                self.assertEqual(len(kit.rows), 5)
+
+    def test_famille_d_un_echantillon(self):
+        self.assertEqual(kitgen.family_of("SAMPLES/DRUMS/Snare/909 Snare.wav"),
+                         "909")
+        self.assertEqual(kitgen.family_of(
+            "SAMPLES/DRUMS/HatC/Sequential Circuits Drumtraks Closed hihat.wav"),
+            "Sequential Circuits Drumtraks")
+        self.assertEqual(kitgen.family_of("SAMPLES/DRUMS/Kick/07-KICK.wav"),
+                         "Synthstrom n°")
+        self.assertEqual(kitgen.family_of(
+            "SAMPLES/Artists/Dean Daughters/Y2K/Y2K - CLAP - 01.wav"),
+            "SAMPLES/Artists/Dean Daughters/Y2K")
+
+    def test_un_long_echantillon_s_arrete_avec_la_note(self):
+        """La règle du firmware : ONCE sous 2,002 s, CUT au-delà."""
+        from delugeapp.core.model import (REPEAT_CUT, REPEAT_ONCE,
+                                          repeat_mode_for)
+
+        self.assertEqual(repeat_mode_for(0.4), REPEAT_ONCE)
+        self.assertEqual(repeat_mode_for(2.001), REPEAT_ONCE)
+        self.assertEqual(repeat_mode_for(2.5), REPEAT_CUT)
+        self.assertEqual(repeat_mode_for(None), REPEAT_ONCE)
 
     def test_role_sans_candidat_est_omis(self):
         """Un rôle introuvable ne crée pas de rangée muette."""
@@ -2475,20 +2671,78 @@ class TestTheory(unittest.TestCase):
         self.assertTrue(theory.scale_notes(60, "pas une gamme"))
 
     def test_mode_notes_du_deluge(self):
-        """Le Deluge exige exactement sept intervalles.
+        """Firmware c1.x : la gamme telle quelle ; officiel : sept valeurs.
 
-        Son écran réserve sept rangées de pads par octave : une gamme de
-        cinq notes doit être complétée, une gamme de huit réduite.
+        Ce test exigeait sept intervalles pour toutes les gammes. C'était la
+        règle du firmware officiel : le firmware communautaire de la machine
+        (c1.2.1) propose des gammes de cinq et six notes, et un morceau de la
+        carte (« Truc 1 ») est enregistré en pentatonique mineure à cinq
+        notes.
         """
+        self.assertEqual(theory.deluge_mode_notes("pentatonique mineure"),
+                         [0, 3, 5, 7, 10])
         for name in theory.SCALES:
             with self.subTest(gamme=name):
-                modes = theory.deluge_mode_notes(name)
+                modes = theory.deluge_mode_notes(name, official=True)
                 self.assertEqual(len(modes), 7)
                 self.assertEqual(modes, sorted(modes))
                 self.assertEqual(len(set(modes)), 7)
                 self.assertTrue(all(0 <= m < 12 for m in modes))
         self.assertEqual(theory.deluge_mode_notes("majeur"),
                          [0, 2, 4, 5, 7, 9, 11])
+        # Une gamme courte est complétée par son mode parent : jamais les
+        # deux tierces à la fois, comme le faisait le complément par le
+        # majeur.
+        self.assertEqual(theory.deluge_mode_notes("pentatonique mineure",
+                                                  official=True),
+                         list(theory.SCALES["mineur"]))
+        self.assertEqual(theory.deluge_mode_notes("in sen", official=True),
+                         list(theory.SCALES["phrygien"]))
+
+    def test_progression_nomme_juste(self):
+        """Le VI de la mineur s'appelait « La » : c'est Fa."""
+        chords = theory.progression(57, "mineur", "mélancolique", seed=3,
+                                    bars=4)
+        self.assertEqual([c["name"] for c in chords],
+                         ["Lam", "Fa", "Do", "Sol"])
+        self.assertEqual([c["bass"] % 12 for c in chords], [9, 5, 0, 7])
+        self.assertTrue(all(36 <= c["bass"] <= 47 for c in chords))
+
+    def test_orthographe_selon_la_tonalite(self):
+        """Do mineur s'écrit avec Lab : la table fixe donnait « Sol# »."""
+        def nommer(root, gamme):
+            sp = theory.scale_spelling(root, gamme)
+            return [theory.spell(n, sp, with_octave=False)
+                    for n in theory.scale_notes(root, gamme)[:-1]]
+
+        self.assertEqual(nommer(60, "mineur"),
+                         ["Do", "Ré", "Mib", "Fa", "Sol", "Lab", "Sib"])
+        self.assertEqual(nommer(62, "mineur harmonique"),
+                         ["Ré", "Mi", "Fa", "Sol", "La", "Sib", "Do#"])
+        # Réb majeur (cinq bémols) plutôt que Do# majeur (sept dièses).
+        self.assertEqual(nommer(61, "majeur")[0], "Réb")
+        # À égalité, la tonique garde le nom qu'on lui donne partout.
+        self.assertEqual(nommer(63, "mineur")[0], "Mib")
+        # Chaque lettre une fois dans une gamme de sept notes.
+        for root in range(60, 72):
+            for gamme in ("majeur", "mineur", "dorien", "lydien"):
+                with self.subTest(root=root, gamme=gamme):
+                    lettres = [n.rstrip("#b") for n in nommer(root, gamme)]
+                    self.assertEqual(len(set(lettres)), 7)
+        # L'octave suit la lettre : Mi#4 est le fa de MIDI 77.
+        sp = theory.scale_spelling(66, "majeur")
+        self.assertEqual(theory.spell(77, sp), "Mi#4")
+        self.assertEqual(theory.progression(60, "mineur", "mélancolique",
+                                            seed=3, bars=4)[1]["name"],
+                         "Lab")
+
+    def test_gammes_du_deluge(self):
+        self.assertEqual(theory.deluge_scale_name("pentatonique mineure"),
+                         "PENTATONIC MINOR")
+        self.assertEqual(theory.deluge_scale_name("in sen"), "USER")
+        self.assertIn("marva", theory.SCALES)
+        self.assertEqual(theory.chord_quality([57, 60, 64]), "min")
+        self.assertEqual(theory.chord_symbol(59, "m7b5"), "Siø7")
 
     def test_appartenance_et_recalage(self):
         self.assertTrue(theory.in_scale(64, 60, "majeur"))
@@ -2726,7 +2980,9 @@ class TestRhythm(unittest.TestCase):
         """Un groove décale les pas, et la force dose l'effet."""
         base = rhythm.euclid_pattern({"HatC": (16, 16, 0)})
         droit = [n.pos for n in base.to_notes({"HatC": 60})[60]]
-        fort = [n.pos for n in rhythm.apply_groove(base, "MPC 16B", 1.0)
+        # « MPC 16B » n'existe plus : les grooves portent les vrais
+        # pourcentages de swing d'une MPC.
+        fort = [n.pos for n in rhythm.apply_groove(base, "MPC 66 %", 1.0)
                 .to_notes({"HatC": 60})[60]]
         self.assertNotEqual(droit, fort)
         nul = [n.pos for n in rhythm.apply_groove(base, "droit", 1.0)
@@ -2980,8 +3236,31 @@ class TestMidiFile(unittest.TestCase):
             self.assertAlmostEqual(60_000_000 / parsed["tempo_us"],
                                    song.tempo_bpm, places=1)
 
+    def test_un_clip_c1_2_1_sort_a_la_bonne_vitesse(self):
+        """Une noire vaut 96 ticks à magnitude 2 : elle reste une noire.
+
+        Le facteur de conversion valait toujours 4 : un clip d'un morceau
+        c1.2.1 sortait quatre fois trop lent, un clip 3.x deux fois.
+        """
+        from delugeapp.core.model import Clip, Note, NoteRow
+
+        for magnitude in (2, 1):
+            clip = Clip(name="T", ticks_per_bar=96 << magnitude)
+            # Une noire de durée, au deuxième temps.
+            noire = 24 << magnitude
+            clip.note_rows = [NoteRow(y=60, notes=[Note(pos=noire,
+                                                        length=noire // 2)])]
+            chemin = self.dir / ("vitesse%d.mid" % magnitude)
+            midifile.clip_to_midi(chemin, clip, 120)
+            notes = self._parse(chemin)["tracks"][1]["notes"]
+            ppq = self._parse(chemin)["ppq"]
+            with self.subTest(magnitude=magnitude):
+                self.assertEqual((notes[0][0], notes[0][3]), (ppq, ppq // 2))
+                self.assertEqual(ppq, 96)
+
     def test_conversion_de_resolution(self):
-        """Les 24 ticks du Deluge deviennent 96 : un facteur exact de 4."""
+        """Sans résolution connue, l'ancienne hypothèse (24 par noire)
+        s'applique : un facteur exact de 4."""
         from delugeapp.core.model import Note, NoteRow
 
         clip = type("C", (), {})()
@@ -4083,8 +4362,14 @@ class TestSlicer(unittest.TestCase):
                 self.assertEqual(zone.unit, "samples")
                 self.assertEqual(zone.start, tranche.start)
                 self.assertEqual(zone.end, tranche.end)
-                self.assertEqual(row.sound.osc1.loop_mode, 0,
-                                 "une tranche ne doit pas boucler")
+                # Ce test exigeait ``loopMode`` 0 en le prenant pour « ne
+                # boucle pas ». C'est CUT : la tranche s'arrêtait avec la
+                # note. ONCE (1) ne boucle pas non plus, et joue la tranche
+                # jusqu'au bout, comme le découpeur du Deluge.
+                from delugeapp.core.model import REPEAT_LOOP, REPEAT_ONCE
+
+                self.assertEqual(row.sound.osc1.loop_mode, REPEAT_ONCE)
+                self.assertNotEqual(row.sound.osc1.loop_mode, REPEAT_LOOP)
 
     def test_les_bornes_survivent_a_l_aller_retour_xml(self):
         """Le test qui compte : un kit relu doit rejouer les mêmes tranches."""
@@ -5057,9 +5342,11 @@ class TestMidiPort(unittest.TestCase):
     def test_ouvrir_et_fermer_un_vrai_port(self):
         from delugeapp.core import midiport
 
-        ports = midiport.outputs()
+        # Jamais le Deluge : la note et le CC 74 — la coupure du filtre en
+        # MIDI Follow — iraient modifier le son en cours sur la machine.
+        ports = [p for p in midiport.outputs() if not p.is_deluge]
         if not ports:
-            self.skipTest("aucun port de sortie MIDI")
+            self.skipTest("aucun port de sortie MIDI autre que le Deluge")
         out = midiport.MidiOut()
         self.assertTrue(out.open(ports[0]))
         try:
@@ -5141,6 +5428,38 @@ class TestMidiFollow(unittest.TestCase):
             self.assertEqual(carte.get("lpfFrequency"), 99)
             self.assertEqual(carte.get("volume"), 8)
             self.assertNotIn("stutterRate", carte)
+
+    def test_la_table_dit_d_ou_elle_vient(self):
+        """Sans fichier lu, ce sont les valeurs d'usine : l'interface ne
+        doit pas prétendre les avoir lues sur la carte."""
+        from delugeapp.core import midifollow
+
+        carte, source = midifollow.load_map_with_source()
+        self.assertEqual((len(carte), source), (52, ""))
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "MIDIFollow.XML"
+            chemin.write_bytes(b"\x00\x01 pas du XML")
+            self.assertEqual(midifollow.load_map_with_source(path=chemin)[1],
+                             "")
+            chemin.write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                "<defaults><defaultCCMappings>"
+                "<lpfFrequency>99</lpfFrequency>"
+                "</defaultCCMappings></defaults>", encoding="utf-8")
+            carte, source = midifollow.load_map_with_source(path=chemin)
+            self.assertEqual((carte, source),
+                             ({"lpfFrequency": 99}, "MIDIFollow.XML"))
+
+            from delugeapp.core.delugelink import DelugeLink
+
+            class Carte:
+                root = Path(tmp)
+
+            lien = DelugeLink()
+            lien.load_follow_map(Carte())
+            self.assertEqual(lien.state().follow_source, "MIDIFollow.XML")
+            lien.load_follow_map(None)
+            self.assertEqual(lien.state().follow_source, "")
 
     def test_un_fichier_abime_retombe_sur_les_defauts(self):
         from delugeapp.core import midifollow
@@ -5500,5 +5819,2590 @@ class TestApiPubliqueNonAppelee(unittest.TestCase):
         self.assertNotIn("intrus", theory.chord_names())
 
 
+# --------------------------------------------------------------------------- #
+# Défauts trouvés lors de l'audit du 12 octobre 2026
+# --------------------------------------------------------------------------- #
+
+#: Preset réduit à ce qui faisait défaut : des parties que le modèle ne
+#: connaît pas (modulateurs FM, affectations MIDI, synchro d'oscillateur),
+#: un câble dont la profondeur dépend de **deux** sources, un attribut
+#: inconnu sur un câble, une polyphonie à l'ancienne et une dernière tranche
+#: sans note haute.
+_PRESET_COMPLET = """<?xml version="1.0" encoding="UTF-8"?>
+<sound
+\tname="TEST"
+\tpolyphonic="1"
+\tmode="fm">
+\t<osc1 type="sample" transpose="0" cents="0" retrigPhase="-1">
+\t\t<sampleRanges>
+\t\t\t<sampleRange rangeTopNote="60" fileName="SAMPLES/a.wav">
+\t\t\t\t<zone startSamplePos="0" endSamplePos="100" />
+\t\t\t</sampleRange>
+\t\t\t<sampleRange fileName="SAMPLES/b.wav">
+\t\t\t\t<zone startSamplePos="0" endSamplePos="200" />
+\t\t\t</sampleRange>
+\t\t</sampleRanges>
+\t</osc1>
+\t<osc2 type="square" oscillatorSync="1" />
+\t<modulator1 transpose="7" cents="3" />
+\t<modulator2 transpose="-5" cents="0" toModulator1="1" />
+\t<midiKnobs>
+\t\t<midiKnob channel="3" ccNumber="74" controlsParam="lpfFrequency" />
+\t</midiKnobs>
+\t<defaultParams volume="0x7FFFFFFF">
+\t\t<patchCables>
+\t\t\t<patchCable source="velocity" destination="volume"
+\t\t\t\tamount="0x20000000" rangeAdjustable="1" />
+\t\t\t<patchCable source="lfo1" destination="pitch" amount="0x03D70A3C">
+\t\t\t\t<depthControlledBy>
+\t\t\t\t\t<patchCable source="lfo2" amount="0x31EB850C" />
+\t\t\t\t\t<patchCable source="random" amount="0x2F5C28E4" />
+\t\t\t\t</depthControlledBy>
+\t\t\t</patchCable>
+\t\t</patchCables>
+\t</defaultParams>
+</sound>
+"""
+
+
+class TestAuditOctobre(unittest.TestCase):
+    """Chaque test échoue sur le code d'avant la correction qu'il décrit."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.root = self.base / "carte"
+        for sub in ("SONGS", "SYNTHS", "KITS", "SAMPLES"):
+            (self.root / sub).mkdir(parents=True)
+        self.sd = sdcard.SDCard(self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _preset(self) -> Path:
+        path = self.root / "SYNTHS" / "TEST.XML"
+        path.write_text(_PRESET_COMPLET, encoding="utf-8")
+        return path
+
+    # -- modèle : rien ne se perd à l'enregistrement ------------------------ #
+
+    def test_dupliquer_un_preset_garde_ce_que_le_modele_ignore(self):
+        """516 presets sur 911 sortaient abîmés de « Dupliquer »."""
+        copie = SynthPreset.load(self._preset()).copy("TEST copie")
+        doc = dxml.load(copie.save(self.root / "SYNTHS" / "C.XML",
+                                   backup=False))
+        self.assertEqual(doc.root.find("modulator1").get("transpose"), "7")
+        self.assertEqual(doc.root.find("modulator2").get("toModulator1"), "1")
+        self.assertEqual(doc.root.find("osc2").get("oscillatorSync"), "1")
+        self.assertIsNotNone(doc.root.find("midiKnobs/midiKnob"))
+
+    def test_deux_sources_de_profondeur_survivent(self):
+        """La source intérieure était remplacée par la source extérieure."""
+        preset = SynthPreset.load(self._preset())
+        preset.save(backup=False)
+        cable = [c for c in SynthPreset.load(preset.path).sound.patch_cables
+                 if c.source == "lfo1"][0]
+        self.assertEqual([s for s, _a in cable.depth_cables],
+                         ["lfo2", "random"])
+        self.assertEqual(cable.depth_cables[1][1], parse_fixed("0x2F5C28E4"))
+
+    def test_attribut_inconnu_d_un_cable_survit(self):
+        path = self._preset()
+        SynthPreset.load(path).save(backup=False)
+        cable = dxml.load(path).root.find(
+            "defaultParams/patchCables/patchCable")
+        self.assertEqual(cable.get("rangeAdjustable"), "1")
+
+    def test_polyphonie_ancienne_non_traduite_si_inchangee(self):
+        path = self._preset()
+        preset = SynthPreset.load(path)
+        self.assertEqual(preset.sound.polyphonic, "poly")
+        preset.save(backup=False)
+        self.assertEqual(dxml.load(path).root.get("polyphonic"), "1")
+        preset.sound.polyphonic = "mono"
+        preset.save(backup=False)
+        self.assertEqual(dxml.load(path).root.get("polyphonic"), "mono")
+
+    def test_derniere_tranche_sans_note_haute(self):
+        path = self._preset()
+        SynthPreset.load(path).save(backup=False)
+        tranches = dxml.load(path).root.findall(
+            "osc1/sampleRanges/sampleRange")
+        self.assertEqual(tranches[0].get("rangeTopNote"), "60")
+        self.assertIsNone(tranches[1].get("rangeTopNote"))
+
+    def test_gammes_et_noms_de_notes_uniques(self):
+        """Deux tables divergentes : « Ré# » ici, « Mib » ailleurs."""
+        song = Song(root_note=3, mode_notes=[0, 2, 3, 6, 7, 8, 11])
+        self.assertEqual(song.scale_name(), "Mib hongroise mineure")
+        song = Song(root_note=10, mode_notes=[0, 1, 5, 7, 10])
+        self.assertEqual(song.scale_name(), "Sib in sen")
+        self.assertEqual(analysis.note_name(63), "Mib3")
+
+    # -- écriture : la copie de sécurité d'abord ---------------------------- #
+
+    def test_pas_d_ecrasement_sans_copie_de_securite(self):
+        from unittest import mock
+
+        path = self._preset()
+        avant = path.read_bytes()
+        doc = dxml.load(path)
+        doc.root.set("name", "CHANGE")
+        with mock.patch.object(dxml, "_make_backup", return_value=None):
+            with self.assertRaises(dxml.DelugeXMLError):
+                dxml.save(doc, path, backup=True)
+        self.assertEqual(path.read_bytes(), avant)
+
+    # -- chemins ------------------------------------------------------------ #
+
+    def test_rel_exige_une_frontiere_de_dossier(self):
+        voisin = self.base / "carte 2" / "x.wav"
+        voisin.parent.mkdir()
+        voisin.write_bytes(b"x")
+        self.assertEqual(self.sd.rel(voisin), "x.wav")
+        self.assertEqual(self.sd.rel(self.root / "SONGS" / "a.XML"),
+                         "SONGS/a.XML")
+
+    def test_un_filename_ne_sort_pas_de_la_carte(self):
+        (self.base / "dehors.wav").write_bytes(b"x")
+        self.assertIsNone(self.sd.resolve_sample("../dehors.wav"))
+        self.assertIsNone(self.sd.resolve_sample("SAMPLES/../../dehors.wav"))
+
+    # -- références ---------------------------------------------------------- #
+
+    def test_relink_trouve_un_nom_echappe(self):
+        """``&`` écrit ``&amp;`` dans le XML : le pré-filtre le manquait."""
+        wav.write(self.root / "SAMPLES" / "Tenor & Alto.wav",
+                  np.zeros(100, dtype=np.float32), 44100)
+        preset = SynthPreset.new("SAX")
+        preset.sound.osc1 = model_osc("SAMPLES/Tenor & Alto.wav")
+        preset.save(self.root / "SYNTHS" / "SAX.XML", backup=False)
+        self.assertIn(b"&amp;", (self.root / "SYNTHS" / "SAX.XML").read_bytes())
+        changes = deps.relink_many(
+            self.sd, {"SAMPLES/Tenor & Alto.wav": "SAMPLES/Sax.wav"},
+            apply=True)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(
+            SynthPreset.load(self.root / "SYNTHS" / "SAX.XML").sample_paths(),
+            ["SAMPLES/Sax.wav"])
+
+    def test_doublon_garde_si_ses_references_n_ont_pas_suivi(self):
+        """Supprimer après une réécriture ratée cassait les presets."""
+        from unittest import mock
+
+        t = np.linspace(0, 0.1, 4410, dtype=np.float32)
+        son = (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+        (self.root / "SAMPLES" / "LONG DOSSIER").mkdir()
+        original = self.root / "SAMPLES" / "LONG DOSSIER" / "son.wav"
+        wav.write(original, son, 44100)
+        wav.write(self.root / "SAMPLES" / "son.wav", son, 44100)
+        preset = SynthPreset.new("P")
+        preset.sound.osc1 = model_osc("SAMPLES/LONG DOSSIER/son.wav")
+        preset.save(self.root / "SYNTHS" / "P.XML", backup=False)
+
+        lib = db.Library(self.base / "index.db")
+        try:
+            scan.scan_card(self.sd, lib, compute_hash=True, full=True)
+            plan = organize.plan_dedupe(self.sd, lib)
+            self.assertEqual([op.src for op in plan.ops], [original])
+            with mock.patch.object(dxml, "save",
+                                   side_effect=dxml.DelugeXMLError("plein")):
+                _done, erreurs = plan.apply(self.sd, lib)
+            self.assertTrue(original.exists(), "le doublon cité a disparu")
+            self.assertTrue(any("conservé" in e for e in erreurs), erreurs)
+        finally:
+            lib.close()
+
+    def test_l_index_suit_un_fichier_deplace(self):
+        wav.write(self.root / "SAMPLES" / "seul.wav",
+                  np.zeros(100, dtype=np.float32), 44100)
+        lib = db.Library(self.base / "index.db")
+        try:
+            scan.scan_card(self.sd, lib, compute_hash=False, full=True)
+            lib.set_rating("sample", "SAMPLES/seul.wav", favorite=True)
+            plan = organize.plan_archive_unused(self.sd, lib)
+            plan.apply(self.sd, lib)
+            self.assertIsNone(lib.get("sample", "SAMPLES/seul.wav"))
+            self.assertIsNotNone(lib.get("sample", "_UNUSED/seul.wav"))
+            self.assertTrue(
+                lib.get_rating("sample", "_UNUSED/seul.wav")["favorite"])
+        finally:
+            lib.close()
+
+    def test_un_preset_ecrit_apparait_dans_l_index(self):
+        lib = db.Library(self.base / "index.db")
+        try:
+            path = SynthPreset.new("NEUF").save(
+                self.root / "SYNTHS" / "NEUF.XML", backup=False)
+            self.assertIsNone(lib.get("synth", "SYNTHS/NEUF.XML"))
+            scan.index_presets(self.sd, lib, [path])
+            self.assertIsNotNone(lib.get("synth", "SYNTHS/NEUF.XML"))
+        finally:
+            lib.close()
+
+    # -- audio ---------------------------------------------------------------- #
+
+    def test_conversion_garde_note_et_boucle(self):
+        """Le bloc ``smpl`` disparaissait : 184 fichiers bouclés sur la carte."""
+        import struct
+
+        smpl = struct.pack("<9I", 0, 0, 31250, 48, 0, 0, 0, 1, 0)
+        smpl += struct.pack("<6I", 0, 0, 1000, 3000, 0, 0)
+        src = self.root / "SAMPLES" / "boucle.wav"
+        data = (0.5 * np.sin(np.linspace(0, 400, 8000))).astype(np.float32)
+        wav.write(src, data, 32000, extra_chunks=[(b"smpl", smpl)])
+        self.assertEqual(wav.probe(src).loop_start, 1000)
+
+        mono = wav.convert(src, self.base / "dc.wav", remove_dc=True)
+        self.assertEqual((mono.root_note, mono.loop_start, mono.loop_end),
+                         (48, 1000, 3000))
+        plus = wav.convert(src, self.base / "48k.wav", sample_rate=48000)
+        self.assertEqual((plus.root_note, plus.loop_start, plus.loop_end),
+                         (48, 1500, 4500))
+
+    def test_recentrer_n_ecrete_pas(self):
+        # Asymétrique, comme un kick saturé : surtout positif, avec de brèves
+        # pointes à -0,99. Recentré, il descend sous -1. (Un signal
+        # symétrique décalé ne prouve rien : le recentrer le ramène dans
+        # ses bornes.)
+        src = self.root / "SAMPLES" / "chaud.wav"
+        signal = np.full(8820, 0.4, dtype=np.float32)
+        signal[::100] = -0.99
+        wav.write(src, signal, 44100)
+        wav.convert(src, self.base / "x.wav", remove_dc=True)
+        sortie, _sr = wav.read(self.base / "x.wav")
+        self.assertLess(float(np.max(np.abs(sortie))), 0.9995)
+
+    def test_rogner_epargne_un_fichier_cite_par_un_preset(self):
+        t = np.zeros(4410, dtype=np.float32)
+        t[2000:] = 0.5
+        wav.write(self.root / "SAMPLES" / "tranche.wav", t, 44100)
+        preset = SynthPreset.new("P")
+        preset.sound.osc1 = model_osc("SAMPLES/tranche.wav")
+        preset.save(self.root / "SYNTHS" / "P.XML", backup=False)
+        lib = db.Library(self.base / "index.db")
+        try:
+            scan.scan_card(self.sd, lib, compute_hash=False, full=True)
+            plan = samplefix.plan_custom(self.sd, lib,
+                                         ["SAMPLES/tranche.wav"], trim_db=-60)
+            self.assertEqual(plan.edits, [])
+            self.assertIn("rognage", plan.skipped[0].skipped)
+        finally:
+            lib.close()
+
+    def test_restaurer_remet_les_bornes_a_l_echelle_d_origine(self):
+        wav.write(self.root / "SAMPLES" / "lent.wav",
+                  (0.3 * np.sin(np.linspace(0, 300, 16000))).astype(
+                      np.float32), 32000)
+        preset = SynthPreset.new("P")
+        preset.sound.osc1 = model_osc("SAMPLES/lent.wav", end=12000)
+        path = preset.save(self.root / "SYNTHS" / "P.XML", backup=False)
+        lib = db.Library(self.base / "index.db")
+        try:
+            scan.scan_card(self.sd, lib, compute_hash=False, full=True)
+            result = samplefix.plan_standard_rate(self.sd, lib).apply(
+                self.sd, lib)
+            self.assertEqual(SynthPreset.load(path).sound.osc1.zone.end, 16538)
+            samplefix.restore(self.sd, result.backup_dir, lib, apply=True)
+            self.assertAlmostEqual(SynthPreset.load(path).sound.osc1.zone.end,
+                                   12000, delta=1)
+        finally:
+            lib.close()
+
+    # -- sauvegardes et export ------------------------------------------------ #
+
+    def test_une_archive_lit_son_manifeste(self):
+        wav.write(self.root / "SAMPLES" / "a.wav",
+                  np.zeros(10, dtype=np.float32), 44100)
+        dossier = self.base / "sauvegardes"
+        backup.create_backup(self.sd, dossier, label="AVANT", zip_it=True,
+                             include_samples=True)
+        info = backup.list_backups(dossier)[0]
+        self.assertTrue(info.zipped)
+        self.assertEqual(info.label, "AVANT")
+        self.assertTrue(info.include_samples)
+        self.assertEqual(backup.diff_backup(info, self.sd)["removed"], [])
+
+    def test_une_piste_audio_n_est_pas_un_preset_manquant(self):
+        (self.root / "SONGS" / "S.XML").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<song>\n'
+            '<instruments>\n<audioOutput name="AUDIO 1" />\n</instruments>\n'
+            '</song>\n', encoding="utf-8")
+        pack = songpack.collect(self.sd, "SONGS/S.XML")
+        self.assertEqual(pack.missing_presets, [])
+
+
+class TestAuditOctobreSuite(unittest.TestCase):
+    """Seconde passe de l'audit : index, doublons, vocabulaire du firmware."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.root = self._carte("carte")
+        self.sd = sdcard.SDCard(self.root)
+        self.lib = db.Library(self.base / "index.db")
+        self.son = (0.5 * np.sin(np.linspace(0, 500, 20000))).astype(
+            np.float32)
+
+    def tearDown(self):
+        self.lib.close()
+        self._tmp.cleanup()
+
+    def _carte(self, nom: str) -> Path:
+        root = self.base / nom
+        for sub in ("SONGS", "SYNTHS", "KITS", "SAMPLES"):
+            (root / sub).mkdir(parents=True)
+        return root
+
+    # -- index -------------------------------------------------------------- #
+
+    def test_un_fichier_modifie_n_est_plus_un_doublon(self):
+        """L'empreinte complète gardée proposait de supprimer un fichier
+        devenu différent."""
+        import shutil as _sh
+
+        wav.write(self.root / "SAMPLES" / "a.wav", self.son, 44100)
+        _sh.copy(self.root / "SAMPLES" / "a.wav", self.root / "SAMPLES" / "b.wav")
+        scan.scan_card(self.sd, self.lib, full=False)
+        self.assertEqual(len(self.lib.duplicates()), 1)
+
+        time.sleep(1.1)              # une date de modification différente
+        autre = self.son.copy()
+        autre[5000:6000] = 0
+        wav.write(self.root / "SAMPLES" / "b.wav", autre, 44100)
+        scan.scan_card(self.sd, self.lib, full=False)
+        self.assertEqual(self.lib.duplicates(), [])
+        self.assertEqual(organize.plan_dedupe(self.sd, self.lib).ops, [])
+
+    def test_un_fichier_disparu_quitte_l_index(self):
+        import shutil as _sh
+
+        wav.write(self.root / "SAMPLES" / "x.wav", self.son[:100], 44100)
+        preset = SynthPreset.new("P")
+        preset.sound.osc1 = model_osc("SAMPLES/x.wav")
+        preset.save(self.root / "SYNTHS" / "P.XML", backup=False)
+        scan.scan_card(self.sd, self.lib, full=False)
+
+        _sh.move(self.root / "SAMPLES" / "x.wav", self.base / "x.wav")
+        scan.scan_card(self.sd, self.lib, full=False)
+        self.assertIsNone(self.lib.get("sample", "SAMPLES/x.wav"))
+        self.assertEqual([r["dst_rel"] for r in self.lib.missing_links()],
+                         ["SAMPLES/x.wav"])
+
+        _sh.move(self.base / "x.wav", self.root / "SAMPLES" / "x.wav")
+        scan.scan_card(self.sd, self.lib, full=False)
+        self.assertEqual(self.lib.missing_links(), [],
+                         "la référence d'un échantillon revenu reste cassée")
+
+    def test_l_index_d_une_autre_carte_est_ecarte(self):
+        """Les empreintes d'une carte s'appliquaient aux fichiers de même
+        chemin d'une autre."""
+        import shutil as _sh
+
+        wav.write(self.root / "SAMPLES" / "a.wav", self.son, 44100)
+        _sh.copy2(self.root / "SAMPLES" / "a.wav", self.root / "SAMPLES" / "b.wav")
+        scan.scan_card(self.sd, self.lib)
+
+        autre_racine = self._carte("autre")
+        wav.write(autre_racine / "SAMPLES" / "a.wav", self.son, 44100)
+        different = self.son.copy()
+        different[:10] = 0
+        wav.write(autre_racine / "SAMPLES" / "b.wav", different, 44100)
+        autre = sdcard.SDCard(autre_racine)
+        self.assertTrue(scan.forget_other_card(autre, self.lib))
+        self.assertEqual(organize.plan_dedupe(autre, self.lib).ops, [])
+        self.assertFalse(scan.forget_other_card(self.sd, self.lib),
+                         "un index vidé ne décrit plus aucune carte")
+
+    def test_un_doublon_qui_ne_l_est_plus_n_est_pas_supprime(self):
+        """Dernier filet, indépendant de l'index : l'octet près."""
+        import shutil as _sh
+
+        wav.write(self.root / "SAMPLES" / "a.wav", self.son, 44100)
+        (self.root / "SAMPLES" / "LONG").mkdir()
+        cible = self.root / "SAMPLES" / "LONG" / "a.wav"
+        _sh.copy(self.root / "SAMPLES" / "a.wav", cible)
+        scan.scan_card(self.sd, self.lib)
+        plan = organize.plan_dedupe(self.sd, self.lib)
+        self.assertEqual([op.src for op in plan.ops], [cible])
+        # Le fichier change entre l'analyse et l'application du plan.
+        donnees = bytearray(cible.read_bytes())
+        donnees[-1] ^= 0xFF
+        cible.write_bytes(bytes(donnees))
+        _done, erreurs = plan.apply(self.sd, self.lib)
+        self.assertTrue(cible.exists())
+        self.assertTrue(any("octet pour octet" in e for e in erreurs))
+
+    # -- vocabulaire du firmware --------------------------------------------- #
+
+    def test_un_cable_vise_le_nom_de_destination_du_firmware(self):
+        from delugeapp.core.model import PatchCable
+
+        preset = SynthPreset.new("PW")
+        preset.sound.patch_cables = [
+            PatchCable("lfo1", "oscAPulseWidth", 0x10000000),
+            PatchCable("lfo2", "bitCrush", 0x10000000),
+            PatchCable("envelope2", "lpfFrequency", 0x10000000)]
+        path = preset.save(self.root / "SYNTHS" / "PW.XML", backup=False)
+        cibles = [c.get("destination") for c in
+                  dxml.load(path).root.iter("patchCable")]
+        self.assertEqual(cibles,
+                         ["oscAPhaseWidth", "bitcrushAmount", "lpfFrequency"])
+
+    def test_l_ecoute_entend_un_cable_de_largeur_d_impulsion(self):
+        from delugeapp.core.model import PatchCable
+
+        son = SynthPreset.new("PW").sound
+        son.patch_cables = [PatchCable("lfo1", "oscAPhaseWidth", 0x20000000)]
+        mods = render._modulations(son, 100, 44100,
+                                   {"lfo1": np.ones(100, dtype=np.float32)})
+        self.assertIn("oscAPulseWidth", mods)
+
+    def test_le_generateur_n_ecrit_que_des_noms_connus_du_firmware(self):
+        """Noms relevés dans le code du firmware communautaire."""
+        filtres = {"24dB", "12dB", "24dBDrive", "SVF_Band", "SVF_Notch",
+                   "HPLadder", "Off"}
+        effets = {"none", "flanger", "chorus", "phaser", "StereoChorus",
+                  "TapeWarble", "dimension", "grainFX"}
+        lfos = {"sine", "triangle", "square", "saw", "sah", "rwalk",
+                "warbler"}
+        vus = set()
+        for genre in genres.genre_keys():
+            for role in synthgen.ROLES:
+                for graine in range(4):
+                    son = synthgen.generate(synthgen.GenOptions(
+                        genre=genre, role=role, seed=graine)).sound
+                    vus |= {("filtre", son.lpf_mode), ("effet", son.mod_fx_type),
+                            ("lfo", son.lfo1.type), ("lfo", son.lfo2.type)}
+        inconnus = sorted(
+            (k, v) for k, v in vus
+            if v not in {"filtre": filtres, "effet": effets, "lfo": lfos}[k])
+        self.assertEqual(inconnus, [])
+
+    def test_ancienne_polyphonie_numerique(self):
+        """Firmware : 0 = auto, 2 = choke, tout autre nombre = poly."""
+        attendu = {"0": "auto", "1": "poly", "2": "choke", "3": "poly",
+                   "4": "poly"}
+        for brut, mode in attendu.items():
+            with self.subTest(valeur=brut):
+                el = dxml.loads(('<sound polyphonic="%s" />' % brut).encode()).root
+                self.assertEqual(Sound.from_xml(el).polyphonic, mode)
+
+    # -- divers --------------------------------------------------------------- #
+
+    def test_un_preset_cite_par_un_morceau_n_est_pas_renomme(self):
+        for nom in ("Cite.", "Libre."):
+            SynthPreset.new(nom).save(self.root / "SYNTHS" / f"{nom}.XML",
+                                      backup=False)
+        (self.root / "SONGS" / "S.XML").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<song>\n<instruments>\n'
+            '<sound presetName="Cite." presetFolder="SYNTHS" />\n'
+            '</instruments>\n</song>\n', encoding="utf-8")
+        scan.scan_card(self.sd, self.lib)
+        cibles = [op.src.name for op in
+                  organize.plan_fix_names(self.sd, self.lib).ops]
+        self.assertIn("Libre..XML", cibles)
+        self.assertNotIn("Cite..XML", cibles)
+
+    def test_midi_follow_ne_lit_que_les_assignations(self):
+        from delugeapp.core import midifollow
+
+        fichier = self.base / "MIDIFollow.XML"
+        fichier.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<defaults>\n'
+            '<defaultCCMappings><lpfFrequency>74</lpfFrequency>'
+            '</defaultCCMappings>\n<pan>3</pan>\n</defaults>\n',
+            encoding="utf-8")
+        self.assertEqual(midifollow.load_map(path=fichier),
+                         {"lpfFrequency": 74})
+
+    def test_restaurer_garde_une_copie_de_ce_qu_on_ecrase(self):
+        """La restauration écrasait le travail récent sans recours."""
+        preset = self.root / "SYNTHS" / "P.XML"
+        preset.write_text("<sound name='ANCIEN' />", encoding="utf-8")
+        dossier = self.base / "sauvegardes"
+        backup.create_backup(self.sd, dossier, label="vieille")
+        preset.write_text("<sound name='RECENT' />", encoding="utf-8")
+
+        vieille = backup.list_backups(dossier)[0]
+        restaures, erreurs = backup.restore_backup(vieille, self.sd,
+                                                   safety_dir=dossier)
+        self.assertEqual((restaures, erreurs), (1, []))
+        self.assertIn("ANCIEN", preset.read_text(encoding="utf-8"))
+        abri = [b for b in backup.list_backups(dossier)
+                if b.label == "avant restauration"]
+        self.assertEqual(len(abri), 1)
+        self.assertIn("RECENT", (abri[0].path / "SYNTHS" / "P.XML").read_text(
+            encoding="utf-8"))
+
+    def test_pas_de_sauvegarde_dans_les_dossiers_de_la_carte(self):
+        with self.assertRaises(OSError):
+            backup.create_backup(self.sd, self.root / "SAMPLES" / "copie")
+        self.assertFalse((self.root / "SAMPLES" / "copie").exists())
+
+    def test_le_swing_survit_au_jeu_sur_la_machine(self):
+        """Un pas à 2,5 partait au pas 2 : le swing disparaissait."""
+        from delugeapp.core.delugelink import DelugeLink
+
+        motif = rhythm.Pattern(steps=4)
+        motif.add("Kick", rhythm.Step(pos=0))
+        motif.add("Kick", rhythm.Step(pos=2.5))
+        lien = DelugeLink()
+        fausse = _SortieFactice()
+        lien._out = fausse
+        self.assertTrue(lien.play_pattern(motif, bpm=240,
+                                          row_notes={"Kick": 36}))
+        for _ in range(300):
+            if not lien.is_playing:
+                break
+            time.sleep(0.01)
+        frappes = fausse.temps_des("on", 36)
+        duree_pas = 60.0 / 240 * motif.ticks_per_step / motif.ppq
+        self.assertEqual(len(frappes), 2)
+        self.assertAlmostEqual(frappes[1] - frappes[0], 2.5 * duree_pas,
+                               delta=0.02)
+
+
+# --------------------------------------------------------------------------- #
+# Générateurs et aides à la composition (13 octobre 2026)
+# --------------------------------------------------------------------------- #
+
+class TestGenerateurRecale(unittest.TestCase):
+    """Le générateur de presets, recalé sur la carte et sur le firmware."""
+
+    @staticmethod
+    def _gen(genre, role, seed, **kw):
+        return synthgen.generate(synthgen.GenOptions(genre=genre, role=role,
+                                                     seed=seed, **kw))
+
+    def test_l_arpegiateur_s_ecrit_pour_c1(self):
+        """c1.2.1 ignore ``mode`` dans un fichier c1.2.x : il lit arpMode."""
+        with tempfile.TemporaryDirectory() as tmp:
+            preset = self._gen("trance", "arp", 3)
+            self.assertTrue(preset.sound.arp.is_on)
+            racine = dxml.load(preset.save(Path(tmp) / "A.XML",
+                                           backup=False)).root
+        arp = racine.find("arpeggiator")
+        self.assertEqual(arp.get("arpMode"), "arp")
+        self.assertIn(arp.get("noteMode"),
+                      ("up", "down", "upDown", "random", "asPlayed"))
+        self.assertIn(arp.get("octaveMode"),
+                      ("up", "down", "upDown", "alt", "random"))
+        # Double-croche ou croche, jamais la quadruple-croche d'avant (9).
+        self.assertIn(arp.get("syncLevel"), ("6", "7", "8"))
+
+    def test_toujours_sensible_a_la_velocite(self):
+        """778 presets réels sur 911 ; le générateur l'oubliait."""
+        for genre in genres.genre_keys():
+            for role in genres.ROLES:
+                son = self._gen(genre, role, 4).sound
+                with self.subTest(genre=genre, role=role):
+                    vel = [c.display() for c in son.patch_cables
+                           if (c.source, c.destination)
+                           == ("velocity", "volume")]
+                    self.assertTrue(vel)
+                    self.assertGreaterEqual(vel[0], 25)
+
+    def test_la_cloche_est_fm_et_accordee(self):
+        from collections import Counter
+
+        modes = Counter(self._gen("ambient", "bell", s).sound.mode
+                        for s in range(30))
+        self.assertGreater(modes["fm"], 15)
+        fm = next(self._gen("ambient", "bell", s) for s in range(30)
+                  if self._gen("ambient", "bell", s).sound.mode == "fm")
+        self.assertNotEqual(fm.sound.modulator1.transpose, 0,
+                            "une cloche à l'unisson n'a rien de métallique")
+        with tempfile.TemporaryDirectory() as tmp:
+            racine = dxml.load(fm.save(Path(tmp) / "B.XML",
+                                       backup=False)).root
+        self.assertEqual(racine.find("modulator1").get("transpose"),
+                         str(fm.sound.modulator1.transpose))
+        self.assertIsNotNone(racine.find("modulator2").get("toModulator1"))
+
+    def test_un_preset_soustractif_n_ecrit_pas_de_modulateur(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preset = self._gen("house", "pad", 1, mode="subtractive")
+            racine = dxml.load(preset.save(Path(tmp) / "P.XML",
+                                           backup=False)).root
+        self.assertIsNone(racine.find("modulator1"))
+
+    def test_le_wobble_de_la_dubstep_est_synchronise(self):
+        synchro = [self._gen("dubstep", "bass", s).sound.lfo1.sync_level
+                   for s in range(30)]
+        self.assertGreater(sum(1 for v in synchro if v), 15)
+        self.assertTrue(all(v in (0, 5, 6, 7) for v in synchro))
+
+    def test_les_basses_tiennent_sauf_en_acid(self):
+        """Sustain médian réel : 35 ; l'acid garde sa basse qui claque."""
+        from delugeapp.core.fixedpoint import to_display
+        from statistics import median
+
+        def sustain(genre):
+            return median(to_display(self._gen(genre, "bass", s).sound
+                                     .env1.sustain) for s in range(20))
+
+        self.assertGreater(sustain("deep_house"), 15)
+        self.assertLess(sustain("acid"), 10)
+
+    def test_les_signatures_de_genre_tiennent(self):
+        from statistics import median
+
+        def med(genre, role, fn):
+            return median(fn(self._gen(genre, role, s).sound)
+                          for s in range(24))
+
+        self.assertGreater(med("trance", "pad", lambda s: s.unison_num),
+                           med("deep_house", "pad", lambda s: s.unison_num))
+        self.assertGreater(
+            med("acid", "bass", lambda s: s.display("lpfResonance")),
+            med("house", "bass", lambda s: s.display("lpfResonance")))
+        self.assertLess(med("house", "bass",
+                            lambda s: s.display("reverbAmount")), 8)
+
+    def test_le_rendu_entend_l_accord_des_modulateurs(self):
+        import copy
+
+        base = self._gen("ambient", "bell", 1, mode="fm")
+        unisson = copy.deepcopy(base)
+        unisson.sound.modulator1.transpose = 0
+        unisson.sound.modulator1.cents = 0
+        a = render.render_sound(base.sound, note=60, seconds=0.8)
+        b = render.render_sound(unisson.sound, note=60, seconds=0.8)
+        self.assertGreater(float(np.max(np.abs(a - b))), 0.05)
+
+    def test_l_ecoute_d_une_rangee_once_ignore_la_fin_de_note(self):
+        """Sur la machine, ONCE joue l'échantillon jusqu'au bout."""
+        from delugeapp.core.model import REPEAT_CUT, REPEAT_ONCE
+
+        with tempfile.TemporaryDirectory() as tmp:
+            racine = Path(tmp) / "carte"
+            (racine / "SAMPLES").mkdir(parents=True)
+            t = np.linspace(0, 1.0, 44100, endpoint=False, dtype=np.float32)
+            wav.write(racine / "SAMPLES" / "long.wav",
+                      (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32),
+                      44100)
+            sd = sdcard.SDCard(racine)
+            kit = Kit.new("K")
+            row = kit.add_row("LONG", "SAMPLES/long.wav", seconds=1.0,
+                              frames=44100)
+            self.assertEqual(row.sound.osc1.loop_mode, REPEAT_ONCE)
+            once = render.render_sound(row.sound, note=60, seconds=1.0,
+                                       gate=0.3, sd=sd)
+            row.sound.osc1.loop_mode = REPEAT_CUT
+            cut = render.render_sound(row.sound, note=60, seconds=1.0,
+                                      gate=0.3, sd=sd)
+        fenetre = slice(int(0.6 * 44100), int(0.7 * 44100))
+        self.assertGreater(float(np.max(np.abs(once[fenetre]))), 0.05)
+        self.assertLess(float(np.max(np.abs(cut[fenetre]))), 0.01)
+
+    def test_lfo_synchronise_a_120_bpm(self):
+        self.assertAlmostEqual(render.synced_hz(7), 8.0)
+        self.assertAlmostEqual(render.synced_hz(5), 2.0)
+        self.assertAlmostEqual(render.synced_hz(3), 0.5)
+        self.assertEqual(render.synced_hz(0), 0.0)
+
+
+class TestAccompagnement(unittest.TestCase):
+    """Basse, accords et arpège tirés d'une progression."""
+
+    def setUp(self):
+        from delugeapp.core import accomp
+
+        self.accomp = accomp
+        self.prog = theory.progression(57, "mineur", "mélancolique", seed=3,
+                                       bars=4)
+
+    def test_chaque_genre_a_ses_styles(self):
+        for genre in genres.genre_keys():
+            chords, bass, _arp = self.accomp.genre_styles(genre)
+            with self.subTest(genre=genre):
+                self.assertIn(chords, self.accomp.CHORD_STYLES)
+                self.assertIn(bass, self.accomp.BASS_STYLES)
+
+    def test_la_basse_tombe_sur_la_fondamentale(self):
+        for style in self.accomp.BASS_STYLES:
+            notes = self.accomp.bass_part(self.prog, style)
+            with self.subTest(style=style):
+                self.assertTrue(notes)
+                for bar, chord in enumerate(self.prog):
+                    premiere = min((e for e in notes
+                                    if bar * 16 <= e.start < (bar + 1) * 16),
+                                   key=lambda e: e.start)
+                    self.assertEqual(premiere.note % 12,
+                                     chord["root"] % 12)
+
+    def test_la_basse_contretemps_evite_les_temps(self):
+        for style in ("contretemps", "roulante"):
+            with self.subTest(style=style):
+                debuts = {e.start % 4 for e in self.accomp.bass_part(
+                    self.prog, style)}
+                self.assertNotIn(0, debuts)
+
+    def test_la_marche_approche_l_accord_suivant(self):
+        notes = self.accomp.bass_part(self.prog, "marche")
+        for bar in range(len(self.prog) - 1):
+            derniere = max((e for e in notes
+                            if bar * 16 <= e.start < (bar + 1) * 16),
+                           key=lambda e: e.start)
+            suivante = self.prog[bar + 1]["bass"]
+            self.assertEqual(abs(derniere.note - suivante), 1)
+
+    def test_les_accords_couvrent_chaque_mesure(self):
+        notes = self.accomp.chord_part(self.prog, "tenu")
+        for bar, chord in enumerate(self.prog):
+            dans = sorted(e.note for e in notes if e.start == bar * 16)
+            self.assertEqual(dans, sorted(chord["notes"]))
+
+    def test_l_arpege_monte_au_dessus_des_accords(self):
+        arp = self.accomp.arp_part(self.prog, "montant", rate=1)
+        self.assertEqual(len(arp), 16 * len(self.prog))
+        haut_accords = max(n for c in self.prog for n in c["notes"])
+        self.assertGreater(min(e.note for e in arp), haut_accords - 12)
+
+    def test_export_midi_multipiste(self):
+        parts = self.accomp.accompany(self.prog, genre="synthwave",
+                                      arp=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "accomp.mid"
+            pistes = midifile.parts_to_midi(chemin, parts, 110)
+            lu = TestMidiFile._parse(chemin)
+        self.assertEqual(pistes, 3)
+        noms = [t["name"] for t in lu["tracks"]]
+        for nom in ("Accords", "Basse", "Arpège"):
+            self.assertIn(nom.replace("è", "e"),
+                          [n.replace("è", "e").replace("?", "e")
+                           for n in noms if n])
+        # Toutes les notes y sont, toutes éteintes (vérifié par l'analyseur).
+        total = sum(len(t["notes"]) for t in lu["tracks"])
+        self.assertEqual(total, sum(len(v) for v in parts.values()))
+
+    def test_ecoute_de_l_accompagnement(self):
+        parts = self.accomp.accompany(self.prog, genre="house")
+        sons = {"Accords": synthgen.generate(synthgen.GenOptions(
+                    genre="house", role="stab", seed=1)).sound,
+                "Basse": synthgen.generate(synthgen.GenOptions(
+                    genre="house", role="bass", seed=1)).sound}
+        audio = render.render_parts(parts, sons, bpm=120, sr=22050)
+        attendu = 4 * 2.0 * 22050                 # quatre mesures à 120
+        self.assertGreaterEqual(audio.shape[0], attendu)
+        self.assertGreater(float(np.max(np.abs(audio))), 0.05)
+        self.assertLessEqual(float(np.max(np.abs(audio))), 0.98 + 1e-6)
+
+
+class TestRythmesJustes(unittest.TestCase):
+    """Motifs, grooves et polyrythmes vérifiés contre leur définition."""
+
+    def test_les_accents_ne_sont_plus_ecretes(self):
+        for genre in genres.genre_keys():
+            motif = rhythm.genre_beat(genre, bars=1, seed=1)
+            with self.subTest(genre=genre):
+                vel = [s.velocity for st in motif.tracks.values()
+                       for s in st]
+                self.assertTrue(all(1 <= v <= 100 for v in vel))
+                # Les coups forts restent distincts des faibles.
+                self.assertGreater(max(vel), min(vel))
+
+    def test_le_break_amen(self):
+        motif = rhythm.genre_beat("jungle", bars=1, seed=1, fills=False)
+        self.assertEqual([s.pos for s in motif.tracks["Kick"]],
+                         [0, 2, 10, 11])
+        self.assertEqual([s.pos for s in motif.tracks["Snare"]],
+                         [4, 7, 9, 12, 15])
+
+    def test_le_two_step_de_la_drum_and_bass(self):
+        motif = rhythm.genre_beat("dnb", bars=1, seed=1, fills=False)
+        self.assertEqual([s.pos for s in motif.tracks["Kick"]], [0, 10])
+        self.assertEqual([s.pos for s in motif.tracks["Snare"]], [4, 12])
+
+    def test_polyrythme_exact(self):
+        cells = rhythm.polyrhythm(3, 4, 16)
+        trois = [round(i * 16 / 3) for i in range(3)]
+        quatre = [0, 4, 8, 12]
+        self.assertEqual({i for i, c in enumerate(cells) if c},
+                         set(trois) | set(quatre))
+
+    def test_swing_mpc(self):
+        """58 % : la seconde double-croche tombe à 58 % de la croche."""
+        decalage = rhythm.GROOVES["MPC 58 %"][1]
+        self.assertAlmostEqual(6 + decalage, 0.58 * 12, places=3)
+        self.assertEqual(rhythm.GROOVES["MPC 58 %"][0], 0)
+        self.assertEqual(rhythm.deluge_swing("MPC 58 %"), 58)
+        self.assertEqual(rhythm.deluge_swing("droit"), 50)
+        self.assertIsNone(rhythm.deluge_swing("laid-back"))
+
+    def test_groove_applique_deux_fois_sans_planter(self):
+        motif = rhythm.genre_beat("house", bars=1, seed=1)
+        une = rhythm.apply_groove(motif, "MPC 62 %")
+        deux = rhythm.apply_groove(une, "MPC 62 %")
+        self.assertEqual(len(deux.tracks["Kick"]), len(motif.tracks["Kick"]))
+        # Depuis le motif droit, le résultat ne cumule pas.
+        refait = rhythm.apply_groove(rhythm.straighten(une), "MPC 62 %")
+        self.assertEqual([s.pos for s in refait.tracks["Shaker"]],
+                         [s.pos for s in une.tracks["Shaker"]])
+
+
+class TestHabitudesDesPresets(unittest.TestCase):
+    """Les traits que le générateur ignorait, recalés sur les 911 presets.
+
+    Mesuré sur la carte (14 octobre 2026) : 33 % des basses ont un
+    portamento, 27 à 56 % des presets une saturation, le délai se cale
+    surtout à la croche, l'effet de modulation va de 11 % (sons pincés) à
+    38 % (arpèges). Le générateur ne posait jamais ni portamento ni
+    saturation, calait tout à la double-croche et mettait un effet de
+    modulation sur un preset sur trois.
+    """
+
+    @staticmethod
+    def _sons(genre, role, n=60, **curseurs):
+        return [synthgen.generate(synthgen.GenOptions(
+            genre=genre, role=role, seed=k, **curseurs)).sound
+            for k in range(n)]
+
+    @staticmethod
+    def _part(sons, test):
+        return sum(1 for s in sons if test(s)) / len(sons)
+
+    def test_portamento_selon_le_role_et_le_genre(self):
+        def glisse(son):
+            return son.display("portamento") > 0
+
+        acid = self._part(self._sons("acid", "bass"), glisse)
+        house = self._part(self._sons("house", "bass"), glisse)
+        claviers = self._part(self._sons("techno", "keys"), glisse)
+        self.assertGreater(acid, 0.5)
+        self.assertGreater(acid, house)
+        self.assertGreater(self._part(self._sons("techno", "bass"), glisse),
+                           claviers)
+
+    def test_saturation_suit_le_curseur_de_salete(self):
+        def sature(son):
+            return son.clipping_amount > 0
+
+        propre = self._part(self._sons("techno", "drone", dirt=0.0), sature)
+        moyen = self._part(self._sons("techno", "drone"), sature)
+        sale = self._part(self._sons("techno", "drone", dirt=1.0), sature)
+        self.assertGreater(moyen, 0.25)
+        self.assertLess(propre, moyen)
+        self.assertLess(moyen, sale)
+
+    def test_delai_a_la_croche_pour_un_lead_a_la_double_pour_une_nappe(self):
+        from collections import Counter
+
+        leads = Counter(s.delay_sync_level
+                        for s in self._sons("trance", "lead"))
+        nappes = Counter(s.delay_sync_level
+                         for s in self._sons("trance", "pad"))
+        self.assertEqual(leads.most_common(1)[0][0], 6)
+        self.assertEqual(nappes.most_common(1)[0][0], 7)
+
+    def test_effet_de_modulation_plus_rare_sur_une_basse(self):
+        def module(son):
+            return son.mod_fx_type != "none"
+
+        self.assertLess(self._part(self._sons("techno", "bass", n=80), module),
+                        self._part(self._sons("techno", "pad", n=80), module))
+
+    def test_la_graine_ne_fait_pas_les_memes_choix_dans_tous_les_genres(self):
+        """Avant, la graine 42 tirait le même mode de jeu en techno et en
+        house : le genre n'entrait pas dans le tirage."""
+        pareils = sum(
+            1 for k in range(60)
+            if synthgen.generate(synthgen.GenOptions(
+                genre="techno", role="bass", seed=k)).sound.polyphonic
+            == synthgen.generate(synthgen.GenOptions(
+                genre="house", role="bass", seed=k)).sound.polyphonic)
+        self.assertLess(pareils, 45)
+
+
+class TestCouleursDAccords(unittest.TestCase):
+    """Septièmes, neuvièmes et suspendus dans les progressions."""
+
+    def test_le_jazz_prend_des_septiemes_sauf_demande_contraire(self):
+        prog = theory.progression(57, "mineur", "jazz", seed=2, bars=4)
+        self.assertTrue(all(len(c["notes"]) == 4 for c in prog))
+        self.assertTrue(all(c["quality"] in ("m7", "maj7", "7", "m7b5")
+                            for c in prog))
+        triades = theory.progression(57, "mineur", "jazz", seed=2, bars=4,
+                                     color="triades")
+        self.assertTrue(all(len(c["notes"]) == 3 for c in triades))
+
+    def test_neuvieme_jouee_sans_fondamentale_et_nommee_juste(self):
+        full, joue, suffixe = theory.colored_chord(60, "majeur", 0,
+                                                   "neuvièmes")
+        self.assertEqual(suffixe, "9")
+        self.assertEqual(theory.chord_quality(full), "maj9")
+        # Mi, sol, si, ré : la fondamentale est laissée à la basse.
+        self.assertEqual(sorted(n % 12 for n in joue), [2, 4, 7, 11])
+        prog = theory.progression(60, "majeur", "pop", seed=1, bars=4,
+                                  color="neuvièmes")
+        for accord in prog:
+            with self.subTest(accord=accord["name"]):
+                self.assertEqual(accord["bass"] % 12, accord["root"] % 12)
+
+    def test_pas_de_neuvieme_mineure(self):
+        """Le ii de la mineur (si-ré-fa-la) n'a pas de neuvième : do serait
+        à un demi-ton de si. Il reste demi-diminué."""
+        full, _joue, suffixe = theory.colored_chord(57, "mineur", 1,
+                                                    "neuvièmes")
+        self.assertEqual(suffixe, "7")
+        self.assertEqual(theory.chord_quality(full), "m7b5")
+
+    def test_pas_de_quarte_augmentee_deguisee_en_sus4(self):
+        """Le IV de do (fa) a un si, quarte augmentée : il prend sus2."""
+        _full, joue, suffixe = theory.colored_chord(60, "majeur", 3,
+                                                    "suspendus")
+        self.assertEqual(suffixe, "sus2")
+        self.assertEqual(theory.chord_quality(joue), "sus2")
+
+    def test_toutes_les_couleurs_restent_dans_la_gamme(self):
+        for color in theory.CHORD_COLORS:
+            for scale in ("majeur", "mineur", "dorien"):
+                classes = {(62 + i) % 12 for i in theory.SCALES[scale]}
+                for amb in theory.progression_names():
+                    prog = theory.progression(62, scale, amb, seed=5, bars=8,
+                                              color=color)
+                    with self.subTest(color=color, scale=scale, amb=amb):
+                        self.assertTrue(all(n % 12 in classes
+                                            for c in prog for n in c["notes"]))
+
+    def test_une_neuvieme_ne_s_ecrase_pas_en_grappe(self):
+        """Jouée avec sa fondamentale, une neuvième met la fondamentale à un
+        ton de la neuvième, et la conduite des voix en faisait une grappe de
+        secondes (Sol9 joué fa-sol-la-si). Sans fondamentale — la basse la
+        tient —, il reste au plus une seconde par accord."""
+        for seed in range(12):
+            prog = theory.progression(60, "majeur", "pop", seed=seed, bars=8,
+                                      color="neuvièmes")
+            for c in prog:
+                notes = sorted(c["notes"])
+                secondes = sum(1 for a, b in zip(notes, notes[1:])
+                               if b - a <= 2)
+                with self.subTest(graine=seed, accord=c["name"]):
+                    self.assertLessEqual(secondes, 1, notes)
+
+
+class TestMelodie(unittest.TestCase):
+    """La mélodie posée sur une progression."""
+
+    def _melodie(self, genre="trance", seed=3, bars=4, scale="mineur",
+                 ambiance="pop"):
+        prog = theory.progression(57, scale, ambiance, seed=seed, bars=bars)
+        return prog, accomp.melody_part(prog, root=57, scale=scale,
+                                        genre=genre, seed=seed)
+
+    def test_dans_la_gamme_et_l_accord_sur_les_temps_forts(self):
+        classes = {(57 + i) % 12 for i in theory.SCALES["mineur"]}
+        for genre in ("ambient", "trance", "house", "lofi"):
+            for seed in range(8):
+                prog, mel = self._melodie(genre, seed, bars=8)
+                for e in mel:
+                    accord = prog[int(e.start // 16)]
+                    with self.subTest(genre=genre, graine=seed, debut=e.start):
+                        self.assertIn(e.note % 12, classes)
+                        if e.start % 8 == 0:
+                            self.assertIn(e.note % 12,
+                                          {n % 12 for n in accord["notes"]}
+                                          | {accord["root"] % 12})
+
+    def test_un_motif_repris_et_une_fin_sur_la_fondamentale(self):
+        prog, mel = self._melodie("synthwave", seed=5)
+
+        def rythme(mesure):
+            return [e.start - 16 * mesure for e in mel
+                    if 16 * mesure <= e.start < 16 * (mesure + 1)]
+
+        self.assertEqual(rythme(0), rythme(1))
+        self.assertEqual(mel[-1].note % 12, prog[-1]["root"] % 12)
+        self.assertGreaterEqual(mel[-1].length, 4)
+
+    def test_un_mouvement_surtout_conjoint(self):
+        from statistics import median
+
+        ecarts = []
+        for seed in range(20):
+            _prog, mel = self._melodie("trance", seed, bars=8)
+            ecarts += [abs(b.note - a.note) for a, b in zip(mel, mel[1:])]
+        self.assertLessEqual(median(ecarts), 2)
+        self.assertLessEqual(max(ecarts), 12)
+
+    def test_l_allure_suit_le_genre(self):
+        _p, ambient = self._melodie("ambient", seed=2)
+        _p, house = self._melodie("house", seed=2)
+        self.assertLess(len(ambient), len(house))
+
+    def test_reproductible_et_renouvelable(self):
+        _p, a = self._melodie(seed=4)
+        _p, b = self._melodie(seed=4)
+        self.assertEqual(a, b)
+        prog = theory.progression(57, "mineur", "pop", seed=4, bars=4)
+        autres = {tuple(e.note for e in accomp.melody_part(
+            prog, root=57, scale="mineur", genre="trance", seed=k))
+            for k in range(6)}
+        self.assertGreater(len(autres), 1)
+
+    def test_une_piste_de_plus_en_midi(self):
+        prog = theory.progression(57, "mineur", "pop", seed=1, bars=4)
+        parts = accomp.accompany(prog, genre="trance", melody=True, root=57,
+                                 scale="mineur", seed=1)
+        self.assertIn("Mélodie", parts)
+        with tempfile.TemporaryDirectory() as tmp:
+            pistes = midifile.parts_to_midi(Path(tmp) / "m.mid", parts, 138)
+        self.assertEqual(pistes, len(parts))
+        self.assertEqual(midifile.PART_CHANNELS["Mélodie"], 3)
+
+
+class TestBatterieSynthetisee(unittest.TestCase):
+    """Écouter un rythme sans carte : une boîte à rythmes calculée."""
+
+    @staticmethod
+    def _centroide(son):
+        spectre = np.abs(np.fft.rfft(son[:, 0], 32768))
+        freqs = np.fft.rfftfreq(32768, 1 / 44100)
+        return float((spectre * freqs).sum() / spectre.sum())
+
+    def test_chaque_voix_sonne_sans_saturer(self):
+        for role in render.SYNTH_DRUM_ROLES:
+            son = render.synth_drum(role)
+            with self.subTest(role=role):
+                self.assertEqual(son.shape[1], 2)
+                self.assertGreater(float(np.sqrt((son ** 2).mean())), 0.02)
+                self.assertLessEqual(float(np.abs(son).max()), 1.0)
+                self.assertTrue(np.all(np.isfinite(son)))
+
+    def test_la_grosse_caisse_est_grave_et_les_charleys_aigus(self):
+        kick = self._centroide(render.synth_drum("Kick"))
+        caisse = self._centroide(render.synth_drum("Snare"))
+        charley = self._centroide(render.synth_drum("HatC"))
+        self.assertLess(kick, 500)
+        self.assertLess(kick, caisse)
+        self.assertLess(caisse, charley)
+        toms = [self._centroide(render.synth_drum(t))
+                for t in ("TomL", "TomM", "TomH")]
+        self.assertEqual(toms, sorted(toms))
+
+    def test_un_motif_boucle_sur_la_duree_demandee(self):
+        motif = rhythm.genre_beat("techno", bars=1, seed=1)
+        audio = render.render_pattern(motif, bpm=120, bars=4, tail=0.0)
+        self.assertAlmostEqual(audio.shape[0] / 44100, 8.0, places=2)
+        # La quatrième mesure joue encore : la boucle n'est pas tombée.
+        fin = audio[int(6.5 * 44100):int(7.5 * 44100)]
+        self.assertGreater(float(np.abs(fin).max()), 0.05)
+
+    def test_une_piste_inconnue_sonne_quand_meme(self):
+        motif = rhythm.Pattern(name="E", steps=16)
+        for pos in (0, 3, 6, 9, 12):
+            motif.add("E(5,16)", rhythm.Step(pos=pos, velocity=90))
+        self.assertGreater(float(np.abs(render.render_pattern(motif)).max()),
+                           0.05)
+
+
+class TestVariationsRythmiques(unittest.TestCase):
+    """« Motif du genre » donnait toujours le même motif."""
+
+    def test_l_ossature_ne_bouge_jamais(self):
+        for genre in genres.genre_keys():
+            base = rhythm.genre_beat(genre, bars=2, seed=1)
+            for seed in range(6):
+                variante = rhythm.variation(base, genre, seed=seed)
+                for piste in rhythm.BACKBONE:
+                    with self.subTest(genre=genre, graine=seed, piste=piste):
+                        self.assertLessEqual(
+                            {st.pos for st in base.tracks.get(piste, [])},
+                            {st.pos for st in variante.tracks.get(piste, [])})
+
+    def test_une_variation_change_quelque_chose_et_se_rejoue(self):
+        base = rhythm.genre_beat("house", bars=1, seed=1)
+
+        def cases(motif):
+            return {(t, st.pos) for t, sts in motif.tracks.items()
+                    for st in sts}
+
+        a = rhythm.variation(base, "house", seed=4)
+        self.assertNotEqual(cases(a), cases(base))
+        self.assertEqual(cases(a), cases(rhythm.variation(base, "house",
+                                                          seed=4)))
+        self.assertTrue(all(0 <= st.pos < a.steps
+                            for sts in a.tracks.values() for st in sts))
+
+    def test_pas_de_charleys_serres_sur_un_rythme_clairseme(self):
+        """Mesuré : la densité d'un motif dub était multipliée par 4,6."""
+        base = rhythm.genre_beat("ambient", bars=1, seed=1)
+        for seed in range(12):
+            variante = rhythm.variation(base, "ambient", seed=seed,
+                                        amount=1.0)
+            self.assertNotIn("charleys", variante.name)
+
+    def test_boucler_un_motif(self):
+        motif = rhythm.genre_beat("techno", bars=1, seed=1)
+        long = rhythm.loop(motif, 3)
+        self.assertEqual(long.steps, 48)
+        self.assertEqual(len(long.tracks["Kick"]),
+                         3 * len(motif.tracks["Kick"]))
+
+
+class TestBasseAcide(unittest.TestCase):
+    """La ligne de 303 : silences, accents, octaves, glissés."""
+
+    def test_notes_de_l_accord_accents_et_glisses(self):
+        prog = theory.progression(57, "mineur", "techno", seed=1, bars=4)
+        basse = accomp.bass_part(prog, "acide")
+        for e in basse:
+            accord = prog[int(e.start // 16)]
+            permises = {(accord["bass"] + d) % 12 for d in (0, 7)} | {
+                n % 12 for n in accord["notes"]}
+            with self.subTest(debut=e.start):
+                self.assertIn(e.note % 12, permises)
+        self.assertTrue(any(e.velocity >= 90 for e in basse))
+        self.assertTrue(any(e.velocity < 80 for e in basse))
+        glisses = [(a, b) for a, b in zip(basse, basse[1:])
+                   if a.start + a.length > b.start]
+        self.assertTrue(glisses)
+        # Deux notes identiques qui se chevauchent se couperaient en MIDI.
+        self.assertTrue(all(a.note != b.note for a, b in glisses))
+
+    def test_l_acid_la_prend_par_defaut(self):
+        self.assertEqual(accomp.genre_styles("acid")[1], "acide")
+
+
+class TestBatterieDansLAccompagnement(unittest.TestCase):
+
+    def test_la_batterie_suit_la_progression_et_part_en_piste_10(self):
+        prog = theory.progression(57, "mineur", "pop", seed=1, bars=4)
+        parts = accomp.accompany(prog, "house",
+                                 drums=rhythm.genre_beat("house", 1, seed=1))
+        batterie = parts["Batterie"]
+        self.assertGreaterEqual(max(e.start for e in batterie), 48)
+        self.assertIn(midifile.GM_DRUMS["Kick"], {e.note for e in batterie})
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "b.mid"
+            midifile.parts_to_midi(chemin, parts, 124)
+            self.assertIn(0x99, chemin.read_bytes())    # note on, canal 10
+
+
+class TestRemplacementDAccord(unittest.TestCase):
+
+    def test_meme_fonction_dans_la_gamme_et_l_original_intact(self):
+        for scale in ("majeur", "mineur"):
+            for seed in range(6):
+                prog = theory.progression(60, scale, "pop", seed=seed, bars=4)
+                copie = [dict(c) for c in prog]
+                classes = {(60 + i) % 12 for i in theory.SCALES[scale]}
+                for position in range(4):
+                    neuve = theory.substitute(prog, position, 60, scale,
+                                              seed=position)
+                    with self.subTest(scale=scale, graine=seed,
+                                      position=position):
+                        self.assertEqual(prog, copie)
+                        self.assertNotEqual(neuve[position]["degree"],
+                                            prog[position]["degree"])
+                        self.assertEqual(neuve[position]["function"],
+                                         prog[position]["function"])
+                        self.assertTrue(all(n % 12 in classes
+                                            for n in neuve[position]["notes"]))
+                        for autre in range(4):
+                            if autre != position:
+                                self.assertEqual(neuve[autre]["name"],
+                                                 prog[autre]["name"])
+
+    def test_la_fonction_figure_dans_chaque_accord(self):
+        prog = theory.progression(60, "majeur", "pop", seed=1, bars=4)
+        self.assertTrue(all(c["function"] in ("tonique", "sous-dominante",
+                                               "dominante") for c in prog))
+
+
+class TestEsquisse(unittest.TestCase):
+    """Le modèle d'arrangement devient un morceau entier."""
+
+    def _esquisse(self, genre, seed=2):
+        prog = sketch.default_progression(genre, seed=seed)
+        return sketch.sketch(prog, genre, root=57, scale="mineur", seed=seed)
+
+    def test_chaque_partie_ne_joue_que_dans_ses_sections(self):
+        for genre in genres.genre_keys():
+            esquisse = self._esquisse(genre)
+            self.assertEqual(esquisse.bars, sum(
+                b for _n, b in sketch.ARRANGEMENTS[genre]))
+            for nom, evenements in esquisse.parts.items():
+                for e in evenements:
+                    section = next(
+                        s for s in esquisse.sections
+                        if s.start * 16 <= e.start < (s.start + s.bars) * 16)
+                    with self.subTest(genre=genre, partie=nom,
+                                      section=section.name):
+                        if nom == "Batterie":
+                            self.assertTrue({"Batterie", "Batterie légère"}
+                                            & set(section.parts))
+                        else:
+                            self.assertIn(nom, section.parts)
+
+    def test_intro_sans_caisse_claire_cassure_sans_batterie(self):
+        esquisse = self._esquisse("techno")
+        for section in esquisse.sections:
+            debut, fin = section.start * 16, (section.start + section.bars) * 16
+            pistes = {t for t, sts in esquisse.drums.tracks.items()
+                      if any(debut <= st.pos < fin for st in sts)}
+            with self.subTest(section=section.name):
+                if section.kind in ("intro", "fin"):
+                    self.assertFalse(pistes & {"Snare", "Clap", "Crash"})
+                if section.kind == "cassure":
+                    self.assertFalse(pistes)
+                if section.kind == "pic":
+                    self.assertIn(float(debut), {st.pos for st in
+                                                 esquisse.drums.tracks["Crash"]})
+
+    def test_un_refrain_final_reste_un_refrain(self):
+        self.assertEqual(sketch.section_kind("Refrain final"), "pic")
+        self.assertEqual(sketch.section_kind("Final"), "fin")
+        self.assertEqual(sketch.section_kind("Pont"), "cassure")
+
+    def test_un_fichier_midi_avec_les_sections_en_reperes(self):
+        esquisse = self._esquisse("house")
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "e.mid"
+            pistes = midifile.parts_to_midi(chemin, esquisse.parts, 124,
+                                            markers=esquisse.markers())
+            donnees = chemin.read_bytes()
+        self.assertEqual(pistes, len(esquisse.parts))
+        self.assertIn(b"\xff\x06\x05Intro", donnees)
+        self.assertIn(b"Refrain 2", donnees)
+
+    def test_un_extrait_part_de_zero_et_dure_huit_mesures_au_plus(self):
+        esquisse = self._esquisse("trance")
+        index = next(i for i, s in enumerate(esquisse.sections)
+                     if s.kind == "pic")
+        parts, batterie, mesures = sketch.excerpt(esquisse, index)
+        self.assertEqual(mesures, 8)
+        debuts = [e.start for evs in parts.values() for e in evs]
+        self.assertGreaterEqual(min(debuts), 0)
+        self.assertLess(max(debuts), 8 * 16)
+        self.assertLess(max(st.pos for sts in batterie.tracks.values()
+                            for st in sts), 8 * 16)
+
+
+def model_osc(file_name: str, end: int = -1):
+    """Oscillateur jouant un fichier, zone en échantillons."""
+    from delugeapp.core.model import Osc, Zone
+
+    return Osc(type="sample", file_name=file_name,
+               zone=Zone(start=0, end=end, unit="samples"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSongWriter(unittest.TestCase):
+    """Morceaux du Deluge écrits depuis les outils de création.
+
+    Le format attendu est celui de la machine (c1.2.1, ``DEFAULT.XML`` et
+    ``SONG1.XML`` de la carte) ; les conversions d'époque reproduisent ce
+    que le firmware fait en chargeant un preset ancien, vérifié sur les
+    instruments des six morceaux c1.2.1 de la carte.
+    """
+
+    ROLES = ("Kick", "Snare", "HatC", "HatO", "Clap", "Rim", "Crash",
+             "Shaker")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "carte"
+        for sub in ("SONGS", "SYNTHS", "KITS"):
+            (self.root / sub).mkdir(parents=True)
+        t = np.linspace(0, 0.3, 13230, endpoint=False, dtype=np.float32)
+        for i, role in enumerate(self.ROLES):
+            folder = self.root / "SAMPLES" / "DRUMS" / role
+            folder.mkdir(parents=True)
+            signal = (0.5 * np.sin(2 * np.pi * (60 + 40 * i) * t)
+                      * np.exp(-t * 6)).astype(np.float32)
+            wav.write(folder / f"{role} 0.wav", signal, 44100)
+        # Comme « 808 Kick.wav » : 22 051 trames, que le TR-808 sans version
+        # borne à 501 ms.
+        wav.write(self.root / "SAMPLES" / "DRUMS" / "Kick" / "808.wav",
+                  np.zeros(22051, dtype=np.float32), 44100)
+        self.sd = sdcard.SDCard(self.root)
+        self.lib = db.Library(Path(self._tmp.name) / "i.db")
+        scan.scan_card(self.sd, self.lib, compute_hash=False)
+
+    def tearDown(self):
+        self.lib.close()
+        self._tmp.cleanup()
+
+    # -- utilitaires ----------------------------------------------------- #
+
+    @staticmethod
+    def _note(pos, length, note=60, velocity=100):
+        return accomp.NoteEvent(pos, length, note, velocity)
+
+    def _spec(self, **kwargs):
+        from delugeapp.core import songwriter
+
+        preset = SynthPreset.new("BASSE")
+        track = songwriter.synth_track(preset)
+        clip = songwriter.ClipSpec(track=0, length=songwriter.BAR, rows={
+            60: [Note(pos=0, length=96, velocity=100)]}, name="Basse")
+        values = dict(name="Essai", bpm=120.0, tracks=[track], clips=[clip])
+        values.update(kwargs)
+        return songwriter.SongSpec(**values)
+
+    # -- temps ----------------------------------------------------------- #
+
+    def test_le_tempo_s_ecrit_comme_la_machine(self):
+        """120 BPM donnent les deux nombres de ``DEFAULT.XML``."""
+        from delugeapp.core import songwriter
+        from delugeapp.core.model import tempo_from_song_attrs
+
+        self.assertEqual(songwriter.tempo_attrs(120), (229, -1342177280))
+        for bpm in (70.5, 124, 128, 174):
+            tick, fraction = songwriter.tempo_attrs(bpm)
+            with self.subTest(bpm=bpm):
+                self.assertAlmostEqual(
+                    tempo_from_song_attrs(tick, fraction, 2), bpm, places=2)
+
+    def test_une_double_croche_vaut_24_ticks(self):
+        from delugeapp.core import songwriter
+
+        self.assertEqual((songwriter.BAR, songwriter.STEP), (384, 24))
+        rows = songwriter.events_to_rows([self._note(4, 2)], 384)
+        note = rows[60][0]
+        self.assertEqual((note.pos, note.length, note.velocity, note.condition),
+                         (96, 48, 127, 20))
+
+    def test_une_note_qui_en_chevauche_une_autre_est_raccourcie(self):
+        """Le firmware **ignore** une note qui commence avant la fin de la
+        précédente : on raccourcit la première au lieu de perdre la seconde."""
+        from delugeapp.core import songwriter
+
+        rows = songwriter.events_to_rows(
+            [self._note(0, 4), self._note(2, 4), self._note(2, 1),
+             self._note(15, 8)], 384)
+        notes = [(n.pos, n.length) for n in rows[60]]
+        self.assertEqual(notes, [(0, 48), (48, 96), (360, 24)])
+
+    def test_un_motif_de_douze_pas_tient_dans_une_mesure(self):
+        from delugeapp.core import songwriter
+
+        motif = rhythm.Pattern(name="E", steps=12)
+        motif.tracks["E(5,12)"] = [rhythm.Step(pos=i) for i in (0, 3, 6)]
+        rows, length = songwriter.pattern_rows(motif, {"E(5,12)": 2})
+        self.assertEqual(length, 384)
+        self.assertEqual([n.pos for n in rows[2]], [0, 96, 192])
+
+    def test_une_partie_qui_se_repete_tient_dans_une_boucle_courte(self):
+        from delugeapp.core import songwriter
+
+        quatre = {36: [Note(pos=b * 384, length=96) for b in range(4)]}
+        rows, length = songwriter.fold(quatre, 4 * 384)
+        self.assertEqual((length, [n.pos for n in rows[36]]), (384, [0]))
+
+        # Une mesure différente des autres : la boucle reste entière.
+        inegal = {36: [Note(pos=b * 384, length=96) for b in range(4)]
+                  + [Note(pos=3 * 384 + 192, length=24)]}
+        self.assertEqual(songwriter.fold(inegal, 4 * 384)[1], 4 * 384)
+
+        # Une note qui déborde de sa mesure ne se replie pas.
+        long = {36: [Note(pos=b * 384 + 300, length=200) for b in range(4)]}
+        self.assertEqual(songwriter.fold(long, 4 * 384)[1], 4 * 384)
+
+    # -- assemblage ------------------------------------------------------ #
+
+    def _sections_spec(self):
+        from delugeapp.core import songwriter
+
+        spec = self._spec()
+        spec.tracks.append(songwriter.synth_track(SynthPreset.new("NAPPE")))
+        bar = songwriter.BAR
+        note = [Note(pos=0, length=96)]
+        spec.clips = [
+            songwriter.ClipSpec(0, bar, {60: list(note)}, section=0,
+                                name="Intro"),
+            songwriter.ClipSpec(0, 2 * bar, {60: list(note)}, section=1,
+                                playing=False, name="Theme"),
+            songwriter.ClipSpec(1, 4 * bar, {64: list(note)}, section=1,
+                                playing=False, name="Theme nappe"),
+            songwriter.ClipSpec(1, bar, {64: list(note)}, section=2,
+                                playing=False, name="Fin"),
+        ]
+        spec.sections = [songwriter.SectionSpec("Intro", 8 * bar),
+                         songwriter.SectionSpec("Thème", 16 * bar),
+                         songwriter.SectionSpec("Fin", 4 * bar)]
+        return spec
+
+    def test_la_premiere_section_est_en_haut_et_enchaine(self):
+        """En disposition « rangées », la machine passe à la section du clip
+        d'en dessous : la première section a les index les plus élevés, et
+        chaque section se répète sur son plus long clip."""
+        from delugeapp.core import songwriter
+
+        root = songwriter.build(self._sections_spec()).root
+        clips = list(root.find("sessionClips"))
+        self.assertEqual([c.get("clipName") for c in clips],
+                         ["Fin", "Theme nappe", "Theme", "Intro"])
+        self.assertEqual([c.get("isPlaying") for c in clips],
+                         ["0", "0", "0", "1"])
+        repeats = {s.get("id"): s.get("numRepeats")
+                   for s in root.find("sections")}
+        self.assertEqual(len(repeats), 12)
+        self.assertEqual([repeats[k] for k in "0123"], ["8", "4", "4", "0"])
+        self.assertEqual(root.get("inputTickMagnitude"), "2")
+        self.assertEqual(root.get("yScrollSongView"), str(4 - 8))
+
+    def test_l_arrangement_place_les_clips_de_session(self):
+        """``clipInstances`` : position, longueur, index du clip de session ;
+        une instance plus longue que son clip le fait boucler."""
+        from delugeapp.core import songwriter
+
+        root = songwriter.build(self._sections_spec()).root
+        bar = songwriter.BAR
+        par_nom = {}
+        for inst in root.find("instruments"):
+            blob = inst.get("clipInstances")[2:]
+            par_nom[inst.get("presetName")] = [
+                (int(blob[i:i + 8], 16) // bar, int(blob[i + 8:i + 16], 16)
+                 // bar, int(blob[i + 16:i + 24], 16))
+                for i in range(0, len(blob), 24)]
+        self.assertEqual(par_nom["BASSE"], [(0, 8, 3), (8, 16, 2)])
+        self.assertEqual(par_nom["NAPPE"], [(8, 16, 1), (24, 4, 0)])
+        clips = list(root.find("sessionClips"))
+        for nom, instances in par_nom.items():
+            for _pos, _len, index in instances:
+                self.assertEqual(clips[index].get("instrumentPresetName"),
+                                 nom)
+
+    def test_deux_synthes_homonymes_restent_distincts(self):
+        """La machine retrouve l'instrument d'un clip par son nom, sans
+        tenir compte de la casse : deux homonymes, et le second se tairait."""
+        from delugeapp.core import songwriter
+
+        spec = self._spec()
+        spec.tracks.append(songwriter.synth_track(SynthPreset.new("basse")))
+        spec.clips.append(songwriter.ClipSpec(1, 384, {
+            48: [Note(pos=0, length=96)]}, name="Autre"))
+        root = songwriter.build(spec).root
+        noms = [i.get("presetName") for i in root.find("instruments")]
+        self.assertEqual(noms, ["BASSE", "basse 2"])
+        self.assertEqual(sorted(c.get("instrumentPresetName")
+                                for c in root.find("sessionClips")),
+                         ["BASSE", "basse 2"])
+
+    def test_un_instrument_integre_laisse_ses_parametres_au_clip(self):
+        """Comme ``DEFAULT.XML`` : ni ``<defaultParams>`` ni ``<arpeggiator>``
+        dans l'instrument ; ``<soundParams>`` et l'arpège dans le clip."""
+        from delugeapp.core import songwriter
+
+        root = songwriter.build(self._spec()).root
+        sound = root.find("instruments/sound")
+        self.assertIsNone(sound.find("defaultParams"))
+        self.assertIsNone(sound.find("arpeggiator"))
+        self.assertIsNone(sound.get("firmwareVersion"))
+        self.assertEqual(list(sound.attrib)[:3],
+                         ["presetName", "presetFolder", "defaultVelocity"])
+        clip = root.find("sessionClips/instrumentClip")
+        self.assertIsNotNone(clip.find("soundParams"))
+        self.assertEqual(clip.find("arpeggiator").get("arpMode"), "off")
+        row = clip.find("noteRows/noteRow")
+        # pos 0, longueur 96, vélocité 100 (0x64), lift 64, condition 20.
+        self.assertEqual(row.get("noteDataWithLift"),
+                         "0x0000000000000060644014")
+
+    def test_le_kit_d_un_morceau_a_une_rangee_par_son(self):
+        """Chaque son du kit a sa rangée dans le clip, avec ses réglages en
+        ``<soundParams>`` ; les réglages du kit vont dans ``<kitParams>``."""
+        from delugeapp.core import songwriter
+
+        kit = Kit.new("KIT")
+        kit.add_row("KICK", "SAMPLES/DRUMS/Kick/Kick 0.wav")
+        kit.add_row("SNARE", "SAMPLES/DRUMS/Snare/Snare 0.wav")
+        track = songwriter.kit_track(kit)
+        spec = songwriter.SongSpec(name="K", tracks=[track], clips=[
+            songwriter.ClipSpec(0, 384, {1: [Note(pos=96, length=24)]})])
+        root = songwriter.build(spec).root
+        body = root.find("instruments/kit")
+        self.assertIsNone(body.find("defaultParams"))
+        drums = list(body.find("soundSources"))
+        self.assertEqual([d.get("name") for d in drums], ["KICK", "SNARE"])
+        self.assertTrue(all(d.find("defaultParams") is None for d in drums))
+        clip = root.find("sessionClips/instrumentClip")
+        self.assertIsNotNone(clip.find("kitParams"))
+        rows = list(clip.find("noteRows"))
+        self.assertEqual([r.get("drumIndex") for r in rows], ["0", "1"])
+        self.assertIsNone(rows[0].get("noteDataWithLift"))
+        self.assertTrue(rows[1].get("noteDataWithLift"))
+        self.assertTrue(all(r.find("soundParams") is not None for r in rows))
+
+    def test_une_note_hors_gamme_coupe_le_mode_gamme(self):
+        """Un clip « dans la gamme » ne montre que les notes de la gamme :
+        une note étrangère y serait invisible."""
+        from delugeapp.core import songwriter
+
+        dans = self._spec(root=0, mode_notes=(0, 2, 4, 5, 7, 9, 11))
+        hors = self._spec(root=0, mode_notes=(0, 2, 4, 5, 7, 9, 11))
+        hors.clips[0].rows[61] = [Note(pos=192, length=24)]
+        self.assertEqual(songwriter.build(dans).root.find(
+            "sessionClips/instrumentClip").get("inKeyMode"), "1")
+        self.assertEqual(songwriter.build(hors).root.find(
+            "sessionClips/instrumentClip").get("inKeyMode"), "0")
+
+    # -- conversions d'époque ------------------------------------------- #
+
+    def _ancien_son(self, version="3.1.5", mode="subtractive"):
+        import xml.etree.ElementTree as ET
+
+        el = ET.fromstring(
+            '<sound firmwareVersion="%s" earliestCompatibleFirmware="3.1.0"'
+            ' polyphonic="poly" mode="%s" lpfMode="24dB">'
+            '<osc1 type="saw" /><osc2 type="square" />'
+            '<arpeggiator mode="both" numOctaves="2" syncLevel="7" />'
+            '<compressor syncLevel="6" attack="327244" release="936" />'
+            '<defaultParams volume="0x50000000" lpfFrequency="0x10000000"'
+            ' lpfResonance="0x40000000">'
+            '<patchCables><patchCable source="velocity"'
+            ' destination="lpfFrequency" amount="0x11800000" />'
+            '<patchCable source="lfo1" destination="pitch"'
+            ' amount="0x03D70A3C" /></patchCables>'
+            '</defaultParams></sound>' % (version, mode))
+        return el
+
+    def test_un_preset_ancien_est_mis_a_niveau(self):
+        """3.1.5 dans un morceau c1.2.1 : ancien mode d'arpège éclaté,
+        câbles d'expression ajoutés (comme TB01 dans ``DEFAULT.XML``),
+        version retirée, ancien compresseur renommé."""
+        from delugeapp.core import songwriter
+
+        track = songwriter.synth_track(self._ancien_son(), version="3.1.5")
+        self.assertEqual((track.arp["arpMode"], track.arp["noteMode"],
+                          track.arp["octaveMode"]), ("arp", "up", "alt"))
+        self.assertIsNone(track.body.get("firmwareVersion"))
+        self.assertIsNotNone(track.body.find("sidechain"))
+        self.assertIsNone(track.body.find("compressor"))
+        cables = [(c.get("source"), c.get("destination"), c.get("amount"))
+                  for c in track.params.find("patchCables")]
+        # Rangés comme la machine les réécrit : groupés par destination.
+        self.assertEqual(cables, [
+            ("velocity", "lpfFrequency", "0x11800000"),
+            ("y", "lpfFrequency", "0x19999990"),
+            ("lfo1", "pitch", "0x03D70A3C"),
+            ("aftertouch", "volume", "0x2A3D7094")])
+
+    def test_un_preset_recent_n_est_pas_converti(self):
+        from delugeapp.core import songwriter
+
+        track = songwriter.synth_track(self._ancien_son("c1.2.1"),
+                                       version="c1.2.1")
+        # L'ancien ``mode`` n'est plus lu par c1.2 : l'arpège reste éteint.
+        self.assertEqual(track.arp["arpMode"], "off")
+        sources = [c.get("source") for c in track.params.find("patchCables")]
+        self.assertEqual(sources, ["velocity", "lfo1"])
+
+    def test_un_son_fm_ancien_perd_ses_filtres(self):
+        """Avant c1.2.0, un son FM gardait un mode de filtre qu'il ne jouait
+        pas : la machine le coupe en le chargeant."""
+        from delugeapp.core import songwriter
+
+        track = songwriter.synth_track(self._ancien_son("c1.1.0", "fm"),
+                                       version="c1.1.0")
+        self.assertEqual((track.body.get("lpfMode"),
+                          track.body.get("hpfMode")), ("off", "off"))
+        cables = {(c.get("source"), c.get("destination"))
+                  for c in track.params.find("patchCables")}
+        self.assertNotIn(("y", "modulator1Volume"), cables)
+
+    def test_la_synchro_de_l_arpege_passe_en_valeur_interne(self):
+        """Le clip garde la valeur interne : TB01 écrit 7, ``DEFAULT.XML``
+        porte 6 dans son clip."""
+        from delugeapp.core import songwriter
+
+        self.assertEqual(songwriter.synth_track(
+            self._ancien_son(), version="3.1.5").arp["syncLevel"], "6")
+        son = self._ancien_son()
+        son.find("arpeggiator").set("syncLevel", "0")
+        self.assertEqual(songwriter.synth_track(
+            son, version="3.1.5").arp["syncLevel"], "0")
+
+    def test_une_version_cachee_dans_un_son_est_retiree(self):
+        """Laissée dans le morceau, elle changerait la version de lecture de
+        tout ce qui suit."""
+        import xml.etree.ElementTree as ET
+
+        from delugeapp.core import songwriter
+
+        kit = ET.fromstring(
+            '<kit firmwareVersion="2.0.0"><firmwareVersion>2.0.0'
+            '</firmwareVersion><earliestCompatibleFirmware>2.0.0'
+            '</earliestCompatibleFirmware><soundSources>'
+            '<sound firmwareVersion="2.0.0"><name>A</name>'
+            '<firmwareVersion>2.0.0</firmwareVersion><osc1><type>square'
+            '</type></osc1></sound></soundSources></kit>')
+        track = songwriter.kit_track(kit, version="3.0.0")
+        texte = ET.tostring(track.body, encoding="unicode")
+        self.assertNotIn("firmwareVersion", texte)
+        songwriter.upgrade_kit(kit, "3.0.0")
+        texte = ET.tostring(kit, encoding="unicode")
+        self.assertNotIn("firmwareVersion", texte)
+        self.assertNotIn("earliestCompatibleFirmware", texte)
+
+    def _kit_sans_version(self):
+        """Un kit au format 2.x, sans version, comme ``000 TR-808.XML``."""
+        import xml.etree.ElementTree as ET
+
+        return ET.fromstring(
+            '<kit><lpfMode>24dB</lpfMode><modFXType>flanger</modFXType>'
+            '<defaultParams><volume>0x3504F334</volume>'
+            '<lpf><frequency>0x7FFFFFFF</frequency>'
+            '<resonance>0x00000000</resonance></lpf>'
+            '<hpf><frequency>0x80000000</frequency>'
+            '<resonance>0xC0000000</resonance></hpf></defaultParams>'
+            '<soundSources><sound><name>KICK</name>'
+            '<osc1><type>sample</type><reversed>0</reversed>'
+            '<fileName>SAMPLES/DRUMS/Kick/808.wav</fileName>'
+            '<zone><startMilliseconds>10</startMilliseconds>'
+            '<endMilliseconds>501</endMilliseconds></zone></osc1>'
+            '<osc2><type>sample</type><fileName></fileName>'
+            '<zone><startMilliseconds>0</startMilliseconds>'
+            '<endMilliseconds>9999999</endMilliseconds></zone></osc2>'
+            '<polyphonic>2</polyphonic><mode>subtractive</mode>'
+            '<defaultParams><volume>0x3851EB64</volume>'
+            '<lpfFrequency>0x7FFFFFFF</lpfFrequency>'
+            '<lpfResonance>0x00000000</lpfResonance>'
+            '<patchCables><patchCable><source>velocity</source>'
+            '<destination>volume</destination><amount>0x3FFFFFE8</amount>'
+            '</patchCable></patchCables></defaultParams>'
+            '<arpeggiator><mode>off</mode><numOctaves>2</numOctaves>'
+            '<syncLevel>7</syncLevel></arpeggiator>'
+            '</sound></soundSources></kit>')
+
+    def test_un_kit_sans_version_recoit_les_conversions_de_la_machine(self):
+        """Mesuré sur ``SONG1.XML``, qui intègre le TR-808 sans version :
+        bornes converties en trames (501 ms -> les 22 051 trames du fichier,
+        à 45 trames près), résonance à mi-course ramenée à zéro quand le
+        filtre est ouvert, câbles d'expression, polyphonie en clair."""
+        from delugeapp.core import songwriter
+
+        track = songwriter.kit_track(self._kit_sans_version(), version="",
+                                     sd=self.sd)
+        drum = track.body.find("soundSources/sound")
+        zone = drum.find("osc1/zone")
+        self.assertEqual((zone.get("startSamplePos"),
+                          zone.get("endSamplePos")), ("441", "22051"))
+        self.assertIsNone(zone.find("startMilliseconds"))
+        vide = drum.find("osc2/zone")
+        self.assertEqual((vide.get("startSamplePos"),
+                          vide.get("endSamplePos")), ("0", "0"))
+        self.assertEqual(drum.find("polyphonic").text, "choke")
+        self.assertEqual(drum.find("arpeggiator").get("arpMode"), "off")
+        params = track.drum_params[0]
+        self.assertEqual(params.find("lpfResonance").text, "0x80000000")
+        self.assertEqual(params.find("volume").text, "0x3851EB64")
+        sources = [c.get("source") or c.find("source").text
+                   for c in params.find("patchCables")]
+        self.assertEqual(sources, ["velocity", "aftertouch", "y"])
+        # Le kit : passe-bas ouvert, résonance à mi-course -> zéro ; le
+        # passe-haut garde la sienne (le firmware teste le passe-bas).
+        self.assertEqual(track.params.find("lpf/resonance").text,
+                         "0x80000000")
+        self.assertEqual(track.params.find("hpf/resonance").text,
+                         "0xC0000000")
+        self.assertEqual(track.unconverted, [])
+
+    def test_la_compensation_de_resonance_suit_le_firmware(self):
+        """``oldResonanceCompensation`` : 8 dB à résonance nulle, 2,7 dB au
+        quart, plus rien dès la mi-course ; ``shiftVolumeByDB`` repart du bas
+        de l'intervalle, défaut du firmware compris."""
+        from delugeapp.core import songwriter
+
+        db = songwriter._resonance_compensation_db
+        self.assertAlmostEqual(db(-(1 << 31)), 8.0, places=4)
+        self.assertAlmostEqual(db(-(1 << 30)), 2764 / 1024.0, places=4)
+        self.assertEqual(db(0), 0.0)
+        # Volume dans l'intervalle 11 (1,5 dB) : +1 dB y reste, aux deux
+        # tiers ; +2 dB passe dans l'intervalle 12 (1,4 dB), à 0,5/1,4.
+        shift = songwriter._shift_volume_db
+        self.assertEqual(shift(0x3851EB64, 1.0) + (1 << 31),
+                         (11 << 28) + 178956976)
+        self.assertEqual(shift(0x3851EB64, 2.0) + (1 << 31),
+                         (12 << 28) + 95869808)
+        self.assertEqual(shift(-(1 << 31), 3.0), -(1 << 31))
+
+    def test_les_versions_se_rangent_comme_dans_le_firmware(self):
+        from delugeapp.core import songwriter
+
+        older = songwriter._older
+        self.assertTrue(older("", "1.2.0"))
+        self.assertTrue(older("3.1.5", "4.0.0-beta"))
+        self.assertTrue(older("4.0.0-beta", "4.0.0"))
+        self.assertTrue(older("4.1.0", "c1.0.0"))
+        self.assertFalse(older("c1.2.1", "c1.2.0"))
+        self.assertTrue(older("c1.1.0", "c1.2.0"))
+
+    # -- écriture -------------------------------------------------------- #
+
+    def test_simuler_n_ecrit_rien(self):
+        from delugeapp.core import songwriter
+
+        avant = sorted(p.name for p in (self.root / "SONGS").iterdir())
+        plan = songwriter.write_song(self.sd, self._spec())
+        self.assertTrue(plan.ok)
+        self.assertFalse(plan.applied)
+        self.assertEqual(plan.rel, "SONGS/Essai.XML")
+        self.assertIn("Nouveau fichier : SONGS/Essai.XML", plan.text())
+        self.assertEqual(sorted(p.name for p in
+                                (self.root / "SONGS").iterdir()), avant)
+
+    def test_un_nom_pris_est_numerote_et_rien_n_est_remplace(self):
+        from delugeapp.core import songwriter
+
+        ancien = self.root / "SONGS" / "ESSAI.XML"
+        ancien.write_bytes(b"<song />")
+        fait = songwriter.write_song(self.sd, self._spec(), apply=True)
+        self.assertEqual(fait.rel, "SONGS/Essai 2.XML")
+        self.assertTrue(fait.applied)
+        self.assertEqual(ancien.read_bytes(), b"<song />")
+        # DEFAULT.XML est le morceau de départ de la machine : jamais ce nom.
+        self.assertEqual(songwriter.free_song_name(self.sd, "default"),
+                         "SONGS/default 2.XML")
+
+    def test_le_morceau_ecrit_se_relit(self):
+        from delugeapp.core import songwriter
+
+        fait = songwriter.write_song(self.sd, self._spec(bpm=124),
+                                     apply=True)
+        song = Song.load(self.sd.abs(fait.rel))
+        self.assertEqual((song.firmware, song.input_tick_magnitude),
+                         ("c1.2.1", 2))
+        self.assertAlmostEqual(song.tempo_bpm, 124.0, places=2)
+        self.assertEqual(song.stats()["clips"], 1)
+        self.assertEqual(song.clips[0].bars, 1.0)
+        self.assertEqual(song.clips[0].note_rows[0].notes[0].length, 96)
+        self.assertEqual(len(song.preview), 144 * 6)
+
+    def test_un_echantillon_absent_est_annonce(self):
+        from delugeapp.core import songwriter
+
+        kit = Kit.new("KIT")
+        kit.add_row("KICK", "SAMPLES/DRUMS/Kick/Kick 0.wav")
+        kit.add_row("FANTOME", "SAMPLES/ABSENT/x.wav")
+        spec = songwriter.SongSpec(
+            name="K", tracks=[songwriter.kit_track(kit)],
+            clips=[songwriter.ClipSpec(0, 384, {0: [Note(pos=0)]})])
+        plan = songwriter.write_song(self.sd, spec)
+        self.assertEqual(plan.missing, ["SAMPLES/ABSENT/x.wav"])
+        self.assertIn("1 échantillon(s) absent(s)", plan.text())
+
+    # -- recettes -------------------------------------------------------- #
+
+    def test_les_sons_des_parties_ont_l_arpegiateur_eteint(self):
+        """L'arpège est écrit note par note : celui de la machine, qui lit
+        ``arpMode``, doit rester éteint."""
+        from delugeapp.core import songwriter
+
+        parts = {"Arpège": [self._note(0, 1)], "Accords": [self._note(0, 16)]}
+        for genre in ("trance", "psytrance", "berlin_school"):
+            for name, preset in songwriter.part_presets(parts, genre).items():
+                with self.subTest(genre=genre, partie=name):
+                    self.assertFalse(preset.sound.arp.is_on)
+
+    def test_une_progression_devient_un_morceau(self):
+        from delugeapp.core import songwriter
+
+        prog = theory.progression(57, "mineur", "techno", bars=4, seed=1)
+        beat = rhythm.genre_beat("techno", bars=1, seed=1, fills=False)
+        parts = accomp.accompany(prog, genre="techno", root=57,
+                                 scale="mineur", seed=1)
+        drums = rhythm.loop(beat, 4)
+        kit, rows, perdus = songwriter.drum_kit_for(self.sd, self.lib,
+                                                    "techno", drums.tracks)
+        self.assertEqual(perdus, [])
+        spec = songwriter.progression_song(
+            parts, name="P", bpm=124, genre="techno", root=57,
+            scale="mineur", drums=drums, kit=kit, row_map=rows)
+        noms = [c.name for c in spec.clips]
+        self.assertEqual(noms, ["Accords", "Basse", "Batterie"])
+        self.assertEqual(spec.clips[-1].length, 384,
+                         "la batterie d'une mesure doit boucler")
+        self.assertEqual((spec.root, spec.mode_notes),
+                         (9, (0, 2, 3, 5, 7, 8, 10)))
+        self.assertTrue(all(c.playing for c in spec.clips))
+
+    def test_une_piste_euclidienne_recoit_une_percussion(self):
+        from delugeapp.core import songwriter
+
+        motif = rhythm.Pattern(name="M", steps=16)
+        motif.tracks["Kick"] = [rhythm.Step(pos=0), rhythm.Step(pos=8)]
+        motif.tracks["E(5,16)"] = [rhythm.Step(pos=i) for i in (0, 3, 6)]
+        kit, rows, perdus = songwriter.drum_kit_for(self.sd, self.lib,
+                                                    "techno", motif.tracks)
+        self.assertEqual(perdus, [])
+        self.assertEqual(set(rows), {"Kick", "E(5,16)"})
+        self.assertNotEqual(rows["Kick"], rows["E(5,16)"])
+        spec = songwriter.pattern_song(motif, kit, rows, name="M", bpm=120)
+        self.assertEqual(sum(len(n) for n in spec.clips[0].rows.values()), 5)
+
+    def test_le_kit_de_l_ecoute_n_est_pas_modifie(self):
+        from delugeapp.core import songwriter
+
+        base = kitgen.build_kit(self.sd, self.lib, "ECOUTE", genre="techno",
+                                seed=1, slots=["Kick"])
+        avant = len(base.rows)
+        kit, rows, _perdus = songwriter.drum_kit_for(
+            self.sd, self.lib, "techno", ["Kick", "Rim"], base=base)
+        self.assertEqual(len(base.rows), avant)
+        self.assertEqual(len(kit.rows), avant + 1)
+
+    def test_une_esquisse_devient_un_morceau_a_sections(self):
+        from delugeapp.core import songwriter
+
+        prog = sketch.default_progression("techno", seed=1)
+        result = sketch.sketch(prog, genre="techno", root=57, scale="mineur",
+                               seed=1)
+        kit, rows, _p = songwriter.drum_kit_for(self.sd, self.lib, "techno",
+                                                result.drums.tracks)
+        spec = songwriter.sketch_song(result, name="S", bpm=128,
+                                      genre="techno", root=57,
+                                      scale="mineur", kit=kit, row_map=rows)
+        self.assertEqual([s.name for s in spec.sections],
+                         [s.name for s in result.sections])
+        self.assertEqual(sum(s.length for s in spec.sections),
+                         result.bars * songwriter.BAR)
+        joues = {c.section for c in spec.clips if c.playing}
+        self.assertEqual(joues, {0})
+        # L'intro tient en boucles courtes : accords et batterie légère.
+        intro = [c for c in spec.clips if c.section == 0]
+        self.assertTrue(all(c.length <= 4 * songwriter.BAR for c in intro))
+        doc = songwriter.build(spec)
+        repeats = [int(s.get("numRepeats")) for s in doc.root.find("sections")]
+        self.assertEqual(repeats[0], 16 // 4)
+
+    def test_un_preset_garde_son_arpegiateur(self):
+        """S'il est allumé, la phrase devient des accords tenus, que la
+        machine arpège elle-même."""
+        from delugeapp.core import songwriter
+
+        preset = SynthPreset.new("ARP")
+        preset.sound.arp.arp_mode = "arp"
+        preset.sound.arp.mode = "up"
+        spec = songwriter.preset_song(preset, name="A", bpm=120,
+                                      genre="trance", role="pluck")
+        self.assertEqual(spec.clips[0].name, "Accords")
+        self.assertEqual(spec.tracks[0].arp["arpMode"], "arp")
+        basse = songwriter.preset_song(SynthPreset.new("B"), name="B",
+                                       bpm=120, genre="techno", role="bass")
+        self.assertEqual(basse.clips[0].name, "Basse")
+        self.assertEqual(basse.tracks[0].arp["arpMode"], "off")
+
+    def test_une_boucle_decoupee_se_rejoue_a_sa_place(self):
+        from delugeapp.core import slicer, songwriter
+
+        tranches = slicer.SliceSet(
+            rel="SAMPLES/DRUMS/Kick/808.wav", sr=44100, frames=88200,
+            slices=[slicer.Slice(i * 22050, (i + 1) * 22050)
+                    for i in range(4)], bpm=120.0)
+        spec = songwriter.slices_song(tranches, name="B")
+        self.assertEqual(spec.clips[0].length, 384)
+        self.assertEqual([spec.clips[0].rows[i][0].pos for i in range(4)],
+                         [0, 96, 192, 288])
+        self.assertEqual(len(spec.tracks[0].drum_params), 4)
+        # Tempo inconnu : celui qui fait tenir la boucle en mesures entières.
+        self.assertEqual(songwriter.loop_tempo(2.0), 120.0)
+        self.assertEqual(songwriter.loop_tempo(1.6), 150.0)
+        self.assertEqual(songwriter.loop_tempo(0), 120.0)
+
+
+class TestVoixMaximales(unittest.TestCase):
+    """``maxVoices`` : la machine écrit 8 pour tous ses sons."""
+
+    def test_un_son_genere_garde_huit_voix_meme_en_legato(self):
+        """Mesuré : les 94 ``maxVoices`` des morceaux de la carte valent 8,
+        legato et auto compris ; 0 serait un plafond de zéro voix."""
+        vus = set()
+        for seed in range(40):
+            preset = synthgen.generate(synthgen.GenOptions(
+                genre="acid", role="bass", seed=seed))
+            vus.add(preset.sound.polyphonic)
+            self.assertEqual(preset.sound.max_voices, 8)
+        self.assertGreater(len(vus), 1, "aucun son non polyphonique tiré")
+
+    def test_un_ancien_zero_redevient_huit_dans_un_morceau(self):
+        import xml.etree.ElementTree as ET
+
+        from delugeapp.core import songwriter
+
+        son = ET.fromstring('<sound polyphonic="legato" maxVoices="0">'
+                            '<osc1 type="saw" /></sound>')
+        track = songwriter.synth_track(son, version="c1.2.1")
+        self.assertEqual(track.body.get("maxVoices"), "8")
+
+
+class TestSysexDuDeluge(unittest.TestCase):
+    """Le SysEx du firmware c1.2.1, lu dans son code.
+
+    Les vecteurs de compression sont calculés **à la main** d'après
+    ``util/pack.c`` : un portage fautif et un test recopié du portage
+    seraient d'accord entre eux.
+    """
+
+    def test_les_demandes_s_ecrivent_comme_le_firmware_les_attend(self):
+        from delugeapp.core import delugesysex as sx
+
+        self.assertEqual(sx.identity_request().hex(" "), "f0 7e 7f 06 01 f7")
+        self.assertEqual(sx.ping(42).hex(" "), "f0 00 21 7b 01 00 2a f7")
+        self.assertEqual(sx.popup().hex(" "), "f0 00 21 7b 01 01 f7")
+        self.assertEqual(sx.display_request().hex(" "),
+                         "f0 00 21 7b 01 02 00 03 f7")
+
+    def test_la_demande_qui_change_l_ecran_de_la_machine_est_refusee(self):
+        """Le mode 4 appelle ``swapDisplayType`` : il bascule l'écran de la
+        machine entre OLED et sept segments."""
+        from delugeapp.core import delugesysex as sx
+
+        with self.assertRaises(ValueError):
+            sx.display_request(4)
+
+    def test_compression_vecteurs_calcules_a_la_main(self):
+        from delugeapp.core import delugesysex as sx
+
+        cas = {
+            bytes(10): [84, 0],                 # 64 + 2×10, puis l'octet
+            bytes([0x80] * 3): [71, 0],         # 64 + 1 (bit fort) + 2×3
+            bytes([1, 2]): [0, 1, 2],           # dense de 2 : décalage 0
+            bytes([0xFF]): [67, 0x7F],          # dense de 1 : 64 + 2 + 1
+            bytes(40): [126, 9, 0],             # 31 + 9 répétitions
+            bytes([1, 2, 3]): [4, 1, 2, 3],     # dense de 3 : décalage 4
+        }
+        for source, attendu in cas.items():
+            with self.subTest(source=source.hex()):
+                self.assertEqual(list(sx.pack_8to7_rle(source)), attendu)
+                self.assertEqual(sx.unpack_7to8_rle(bytes(attendu)), source)
+
+    def test_codage_7_bits_de_sequential(self):
+        from delugeapp.core import delugesysex as sx
+
+        source = bytes([0x81, 2, 3, 4, 5, 6, 0x87])
+        self.assertEqual(list(sx.pack_8bit_to_7bit(source)),
+                         [0x41, 1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(sx.unpack_7bit_to_8bit(
+            sx.pack_8bit_to_7bit(source)), source)
+
+    def test_allers_retours_sur_des_ecrans_varies(self):
+        import random
+
+        from delugeapp.core import delugesysex as sx
+
+        rng = random.Random(3)
+        for essai in range(60):
+            source = bytes(rng.choice((0, 0, 0, 0xFF, rng.randrange(256)))
+                           for _ in range(sx.OLED_BYTES))
+            with self.subTest(essai=essai):
+                code = sx.pack_8to7_rle(source)
+                self.assertTrue(all(octet < 128 for octet in code))
+                self.assertEqual(sx.unpack_7to8_rle(code, sx.OLED_BYTES),
+                                 source)
+
+    def test_un_flux_abime_ne_leve_pas(self):
+        from delugeapp.core import delugesysex as sx
+
+        self.assertIsNone(sx.unpack_7to8_rle(bytes([62, 0, 0])))
+        self.assertIsNone(sx.parse(b"\xf0\x00\x21\x7b\x01\x02\x40\x01\x00"
+                                   b"\x3e\x00\xf7"))
+        self.assertIsNone(sx.parse(b"\x90\x40\x40"))
+        self.assertIsNone(sx.parse(b""))
+
+    def test_lire_l_identite(self):
+        from delugeapp.core import delugesysex as sx
+
+        reponse = bytes((0xF0, 0x7E, 0x7F, 0x06, 0x02, 0x00, 0x21, 0x7B,
+                         0x01, 0, 0, 0, 1, 2, 1, 0, 0xF7))
+        identite = sx.parse(reponse)
+        self.assertEqual(identite.version, "c1.2.1")
+        self.assertTrue(identite.community)
+        officiel = sx.Identity(4, 1, 4)
+        self.assertEqual((officiel.version, officiel.community),
+                         ("4.1.4", False))
+        autre = bytearray(reponse)
+        autre[6] = 0x22                     # un autre fabricant
+        self.assertIsNone(sx.parse(bytes(autre)))
+
+    def test_l_ecran_se_reconstruit_image_puis_differences(self):
+        """Bit 0 d'un octet = pixel du **haut** de sa colonne."""
+        from delugeapp.core import delugesysex as sx
+
+        image = bytearray(sx.OLED_BYTES)
+        image[0] = 0x01                     # (0, 0)
+        image[128 + 5] = 0x80               # (5, 15)
+        trame = (b"\xf0\x00\x21\x7b\x01\x02\x40\x01\x00"
+                 + sx.pack_8to7_rle(bytes(image)) + b"\xf7")
+        ecran = sx.OledScreen()
+        self.assertTrue(ecran.apply(sx.parse(trame)))
+        self.assertTrue(ecran.pixel(0, 0))
+        self.assertTrue(ecran.pixel(5, 15))
+        self.assertFalse(ecran.pixel(0, 1))
+        self.assertEqual(ecran.lit_count(), 2)
+        difference = (b"\xf0\x00\x21\x7b\x01\x02\x40\x02\x02\x01"
+                      + sx.pack_8to7_rle(bytes([0xFF] * 8)) + b"\xf7")
+        delta = sx.parse(difference)
+        self.assertEqual((delta.start, len(delta.data)), (2, 8))
+        ecran.apply(delta)
+        self.assertEqual(ecran.lit_count(), 2 + 64)
+        self.assertTrue(all(ecran.pixel(x, y) for x in range(16, 24)
+                            for y in range(8)))
+
+    def test_une_difference_pleine_page_vaut_une_image(self):
+        """Mesuré sur la machine : l'abonnement forcé (mode 3) répond par
+        une différence qui couvre tout l'écran, jamais par une image."""
+        from delugeapp.core import delugesysex as sx
+
+        ecran = sx.OledScreen()
+        partielle = (b"\xf0\x00\x21\x7b\x01\x02\x40\x02\x00\x01"
+                     + sx.pack_8to7_rle(bytes([0xFF] * 8)) + b"\xf7")
+        self.assertTrue(ecran.apply(sx.parse(partielle)))
+        self.assertFalse(ecran.complete)
+        pleine = (b"\xf0\x00\x21\x7b\x01\x02\x40\x02\x00\x60"
+                  + sx.pack_8to7_rle(bytes(sx.OLED_BYTES)) + b"\xf7")
+        delta = sx.parse(pleine)
+        self.assertEqual((delta.start, len(delta.data)), (0, sx.OLED_BYTES))
+        self.assertTrue(ecran.apply(delta))
+        self.assertTrue(ecran.complete)
+        self.assertEqual(ecran.lit_count(), 0)
+
+    #: Réponse du Deluge branché (firmware c1.2.1) à la demande d'image
+    #: compressée (mode 1), telle qu'elle est arrivée : l'écran montrait
+    #: « SYNTH » au-dessus de « TB01 ».
+    TRAME_MESUREE = (
+        "f000217b01024001007e7f006600424c47122c6400060870240806007e081010"
+        "207e004402437e440202007e4610437e7e4400514044004b4043004400430049"
+        "4043004400450045407e4600447f4a00447f4466007f3d4400003f7f4460007f"
+        "3f44004401447f7e7f007e7400f7")
+
+    def test_une_vraie_trame_de_la_machine(self):
+        """Des octets venus de la machine, pas de notre codeur : un portage
+        fautif et un vecteur qu'il aurait produit seraient d'accord."""
+        from delugeapp.core import delugesysex as sx
+
+        brut = bytes.fromhex(self.TRAME_MESUREE)
+        self.assertEqual(len(brut), 110)
+        trame = sx.parse(brut)
+        self.assertIsInstance(trame, sx.OledFrame)
+        ecran = sx.OledScreen()
+        self.assertTrue(ecran.apply(trame))
+        self.assertEqual(ecran.lit_count(), 207)
+        allumes = [(x, y) for y in range(sx.OLED_HEIGHT)
+                   for x in range(sx.OLED_WIDTH) if ecran.pixel(x, y)]
+        self.assertEqual((min(x for x, _ in allumes), max(x for x, _ in allumes),
+                          min(y for _, y in allumes), max(y for _, y in allumes)),
+                         (49, 78, 9, 30))
+        # Le haut du S de SYNTH, la barre du T de TB01.
+        self.assertTrue(ecran.pixel(50, 9))
+        self.assertFalse(ecran.pixel(49, 9))
+        self.assertTrue(all(ecran.pixel(x, 22) for x in range(49, 57)))
+        # Et notre codeur redonne exactement ce que la machine a envoyé.
+        self.assertEqual(sx.pack_8to7_rle(trame.data), brut[9:-1])
+
+    def test_la_vraie_reponse_d_identite(self):
+        from delugeapp.core import delugesysex as sx
+
+        reponse = bytes.fromhex("f07e7f0602 00217b01 000000 010201 00f7"
+                                .replace(" ", ""))
+        identite = sx.parse(reponse)
+        self.assertEqual((identite.major, identite.minor, identite.patch),
+                         (1, 2, 1))
+        self.assertTrue(identite.community)
+        self.assertEqual(identite.version, "c1.2.1")
+
+    def test_une_difference_hors_ecran_est_refusee(self):
+        from delugeapp.core import delugesysex as sx
+
+        trop_loin = (b"\xf0\x00\x21\x7b\x01\x02\x40\x02\x60\x01"
+                     + sx.pack_8to7_rle(bytes(8)) + b"\xf7")
+        self.assertIsNone(sx.parse(trop_loin))
+
+
+class TestControleursExacts(unittest.TestCase):
+    """Contrôleur <-> paramètre, au cran près du firmware.
+
+    ``ParamCollection::paramValueToKnobPos`` : ``(v + 2^24) >> 25`` ;
+    ``MidiTakeover::calculateKnobPos`` : ``cc − 64``, et 127 vaut +64.
+    """
+
+    def test_envoyer_tombe_sur_le_cran_du_firmware(self):
+        from delugeapp.core import midifollow
+
+        # 0x3851EB64 : position 28 pour le firmware, donc 92. L'ancienne
+        # règle de trois disait 91, un cran trop bas.
+        self.assertEqual(midifollow.cc_value(0x3851EB64), 92)
+        self.assertEqual(midifollow.cc_value(0), 64)
+        self.assertEqual(midifollow.cc_value(INT32_MIN), 0)
+        self.assertEqual(midifollow.cc_value(INT32_MAX), 127)
+        self.assertEqual(midifollow.cc_value(0x7F000000), 127)
+
+    def test_la_largeur_d_impulsion_est_a_demi_echelle(self):
+        """``PatchedParamSet`` : ``(v >> 24) − 64`` pour la largeur
+        d'impulsion des oscillateurs."""
+        from delugeapp.core import midifollow
+
+        self.assertEqual(midifollow.cc_value(0x40000000, "oscAPulseWidth"), 64)
+        self.assertEqual(midifollow.raw_from_cc(64, "oscBPulseWidth"),
+                         0x40000000)
+
+    def test_lire_le_retour_de_la_machine(self):
+        from delugeapp.core import midifollow
+
+        self.assertEqual(midifollow.raw_from_cc(92), 28 << 25)
+        self.assertEqual(midifollow.raw_from_cc(64), 0)
+        self.assertEqual(midifollow.raw_from_cc(0), INT32_MIN)
+        # La machine envoie position + 64 : 128 pour le maximum.
+        self.assertEqual(midifollow.raw_from_cc(128), INT32_MAX)
+
+    def test_un_aller_retour_ne_bouge_pas_d_un_cran(self):
+        from delugeapp.core import midifollow
+
+        for cc in range(0, 127):
+            with self.subTest(cc=cc):
+                self.assertEqual(
+                    midifollow.cc_value(midifollow.raw_from_cc(cc)), cc)
+
+    def test_la_carte_inverse(self):
+        from delugeapp.core import midifollow
+
+        inverse = midifollow.reverse_map({"lpfFrequency": 74, "pan": 10})
+        self.assertEqual(inverse, {74: "lpfFrequency", 10: "pan"})
+
+
+class _FauxWinmm:
+    """Les fonctions d'entrée de ``winmm``, jouées par Python.
+
+    Les en-têtes ``MIDIHDR`` sont les vrais objets ctypes du module : le
+    faux pilote y écrit comme le vrai, puis appelle le vrai rappel.
+    """
+
+    def __init__(self):
+        import ctypes
+        import threading
+
+        self.ctypes = ctypes
+        self.verrou = threading.Lock()
+        self.proc = None
+        self.file: list = []
+        self.appels: list[str] = []
+        self.prepares: set[int] = set()
+        self.ajouts_apres_reset = 0
+        self.remis = False
+
+    def midiInOpen(self, poignee, index, proc, inst, drapeaux):
+        poignee._obj.value = 4242
+        self.proc = proc
+        self.appels.append("open")
+        return 0
+
+    def midiInPrepareHeader(self, _h, entete, taille):
+        self.prepares.add(self.ctypes.addressof(entete._obj))
+        return 0
+
+    def midiInAddBuffer(self, _h, entete, taille):
+        with self.verrou:
+            if self.remis:
+                self.ajouts_apres_reset += 1
+            self.file.append(entete._obj)
+            self.appels.append("add")
+        return 0
+
+    def midiInStart(self, _h):
+        self.appels.append("start")
+        return 0
+
+    def midiInStop(self, _h):
+        self.appels.append("stop")
+        return 0
+
+    def midiInReset(self, _h):
+        self.appels.append("reset")
+        with self.verrou:
+            self.remis = True
+            rendus, self.file = self.file, []
+        for entete in rendus:
+            entete.dwBytesRecorded = 0
+            entete.dwFlags |= 1
+            self.proc(4242, 0x3C4, None, self.ctypes.addressof(entete), 0)
+        return 0
+
+    def midiInUnprepareHeader(self, _h, entete, taille):
+        with self.verrou:
+            if any(e is entete._obj for e in self.file):
+                return 65
+        self.appels.append("unprepare")
+        return 0
+
+    def midiInClose(self, _h):
+        self.appels.append("close")
+        return 0
+
+    # -- côté appareil ---------------------------------------------------- #
+
+    def sysex(self, donnees: bytes, stamp: int = 0) -> None:
+        reste = bytes(donnees)
+        while reste:
+            with self.verrou:
+                entete = self.file.pop(0)
+            morceau, reste = (reste[:entete.dwBufferLength],
+                              reste[entete.dwBufferLength:])
+            self.ctypes.memmove(entete.lpData, morceau, len(morceau))
+            entete.dwBytesRecorded = len(morceau)
+            entete.dwFlags |= 1
+            self.proc(4242, 0x3C4, None, self.ctypes.addressof(entete), stamp)
+
+    def court(self, status: int, d1: int, d2: int, stamp: int) -> None:
+        self.proc(4242, 0x3C3, None, status | (d1 << 8) | (d2 << 16), stamp)
+
+
+class _FauxSortie:
+    """Les fonctions de sortie de ``winmm``, qui notent ce qui part."""
+
+    def __init__(self):
+        self.appels: list = []
+
+    def midiOutOpen(self, poignee, index, rappel, instance, drapeaux):
+        poignee._obj.value = 77
+        self.appels.append("open")
+        return 0
+
+    def midiOutShortMsg(self, _h, message):
+        self.appels.append((message & 0xFF, (message >> 8) & 0xFF,
+                            (message >> 16) & 0xFF))
+        return 0
+
+    def midiOutReset(self, _h):
+        self.appels.append("reset")
+        return 0
+
+    def midiOutClose(self, _h):
+        self.appels.append("close")
+        return 0
+
+
+class TestFermetureDeSortie(unittest.TestCase):
+    """Fermer un port n'envoie rien à la machine s'il n'a rien joué.
+
+    Lu en relisant le code, le Deluge branché : chaque fermeture envoyait
+    seize « All Notes Off » et un ``midiOutReset``, y compris sur le port des
+    SysEx et pendant des essais censés ne rien envoyer.
+    """
+
+    def setUp(self):
+        from delugeapp.core import midiport
+
+        if midiport.ctypes is None:
+            self.skipTest("ctypes de Windows absent")
+        self.midiport = midiport
+        self.faux = _FauxSortie()
+        self._vrai = midiport._winmm
+        midiport._winmm = self.faux
+        self.port = midiport.MidiOut()
+        self.assertTrue(self.port.open(
+            midiport.MidiDevice(0, "MIDIOUT3 (Deluge)", "out")))
+
+    def tearDown(self):
+        self.midiport._winmm = self._vrai
+
+    def test_un_port_qui_n_a_rien_joue_se_ferme_sans_rien_envoyer(self):
+        self.port.realtime(self.midiport.CLOCK)   # message système : neutre
+        self.port.close()
+        self.assertEqual(self.faux.appels, ["open", (0xF8, 0, 0), "close"])
+
+    def test_un_port_qui_a_joue_eteint_tout_en_partant(self):
+        self.port.note_on(60, 100, channel=2)
+        self.port.close()
+        appels = self.faux.appels
+        self.assertIn((0x81, 60, 0), appels)             # la note relâchée
+        self.assertEqual(sum(1 for a in appels if isinstance(a, tuple)
+                             and a[0] & 0xF0 == 0xB0 and a[1] == 123), 16)
+        self.assertEqual(appels[-2:], ["reset", "close"])
+
+    def test_rouvrir_remet_le_compte_a_zero(self):
+        self.port.note_on(60)
+        self.port.close()
+        self.faux.appels.clear()
+        self.assertTrue(self.port.open(
+            self.midiport.MidiDevice(0, "Deluge", "out")))
+        self.port.close()
+        self.assertEqual(self.faux.appels, ["open", "close"])
+
+
+class TestEntreeSysex(unittest.TestCase):
+    """La réception des SysEx, sur un faux pilote mais avec les vrais
+    tampons, le vrai rappel et le vrai fil de recyclage."""
+
+    def setUp(self):
+        from delugeapp.core import midiport
+
+        if midiport.ctypes is None:
+            self.skipTest("ctypes de Windows absent")
+        self.midiport = midiport
+        self.faux = _FauxWinmm()
+        self._vrai = midiport._winmm
+        midiport._winmm = self.faux
+
+    def tearDown(self):
+        self.midiport._winmm = self._vrai
+
+    def _ouvrir(self):
+        entree = self.midiport.MidiIn()
+        self.assertTrue(entree.open(self.midiport.MidiDevice(0, "Deluge",
+                                                             "in")))
+        self.assertEqual(len(self.faux.file),
+                         self.midiport.SYSEX_BUFFERS)
+        return entree
+
+    def _attendre_tampons(self, nombre):
+        for _ in range(200):
+            with self.faux.verrou:
+                if len(self.faux.file) >= nombre:
+                    return True
+            time.sleep(0.005)
+        return False
+
+    def test_un_sysex_sur_deux_tampons_est_recolle(self):
+        entree = self._ouvrir()
+        try:
+            long = bytes([0xF0]) + bytes(range(1, 128)) * 40 + b"\xf7"
+            self.assertGreater(len(long), self.midiport.SYSEX_BUFFER_SIZE)
+            self.faux.sysex(long, stamp=77)
+            recus = entree.poll()
+            self.assertEqual(len(recus), 1)
+            self.assertTrue(recus[0].is_sysex)
+            self.assertEqual(recus[0].data, long)
+            self.assertEqual(recus[0].stamp, 77)
+            # Les deux tampons sont revenus au pilote, par le fil de
+            # recyclage et non par le rappel.
+            self.assertTrue(self._attendre_tampons(
+                self.midiport.SYSEX_BUFFERS))
+        finally:
+            entree.close()
+
+    def test_les_messages_courts_gardent_l_horodatage_du_pilote(self):
+        entree = self._ouvrir()
+        try:
+            self.faux.court(0xF8, 0, 0, stamp=1234)
+            self.faux.court(0xB0, 74, 128, stamp=1240)
+            recus = entree.poll()
+            self.assertEqual([(m.status, m.stamp) for m in recus],
+                             [(0xF8, 1234), (0xB0, 1240)])
+            # 128 n'est pas un octet MIDI, mais c'est ce que la machine
+            # envoie pour un bouton au maximum : on le garde.
+            self.assertEqual(recus[1].data2, 128)
+        finally:
+            entree.close()
+
+    def test_fermer_rend_tout_dans_l_ordre(self):
+        """Arrêt, reset (le pilote rend les tampons), **aucun** tampon
+        rendu au pilote après le reset, libération, fermeture."""
+        entree = self._ouvrir()
+        entree.close()
+        appels = [a for a in self.faux.appels if a != "add"]
+        self.assertEqual(appels[:4], ["open", "start", "stop", "reset"])
+        self.assertEqual(appels[-1], "close")
+        self.assertEqual(appels.count("unprepare"),
+                         self.midiport.SYSEX_BUFFERS)
+        self.assertEqual(self.faux.ajouts_apres_reset, 0)
+        self.assertFalse(entree.is_open)
+
+    def test_rouvrir_ne_bloque_pas(self):
+        """``open`` ferme d'abord, **hors** du verrou que le fil de
+        recyclage attend : rouvrir prenait deux secondes d'attente."""
+        entree = self._ouvrir()
+        try:
+            self.faux.sysex(b"\xf0\x01\xf7")
+            debut = time.monotonic()
+            self.faux.file.clear()
+            self.assertTrue(entree.open(self.midiport.MidiDevice(
+                0, "Deluge", "in")))
+            self.assertLess(time.monotonic() - debut, 1.0)
+        finally:
+            entree.close()
+
+
+def _deluge_simule():
+    """Le module ``tests/deluge_simule.py``, quelle que soit la façon dont la
+    suite est lancée (``discover -s tests`` ou ``tests.test_core``)."""
+    import sys
+
+    dossier = str(Path(__file__).resolve().parent)
+    if dossier not in sys.path:
+        sys.path.insert(0, dossier)
+    import deluge_simule
+
+    return deluge_simule
+
+
+class TestLiaisonVivante(unittest.TestCase):
+    """La liaison complète, face au Deluge simulé (``tests/deluge_simule.py``)."""
+
+    def setUp(self):
+        from delugeapp.core import midiport
+        from delugeapp.core.delugelink import DelugeLink
+
+        DelugeSimule = _deluge_simule().DelugeSimule
+
+        self.midiport = midiport
+        self.machine = DelugeSimule()
+        self._sauves = (midiport.outputs, midiport.inputs,
+                        midiport.available)
+        midiport.outputs = lambda: self.machine.devices("out")
+        midiport.inputs = lambda: self.machine.devices("in")
+        midiport.available = lambda: True
+        self.lien = DelugeLink()
+        self.machine.brancher(self.lien)
+
+    def tearDown(self):
+        (self.midiport.outputs, self.midiport.inputs,
+         self.midiport.available) = self._sauves
+
+    def test_les_notes_passent_par_le_premier_port_et_les_sysex_par_le_troisieme(self):
+        self.assertTrue(self.lien.connect())
+        etat = self.lien.state()
+        self.assertEqual(etat.out_name, "Deluge")
+        self.assertEqual(etat.in_name, "Deluge")
+        self.assertEqual(etat.sysex_name, "MIDIOUT3 (Deluge)")
+        envoyes = [e[0] for e in self.machine.sorties[3].envoyes]
+        self.assertEqual(envoyes, ["sysex", "sysex"])
+        self.assertEqual(self.machine.sorties[1].envoyes, [])
+
+    def test_la_machine_dit_sa_version_et_l_aller_retour_se_mesure(self):
+        self.assertTrue(self.lien.connect())
+        evenements = self.lien.service()
+        self.assertIn("identity", evenements)
+        self.assertIn("ping", evenements)
+        etat = self.lien.state()
+        self.assertEqual(etat.firmware, "c1.2.1")
+        self.assertTrue(etat.verified)
+        self.assertIsNotNone(etat.latency_ms)
+        self.assertIn("Deluge c1.2.1", etat.summary())
+
+    def test_l_aller_retour_se_compte_a_l_arrivee_pas_au_service(self):
+        """La machine répond en 2 à 3 ms, le service ne passe que toutes les
+        40 ms : compté au service, l'aller-retour affichait 41 ms
+        (mesuré sur la machine)."""
+        self.assertTrue(self.lien.connect())
+        self.lien.service()
+        self.assertTrue(self.lien.ping())
+        time.sleep(0.08)
+        self.assertIn("ping", self.lien.service())
+        self.assertLess(self.lien.latency_ms, 40.0)
+
+    def test_un_aller_retour_sous_la_milliseconde_ne_s_affiche_pas_zero(self):
+        """Mesuré : 0,3 ms en USB. Arrondi à l'unité, c'était « 0 ms »."""
+        from delugeapp.core.delugelink import latency_text
+
+        self.assertEqual(latency_text(0.33), "0,3 ms")
+        self.assertEqual(latency_text(2.54), "2,5 ms")
+        self.assertEqual(latency_text(41.2), "41 ms")
+        self.assertEqual(latency_text(-1), "0,0 ms")
+
+    def test_sans_troisieme_port_les_sysex_passent_par_le_premier(self):
+        self.machine = _deluge_simule().DelugeSimule(cables=1)
+        self.machine.brancher(self.lien)
+        self.assertTrue(self.lien.connect())
+        self.assertEqual(self.lien.state().sysex_name, "Deluge")
+        self.lien.service()
+        self.assertEqual(self.lien.state().firmware, "c1.2.1")
+
+    def test_une_machine_muette_est_redemandee_trois_fois(self):
+        self.machine.muette = True
+        self.assertTrue(self.lien.connect())
+        for _ in range(4):
+            self.lien._ident_sent -= 3.0
+            self.lien.service()
+        identites = [d for d in self.machine.demandes
+                     if d == bytes((0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7))]
+        self.assertEqual(len(identites), 3)
+        self.assertEqual(self.lien.state().firmware, "")
+
+    def test_l_ecran_se_recopie_et_s_entretient(self):
+        from delugeapp.core import delugesysex as sx
+
+        self.assertTrue(self.lien.connect())
+        self.lien.service()
+        self.machine.ecran[0] = 0xFF
+        self.assertTrue(self.lien.set_screen(True))
+        # Comme la vraie machine : une différence pleine page, pas d'image.
+        reponse = sx.parse(self.machine.entrees[3].recus[-1].data)
+        self.assertIsInstance(reponse, sx.OledDelta)
+        self.assertEqual((reponse.start, len(reponse.data)),
+                         (0, sx.OLED_BYTES))
+        self.assertIn("screen", self.lien.service())
+        self.assertTrue(self.lien.screen.complete)
+        self.assertEqual(self.lien.screen.lit_count(), 8)
+        self.machine.dessine(3, bytes([0x0F] * 8))
+        self.assertIn("screen", self.lien.service())
+        self.assertEqual(self.lien.screen.lit_count(), 8 + 32)
+        # L'abonnement dure deux secondes : il est renouvelé avant.
+        avant = len(self.machine.demandes)
+        self.lien._screen_sent -= 1.5
+        self.lien.service()
+        self.assertEqual(len(self.machine.demandes), avant + 1)
+        self.assertEqual(self.machine.demandes[-1][-2], 2)
+        self.lien.set_screen(False)
+        self.lien._screen_sent -= 5
+        self.lien.service()
+        self.assertEqual(len(self.machine.demandes), avant + 1)
+
+    def test_le_tempo_et_la_lecture_de_la_machine(self):
+        self.assertTrue(self.lien.connect())
+        self.machine.court(self.midiport.START)
+        self.machine.horloge(124.0)
+        evenements = self.lien.service()
+        self.assertIn("transport", evenements)
+        self.assertIn("tempo", evenements)
+        self.assertTrue(self.lien.running)
+        self.assertAlmostEqual(self.lien.tempo, 124.0, delta=0.3)
+        self.machine.court(self.midiport.STOP)
+        self.lien.service()
+        self.assertFalse(self.lien.running)
+
+    def test_une_horloge_qui_se_tait_arrete_la_lecture(self):
+        self.assertTrue(self.lien.connect())
+        self.machine.court(self.midiport.START)
+        self.machine.horloge(120.0)
+        self.lien.service()
+        self.lien._tick_seen -= 5.0
+        self.assertIn("transport", self.lien.service())
+        self.assertFalse(self.lien.running)
+        self.assertAlmostEqual(self.lien.tempo, 120.0, delta=0.3)
+
+    def test_le_retour_midi_follow_donne_le_son_selectionne(self):
+        self.assertTrue(self.lien.connect())
+        self.lien.set_channel(1)
+        cc = self.lien.follow_map["lpfFrequency"]
+        self.machine.court(0xB0, cc, 92)
+        self.machine.court(0xB1, cc, 10)       # un autre canal : ignoré
+        self.assertIn("params", self.lien.service())
+        self.assertEqual(self.lien.machine["lpfFrequency"], 28 << 25)
+        self.assertEqual(self.lien.state().feedback, 1)
+
+    def test_les_notes_tenues_sur_la_machine(self):
+        self.assertTrue(self.lien.connect())
+        for note in (60, 64, 67):
+            self.machine.court(0x90, note, 100)
+        self.machine.court(0x80, 64, 0)
+        self.assertIn("notes", self.lien.service())
+        self.assertEqual(self.lien.held, {60, 67})
+
+    def test_un_port_occupe_se_dit_en_clair(self):
+        self.machine.refuse_cable = 1
+        self.assertFalse(self.lien.connect())
+        resume = self.lien.state().summary()
+        self.assertIn("déjà utilisé par une autre application", resume)
+
+    def test_deconnecter_oublie_ce_que_la_machine_a_dit(self):
+        self.assertTrue(self.lien.connect())
+        self.lien.service()
+        self.lien.disconnect()
+        etat = self.lien.state()
+        self.assertEqual((etat.firmware, etat.latency_ms, etat.out_name),
+                         ("", None, ""))
+
+    def test_le_tempo_d_une_horloge(self):
+        from delugeapp.core.delugelink import tempo_from_ticks
+
+        ecart = 60000.0 / (120 * 24)
+        self.assertAlmostEqual(tempo_from_ticks(
+            [i * ecart for i in range(25)]), 120.0, places=6)
+        self.assertIsNone(tempo_from_ticks([0, 10]))
+        self.assertIsNone(tempo_from_ticks([5, 5, 5]))

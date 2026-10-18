@@ -19,11 +19,13 @@ mixage harmonique.
 from __future__ import annotations
 
 import logging
+import random
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGridLayout,
@@ -44,8 +46,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ...core import accomp as accomp_mod
 from ...core import genres as genres_mod
 from ...core import rhythm as rhythm_mod
+from ...core import sketch as sketch_mod
+from ...core import songwriter as songwriter_mod
 from ...core import theory as theory_mod
 from ..theme import GOLD, PAD, PAD_CYAN
 from ..widgets.common import Card
@@ -55,44 +60,35 @@ from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
 
-#: Modèles de structure par genre : ``(section, mesures)``.
-ARRANGEMENTS: dict[str, tuple[tuple[str, int], ...]] = {
-    "techno": (("Intro", 16), ("Montée", 16), ("Thème", 32), ("Cassure", 16),
-               ("Thème 2", 32), ("Final", 16)),
-    "house": (("Intro", 16), ("Couplet", 16), ("Montée", 8), ("Refrain", 32),
-              ("Cassure", 16), ("Refrain 2", 32), ("Final", 16)),
-    "trance": (("Intro", 16), ("Montée", 32), ("Cassure", 16),
-               ("Explosion", 32), ("Thème", 32), ("Final", 16)),
-    "dnb": (("Intro", 16), ("Montée", 16), ("Chute", 32), ("Cassure", 16),
-            ("Chute 2", 32), ("Final", 8)),
-    "ambient": (("Apparition", 32), ("Développement", 64),
-                ("Point culminant", 32), ("Dissipation", 48)),
-    "lofi": (("Intro", 8), ("Boucle A", 16), ("Boucle B", 16),
-             ("Pont", 8), ("Boucle A", 16), ("Sortie", 8)),
-}
+#: Modèle de structure de chaque genre (voir :mod:`delugeapp.core.sketch`).
+ARRANGEMENTS = sketch_mod.ARRANGEMENTS
 
 #: Correspondance ``syncLevel`` du Deluge et division rythmique.
 #:
-#: Le firmware code la synchronisation en puissances de deux ; cette table
-#: évite de la redécouvrir à chaque fois.
+#: Calcul du firmware (``model/sync.cpp``) : la valeur écrite dans le fichier
+#: vaut ``2^(3 - niveau)`` mesures, la magnitude du morceau s'annulant entre
+#: la lecture et l'affichage. Les 23 arpèges synchronisés de la carte sont
+#: en 7, la double-croche. Cette table était décalée d'un cran (7 annoncé en
+#: croche).
 SYNC_LEVELS: tuple[tuple[int, str], ...] = (
     (0, "libre (non synchronisé)"),
-    (1, "8 mesures"),
-    (2, "4 mesures"),
-    (3, "2 mesures"),
-    (4, "1 mesure"),
-    (5, "1/2 — blanche"),
-    (6, "1/4 — noire"),
-    (7, "1/8 — croche"),
-    (8, "1/16 — double-croche"),
-    (9, "1/32 — triple-croche"),
+    (1, "4 mesures"),
+    (2, "2 mesures"),
+    (3, "1 mesure"),
+    (4, "1/2 — blanche"),
+    (5, "1/4 — noire"),
+    (6, "1/8 — croche"),
+    (7, "1/16 — double-croche"),
+    (8, "1/32 — triple-croche"),
+    (9, "1/64 — quadruple-croche"),
 )
 
 #: Aide-mémoire : limites et valeurs du Deluge, mesurées ou documentées.
 CHEATSHEET: tuple[tuple[str, str], ...] = (
     ("Résolution rythmique",
-     "24 ticks par noire, 96 par mesure 4/4. Un clip de 1536 ticks fait "
-     "16 mesures."),
+     "Une mesure 4/4 vaut 96 << inputTickMagnitude ticks : 384 dans un "
+     "morceau c1.2.1 (magnitude 2), 192 dans un morceau 3.x. Un clip de "
+     "1536 ticks fait 4 mesures en c1.2.1."),
     ("Paramètres",
      "Entiers 32 bits : 0x80000000 = minimum, 0x00000000 = milieu, "
      "0x7FFFFFFF = maximum. L'écran affiche 0 à 50."),
@@ -106,8 +102,19 @@ CHEATSHEET: tuple[tuple[str, str], ...] = (
      "0x14 (20) = toujours. En dessous de 20, probabilité par pas de 5 %. "
      "À partir de 0x80, règle d'itération."),
     ("Gammes",
-     "<modeNotes> attend exactement sept intervalles : l'écran réserve "
-     "sept rangées de pads par octave."),
+     "Firmware communautaire (c1.x) : <modeNotes> accepte des gammes de "
+     "cinq, six ou sept notes, et toute gamme utilisateur. Le firmware "
+     "officiel en exigeait exactement sept."),
+    ("syncLevel",
+     "Valeur du fichier : 3 = 1 mesure, 5 = noire, 6 = croche, "
+     "7 = double-croche, 8 = triple-croche. 0 = libre."),
+    ("Arpégiateur (c1.x)",
+     "arpMode=\"arp\" l'allume ; noteMode (up, down, upDown, random, "
+     "asPlayed) et octaveMode (up, down, upDown, alt, random) le règlent. "
+     "L'ancien attribut mode n'est plus lu dans un fichier c1.2."),
+    ("Rangées de kit",
+     "loopMode 1 (ONCE) joue l'échantillon jusqu'au bout : c'est ce que "
+     "choisit le Deluge sous 2 secondes. 0 (CUT) l'arrête avec la note."),
     ("Noms de fichiers",
      "FAT32 : pas de < > : \" / \\ | ? *, ni de point ou d'espace final. "
      "63 caractères au maximum, ASCII de préférence."),
@@ -135,6 +142,13 @@ class ToolboxPage(Page):
         super().__init__(ctx, parent)
         self._pattern = None
         self._progression: list = []
+        self._progression_key: tuple = (None, "")
+        self._melody_seed = 1
+        self._pattern_base = None
+        self._chord_rolls = 0
+        #: Kits d'écoute bâtis sur la carte, par genre et pistes.
+        self._listen_kits: dict = {}
+        self._spelling: dict = {}
 
     def build(self) -> None:
         outer = QVBoxLayout(self.content())
@@ -193,6 +207,11 @@ class ToolboxPage(Page):
         self._scale_notes.setWordWrap(True)
         card.body().addWidget(self._scale_notes)
 
+        self._deluge_scale = QLabel("")
+        self._deluge_scale.setProperty("role", "subtitle")
+        self._deluge_scale.setWordWrap(True)
+        card.body().addWidget(self._deluge_scale)
+
         mode_row = QHBoxLayout()
         self._mode_notes = QLineEdit()
         self._mode_notes.setReadOnly(True)
@@ -227,6 +246,14 @@ class ToolboxPage(Page):
         for name in theory_mod.progression_names():
             self._progression_kind.addItem(name, name)
         prog_row.addWidget(self._progression_kind, 1)
+        prog_row.addWidget(QLabel("Couleur"))
+        self._prog_color = QComboBox()
+        self._prog_color.addItem("selon l'ambiance", "")
+        for color, aide in theory_mod.CHORD_COLORS.items():
+            self._prog_color.addItem(color, color)
+            self._prog_color.setItemData(self._prog_color.count() - 1, aide,
+                                         Qt.ItemDataRole.ToolTipRole)
+        prog_row.addWidget(self._prog_color)
         prog_row.addWidget(QLabel("Mesures"))
         self._progression_bars = QSpinBox()
         self._progression_bars.setRange(2, 16)
@@ -235,10 +262,85 @@ class ToolboxPage(Page):
         make = tool_button("Proposer", "wand", primary=True)
         make.clicked.connect(self.guard(self._make_progression))
         prog_row.addWidget(make)
-        export = tool_button("En MIDI", "export")
-        export.clicked.connect(self.guard(self._export_progression))
-        prog_row.addWidget(export)
         prog.body().addLayout(prog_row)
+
+        # L'accompagnement : comment poser la progression dans le temps.
+        acc_row = QHBoxLayout()
+        acc_row.addWidget(QLabel("Genre"))
+        self._acc_genre = QComboBox()
+        for key in genres_mod.genre_keys():
+            self._acc_genre.addItem(genres_mod.genre(key).label, key)
+        self._acc_genre.activated.connect(
+            self.guard(lambda _i: self._genre_tempo()))
+        acc_row.addWidget(self._acc_genre)
+        acc_row.addWidget(QLabel("Accords"))
+        self._acc_chords = QComboBox()
+        self._acc_chords.addItem("selon le genre", "")
+        for style in accomp_mod.CHORD_STYLES:
+            self._acc_chords.addItem(style, style)
+        acc_row.addWidget(self._acc_chords)
+        acc_row.addWidget(QLabel("Basse"))
+        self._acc_bass = QComboBox()
+        self._acc_bass.addItem("selon le genre", "")
+        for style, aide in accomp_mod.BASS_STYLES.items():
+            self._acc_bass.addItem(style, style)
+            self._acc_bass.setItemData(self._acc_bass.count() - 1, aide,
+                                       Qt.ItemDataRole.ToolTipRole)
+        acc_row.addWidget(self._acc_bass)
+        acc_row.addWidget(QLabel("BPM"))
+        self._acc_bpm = QSpinBox()
+        self._acc_bpm.setRange(40, 220)
+        self._acc_bpm.setValue(124)
+        acc_row.addWidget(self._acc_bpm)
+        acc_row.addStretch(1)
+        prog.body().addLayout(acc_row)
+
+        # Les parties facultatives sur leur propre ligne : sur la même que
+        # le genre et les styles, la page débordait à 980 pixels.
+        extra_row = QHBoxLayout()
+        extra_row.addWidget(QLabel("Ajouter"))
+        self._acc_arp = QCheckBox("Arpège")
+        extra_row.addWidget(self._acc_arp)
+        self._acc_melody = QCheckBox("Mélodie")
+        extra_row.addWidget(self._acc_melody)
+        self._acc_drums = QCheckBox("Batterie")
+        extra_row.addWidget(self._acc_drums)
+        extra_row.addStretch(1)
+        prog.body().addLayout(extra_row)
+
+        # Les listes de ces deux rangées peuvent rétrécir : à leur largeur
+        # naturelle, la page débordait sous une barre de défilement
+        # horizontale à 980 pixels, « Proposer » et le tempo coupés.
+        for liste in (self._progression_kind, self._prog_color,
+                      self._acc_genre, self._acc_chords, self._acc_bass):
+            liste.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            liste.setMinimumContentsLength(7)
+
+        play_row = QHBoxLayout()
+        self._listen_prog_button = tool_button("Écouter", "play")
+        self._listen_prog_button.clicked.connect(
+            self.guard(self._listen_progression))
+        play_row.addWidget(self._listen_prog_button)
+        stop = tool_button("Arrêter", "stop")
+        stop.clicked.connect(self.guard(self._stop_audio))
+        play_row.addWidget(stop)
+        self._export_prog_button = tool_button("En MIDI", "export")
+        self._export_prog_button.clicked.connect(
+            self.guard(self._export_progression))
+        play_row.addWidget(self._export_prog_button)
+        self._song_prog_button = tool_button("En morceau", "song")
+        self._song_prog_button.clicked.connect(
+            self.guard(self._song_from_progression))
+        play_row.addWidget(self._song_prog_button)
+        self._melody_button = tool_button("Autre mélodie", "dice")
+        self._melody_button.clicked.connect(self.guard(self._other_melody))
+        play_row.addWidget(self._melody_button)
+        self._chord_button = tool_button("Autre accord", "dice")
+        self._chord_button.clicked.connect(self.guard(self._other_chord))
+        play_row.addWidget(self._chord_button)
+        play_row.addStretch(1)
+        prog.body().addLayout(play_row)
 
         self._progression_list = QListWidget()
         self._progression_list.setMaximumHeight(140)
@@ -258,24 +360,43 @@ class ToolboxPage(Page):
         notes = theory_mod.scale_notes(root, scale, octaves=1)
         self._piano.set_highlight(
             [n - root for n in notes], GOLD)
+        # Les noms suivent la tonalité : do mineur s'écrit avec Lab, pas
+        # avec Sol#.
+        self._spelling = theory_mod.scale_spelling(root, scale)
+        tonique = theory_mod.spell(root, self._spelling, with_octave=False)
         self._scale_notes.setText(
-            f"{theory_mod.note_to_name(root, with_octave=False)} {scale} :  "
-            + "  ".join(theory_mod.note_to_name(n, with_octave=False)
+            f"{tonique} {scale} :  "
+            + "  ".join(theory_mod.spell(n, self._spelling, with_octave=False)
                         for n in notes[:-1]))
-        self._mode_notes.setText(
-            ", ".join(str(v) for v in theory_mod.deluge_mode_notes(scale)))
+        exact = theory_mod.deluge_mode_notes(scale)
+        self._mode_notes.setText(", ".join(str(v) for v in exact))
+        name = theory_mod.deluge_scale_name(scale)
+        if name == "USER":
+            hint = ("Sur le Deluge : gamme utilisateur (USER), à saisir "
+                    "note par note — ou en recopiant <modeNotes>.")
+        else:
+            hint = f"Sur le Deluge : {name}."
+        officiel = theory_mod.deluge_mode_notes(scale, official=True)
+        if officiel != exact:
+            hint += ("  Firmware officiel (sept notes exactement) : "
+                     + ", ".join(str(v) for v in officiel) + ".")
+        self._deluge_scale.setText(hint)
 
         self._chords.setRowCount(0)
         for symbol, chord_notes in theory_mod.diatonic_chords(root, scale):
             index = self._chords.rowCount()
             self._chords.insertRow(index)
             self._chords.setItem(index, 0, QTableWidgetItem(symbol))
+            # Le nom complet, qualité comprise : « Rém », et non « Ré ».
             self._chords.setItem(
                 index, 1,
-                QTableWidgetItem(theory_mod.note_to_name(
-                    chord_notes[0], with_octave=False) if chord_notes else "—"))
+                QTableWidgetItem(theory_mod.chord_symbol(
+                    chord_notes[0], theory_mod.chord_quality(chord_notes),
+                    spelling=self._spelling)
+                    if chord_notes else "—"))
             item = QTableWidgetItem(
-                "  ".join(theory_mod.note_to_name(n) for n in chord_notes))
+                "  ".join(theory_mod.spell(n, self._spelling)
+                          for n in chord_notes))
             item.setData(Qt.ItemDataRole.UserRole, chord_notes)
             self._chords.setItem(index, 2, item)
 
@@ -305,20 +426,184 @@ class ToolboxPage(Page):
         scale = self._scale.currentData() or "majeur"
         self._progression = theory_mod.progression(
             root, scale, self._progression_kind.currentData() or "",
-            bars=int(self._progression_bars.value()))
+            bars=int(self._progression_bars.value()),
+            color=self._prog_color.currentData() or "")
+        # La mélodie se tire dans la gamme de la progression, même si l'on
+        # change de gamme ensuite sans en proposer une nouvelle.
+        self._progression_key = (root, scale)
+        self._melody_seed = random.randrange(1 << 20)
+        self._show_progression()
+        self.say(f"{len(self._progression)} accords proposés : "
+                 + " – ".join(c["name"] for c in self._progression) + ".")
+
+    def _show_progression(self) -> None:
+        """Remplit la liste des accords ; garde la ligne choisie."""
+        root, scale = self._progression_key
+        spelling = theory_mod.scale_spelling(root if root is not None else 60,
+                                             scale or "majeur")
+        selection = self._progression_list.currentRow()
         self._progression_list.clear()
         for chord in self._progression:
-            notes = "  ".join(theory_mod.note_to_name(n)
+            notes = "  ".join(theory_mod.spell(n, spelling)
                               for n in chord["notes"])
+            fonction = chord.get("function", "")
+            # Des séparateurs plutôt qu'un alignement par espaces : la police
+            # est proportionnelle, et « IIImaj9 Mibmaj9 » décalait tout.
             self._progression_list.addItem(
-                f"{chord['degree']:<5} {chord['symbol']:<7} {notes}")
-        self.say(f"{len(self._progression)} accords proposés.")
+                f"{chord['symbol']}   ·   {chord['name']}   ·   {notes}"
+                + (f"   ({fonction})" if fonction else ""))
+        if 0 <= selection < self._progression_list.count():
+            self._progression_list.setCurrentRow(selection)
+
+    def _other_chord(self) -> None:
+        """Remplace l'accord choisi par un autre de même fonction."""
+        if not self._progression:
+            self.say("Proposez d'abord une progression.")
+            return
+        index = self._progression_list.currentRow()
+        if not 0 <= index < len(self._progression):
+            self.say("Choisissez d'abord un accord dans la liste.")
+            return
+        root, scale = self._progression_key
+        avant = self._progression[index]["name"]
+        self._chord_rolls += 1
+        self._progression = theory_mod.substitute(
+            self._progression, index, root, scale,
+            seed=self._melody_seed + self._chord_rolls)
+        self._show_progression()
+        apres = self._progression[index]
+        self.say(f"{avant} remplacé par {apres['name']}, même fonction "
+                 f"({apres.get('function') or 'libre'}) : "
+                 + " – ".join(c["name"] for c in self._progression) + ".")
 
     def _highlight_progression(self, row: int) -> None:
         if not 0 <= row < len(self._progression):
             return
         self._piano.set_exact_highlight(
             self._progression[row]["notes"], PAD_CYAN)
+
+    def _genre_tempo(self) -> None:
+        """Le tempo suit le genre choisi : le milieu de sa plage."""
+        key = self._acc_genre.currentData() or "techno"
+        low, high = genres_mod.genre(key).bpm
+        self._acc_bpm.setValue(int(round((low + high) / 2.0)))
+
+    def _parts(self) -> dict:
+        """Les parties d'accompagnement de la progression courante."""
+        root, scale = getattr(self, "_progression_key", (None, ""))
+        return accomp_mod.accompany(
+            self._progression,
+            genre=self._acc_genre.currentData() or "",
+            chords=self._acc_chords.currentData() or "",
+            bass=self._acc_bass.currentData() or "",
+            arp=True if self._acc_arp.isChecked() else None,
+            melody=self._acc_melody.isChecked(),
+            root=root, scale=scale,
+            seed=self._melody_seed,
+            drums=self._current_beat() if self._acc_drums.isChecked()
+            else None)
+
+    def _current_beat(self):
+        """Le rythme de l'onglet Rythme, sinon celui du genre choisi ici."""
+        if self._pattern is not None and any(self._pattern.tracks.values()):
+            return self._pattern
+        return rhythm_mod.genre_beat(self._acc_genre.currentData() or "techno",
+                                     bars=1, seed=1)
+
+    def _drum_kit(self, genre: str, tracks):
+        """Un kit de la carte pour faire sonner les pistes, ou ``None``.
+
+        Bâti par :func:`delugeapp.core.kitgen.build_kit` dans la
+        bibliothèque indexée ; sans carte, ou pour une piste qu'elle ne
+        couvre pas, la batterie synthétisée prend le relais.
+        """
+        if self.sd is None or self.lib is None:
+            return None
+        from ...core import kitgen
+
+        roles = tuple(sorted(t for t in tracks if t in kitgen.ROLE_VOLUME))
+        key = (genre, roles)
+        if key not in self._listen_kits:
+            try:
+                kit = kitgen.build_kit(self.sd, self.lib, "ECOUTE",
+                                       genre=genre, seed=1,
+                                       slots=list(roles))
+            except Exception as exc:  # noqa: BLE001 - l'écoute se rabat
+                log.debug("kit d'écoute impossible : %s", exc)
+                kit = None
+            self._listen_kits[key] = kit if kit is not None and kit.rows \
+                else None
+        return self._listen_kits[key]
+
+    def _other_melody(self) -> None:
+        """Une autre mélodie sur les mêmes accords, puis on l'écoute."""
+        if not self._progression:
+            self._make_progression()
+        if not self._progression:
+            return
+        self._melody_seed = (self._melody_seed + 1) % (1 << 20)
+        self._acc_melody.setChecked(True)
+        self._listen_progression()
+
+    def _listen_progression(self) -> None:
+        if not self._progression:
+            self._make_progression()
+        if not self._progression:
+            return
+        parts = self._parts()
+        genre = self._acc_genre.currentData() or "techno"
+        drums = (rhythm_mod.loop(self._current_beat(),
+                                 max(1, len(self._progression)))
+                 if self._acc_drums.isChecked() else None)
+        kit = self._drum_kit(genre, drums.tracks) if drums else None
+        self.say("Rendu de l'accompagnement…")
+        self.run(self._render_parts, parts, genre,
+                 int(self._acc_bpm.value()), drums, kit, self.sd,
+                 on_result=self.guard(self._play_audio),
+                 on_error=self.guard(
+                     lambda m: self.say(f"Rendu impossible : {m}")),
+                 title="Rendu de l'accompagnement")
+
+    @staticmethod
+    def _render_parts(parts: dict, genre: str, bpm: int, drums=None,
+                      kit=None, sd=None):
+        """Joue chaque partie avec un son généré pour le genre (fil séparé).
+
+        ``drums`` : le motif de batterie, joué par ``kit`` (des échantillons
+        de la carte) ou, à défaut, par la batterie synthétisée.
+        """
+        from ...core import render
+
+        styles = accomp_mod.genre_styles(genre)
+        # Les sons de l'export en morceau : les mêmes, tirés au même endroit.
+        sounds = {name: preset.sound for name, preset in
+                  songwriter_mod.part_presets(parts, genre).items()}
+        log.debug("accompagnement %s : %s", genre, styles)
+        tonal = render.render_parts(parts, sounds, bpm=bpm, sr=44100)
+        if drums is None or not drums.tracks:
+            return tonal
+        beat = render.render_pattern(drums, bpm=bpm, sr=44100, kit=kit,
+                                     sd=sd)
+        return render.mix(tonal, beat, levels=(1.0, 0.85))
+
+    def _play_audio(self, audio) -> None:
+        if audio is None or self.player is None:
+            self.say("Aucune sortie audio disponible.")
+            return
+        try:
+            self.player.set_volume(self.ctx.settings.preview_volume)
+            self.player.play_array(audio, 44100)
+            self.say("Lecture de l'accompagnement…")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("lecture impossible : %s", exc)
+            self.say(f"Lecture impossible : {exc}")
+
+    def _stop_audio(self) -> None:
+        if self.player is not None:
+            try:
+                self.player.stop()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("arrêt impossible : %s", exc)
 
     def _export_progression(self) -> None:
         if not self._progression:
@@ -327,17 +612,132 @@ class ToolboxPage(Page):
         from ...core import midifile
 
         chosen, _f = QFileDialog.getSaveFileName(
-            self, "Exporter la progression", "progression.mid",
+            self, "Exporter l'accompagnement", "progression.mid",
             "Fichier MIDI (*.mid)")
         if not chosen:
             return
         try:
-            midifile.progression_to_midi(Path(chosen), self._progression, 120)
+            pistes = midifile.parts_to_midi(
+                Path(chosen), self._parts(), int(self._acc_bpm.value()))
         except Exception as exc:  # noqa: BLE001
             log.exception("export MIDI impossible")
             self.say(f"Export impossible : {exc}")
             return
-        self.say(f"Progression exportée : {Path(chosen).name}")
+        noms = ", ".join(n.lower() for n in self._parts())
+        self.say(f"Accompagnement exporté : {Path(chosen).name} "
+                 f"({pistes} pistes — {noms})")
+
+    # -- tempo de la machine ------------------------------------------------- #
+
+    def follow_tempo(self, bpm: int) -> bool:
+        """Les trois tempos de la page prennent celui du Deluge.
+
+        Appelé par la fenêtre quand l'horloge de la machine change de tempo
+        (réglage « Les outils suivent le tempo du Deluge »). Rend ``True``
+        si un champ a changé.
+        """
+        try:
+            tempo = int(round(float(bpm)))
+        except (TypeError, ValueError):
+            return False
+        change = False
+        # La page peut exister sans avoir encore été construite.
+        for champ in (getattr(self, "_acc_bpm", None),
+                      getattr(self, "_beat_bpm", None),
+                      getattr(self, "_arr_bpm", None)):
+            if champ is None:
+                continue
+            borne = max(champ.minimum(), min(champ.maximum(), tempo))
+            if champ.value() != borne:
+                champ.setValue(borne)
+                change = True
+        return change
+
+    # -- morceaux du Deluge -------------------------------------------------- #
+
+    def _beat_kit(self, card, genre: str, tracks):
+        """Le kit qui jouera la batterie : celui de l'écoute, complété.
+
+        Les pistes que le kit d'écoute ne couvre pas (une piste
+        euclidienne…) reçoivent un son de percussion de la carte : sur la
+        machine, une piste sans rangée resterait muette.
+        """
+        base = self._drum_kit(genre, tracks)
+        kit, rows, lost = songwriter_mod.drum_kit_for(
+            card, self.lib, genre, tracks, base=base)
+        if lost:
+            log.info("pistes sans son dans le morceau : %s", ", ".join(lost))
+        return kit, rows
+
+    def _song_from_progression(self) -> None:
+        """La progression et son accompagnement, en morceau du Deluge."""
+        if not self._progression:
+            self.say("Proposez d'abord une progression.")
+            return
+        genre = self._acc_genre.currentData() or "techno"
+        bpm = int(self._acc_bpm.value())
+        root, scale = self._progression_key
+        parts = self._parts()
+        progression = list(self._progression)
+        with_drums = self._acc_drums.isChecked()
+
+        def build(card):
+            drums = kit = rows = None
+            if with_drums:
+                drums = rhythm_mod.loop(self._current_beat(),
+                                        max(1, len(progression)))
+                kit, rows = self._beat_kit(card, genre, drums.tracks)
+            return songwriter_mod.progression_song(
+                parts, name="", bpm=bpm, genre=genre, root=root, scale=scale,
+                drums=drums, kit=kit, row_map=rows)
+
+        tonique = theory_mod.spell(
+            root if root is not None else 60,
+            theory_mod.scale_spelling(root if root is not None else 60,
+                                      scale or "majeur"),
+            with_octave=False)
+        self.write_song(build, f"Progression {tonique} {scale or 'majeur'}")
+
+    def _song_from_beat(self) -> None:
+        """Le motif affiché, joué par un kit de la carte, en morceau."""
+        pattern = self._sequencer.pattern() or self._pattern
+        if pattern is None or not any(pattern.tracks.values()):
+            self.say("Créez d'abord un motif.")
+            return
+        genre = self._beat_genre.currentData() or "techno"
+        bpm = int(self._beat_bpm.value())
+
+        def build(card):
+            kit, rows = self._beat_kit(card, genre, pattern.tracks)
+            if kit is None:
+                raise ValueError("aucun échantillon de batterie dans la "
+                                 "bibliothèque — lancez une analyse de la "
+                                 "carte")
+            return songwriter_mod.pattern_song(pattern, kit, rows, name="",
+                                               bpm=bpm)
+
+        self.write_song(build, f"Rythme {genres_mod.genre(genre).label}")
+
+    def _song_from_sketch(self) -> None:
+        """L'esquisse entière, en morceau à sections."""
+        genre = self._arr_genre.currentData() or "techno"
+        bpm = int(self._arr_bpm.value())
+        result = self._sketch()
+        if self._progression:
+            root, scale = self._progression_key
+        else:
+            root, scale = 57, "mineur"
+
+        def build(card):
+            kit = rows = None
+            if result.drums is not None and result.drums.tracks:
+                kit, rows = self._beat_kit(card, genre, result.drums.tracks)
+            return songwriter_mod.sketch_song(
+                result, name="", bpm=bpm, genre=genre, root=root,
+                scale=scale, kit=kit, row_map=rows)
+
+        self.write_song(build, f"Esquisse {genres_mod.genre(genre).label}")
+
 
     # -- rythme ------------------------------------------------------------- #
 
@@ -355,6 +755,8 @@ class ToolboxPage(Page):
         self._beat_genre = QComboBox()
         for key in genres_mod.genre_keys():
             self._beat_genre.addItem(genres_mod.genre(key).label, key)
+        self._beat_genre.activated.connect(
+            self.guard(lambda _i: self._beat_tempo()))
         grid.addWidget(self._beat_genre, 0, 1)
 
         grid.addWidget(QLabel("Mesures"), 0, 2)
@@ -404,10 +806,34 @@ class ToolboxPage(Page):
         apply_groove = tool_button("Appliquer", "check")
         apply_groove.clicked.connect(self.guard(self._apply_groove))
         groove_row.addWidget(apply_groove)
-        export = tool_button("En MIDI", "export")
-        export.clicked.connect(self.guard(self._export_beat))
-        groove_row.addWidget(export)
+        self._export_beat_button = tool_button("En MIDI", "export")
+        self._export_beat_button.clicked.connect(
+            self.guard(self._export_beat))
+        groove_row.addWidget(self._export_beat_button)
+        self._song_beat_button = tool_button("En morceau", "song")
+        self._song_beat_button.clicked.connect(
+            self.guard(self._song_from_beat))
+        groove_row.addWidget(self._song_beat_button)
         card.body().addLayout(groove_row)
+
+        listen_row = QHBoxLayout()
+        self._variation_button = tool_button("Variation", "dice")
+        self._variation_button.clicked.connect(self.guard(self._variation))
+        listen_row.addWidget(self._variation_button)
+        self._listen_beat_button = tool_button("Écouter", "play")
+        self._listen_beat_button.clicked.connect(
+            self.guard(self._listen_beat))
+        listen_row.addWidget(self._listen_beat_button)
+        stop_beat = tool_button("Arrêter", "stop")
+        stop_beat.clicked.connect(self.guard(self._stop_audio))
+        listen_row.addWidget(stop_beat)
+        listen_row.addWidget(QLabel("BPM"))
+        self._beat_bpm = QSpinBox()
+        self._beat_bpm.setRange(40, 220)
+        self._beat_bpm.setValue(128)
+        listen_row.addWidget(self._beat_bpm)
+        listen_row.addStretch(1)
+        card.body().addLayout(listen_row)
 
         self._sequencer = StepSequencer()
         self._sequencer.setMinimumHeight(130)
@@ -426,7 +852,50 @@ class ToolboxPage(Page):
         self._pattern = rhythm_mod.genre_beat(
             self._beat_genre.currentData() or "techno",
             bars=int(self._beat_bars.value()), seed=1)
+        self._pattern_base = self._pattern
         self._show_pattern()
+
+    def _beat_tempo(self) -> None:
+        """Le tempo du rythme suit le genre : le milieu de sa plage."""
+        low, high = genres_mod.genre(
+            self._beat_genre.currentData() or "techno").bpm
+        self._beat_bpm.setValue(int(round((low + high) / 2.0)))
+
+    def _variation(self) -> None:
+        """Une variation du motif du genre, ossature intacte."""
+        if self._pattern_base is None:
+            self._beat_from_genre()
+        genre = self._beat_genre.currentData() or "techno"
+        self._pattern = rhythm_mod.variation(
+            self._pattern_base, genre, seed=random.randrange(1 << 30))
+        self._show_pattern()
+        self.say("Variation : " + self._pattern.name.split(" — ")[-1]
+                 + ". Grosse caisse, caisse claire et clap n'ont pas bougé.")
+
+    def _listen_beat(self) -> None:
+        """Joue le motif deux fois, avec les sons de la carte s'il y en a."""
+        pattern = self._sequencer.pattern() or self._pattern
+        if pattern is None or not any(pattern.tracks.values()):
+            self.say("Créez d'abord un motif.")
+            return
+        genre = self._beat_genre.currentData() or "techno"
+        kit = self._drum_kit(genre, pattern.tracks)
+        bars = max(2, int(round(pattern.bars)) * 2)
+        self.say("Rendu du rythme…" + ("" if kit else
+                                        " (batterie synthétisée)"))
+        self.run(self._render_beat, pattern, int(self._beat_bpm.value()),
+                 kit, self.sd, bars,
+                 on_result=self.guard(self._play_audio),
+                 on_error=self.guard(
+                     lambda m: self.say(f"Rendu impossible : {m}")),
+                 title="Rendu du rythme")
+
+    @staticmethod
+    def _render_beat(pattern, bpm: int, kit, sd, bars: int):
+        from ...core import render
+
+        return render.render_pattern(pattern, bpm=bpm, sr=44100, kit=kit,
+                                     sd=sd, bars=bars)
 
     def _add_euclid(self) -> None:
         """Ajoute une piste euclidienne au motif courant."""
@@ -444,6 +913,8 @@ class ToolboxPage(Page):
         self._pattern.tracks[name] = [
             rhythm_mod.Step(pos=i, velocity=100)
             for i, on in enumerate(cells) if on]
+        # Une variation partira désormais de ce motif-ci, piste comprise.
+        self._pattern_base = self._pattern
         self._show_pattern()
         self.say(f"Piste {name} ajoutée.")
 
@@ -451,14 +922,22 @@ class ToolboxPage(Page):
         if self._pattern is None:
             self.say("Créez d'abord un motif.")
             return
+        # Toujours depuis le motif droit : appliquer deux fois un groove le
+        # cumulait, et le second clic plantait sur les positions décalées.
+        # Les pas ajoutés ou retirés dans la grille sont conservés.
+        groove = self._groove.currentData() or "droit"
         pattern = rhythm_mod.apply_groove(
-            self._pattern, self._groove.currentData() or "droit", 1.0)
+            rhythm_mod.straighten(self._pattern), groove, 1.0)
         swing = self._swing.value() / 100.0
         if swing > 0:
             pattern = rhythm_mod.swing(pattern, swing)
         self._pattern = pattern
         self._show_pattern()
-        self.say("Groove appliqué.")
+        equivalent = rhythm_mod.deluge_swing(groove)
+        if equivalent is not None and swing <= 0:
+            self.say(f"Groove appliqué. Sur le Deluge : swing {equivalent}.")
+        else:
+            self.say("Groove appliqué.")
 
     def _show_pattern(self) -> None:
         if self._pattern is None:
@@ -478,7 +957,8 @@ class ToolboxPage(Page):
         if not chosen:
             return
         try:
-            midifile.pattern_to_midi(Path(chosen), pattern, None, 128)
+            midifile.pattern_to_midi(Path(chosen), pattern, None,
+                                     int(self._beat_bpm.value()))
         except Exception as exc:  # noqa: BLE001
             log.exception("export MIDI impossible")
             self.say(f"Export impossible : {exc}")
@@ -730,10 +1210,10 @@ class ToolboxPage(Page):
         row = QHBoxLayout()
         row.addWidget(QLabel("Genre"))
         self._arr_genre = QComboBox()
-        for key in ARRANGEMENTS:
+        for key in genres_mod.genre_keys():
             self._arr_genre.addItem(genres_mod.genre(key).label, key)
         self._arr_genre.activated.connect(
-            self.guard(lambda _i: self._show_arrangement()))
+            self.guard(lambda _i: self._arrangement_genre()))
         row.addWidget(self._arr_genre, 1)
         row.addWidget(QLabel("BPM"))
         self._arr_bpm = QSpinBox()
@@ -744,11 +1224,16 @@ class ToolboxPage(Page):
         row.addWidget(self._arr_bpm)
         card.body().addLayout(row)
 
-        self._arrangement = QTableWidget(0, 4)
+        self._arrangement = QTableWidget(0, 5)
         self._arrangement.setHorizontalHeaderLabels(
-            ["Section", "Mesures", "Durée", "Position"])
-        self._arrangement.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
+            ["Section", "Mesures", "Durée", "Position", "Parties"])
+        entete = self._arrangement.horizontalHeader()
+        for colonne in range(4):
+            entete.setSectionResizeMode(
+                colonne, QHeaderView.ResizeMode.ResizeToContents)
+        entete.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self._arrangement.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
         self._arrangement.verticalHeader().setVisible(False)
         self._arrangement.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -757,13 +1242,124 @@ class ToolboxPage(Page):
         self._arr_total = QLabel("")
         self._arr_total.setProperty("role", "subtitle")
         card.body().addWidget(self._arr_total)
+
+        sketch_row = QHBoxLayout()
+        self._listen_section_button = tool_button("Écouter la section",
+                                                  "play")
+        self._listen_section_button.clicked.connect(
+            self.guard(self._listen_section))
+        sketch_row.addWidget(self._listen_section_button)
+        stop = tool_button("Arrêter", "stop")
+        stop.clicked.connect(self.guard(self._stop_audio))
+        sketch_row.addWidget(stop)
+        self._export_sketch_button = tool_button("Esquisse en MIDI",
+                                                 "export")
+        self._export_sketch_button.clicked.connect(
+            self.guard(self._export_sketch))
+        sketch_row.addWidget(self._export_sketch_button)
+        self._song_sketch_button = tool_button("Esquisse en morceau", "song")
+        self._song_sketch_button.clicked.connect(
+            self.guard(self._song_from_sketch))
+        sketch_row.addWidget(self._song_sketch_button)
+        sketch_row.addStretch(1)
+        card.body().addLayout(sketch_row)
+
+        self._arr_source = QLabel("")
+        self._arr_source.setProperty("role", "subtitle")
+        self._arr_source.setWordWrap(True)
+        card.body().addWidget(self._arr_source)
         column.addWidget(card, 1)
         return host
+
+    def _arrangement_genre(self) -> None:
+        """Le tempo suit le genre, puis la structure se redessine."""
+        low, high = genres_mod.genre(
+            self._arr_genre.currentData() or "techno").bpm
+        self._arr_bpm.blockSignals(True)
+        self._arr_bpm.setValue(int(round((low + high) / 2.0)))
+        self._arr_bpm.blockSignals(False)
+        self._show_arrangement()
+
+    def _sketch(self):
+        """L'esquisse : les accords de l'onglet Théorie et le rythme de
+        l'onglet Rythme s'ils existent, sinon ceux du genre."""
+        genre = self._arr_genre.currentData() or "techno"
+        if self._progression:
+            progression = self._progression
+            root, scale = self._progression_key
+        else:
+            progression = sketch_mod.default_progression(genre, seed=1)
+            root, scale = 57, "mineur"
+        pattern = (self._pattern
+                   if self._pattern is not None
+                   and (self._beat_genre.currentData() or "") == genre
+                   else None)
+        return sketch_mod.sketch(progression, genre, pattern=pattern,
+                                 root=root, scale=scale, seed=1)
+
+    def _sketch_sources(self) -> str:
+        genre = self._arr_genre.currentData() or "techno"
+        accords = (" – ".join(c["name"] for c in self._progression)
+                   if self._progression else
+                   "une progression « %s » en la mineur"
+                   % sketch_mod.GENRE_AMBIANCE.get(genre, "pop"))
+        rythme = ("celui de l'onglet Rythme"
+                  if self._pattern is not None
+                  and (self._beat_genre.currentData() or "") == genre
+                  else "le motif du genre")
+        return (f"L'esquisse déroule {accords} sur toute la structure ; "
+                f"rythme : {rythme}. Chaque section ne garde que les "
+                f"parties de son rôle.")
+
+    def _listen_section(self) -> None:
+        index = self._arrangement.currentRow()
+        if index < 0:
+            self.say("Choisissez d'abord une section dans le tableau.")
+            return
+        result = self._sketch()
+        parts, drums, bars = sketch_mod.excerpt(result, index, max_bars=8)
+        if not parts and drums is None:
+            self.say("Cette section ne joue rien.")
+            return
+        genre = self._arr_genre.currentData() or "techno"
+        kit = self._drum_kit(genre, drums.tracks) if drums else None
+        section = result.sections[index]
+        self.say(f"Rendu de « {section.name} » ({bars} mesures)…")
+        self.run(self._render_parts, parts, genre,
+                 int(self._arr_bpm.value()), drums, kit, self.sd,
+                 on_result=self.guard(self._play_audio),
+                 on_error=self.guard(
+                     lambda m: self.say(f"Rendu impossible : {m}")),
+                 title="Rendu de la section")
+
+    def _export_sketch(self) -> None:
+        from ...core import midifile
+
+        chosen, _f = QFileDialog.getSaveFileName(
+            self, "Exporter l'esquisse", "esquisse.mid",
+            "Fichier MIDI (*.mid)")
+        if not chosen:
+            return
+        result = self._sketch()
+        try:
+            pistes = midifile.parts_to_midi(
+                Path(chosen), result.parts, int(self._arr_bpm.value()),
+                markers=result.markers())
+        except Exception as exc:  # noqa: BLE001
+            log.exception("export de l'esquisse impossible")
+            self.say(f"Export impossible : {exc}")
+            return
+        minutes = result.bars * 4 * 60.0 / float(self._arr_bpm.value())
+        self.say(f"Esquisse exportée : {Path(chosen).name} — {pistes} "
+                 f"pistes ({', '.join(n.lower() for n in result.parts)}), "
+                 f"{len(result.sections)} sections, {result.bars} mesures, "
+                 f"{int(minutes // 60)} min {int(minutes % 60):02d} s.")
 
     def _show_arrangement(self) -> None:
         key = self._arr_genre.currentData() or "techno"
         bpm = float(self._arr_bpm.value())
         sections = ARRANGEMENTS.get(key, ARRANGEMENTS["techno"])
+        roles = sketch_mod.plan(key)
         bar_seconds = 4 * 60.0 / bpm
 
         self._arrangement.setRowCount(0)
@@ -784,6 +1380,12 @@ class ToolboxPage(Page):
                 row, 3,
                 QTableWidgetItem(f"mesure {position + 1} — "
                                  f"{int(start // 60)}:{int(start % 60):02d}"))
+            if index < len(roles):
+                parties = QTableWidgetItem(
+                    ", ".join(p.lower() for p in roles[index].parts))
+                parties.setToolTip(
+                    sketch_mod.SECTION_KINDS.get(roles[index].kind, ""))
+                self._arrangement.setItem(row, 4, parties)
             position += bars
 
         total = position * bar_seconds
@@ -791,6 +1393,7 @@ class ToolboxPage(Page):
             f"{position} mesures au total, soit "
             f"{int(total // 60)} min {int(total % 60):02d} s à {bpm:.0f} BPM. "
             f"Les sections du Deluge se règlent dans la vue Morceau.")
+        self._arr_source.setText(self._sketch_sources())
 
     # -- aide-mémoire ------------------------------------------------------- #
 
@@ -816,9 +1419,12 @@ class ToolboxPage(Page):
     # -- rafraîchissement --------------------------------------------------- #
 
     def _refresh(self) -> None:
+        if not self._progression:
+            self._genre_tempo()
         self._show_scale()
         self._calc()
         self._fill_wheel()
-        self._show_arrangement()
         if self._pattern is None:
+            self._beat_tempo()
             self._beat_from_genre()
+        self._show_arrangement()

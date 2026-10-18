@@ -207,6 +207,11 @@ class Settings:
     language: str = "fr"
     scan_hash: bool = True
     scan_analyze: bool = False
+    #: Au démarrage, relire les fichiers de la carte modifiés depuis la
+    #: dernière analyse (0,2 s sur la carte de l'utilisateur). Sans cela,
+    #: l'index gardait 125 références « manquantes » qu'une réparation
+    #: faite depuis avait rétablies.
+    index_on_start: bool = True
 
     # -- lien avec le Deluge branché --------------------------------------
     #: Nom du port de sortie MIDI, vide = chercher le Deluge tout seul.
@@ -219,6 +224,8 @@ class Settings:
     midi_autoconnect: bool = True
     #: Écouter **sur la machine** plutôt qu'avec le moteur approché.
     midi_audition: bool = False
+    #: Les tempos des outils suivent celui du Deluge quand son horloge arrive.
+    midi_follow_tempo: bool = True
 
     # -- sérialisation ----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
@@ -236,11 +243,13 @@ class Settings:
             "language": self.language,
             "scan_hash": bool(self.scan_hash),
             "scan_analyze": bool(self.scan_analyze),
+            "index_on_start": bool(self.index_on_start),
             "midi_out": self.midi_out,
             "midi_in": self.midi_in,
             "midi_channel": int(self.midi_channel),
             "midi_autoconnect": bool(self.midi_autoconnect),
             "midi_audition": bool(self.midi_audition),
+            "midi_follow_tempo": bool(self.midi_follow_tempo),
         }
 
     @classmethod
@@ -274,6 +283,7 @@ class Settings:
         s.language = (_as_str(g("language"), s.language).strip().lower() or "fr")
         s.scan_hash = _as_bool(g("scan_hash"), s.scan_hash)
         s.scan_analyze = _as_bool(g("scan_analyze"), s.scan_analyze)
+        s.index_on_start = _as_bool(g("index_on_start"), s.index_on_start)
         s.midi_out = _as_str(g("midi_out"), s.midi_out)
         s.midi_in = _as_str(g("midi_in"), s.midi_in)
         s.midi_channel = int(_as_float(g("midi_channel"),
@@ -281,6 +291,8 @@ class Settings:
         s.midi_autoconnect = _as_bool(g("midi_autoconnect"),
                                       s.midi_autoconnect)
         s.midi_audition = _as_bool(g("midi_audition"), s.midi_audition)
+        s.midi_follow_tempo = _as_bool(g("midi_follow_tempo"),
+                                       s.midi_follow_tempo)
         return s
 
     # -- confort ----------------------------------------------------------

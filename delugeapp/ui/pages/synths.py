@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.fixedpoint import to_display
-from ..theme import PAD
+from ..theme import PAD, category_color
 from ..widgets.common import (
     Card,
     ElidedLabel,
@@ -54,6 +54,13 @@ from ..widgets.waveform import WaveformView
 from .base import Page, tool_button
 
 log = logging.getLogger(__name__)
+
+
+def _pastille(categorie) -> str:
+    """Couleur de la pastille d'une catégorie, rien si elle est vide."""
+    texte = str(categorie or "").strip()
+    return category_color(texte) if texte else ""
+
 
 #: Paramètres montrés en encodeurs, dans cet ordre.
 KNOB_PARAMS: tuple[tuple[str, str, bool], ...] = (
@@ -80,8 +87,10 @@ class SynthsPage(Page):
     #: ``'synth'`` ou ``'kit'`` : la page des kits réutilise cette classe.
     KIND = "synth"
 
-    #: Un preset a été choisi (utile au générateur pour partir de celui-ci).
+    #: Un preset a été choisi.
     presetChosen = pyqtSignal(str)
+    #: Demande d'ouvrir ce preset dans le générateur, pour le faire varier.
+    openInGenerator = pyqtSignal(str)
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
@@ -115,6 +124,10 @@ class SynthsPage(Page):
                                 "Enregistrer une copie à côté de l'original")
         duplicate.clicked.connect(self.guard(self._duplicate))
         actions.addWidget(duplicate)
+
+        vary = tool_button("Varier dans le générateur", "wand")
+        vary.clicked.connect(self.guard(self._vary))
+        actions.addWidget(vary)
 
         row = QHBoxLayout()
         row.setSpacing(6)
@@ -316,7 +329,7 @@ class SynthsPage(Page):
         return [
             ("Nom", get("name"), 200, left),
             ("Dossier", dossier, 150, left),
-            ("Catégorie", get("category"), 95, left),
+            ("Catégorie", get("category"), 108, left, None, _pastille),
             ("Moteur", get("mode"), 85, left),
             ("Taille", get("size"), 80, right, human_size),
         ]
@@ -556,6 +569,15 @@ class SynthsPage(Page):
             except Exception as exc:  # noqa: BLE001
                 log.debug("arrêt impossible : %s", exc)
 
+    # -- vers le générateur -------------------------------------------------- #
+
+    def _vary(self) -> None:
+        """Ouvre le preset choisi dans le générateur."""
+        if self._preset is None or not self._current:
+            self.say("Choisissez d'abord un preset.")
+            return
+        self.openInGenerator.emit(self._current)
+
     # -- duplication -------------------------------------------------------- #
 
     def _duplicate(self) -> None:
@@ -595,6 +617,7 @@ class SynthsPage(Page):
             self.say(f"Duplication impossible : {exc}")
             return
         card.invalidate_cache()
+        _index_written(self, [target])
         self.say(f"Copie créée : {target.name}")
         self._refresh()
 
@@ -617,3 +640,12 @@ class SynthsPage(Page):
         index = self._category.findData(current)
         self._category.setCurrentIndex(max(0, index))
         self._category.blockSignals(False)
+
+
+def _index_written(page, paths) -> None:
+    """Ajoute à l'index ce qu'on vient d'écrire, pour que les listes le montrent."""
+    try:
+        from ...core.scan import index_presets
+        index_presets(page.sd, page.lib, list(paths))
+    except Exception:  # noqa: BLE001 - l'index se rattrapera à l'analyse
+        log.exception("indexation immédiate impossible")
