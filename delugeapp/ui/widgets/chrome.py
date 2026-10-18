@@ -12,7 +12,9 @@
 * :class:`LedButton` — un bouton rond de façade qui s'allume (lecture,
   liaison avec le Deluge) ;
 * :class:`LedStrip` — le filet lumineux sous la barre du haut, à la couleur
-  de la page affichée.
+  de la page affichée ;
+* :class:`DropVeil` — le voile qui couvre la fenêtre quand on y glisse des
+  fichiers à envoyer au Deluge.
 
 Tout est tracé au :class:`QPainter` : ces pièces n'ont pas d'équivalent
 dans les styles de Qt, et le QSS ne sait dessiner ni halo ni dégradé radial
@@ -50,6 +52,7 @@ from ..theme import (
     OLED_FG,
     OLED_HI,
     PAD_AMBER,
+    PAD_GREEN,
     PAD_MAGENTA,
     PAD_RED,
     PAD_WHITE,
@@ -660,3 +663,83 @@ class LedStrip(QWidget):
             p.end()
         except Exception as exc:        # noqa: BLE001
             log.debug("filet non tracé : %s", exc)
+
+
+class DropVeil(QWidget):
+    """Le voile qui couvre la fenêtre pendant qu'on y glisse des fichiers.
+
+    Le treillis du guide à la couleur du Deluge connecté, un grand pad
+    allumé, et en clair ce que deviendra le dépôt : « dans la copie de
+    travail, puis sur le Deluge par le câble USB ». Il ne prend aucun clic ;
+    c'est la fenêtre qui reçoit le dépôt.
+    """
+
+    def __init__(self, parent: QWidget | None = None,
+                 color: str = PAD_GREEN) -> None:
+        super().__init__(parent)
+        self._couleur = color
+        self._detail = ""
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                          True)
+        self.hide()
+
+    def detail(self) -> str:
+        return self._detail
+
+    def show_over(self, rect, detail: str) -> None:
+        """Couvre ``rect`` et dit où partira le dépôt."""
+        self._detail = str(detail or "")
+        self.setGeometry(rect)
+        self.raise_()
+        self.show()
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            cadre = QRectF(self.rect())
+            p.fillRect(cadre, QColor(10, 13, 18, 238))
+            treillis = art.circuit(int(cadre.width()), int(cadre.height()),
+                                   self._couleur, seed=1906,
+                                   dpr=self.devicePixelRatioF(),
+                                   density=0.30, fade=(0.0, 0.0))
+            p.setOpacity(0.28)
+            p.drawPixmap(0, 0, treillis)
+            p.setOpacity(1.0)
+
+            bord = cadre.adjusted(18, 18, -18, -18)
+            stylo = QPen(QColor(self._couleur))
+            stylo.setWidthF(2.0)
+            stylo.setStyle(Qt.PenStyle.DashLine)
+            p.setPen(stylo)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(bord, 22, 22)
+
+            cote = 104.0
+            centre = cadre.center()
+            pad = QRectF(centre.x() - cote / 2, centre.y() - cote - 14,
+                         cote, cote)
+            art.paint_pad(p, pad, self._couleur, glow=0.55)
+            encre = text_on(self._couleur)
+            p.drawPixmap(pad.adjusted(26, 26, -26, -26).toRect(),
+                         icons.icon("import", encre, 52).pixmap(52, 52))
+
+            p.setPen(QColor(PAD_WHITE))
+            p.setFont(_police(FONT_UI, 17, 700, 2.5, capitales=True))
+            titre = QRectF(bord.left() + 24, pad.bottom() + 22,
+                           bord.width() - 48, 34)
+            p.drawText(titre, int(Qt.AlignmentFlag.AlignCenter),
+                       "Déposez pour envoyer au Deluge")
+            p.setPen(QColor(GREY_LIGHT))
+            p.setFont(_police(FONT_UI, 11))
+            texte = QRectF(bord.left() + 40, titre.bottom() + 6,
+                           bord.width() - 80, 60)
+            p.drawText(texte, int(Qt.AlignmentFlag.AlignHCenter
+                                  | Qt.AlignmentFlag.AlignTop
+                                  | Qt.TextFlag.TextWordWrap),
+                       self._detail + "\nLe plan de l'envoi est montré avant "
+                       "toute copie.")
+            p.end()
+        except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
+            log.debug("voile de dépôt non tracé : %s", exc)

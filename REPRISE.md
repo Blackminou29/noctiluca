@@ -1,6 +1,6 @@
 # Point d'étape — Deluge Companion
 
-**Dernière mise à jour :** 15 octobre 2026 (le Deluge branché, en direct, §3 novovicies)
+**Dernière mise à jour :** 18 octobre 2026 (le PC et le Deluge, dans les deux sens, §3 untricies)
 **État :** **application terminée et fonctionnelle.** Les cinq phases sont écrites,
 `python main.py` démarre, **la suite complète passe** (le nombre exact est dans le dernier
 § daté). Deux audits de bugs (§3 duovicies) puis trois passes sur les générateurs et la
@@ -14,7 +14,11 @@ suivi : voir §3 terdecies. **L'interface a ensuite été entièrement reprise**
 guide** (« la façade ») : voir §3 septvicies. **Chaque outil de création écrit
 désormais un morceau du Deluge** (`core/songwriter.py`) : voir §3 octovicies.
 **L'application travaille avec le Deluge branché en USB** — écran recopié,
-tempo, son sélectionné, mesuré sur la machine : voir §3 novovicies.
+tempo, son sélectionné, mesuré sur la machine : voir §3 novovicies. **Sa carte
+reste dans la machine** : firmware 1.3, copie de travail synchronisée par USB, la
+sauvegarde de l'utilisateur seulement lue — voir §3 tricies. **Les échanges vont dans
+les deux sens** : envoyer au Deluge les sons et packs du PC, voir ce qui attend et ce
+qui est arrivé, glisser un son vers le logiciel de MAO — voir §3 untricies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -299,6 +303,209 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 untricies. Le PC et le Deluge, dans les deux sens (18 octobre 2026)
+
+> « Améliorer le workflow entre le déluge et le PC. »
+
+### Le constat, d'abord : le journal et la copie de travail de l'utilisateur
+
+* **Il s'en sert.** À 14 h 48, il a créé la copie de travail face au Deluge en 1.3,
+  attendu une analyse complète (112 s), fait une sauvegarde, puis réparé les dix presets
+  `rephazer` dans la copie. Le manifeste dit qu'ils sont partis sur la carte à 14 h 53 —
+  **son journal n'en disait rien** : aucune synchronisation n'y laissait de trace.
+* **Plus rien ne pouvait aller du PC vers la carte.** La carte restant dans la machine,
+  l'Explorateur ne l'atteint plus, et l'application ne savait envoyer que ce qu'elle
+  fabrique. Sur le PC : 1 294 WAV dans deux packs téléchargés (« postsolarpunk
+  Multisamples », 271 Mio ; « TJontheRoad Delugetions Free Pack », 18 Mio), dont 169
+  parasites `._*` de macOS.
+* **Dans l'autre sens**, ce que le Deluge enregistre arrive dans un dossier caché
+  (`%LOCALAPPDATA%`) : aucune liste, aucun glisser vers le logiciel de MAO.
+* **« Mettre à jour la sauvegarde » figeait la fenêtre** : son plan compare le contenu
+  de 1,4 Go dans le fil de l'interface — 11,3 s à froid, 3,4 s ensuite (mesuré, en
+  simulation). Il trouve 13 fichiers que la sauvegarde n'a pas : ce que le Deluge a
+  enregistré aujourd'hui (`Cool1`, `Calm Down`, quatre rééchantillonnages…).
+
+### Ce qu'il fallait savoir avant d'écrire
+
+* **Ce que la machine lit** (SPEC §1.8), dans le code de son firmware (tag `beta` =
+  commit `102cf9f`, celui de sa carte) : `RIFF/WAVE` ou `FORM/AIFF`, PCM 8 à 32 bits ou
+  flottant 32, mono ou stéréo, 5 à 96 kHz — et **l'en-tête `WAVE_FORMAT_EXTENSIBLE` est
+  refusé**. La carte et le PC de l'utilisateur respectent tous ces règles ; le contrôle
+  sert à ce qui viendra d'ailleurs.
+* **La machine met ses requêtes de fichiers en file** (`smSysex::sysexReceived`) et en
+  traite une toutes les 0,2 ms ; mais elle jette en silence ce qui dépasse 1 024 paquets
+  USB en attente d'envoi. D'où deux lectures d'avance, pas trois. Mesuré, lecture
+  seule : **126-129 → 154-160 Ko/s**, contenus identiques, aucune perte — confirmé
+  ensuite avec le code de l'application.
+* **L'écriture est bornée par le câble** : un SysEx de 1 000 octets met 11 ms du PC à la
+  machine (mesuré par un ping allongé, sans rien écrire) ; un bloc d'écriture 18 ms. Le
+  chevauchement gagnerait peut-être les 7 ms restantes : ça ne se vérifie qu'en
+  écrivant, donc pas sans l'utilisateur.
+
+### Ce qui existe maintenant
+
+| | |
+|---|---|
+| `core/cardimport.py` | de ce qui est déposé au plan, puis à la copie : packs à la forme de la carte, sons en vrac, presets, kits, morceaux ; parasites écartés ; règles du firmware ; noms transmissibles ; rien d'existant remplacé |
+| `wav.deluge_problem` | pourquoi le Deluge refuserait un fichier, et si une conversion sans perte audible le répare |
+| `ui/sendfiles.py` | le parcours d'envoi et `SendDialog`, le plan montré avant toute copie |
+| la fenêtre | dépôt de fichiers n'importe où, sous un voile (`chrome.DropVeil`) ; Fichier ▸ Envoyer des fichiers / un dossier (Ctrl+I, Ctrl+Maj+I) ; l'écran OLED dit « N À ENVOYER » |
+| tableau de bord | panneau « Le Deluge et le PC » : état, ce qui attend, dernier échange, « Reçu du Deluge » cliquable, envoi, zone de dépôt ; « À faire maintenant » propose de mettre la sauvegarde à jour |
+| Échantillons | « Envoyer au Deluge… » vers le dossier choisi ; la liste se glisse vers l'Explorateur ou le logiciel de MAO |
+| `cardsync` | historique des échanges (`echanges.json`), ce qui attend, arrêt propre (`STOPPED`, câble débranché, machine muette), sauvegarde comparée sans tout relire (`sauvegarde.json`), temporaires jamais envoyés |
+| `delugefiles` | deux lectures d'avance, arrêt entre deux blocs, `NOT_CONNECTED` immédiat, `cable_time` |
+| `cardwork` | transfert arrêté quand la machine joue et repris à l'arrêt ; chaque échange gardé et écrit au journal ; ce qui attend compté hors du fil de l'interface ; sauvegarde comparée en arrière-plan |
+
+### Sur les vrais packs, en simulation
+
+« TJontheRoad » : 77 fichiers, 18,3 Mio, **environ 7 min** par le câble, 6 parasites
+écartés, ses 36 presets dans `SYNTHS` comme le prévoit le pack. « postsolarpunk » :
+1 094 fichiers, 271 Mio, **environ 1 h 43** — le plan le dit avant de copier ; ses 766
+références se résolvent toutes. Lecture et plan : moins de 0,3 s.
+
+### Ce que les images et l'audit ont trouvé
+
+* La phrase sur la sauvegarde apparaissait **deux fois** (bandeau et panneau) ; puis le
+  bandeau ne suivait pas la fin de la comparaison faite en arrière-plan. Corrigés.
+* « Aucune sauvegarde de cette carte » s'affichait alors que le miroir de la carte en est
+  une : le diagnostic ne connaît que les sauvegardes de l'application. Avec le miroir
+  réglé, la question devient « ce qui lui manque ».
+* Le détail du plan n'était pas en chasse fixe : un `setFont` écrasé par la feuille de
+  style, comme le tempo de « Deluge en direct ». Passé par `role="mono"`.
+* **Audit sur les vraies données** (copie fantôme en liens physiques, index réel copié,
+  aucun port MIDI, empreintes avant/après) : **mon compte de ce qui attend, fait dans le
+  fil de l'interface, figeait la fenêtre 0,3 s de plus au démarrage** — 0,52 s sans lui,
+  0,84 s avec, à quatre reprises contre un témoin. Passé dans un fil : 0,57 s. Et tout
+  travail de fond effaçait, en finissant, le message de la barre d'état :
+  `run_task(quiet=True)` pour ceux que l'utilisateur n'a pas demandés.
+
+### Mes tests étaient fautifs, une fois
+
+Le bandeau attendu ne venait pas : « Aucune sauvegarde » passait avant — et c'était la
+règle qui était fausse, pas le test (ci-dessus). Les clics réels ont en revanche trouvé
+deux vrais défauts de mon code : `guard(signal.emit)` transmettait le booléen du clic
+à un signal sans argument — la famille des 55 boutons inertes — et deux classes de tests
+ne neutralisaient pas `getOpenFileNames`, qu'aucun bouton n'utilisait jusque-là.
+
+### Vérifié
+
+* **990 tests** sous unittest et sous pytest ; **25 garde-fous** de cette passe
+  éprouvés en les retirant un à un (`retirer_echanges.py`) — chacun fait tomber son test.
+* Réglages, index, journal et copie de travail de l'utilisateur inchangés (dates et
+  tailles relevées au début de la session) ; sauvegarde inchangée ; rien d'écrit sur la
+  carte du Deluge — seules des lectures, et deux mesures de débit en lecture.
+* Rendus à 1 440 et 980 px : tableau de bord dans chaque état, voile, plan, page
+  Échantillons ; puis sur les vraies données.
+
+### À vérifier sur la machine, avec l'utilisateur
+
+1. **Un premier envoi réel** : le pack « TJontheRoad » (7 min) — les presets s'ouvrent-ils,
+   les kicks sonnent-ils ?
+2. **La lecture détectée** : l'arrêt pendant que la machine joue repose sur son horloge
+   et ses messages START/STOP, jamais encore vus sur sa machine (§3 novovicies). Sans
+   horloge MIDI en sortie, l'application ne saurait pas qu'elle joue.
+3. **Écrire plus vite** : deux blocs d'écriture en vol, mesurés dans un dossier neuf
+   qu'on retire — avec son accord.
+4. L'historique commence maintenant : les arrivées d'aujourd'hui (antérieures) n'y sont
+   pas ; elles apparaîtront à la prochaine réception.
+
+---
+
+## 3 tricies. La carte reste dans le Deluge (18 octobre 2026)
+
+> « Le dossier SDCARD Deluge est un emplacement de sauvegarde de ma carte SD
+> qui n'est pas destiné à être le répertoire de travail mais une sauvegarde
+> de la carte en cas de problème. Le logiciel doit être capable de
+> travailler directement sur la carte du Deluge relié au PC. »
+
+### Le constat, mesuré
+
+* **En firmware 1.2.1, impossible** : branché, le Deluge n'est qu'un
+  périphérique MIDI ; le code le confirme (seules `USB_CFG_PMIDI_USE` et
+  `USB_CFG_HMIDI_USE` sont compilées). Sa carte ne s'ouvre qu'au PC, dans
+  un lecteur.
+* **Le firmware 1.3** (bêta du 18 octobre 2026) ouvre la carte par SysEx
+  (`storage/smsysex.cpp`). Question posée à l'utilisateur : il a mis sa
+  machine à jour. Identité reçue : 1.3.0.
+* L'application travaillait **dans la sauvegarde**. Preuve qu'il le fallait
+  corriger : le 11 octobre, elle y avait réparé dix presets `rephazer` que
+  la carte n'a jamais reçus (mesuré par USB, tailles différentes).
+
+### Mesuré sur la machine (lecture seule, puis un essai accordé)
+
+| | |
+|---|---|
+| ping, page de dossier | 1 ms ; 5 à 17 ms |
+| toute la carte | 4 318 fichiers, 182 dossiers, **3,6 s** |
+| lecture, écriture | 113 à 128 Ko/s ; **45 Ko/s** |
+| la carte et la sauvegarde | 4 295 fichiers communs, même taille, **tous à −7 200 s** (copie faite sur un Mac) ; 23 différents ou nouveaux (6,3 Mo) ; la sauvegarde a 4,2 Go de plus — des corbeilles et l'index Spotlight |
+| ce que le Deluge enregistre | **date nulle** (pas d'horloge) : `Calm Down.XML`, les quatre `Cool1` |
+| `SETTINGS/MIDIFollow.XML` | déménagé en 1.3 ; `<cc_mappings>` (79 assignations, les 52 d'avant inchangées) ; **les réglages de la machine** : Channel A = 1, retour sur A, note 36 |
+| essai d'écriture (accordé) | dossier neuf, fichier écrit, relu, refus d'écrire sur un nom pris, remplacement, datation, dossier retiré : tout vérifié |
+| copie de travail (isolée, rien écrit sur la carte) | 2 734 fichiers repris de la sauvegarde + 23 par le câble en **52 s** ; 2 757 fichiers justes ; 15 relus identiques |
+
+### Ce que le code de la machine impose
+
+* `open` en écriture **écrase** ; `move` et `copy` **écrasent** si la
+  destination existe. Le client n'écrit que sous un nom temporaire neuf et
+  ne déplace que par `rename`, qui refuse un nom pris.
+* Un SysEx reçu de plus de **1 024 octets** est abandonné **sans réponse** :
+  le premier essai d'écriture est resté muet — un bloc de 1 024 octets
+  codés en faisait 1 230. Le simulateur ne l'avait pas vu, il le rejette
+  désormais aussi.
+* Le bit 7 des noms se perd : « dièse » revient « di\nse ». Lecture
+  tolérante ; ces noms — quatre fichiers parasites de macOS — sont mis à
+  part.
+
+### Ce qui existe maintenant
+
+| | |
+|---|---|
+| `core/delugefiles.py` | le client USB : sonde, session, dossiers, lecture, écriture sans jamais écraser |
+| `core/cardsync.py` | copie de travail, synchronisation à trois voies, mise à jour de la sauvegarde |
+| `ui/cardwork.py` | l'orchestration : à la connexion, après chaque écriture, au retour dans la fenêtre — jamais pendant que la machine joue |
+| Réglages ▸ Carte du Deluge | état, « Créer la copie de travail » / « Synchroniser maintenant », suppressions à confirmer, sauvegarde |
+| `SDCard.read_only` | la sauvegarde s'ouvre en lecture seule ; chaque fonction qui écrit le vérifie |
+| `midifollow` | le fichier de la 1.3, ses réglages lus ; « Deluge en direct » les constate |
+
+### Les règles
+
+* Ce que le Deluge change **descend** ; ce que l'application crée **monte**.
+* Changé des deux côtés : les **deux versions** restent (« … (PC) »).
+* Supprimé sur le Deluge : retiré de la copie, **gardé dans son
+  historique**. Supprimé sur le PC : **proposé**, jamais fait seul.
+* La sauvegarde : lue ; mise à jour **sur commande**, sans rien y
+  supprimer, les versions remplacées gardées à côté.
+* Ce que la sauvegarde a **seule** n'est jamais repris d'office, mais la
+  musique en est proposée à la création de la copie : le journal de
+  l'utilisateur montre qu'il avait créé, le 15 octobre, un kit
+  `COMPAGNON 1` — enregistré par l'application dans la sauvegarde, jamais
+  arrivé sur la carte.
+
+### Pièges de méthode
+
+* Mon Deluge simulé acceptait des messages que la machine refuse ; il les
+  refuse maintenant. La règle reste : **un simulateur se vérifie contre la
+  machine**.
+* Les heredocs de l'outil Bash mangent les barres obliques inverses : des
+  `\\n` devenus de vrais sauts de ligne, des continuations de ligne
+  avalées. Écrire ce genre de correctif avec l'outil d'écriture.
+
+### Vérifié
+
+* **946 tests** (618 du cœur, 328 d'interface), sous pytest et
+  sous unittest ; 15 garde-fous de cette passe éprouvés en les retirant.
+* Réglages et index réels de l'utilisateur inchangés ; sauvegarde
+  inchangée.
+
+### À faire par l'utilisateur, une fois
+
+Réglages ▸ Carte du Deluge ▸ **Créer la copie de travail** (le Deluge
+branché). Au démarrage, l'application aura reconnu `SDCARD Deluge` comme
+sauvegarde : elle s'y ouvre en lecture seule jusque-là.
 
 ---
 

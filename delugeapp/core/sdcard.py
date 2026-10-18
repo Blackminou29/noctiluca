@@ -116,6 +116,16 @@ def _is_ignored_file(name: str) -> bool:
     return name.lower() in IGNORED_FILES
 
 
+def is_drive_root(p: Path) -> bool:
+    """Vrai pour la racine d'un lecteur (``E:\\``) : une carte glissée dans
+    un lecteur, et non un dossier qui en garde une copie."""
+    try:
+        p = Path(p)
+        return bool(p.anchor) and p.resolve() == Path(p.anchor).resolve()
+    except (OSError, ValueError):
+        return False
+
+
 def is_deluge_root(p: Path) -> bool:
     """Vrai si ``p`` ressemble à la racine d'une carte Deluge.
 
@@ -302,9 +312,22 @@ class SDCard:
     _dir_cache: dict[str, dict[str, str]] = field(
         default_factory=dict, repr=False, compare=False
     )
+    #: Vrai pour un emplacement qu'on lit sans jamais l'écrire : la
+    #: **sauvegarde** de la carte. Chaque fonction qui écrit le vérifie
+    #: (:meth:`require_writable`).
+    read_only: bool = field(default=False, compare=False)
+    #: Pourquoi, en une phrase pour l'utilisateur.
+    read_only_reason: str = field(default="", repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
+
+    def require_writable(self) -> None:
+        """Lève :class:`PermissionError` si l'on ne doit pas écrire ici."""
+        if self.read_only:
+            raise PermissionError(
+                self.read_only_reason
+                or "Cet emplacement est en lecture seule : rien n'y est écrit.")
 
     # -- conversions de chemins -------------------------------------------- #
 

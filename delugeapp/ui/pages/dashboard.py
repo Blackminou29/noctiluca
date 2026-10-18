@@ -12,6 +12,8 @@ peut durer bien plus, et l'interface doit rester vivante (SPEC §6.2).
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -30,12 +32,15 @@ from ..theme import (
     GOLD,
     GREY,
     PAD,
+    PAD_AMBER,
+    PAD_CYAN,
     PAD_GREEN,
     PAD_MAGENTA,
     PANEL_HI,
     pad_color,
     page_color,
     severity_color,
+    with_alpha,
 )
 from ..widgets.common import (
     clear_layout,
@@ -74,6 +79,28 @@ ISSUE_DESTINATION: dict[str, str] = {
     "NO_BACKUP": "Health#Sauvegardes",
 }
 
+#: Où s'ouvre un fichier reçu du Deluge, selon son dossier : page, et ce
+#: qu'il est, en un mot.
+ARRIVAL_PAGES: dict[str, tuple[str, str]] = {
+    "SONGS": ("Songs", "morceau"),
+    "SYNTHS": ("Synths", "preset"),
+    "KITS": ("Kits", "kit"),
+    "SAMPLES": ("Samples", "son"),
+}
+
+
+def _quand(instant: float) -> str:
+    """« aujourd'hui à 14h53 », « hier à 9h05 », « le 15/10 à 12h31 »."""
+    moment = datetime.fromtimestamp(float(instant))
+    jour = moment.date()
+    if jour == date.today():
+        texte = "aujourd'hui"
+    elif jour == date.today() - timedelta(days=1):
+        texte = "hier"
+    else:
+        texte = "le %s" % moment.strftime("%d/%m")
+    return "%s à %s" % (texte, moment.strftime("%Hh%M"))
+
 
 class _LigneAnomalie(QWidget):
     """Ligne d'anomalie cliquable, qui mène là où on la répare."""
@@ -105,6 +132,12 @@ class DashboardPage(Page):
     navigateRequested = pyqtSignal(str)
     #: L'analyse vient de se terminer : les autres pages doivent se rafraîchir.
     scanFinished = pyqtSignal()
+    #: Envoyer des fichiers du PC au Deluge : la fenêtre ouvre le choix.
+    sendRequested = pyqtSignal(list, str)
+    #: Synchroniser tout de suite avec le Deluge branché.
+    syncRequested = pyqtSignal()
+    #: Mettre la sauvegarde de la carte à jour (le plan est montré d'abord).
+    backupRequested = pyqtSignal()
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
@@ -113,6 +146,9 @@ class DashboardPage(Page):
         #: dit ce qui a été relu, pas le contenu entier de la carte.
         self._auto_scan = False
         self._tiles: dict[str, StatTile] = {}
+        #: Statistiques et diagnostic du dernier rafraîchissement : le
+        #: bandeau se recalcule sur eux quand seul l'état de la carte change.
+        self._dernier_etat: tuple | None = None
 
     # -- construction ------------------------------------------------------- #
 
@@ -150,6 +186,7 @@ class DashboardPage(Page):
         outer.addWidget(scroll, 1)
 
         column.addWidget(self._build_next_step())
+        column.addWidget(self._build_exchanges())
         column.addWidget(self._build_tiles())
         column.addWidget(self._build_card_info())
 
@@ -206,6 +243,9 @@ class DashboardPage(Page):
         if self._next_target == "@scan":
             self._start_scan()
             return
+        if self._next_target == "@backup":
+            self.backupRequested.emit()
+            return
         if self._next_target:
             self.navigateRequested.emit(self._next_target)
 
@@ -245,12 +285,31 @@ class DashboardPage(Page):
 
         anomalies = {i.code: i for i in getattr(report, "issues", ())}
 
+        # Le diagnostic ne connaît que les sauvegardes faites par
+        # l'application ; le miroir de la carte que l'utilisateur garde
+        # (« SDCARD Deluge ») en est une aussi. Avec lui, la question n'est
+        # plus « aucune sauvegarde » mais « ce qui lui manque » — juste
+        # en dessous.
         manque = anomalies.get("NO_BACKUP")
-        if manque is not None:
+        miroir = self.ctx.settings.card_backup_path()
+        if manque is not None and (miroir is None or not miroir.is_dir()):
             return ("Aucune sauvegarde de cette carte. Avant toute "
                     "correction, une copie complète évite de perdre des "
                     "mois de travail.",
                     "Sauvegarder", "Health#Sauvegardes", "backup",
+                    page_color("Health"))
+
+        # Ce que le Deluge vient d'enregistrer n'est nulle part ailleurs que
+        # sur sa carte et dans la copie de travail : la sauvegarde de
+        # l'utilisateur ne le reçoit que sur commande.
+        travail = getattr(self.ctx, "card_work", None)
+        en_retard = travail.backup_missing() if (
+            travail is not None and travail.working_on_copy()) else 0
+        if en_retard:
+            return ("Votre sauvegarde n'a pas encore %d fichier(s) de la "
+                    "carte — ce que vous avez enregistré sur le Deluge ou "
+                    "créé ici depuis sa dernière mise à jour." % en_retard,
+                    "Mettre à jour la sauvegarde", "@backup", "backup",
                     page_color("Health"))
 
         absents = anomalies.get("MISSING_SAMPLE")
@@ -284,6 +343,202 @@ class DashboardPage(Page):
                 "enregistrer.",
                 "Générer un preset", "Generator#Preset de synthé", "wand",
                 page_color("Generator"))
+
+    # -- le Deluge et le PC ---------------------------------------------------- #
+
+    def _build_exchanges(self) -> QWidget:
+        """« Le Deluge et le PC » : où en est le lien, ce qui attend le Deluge,
+        ce qui en est arrivé, et la porte d'entrée des fichiers du PC.
+
+        Le panneau a la couleur de la pastille du Deluge connecté. Avant lui,
+        un échange ne laissait qu'un message de dix secondes dans la barre
+        d'état, et rien ne disait ce qui attendait la prochaine connexion.
+        """
+        card = Card("Le Deluge et le PC", color=PAD_GREEN)
+        self._exchanges_card = card
+        body = card.body()
+
+        haut = QHBoxLayout()
+        haut.setContentsMargins(0, 0, 0, 0)
+        haut.setSpacing(10)
+        self._link_pad = LitPad("midi", GREY, 34, halo=8)
+        haut.addWidget(self._link_pad)
+        textes = QVBoxLayout()
+        textes.setSpacing(2)
+        self._link_state = QLabel("—")
+        self._link_state.setWordWrap(True)
+        textes.addWidget(self._link_state)
+        self._link_detail = QLabel("")
+        self._link_detail.setProperty("role", "subtitle")
+        self._link_detail.setWordWrap(True)
+        textes.addWidget(self._link_detail)
+        haut.addLayout(textes, 1)
+        self._sync_button = tool_button("Synchroniser", "refresh",
+                                        color=PAD_GREEN)
+        # Une lambda, pas ``emit`` lui-même : ``emit`` accepte tout, et
+        # ``guard`` lui transmettrait le booléen de ``clicked``.
+        self._sync_button.clicked.connect(
+            self.guard(lambda: self.syncRequested.emit()))
+        haut.addWidget(self._sync_button)
+        self._send_button = tool_button("Envoyer des fichiers…", "import",
+                                        color=PAD_GREEN)
+        self._send_button.clicked.connect(
+            self.guard(lambda: self.sendRequested.emit([], "")))
+        haut.addWidget(self._send_button)
+        self._goto_card_button = tool_button("Carte du Deluge…", "settings",
+                                             color=page_color("Settings"))
+        self._goto_card_button.clicked.connect(
+            self.guard(lambda: self.navigateRequested.emit("Settings")))
+        haut.addWidget(self._goto_card_button)
+        hote = QWidget()
+        hote.setLayout(haut)
+        body.addWidget(hote)
+
+        self._arrivals_title = QLabel("Reçu du Deluge")
+        self._arrivals_title.setProperty("role", "subtitle")
+        body.addWidget(self._arrivals_title)
+        self._arrivals = QVBoxLayout()
+        self._arrivals.setSpacing(2)
+        body.addLayout(self._arrivals)
+
+        ligne = QHBoxLayout()
+        ligne.setContentsMargins(0, 0, 0, 0)
+        self._backup_text = QLabel("")
+        self._backup_text.setWordWrap(True)
+        ligne.addWidget(self._backup_text, 1)
+        self._backup_button = tool_button("Mettre à jour la sauvegarde",
+                                          "backup",
+                                          color=page_color("Health"))
+        self._backup_button.clicked.connect(
+            self.guard(lambda: self.backupRequested.emit()))
+        ligne.addWidget(self._backup_button)
+        self._backup_row = QWidget()
+        self._backup_row.setLayout(ligne)
+        body.addWidget(self._backup_row)
+
+        self._drop_hint = QLabel(
+            "Glissez sur la fenêtre des sons, des presets ou un pack entier : "
+            "ils partent sur le Deluge, le plan montré d'abord.")
+        self._drop_hint.setWordWrap(True)
+        self._drop_hint.setProperty("role", "subtitle")
+        self._drop_hint.setStyleSheet(
+            "QLabel { border: 1px dashed %s; border-radius: 8px;"
+            " padding: 8px 10px; }" % with_alpha(PAD_GREEN, 0.55))
+        body.addWidget(self._drop_hint)
+        return card
+
+    def refresh_exchanges(self) -> None:
+        """Redessine le panneau « Le Deluge et le PC », et le bandeau qui
+        peut en dépendre : l'état de la carte change — une comparaison avec
+        la sauvegarde aboutit, une synchronisation finit — sans que le reste
+        du tableau de bord ait bougé. Le diagnostic n'est pas relancé."""
+        if not self._built or self.sd is None:
+            return
+        try:
+            if self._dernier_etat is not None:
+                self._fill_next_step(*self._dernier_etat)
+            self._fill_exchanges()
+        except Exception:  # noqa: BLE001 - rempart, cf. SPEC §6.3
+            log.exception("panneau des échanges non rempli")
+
+    def _fill_exchanges(self) -> None:
+        travail = getattr(self.ctx, "card_work", None)
+        role = self.ctx.settings.card_role(self.sd.root)
+        lien = getattr(self.ctx, "link", None)
+        connecte = bool(lien is not None and lien.is_connected)
+        usb = bool(travail is not None and travail.files() is not None)
+        sur_la_copie = role == "travail" and travail is not None
+
+        self._sync_button.setVisible(sur_la_copie)
+        self._send_button.setVisible(role != "sauvegarde")
+        self._goto_card_button.setVisible(role == "sauvegarde")
+        self._drop_hint.setVisible(role != "sauvegarde")
+        clear_layout(self._arrivals)
+        arrivees = travail.arrivals(6) if sur_la_copie else []
+        self._arrivals_title.setVisible(bool(arrivees))
+        for quand, rel in arrivees:
+            self._arrivals.addWidget(self._arrival_row(quand, rel))
+        manque = travail.backup_missing() if sur_la_copie else 0
+        # Le bandeau « à faire maintenant » le dit déjà : pas deux fois.
+        self._backup_row.setVisible(bool(manque)
+                                    and self._next_target != "@backup")
+        if manque:
+            self._backup_text.setText(
+                "Votre sauvegarde n'a pas encore %d fichier(s) de la carte."
+                % manque)
+
+        if role == "sauvegarde":
+            self._set_link(GREY, "backup",
+                           "Vous regardez la sauvegarde de la carte, en "
+                           "lecture seule.",
+                           "Pour échanger avec le Deluge, l'application "
+                           "travaille sur sa carte : Réglages ▸ Carte du "
+                           "Deluge.")
+            return
+        if not sur_la_copie:
+            self._set_link(PAD_CYAN, "folder",
+                           "Carte ouverte directement%s." % (
+                               " dans un lecteur du PC" if role == "carte"
+                               else ""),
+                           "Ce que vous y envoyez est copié tout de suite. "
+                           "Avec le firmware 1.3, la carte peut rester dans "
+                           "le Deluge : Réglages ▸ Carte du Deluge.")
+            return
+
+        if travail.busy:
+            couleur, icone, etat = (PAD_AMBER, "refresh",
+                                    "Synchronisation avec le Deluge…")
+        elif usb:
+            couleur, icone, etat = (PAD_GREEN, "midi",
+                                    "Deluge branché : sa carte s'ouvre par "
+                                    "le câble USB.")
+        elif connecte:
+            couleur, icone, etat = (GOLD, "midi",
+                                    "Deluge branché, mais sa carte ne s'ouvre "
+                                    "pas par USB : il faut le firmware 1.3.")
+        else:
+            couleur, icone, etat = GREY, "midi", "Deluge débranché."
+        details = [travail.pending_text() + "." if travail.pending
+                   else "Tout ce qui est ici est aussi sur le Deluge."]
+        derniers = travail.exchanges(1)
+        if derniers:
+            details.append("Dernier échange %s : %s."
+                           % (_quand(derniers[0].when), derniers[0].summary()))
+        self._set_link(couleur, icone, etat, " ".join(details))
+        self._sync_button.setEnabled(usb and not travail.busy)
+
+    def _set_link(self, couleur: str, icone: str, etat: str,
+                  detail: str) -> None:
+        self._link_pad.set_color(couleur)
+        self._link_pad.set_icon(icone)
+        self._link_state.setText(etat)
+        self._link_detail.setText(detail)
+
+    def _arrival_row(self, quand: float, rel: str) -> QWidget:
+        """Une ligne « reçu du Deluge », qui ouvre le fichier sur sa page."""
+        cle, nature = ARRIVAL_PAGES.get(rel.split("/", 1)[0].upper(),
+                                        ("Samples", "fichier"))
+        cible = "%s#%s" % (cle, rel)
+        ligne = _LigneAnomalie(cible)
+        disposition = QHBoxLayout(ligne)
+        disposition.setContentsMargins(0, 2, 0, 2)
+        disposition.setSpacing(8)
+        pastille = QLabel("●")
+        pastille.setStyleSheet("color: %s;" % page_color(cle))
+        disposition.addWidget(pastille)
+        disposition.addWidget(ElidedLabel(Path(rel).stem), 1)
+        for texte, largeur in ((nature, 70), (_quand(quand), 130)):
+            etiquette = QLabel(texte)
+            etiquette.setProperty("role", "subtitle")
+            etiquette.setFixedWidth(largeur)
+            disposition.addWidget(etiquette)
+        fleche = QLabel("›")
+        fleche.setStyleSheet("color: %s;" % GREY)
+        disposition.addWidget(fleche)
+        ligne.setToolTip("%s\n\nCliquez pour l'ouvrir." % rel)
+        ligne.clicked.connect(
+            self.guard(lambda _c=False, d=cible: self.navigateRequested.emit(d)))
+        return ligne
 
     def _build_tiles(self) -> QWidget:
         """Les six tuiles chiffrées."""
@@ -548,7 +803,9 @@ class DashboardPage(Page):
         self._fill_tiles(stats)
         self._fill_card_info(stats)
         rapport = self._fill_health(stats)
+        self._dernier_etat = (stats, rapport)
         self._fill_next_step(stats, rapport)
+        self.refresh_exchanges()
         self._fill_folders()
 
     def _stats(self) -> dict:

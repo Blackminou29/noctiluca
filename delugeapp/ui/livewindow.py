@@ -52,7 +52,8 @@ __all__ = ["DelugeLiveWindow", "checklist"]
 REFRESH_MS = 100
 
 
-def checklist(state, channel: int) -> list[tuple[bool, str]]:
+def checklist(state, channel: int,
+              follow=None) -> list[tuple[bool, str]]:
     """Les réglages qui font marcher la liaison, et ce que l'on en voit.
 
     Rend des couples ``(fait, phrase)`` : la phrase dit ce qui est constaté,
@@ -83,15 +84,39 @@ def checklist(state, channel: int) -> list[tuple[bool, str]]:
     if state.latency_ms is not None:
         lignes.append((True, "Liaison vérifiée : aller-retour %s."
                        % latency_text(state.latency_ms)))
+    if getattr(state, "files", None):
+        lignes.append((True, "Carte ouverte par USB : la copie de travail "
+                       "se tient à son image."))
+    if follow is not None:
+        # Le firmware 1.3 écrit ses réglages sur la carte : on les lit au
+        # lieu de les supposer.
+        a = follow.channel_a
+        if a is None:
+            lignes.append((False, "Sur le Deluge, MIDI Follow est éteint : "
+                           "MIDI ▸ Follow ▸ Channel A = %d." % channel))
+        elif a != channel:
+            lignes.append((False, "Le Deluge suit le canal %d, l'application "
+                           "joue sur le canal %d : accordez-les (Réglages, "
+                           "ou MIDI ▸ Follow ▸ Channel A)." % (a, channel)))
+        else:
+            lignes.append((True, "MIDI Follow réglé sur la machine : "
+                           "Channel A = %d (lu sur sa carte)." % a))
+        if a is not None and follow.feedback != "a":
+            lignes.append((False, "Retour MIDI Follow éteint : MIDI ▸ Follow "
+                           "▸ Feedback = Channel A, pour que le son "
+                           "sélectionné revienne ici."))
     if state.feedback:
         lignes.append((True, "MIDI Follow : %s du son sélectionné." % (
             "1 réglage reçu" if state.feedback == 1
             else "%d réglages reçus" % state.feedback)))
-    else:
+    elif follow is None:
         lignes.append((False, "MIDI Follow, sur le Deluge : MIDI ▸ Follow ▸ "
                        "Channel A = %d, puis Feedback = Channel A. Changez "
                        "ensuite d'instrument : ses réglages arrivent ici."
                        % channel))
+    elif follow.channel_a == channel and follow.feedback == "a":
+        lignes.append((False, "Changez d'instrument sur le Deluge : ses "
+                       "réglages arrivent ici."))
     if state.clock_alive:
         lignes.append((True, "Horloge reçue : %s BPM."
                        % _bpm(state.tempo)))
@@ -405,12 +430,40 @@ class DelugeLiveWindow(QWidget):
             self.notes_label.setText("Aucune note tenue")
         self.chord_label.setText(theory_mod.name_chord(tenues))
         self._fill_params(lien.machine_values())
+        follow = self._follow()
+        if (follow is not None and follow.channel_a is not None
+                and follow.feedback == "a"):
+            self.params_hint.setText("Le retour MIDI Follow est actif sur la "
+                                     "machine : changez d'instrument ou "
+                                     "tournez un bouton, ses réglages "
+                                     "arrivent ici.")
+        else:
+            self.params_hint.setText("Rien de reçu : activez le retour MIDI "
+                                     "Follow sur la machine, puis changez "
+                                     "d'instrument.")
+
+    def _follow(self):
+        """Les réglages MIDI Follow écrits par la machine sur sa carte (1.3),
+        relus seulement quand le fichier change."""
+        carte = getattr(self.ctx, "sd", None)
+        if carte is None:
+            return None
+        try:
+            chemin = midifollow._card_file(carte)
+            cle = (str(chemin), chemin.stat().st_mtime_ns) if chemin else None
+        except OSError:
+            cle = None
+        if cle != getattr(self, "_follow_key", "?"):
+            self._follow_key = cle
+            self._follow_value = midifollow.read_settings(carte) if cle \
+                else None
+        return self._follow_value
 
     def _checklist_html(self, etat, canal: int) -> str:
         if etat is None:
             return ""
         lignes = []
-        for fait, phrase in checklist(etat, canal):
+        for fait, phrase in checklist(etat, canal, self._follow()):
             couleur = PAD_GREEN if fait else PAD_AMBER
             marque = "✓" if fait else "○"
             lignes.append('<p style="margin:2px 0"><span style="color:%s">'

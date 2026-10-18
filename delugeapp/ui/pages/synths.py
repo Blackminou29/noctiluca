@@ -585,7 +585,7 @@ class SynthsPage(Page):
         if self._preset is None or not self._current:
             self.say("Aucun preset sélectionné.")
             return
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
 

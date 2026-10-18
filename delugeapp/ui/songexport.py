@@ -37,7 +37,7 @@ def export_song(parent, ctx, build: Callable, default_name: str,
     """
     from ..core import songwriter
 
-    card = ctx.sd_or_warn(parent)
+    card = ctx.sd_or_warn(parent, write=True)
     if card is None:
         return ""
     try:

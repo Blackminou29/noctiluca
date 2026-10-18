@@ -718,6 +718,10 @@ class MidiIn:
         #: SysEx en cours de réassemblage (un message peut couvrir plusieurs
         #: tampons).
         self._morceau = bytearray()
+        #: Destinataire direct de certains SysEx — l'accès aux fichiers de la
+        #: carte, qui attend chaque réponse pour envoyer la suite : appelé
+        #: depuis le fil du pilote, il rend ``True`` s'il garde le message.
+        self._tap = None
         #: Dernière erreur d'ouverture, en clair.
         self.last_error = ""
 
@@ -851,6 +855,13 @@ class MidiIn:
         if self._morceau and self._morceau[-1] == 0xF7:
             complet = bytes(self._morceau)
             self._morceau = bytearray()
+            tap = self._tap
+            if tap is not None:
+                try:
+                    if tap(complet, time.perf_counter()):
+                        return
+                except Exception as exc:   # noqa: BLE001 - fil du pilote
+                    log.debug("SysEx refusé par son destinataire : %s", exc)
             self._push(SYSEX, 0, 0, stamp, complet)
         elif len(self._morceau) > 64 * SYSEX_BUFFER_SIZE:
             self._morceau = bytearray()  # jamais terminé : abandon
@@ -890,6 +901,11 @@ class MidiIn:
                 int(stamp), data, time.perf_counter()))
         except queue.Full:
             self._perdus += 1
+
+    def set_sysex_tap(self, tap) -> None:
+        """Confie certains SysEx à ``tap(données, instant) -> bool`` dès leur
+        arrivée, au lieu de la file. ``None`` le retire."""
+        self._tap = tap
 
     def poll(self, limit: int = 512) -> list[MidiMessage]:
         """Rend ce qui est arrivé depuis le dernier appel."""

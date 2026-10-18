@@ -176,6 +176,8 @@ def relink(sd: SDCard, old_rel: str, new_rel: str, apply: bool = False,
     L'écriture passe par ``dxml.save``, donc avec sauvegarde ``.bak`` et
     écriture atomique, et **conserve le dialecte XML d'origine**.
     """
+    if apply:
+        sd.require_writable()
     old_norm = norm_rel(old_rel)
     new_clean = str(new_rel or "").replace("\\", "/").strip("/")
     changes: list[tuple[Path, int]] = []
@@ -379,6 +381,8 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
         une référence non redirigée devient une référence cassée.
     :returns: ``[(fichier, nombre total de remplacements)]``.
     """
+    if apply:
+        sd.require_writable()
     table = {norm_rel(old): str(new or "").replace("\\", "/").strip("/")
              for old, new in (mapping or {}).items()
              if old and new}

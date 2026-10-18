@@ -139,6 +139,7 @@ class Plan:
         Une opération en échec n'interrompt pas le plan : son message est
         ajouté à la liste d'erreurs et le reste continue.
         """
+        sd.require_writable()
         done = 0
         errors: list[str] = []
         mapping: dict[str, str] = {}

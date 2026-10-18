@@ -669,7 +669,7 @@ class GeneratorPage(Page):
         if self._preset is None:
             self.say("Générez d'abord un son.")
             return
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
 
@@ -726,7 +726,7 @@ class GeneratorPage(Page):
 
     def _generate_batch(self) -> None:
         """Produit plusieurs presets d'un coup dans un nouveau dossier."""
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         count, ok = QInputDialog.getInt(
@@ -877,7 +877,7 @@ class GeneratorPage(Page):
         if self._kit is None:
             self.say("Construisez d'abord un kit.")
             return
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         from ...core.sdcard import safe_deluge_name

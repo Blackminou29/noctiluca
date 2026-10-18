@@ -1402,6 +1402,7 @@ def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
         return result
     if not apply:
         return result
+    sd.require_writable()
     target = sd.abs(rel)
     if target.exists():
         # Créé entre la simulation et l'écriture : on ne remplace rien.

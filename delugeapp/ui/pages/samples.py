@@ -93,6 +93,32 @@ DURATION_FILTERS: tuple[tuple[str, float, float], ...] = (
 PEAK_BUCKETS = 1400
 
 
+class _SampleModel(RowTableModel):
+    """Les échantillons, qu'on peut glisser hors de l'application.
+
+    Un son glissé de la liste vers l'Explorateur ou un logiciel de MAO y
+    arrive tel qu'il est dans la copie de travail : un enregistrement fait
+    sur le Deluge se retravaille sur le PC sans passer par un dossier caché.
+    """
+
+    def __init__(self, columns, rows, page) -> None:
+        super().__init__(columns, rows, page)
+        self._page = page
+
+    def flags(self, index):  # noqa: D102 - API Qt
+        drapeaux = super().flags(index)
+        if index.isValid():
+            drapeaux |= Qt.ItemFlag.ItemIsDragEnabled
+        return drapeaux
+
+    def mimeTypes(self) -> list[str]:  # noqa: N802 - API Qt
+        return ["text/uri-list"]
+
+    def mimeData(self, indexes):  # noqa: N802 - API Qt
+        lignes = sorted({index.row() for index in indexes})
+        return self._page.mime_for_rows([self.row_at(i) for i in lignes])
+
+
 class ProcessDialog(QDialog):
     """Choix des traitements à appliquer à une sélection d'échantillons.
 
@@ -438,7 +464,7 @@ class SliceDialog(QDialog):
     # -- écriture ----------------------------------------------------------- #
 
     def _do_write(self) -> None:
-        card = self.ctx.sd
+        card = self.ctx.sd_or_warn(self, write=True)
         if card is None or not self.sliceset:
             return
         rel, message = slicer.save_sliced_kit(card, self.sliceset,
@@ -488,7 +514,7 @@ class SliceDialog(QDialog):
 
 
     def _do_export(self) -> None:
-        card = self.ctx.sd
+        card = self.ctx.sd_or_warn(self, write=True)
         if card is None or not self.sliceset:
             return
         dossier = "SAMPLES/%s TRANCHES" % Path(self.rel).stem[:16]
@@ -540,6 +566,8 @@ class SamplesPage(Page):
     #: autres pages (dont la note de santé) doivent se rafraîchir. Le nom est
     #: celui que ``mainwindow._connect_page`` reconnaît.
     cardModified = pyqtSignal()
+    #: Des fichiers du PC à envoyer au Deluge, et le dossier choisi ici.
+    sendRequested = pyqtSignal(list, str)
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
@@ -598,6 +626,10 @@ class SamplesPage(Page):
             "Trouver les échantillons qui ressemblent au son sélectionné")
         self._similar_button.clicked.connect(self.guard(self._toggle_similar))
         actions.addWidget(self._similar_button)
+
+        self._send_button = tool_button("Envoyer au Deluge…", "import")
+        self._send_button.clicked.connect(self.guard(self._send))
+        actions.addWidget(self._send_button)
 
         # Rien n'est sélectionné au premier affichage : les actions qui
         # portent sur un son restent éteintes jusqu'au premier clic dans la
@@ -688,6 +720,12 @@ class SamplesPage(Page):
         self._table = QTableView()
         self._table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
+        # Un son glissé hors de la liste arrive dans l'Explorateur ou le
+        # logiciel de MAO : c'est une copie, la carte n'est pas touchée.
+        self._table.setDragEnabled(True)
+        self._table.setDragDropMode(
+            QAbstractItemView.DragDropMode.DragOnly)
+        self._table.setDefaultDropAction(Qt.DropAction.CopyAction)
         card.body().addWidget(self._table)
         return card
 
@@ -922,8 +960,8 @@ class SamplesPage(Page):
     def _fill_table(self, rows, with_closeness: bool = False) -> None:
         """Pose les lignes dans la table, en ajustant les colonnes."""
         if self._model is None:
-            self._model = RowTableModel(self._columns(with_closeness),
-                                        rows, self)
+            self._model = _SampleModel(self._columns(with_closeness),
+                                       rows, self)
             self._proxy = sorted_proxy(self._model, self)
             self._table.setModel(self._proxy)
             configure_table(self._table, self._model)
@@ -1194,6 +1232,56 @@ class SamplesPage(Page):
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
+    # -- du PC vers le Deluge, et retour ---------------------------------------- #
+
+    def _send(self) -> None:
+        """Choisir des fichiers du PC à envoyer au Deluge, dans le dossier
+        choisi dans l'arbre s'il y en a un."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        depart = Path.home() / "Downloads"
+        choisis, _filtre = QFileDialog.getOpenFileNames(
+            self, "Envoyer au Deluge",
+            str(depart if depart.is_dir() else Path.home()),
+            "Sons, presets, kits et morceaux du Deluge "
+            "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;Tous les fichiers (*)")
+        if choisis:
+            dossier = self._folder if self._folder.upper().startswith(
+                "SAMPLES") else ""
+            self.sendRequested.emit(list(choisis), dossier)
+
+    def mime_for_rows(self, rows):
+        """Les fichiers de ces lignes, pour un glisser vers le PC."""
+        from PyQt6.QtCore import QMimeData, QUrl
+
+        if self.sd is None:
+            return None
+        adresses = []
+        for row in rows:
+            try:
+                rel = row["rel"]
+            except (KeyError, IndexError, TypeError):
+                continue
+            chemin = self.sd.resolve_sample(rel)
+            if chemin is not None:
+                adresses.append(QUrl.fromLocalFile(str(chemin)))
+        if not adresses:
+            return None
+        donnees = QMimeData()
+        donnees.setUrls(adresses)
+        return donnees
+
+    def _clear_filters(self) -> None:
+        """Retire aussi le dossier choisi dans l'arbre : un son reçu du
+        Deluge s'affiche dans la liste entière."""
+        racine = self._tree.topLevelItem(0) if self._tree.topLevelItemCount() \
+            else None
+        if racine is not None:
+            self._tree.blockSignals(True)
+            self._tree.setCurrentItem(racine)
+            self._tree.blockSignals(False)
+        super()._clear_filters()
+
     def _set_stars(self, value: int) -> None:
         if not self._current:
             return
@@ -1254,7 +1342,7 @@ class SamplesPage(Page):
 
     def _process(self) -> None:
         """Traite la sélection : choix, simulation, confirmation, exécution."""
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         rows = self._selected_rows()

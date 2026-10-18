@@ -78,6 +78,11 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                          "morceau n'utilise — candidats au rangement",
         "@_only_missing": "Ne montre que les fichiers réclamés par un preset "
                           "mais absents de la carte",
+        "@_send_button": "**Écrit sur la carte.** Choisissez des sons ou des "
+                         "presets du PC : le plan montre où chacun ira, ce "
+                         "qui est déjà sur la carte et ce que le Deluge "
+                         "refuserait, avant toute copie. Un dossier ou un "
+                         "pack entier se glisse sur la fenêtre  (Ctrl+I)",
     },
 
     # ---------------------------------------------------------------- #
@@ -418,6 +423,20 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "@_scan_button": "Relit la carte et met l'index à jour  (Ctrl+R)",
         "@_stop_button": "Interrompt l'analyse ; ce qui a déjà été lu est "
                          "conservé",
+        "@_sync_button": "Échange tout de suite avec le Deluge branché : ce "
+                         "qu'il a enregistré descend, ce que l'application a "
+                         "créé ou reçu du PC monte  (Ctrl+Maj+D)",
+        "@_send_button": "**Écrit sur la carte.** Choisir des fichiers du PC "
+                         "à envoyer au Deluge ; le plan est montré avant toute "
+                         "copie. Un dossier ou un pack se glisse sur la "
+                         "fenêtre  (Ctrl+I)",
+        "@_goto_card_button": "Ouvre les réglages de la carte du Deluge : "
+                              "copie de travail, synchronisation et "
+                              "sauvegarde",
+        "@_backup_button": "**Écrit dans votre sauvegarde.** Y ajoute ce qui "
+                           "lui manque et remplace ce qui a changé, "
+                           "l'ancienne version gardée à côté ; rien n'y est "
+                           "supprimé. Le plan est montré d'abord",
     },
 }
 

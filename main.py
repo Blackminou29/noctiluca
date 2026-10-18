@@ -144,7 +144,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _build_context(args: argparse.Namespace):
     """Construit l'``AppContext``, en rattrapant chaque défaillance."""
-    from delugeapp.config import CONFIG_DIR, AppContext, load_settings
+    from delugeapp.config import (CONFIG_DIR, AppContext, load_settings,
+                                  save_settings)
     from delugeapp.core.audio_out import Player
     from delugeapp.core.db import Library
     from delugeapp.core.sdcard import SDCard
@@ -155,6 +156,16 @@ def _build_context(args: argparse.Namespace):
     if args.sd:
         settings.sd_path = str(Path(args.sd).expanduser())
         settings.add_recent(settings.sd_path)
+
+    # Un dossier de travail qui n'était qu'une copie de la carte devient ce
+    # qu'il est : sa sauvegarde, qu'on lit sans l'écrire.
+    if settings.adopt_card_roles():
+        log.info("« %s » reconnu comme sauvegarde de la carte",
+                 settings.card_backup)
+        try:
+            save_settings(settings)
+        except Exception:  # noqa: BLE001
+            log.exception("réglages non enregistrés")
 
     # L'index : son absence ne doit pas empêcher le démarrage, mais sans lui
     # les pages n'ont rien à montrer, donc on le signale clairement.
@@ -173,7 +184,7 @@ def _build_context(args: argparse.Namespace):
     card = None
     if settings.sd_path.strip():
         try:
-            card = SDCard(Path(settings.sd_path))
+            card = settings.open_card(Path(settings.sd_path))
         except Exception:  # noqa: BLE001 - chemin absurde
             log.exception("carte SD inutilisable : %s", settings.sd_path)
 

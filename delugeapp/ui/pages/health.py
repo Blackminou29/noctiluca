@@ -473,7 +473,7 @@ class HealthPage(Page):
 
     def _autofix(self) -> None:
         """Construit le plan, le montre, puis l'applique si accepté."""
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None or self._report is None:
             return
         codes = self._checked_codes()
@@ -510,7 +510,7 @@ class HealthPage(Page):
 
     def _apply_plan(self, plan, title: str) -> None:
         """Montre le plan et l'applique après accord explicite."""
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         dialog = PlanDialog(plan, self, title)
@@ -532,7 +532,7 @@ class HealthPage(Page):
 
     def _apply_fix(self, plan) -> None:
         """Montre un plan de correction audio, puis l'exécute si accepté."""
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         dialog = PlanDialog(plan, self, "Correction des défauts audio")
@@ -604,7 +604,7 @@ class HealthPage(Page):
                                      QTableWidgetItem(human_size(wasted)))
 
     def _dedupe(self) -> None:
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         from ...core import organize
@@ -688,7 +688,7 @@ class HealthPage(Page):
 
     def _relink(self) -> None:
         """Répare les références cassées dont le remplaçant est certain."""
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         from ...core import health as health_mod
@@ -727,7 +727,7 @@ class HealthPage(Page):
                 index, 2, QTableWidgetItem(human_size(row["size"])))
 
     def _archive_unused(self) -> None:
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         from ...core import organize
@@ -838,7 +838,7 @@ class HealthPage(Page):
         box.exec()
 
     def _restore_backup(self) -> None:
-        card = self.card_or_warn()
+        card = self.writable_card()
         if card is None:
             return
         info = self._selected_backup()

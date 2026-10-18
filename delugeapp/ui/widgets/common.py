@@ -496,6 +496,9 @@ class SearchBar(QLineEdit):
         super().__init__(parent)
         self.setPlaceholderText(placeholder)
         self.setClearButtonEnabled(True)
+        # Des fichiers glissés sur la fenêtre partent vers le Deluge : le
+        # champ ne doit pas les avaler en y écrivant leur adresse.
+        self.setAcceptDrops(False)
         self.addAction(icons.icon("search", GREY, 16),
                        QLineEdit.ActionPosition.LeadingPosition)
 

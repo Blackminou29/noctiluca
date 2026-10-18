@@ -36,6 +36,7 @@ carte quand elle est là, et les valeurs ci-dessous ne servent que de repli.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from .fixedpoint import INT32_MAX, INT32_MIN
@@ -223,18 +224,25 @@ def load_map_with_source(card=None, path: Path | None = None
     return sortie, source
 
 
+#: Où le firmware range le fichier : ``SETTINGS/`` depuis la 1.3
+#: (``MIDI_FOLLOW_XML``, mesuré sur la carte), la racine avant.
+FOLLOW_PLACES = ("SETTINGS/" + FOLLOW_FILE, FOLLOW_FILE)
+
+
 def _card_file(card) -> Path | None:
     if card is None:
         return None
     racine = getattr(card, "root", None)
     if racine is None:
         return None
-    try:
-        chemin = Path(racine) / FOLLOW_FILE
-        return chemin if chemin.is_file() else None
-    except OSError as exc:             # noqa: BLE001
-        log.debug("MIDIFollow.XML inaccessible : %s", exc)
-        return None
+    for place in FOLLOW_PLACES:
+        try:
+            chemin = Path(racine) / place
+            if chemin.is_file():
+                return chemin
+        except OSError as exc:         # noqa: BLE001
+            log.debug("MIDIFollow.XML inaccessible : %s", exc)
+    return None
 
 
 def _read_file(chemin: Path) -> dict[str, int]:
@@ -252,9 +260,13 @@ def _read_file(chemin: Path) -> dict[str, int]:
 
     # Seules les assignations comptent : une autre section numérique (canal,
     # réglage ajouté par un firmware futur) deviendrait sinon un contrôleur.
-    section = racine.find(".//defaultCCMappings")
-    if section is not None:
-        racine = section
+    # Mesuré sur la 1.3 : faute de reconnaître ``cc_mappings``, ses canaux
+    # et sa note de base passaient pour 28 contrôleurs de plus.
+    for nom in ("cc_mappings", "defaultCCMappings"):
+        section = racine.find(".//" + nom)
+        if section is not None:
+            racine = section
+            break
 
     sortie: dict[str, int] = {}
     for element in racine.iter():
@@ -265,6 +277,57 @@ def _read_file(chemin: Path) -> dict[str, int]:
             continue
         sortie[element.tag] = int(texte)
     return sortie
+
+
+@dataclass(frozen=True)
+class FollowSettings:
+    """Les réglages MIDI Follow **de la machine**, tels que la 1.3 les
+    enregistre dans ``SETTINGS/MIDIFollow.XML``.
+
+    Les canaux sont comptés de 1 à 16 ; ``None`` veut dire « non réglé »
+    (le firmware écrit le canal + 1, et 256 pour « aucun »).
+    """
+
+    channel_a: int | None = None
+    channel_b: int | None = None
+    channel_c: int | None = None
+    kit_root_note: int | None = None
+    #: ``"a"``, ``"b"``, ``"c"`` ou ``None`` (retour éteint).
+    feedback: str | None = None
+
+
+def read_settings(card=None, path: Path | None = None) -> FollowSettings | None:
+    """Les réglages de la machine, ou ``None`` si le fichier n'en porte pas
+    (firmware 1.2.1 : ils vivaient dans sa mémoire, pas sur la carte)."""
+    from . import dxml
+
+    fichier = Path(path) if path is not None else _card_file(card)
+    if fichier is None:
+        return None
+    try:
+        racine = getattr(dxml.load(fichier), "root", None)
+    except Exception as exc:           # noqa: BLE001 - fichier utilisateur
+        log.debug("MIDIFollow.XML illisible : %s", exc)
+        return None
+    if racine is None:
+        return None
+    section = racine.find(".//settings")
+    if section is None:
+        return None
+
+    def canal(nom: str) -> int | None:
+        texte = (section.findtext("channels/%s/channel" % nom) or "").strip()
+        if not texte.isdigit():
+            return None
+        valeur = int(texte)
+        return valeur if 1 <= valeur <= 16 else None
+
+    note = (section.findtext("kit_root_note/note") or "").strip()
+    retour = (section.findtext("feedback/channel") or "").strip().lower()
+    return FollowSettings(
+        channel_a=canal("a"), channel_b=canal("b"), channel_c=canal("c"),
+        kit_root_note=int(note) if note.isdigit() else None,
+        feedback=retour if retour in ("a", "b", "c") else None)
 
 
 def _raw_value(sound, cle: str) -> int | None:

@@ -85,6 +85,21 @@ LOG_PATH: Path = CONFIG_DIR / "app.log"
 DEFAULT_BACKUP_DIR: Path = CONFIG_DIR / "backups"
 
 
+def _default_work_dir() -> Path:
+    """Copie de travail par défaut : sur la machine (1,4 Go n'ont rien à faire
+    dans un profil itinérant), sauf configuration imposée."""
+    if (os.environ.get(CONFIG_ENV) or "").strip():
+        return CONFIG_DIR / "Carte"
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        return Path(local) / APP_ORG / "Carte"
+    return CONFIG_DIR / "Carte"
+
+
+#: Où vit la copie de travail de la carte, sauf réglage contraire.
+DEFAULT_WORK_DIR: Path = _default_work_dir()
+
+
 def ensure_config_dir() -> Path:
     """Crée le dossier de configuration au besoin et le retourne."""
     try:
@@ -227,6 +242,16 @@ class Settings:
     #: Les tempos des outils suivent celui du Deluge quand son horloge arrive.
     midi_follow_tempo: bool = True
 
+    # -- la carte du Deluge ------------------------------------------------
+    #: Copie de travail de la carte, tenue à son image par USB (firmware
+    #: 1.3) ; vide = l'emplacement par défaut.
+    work_dir: str = ""
+    #: Sauvegarde complète de la carte : **lue, jamais écrite** — sauf par
+    #: « Mettre à jour la sauvegarde », qui n'y supprime rien.
+    card_backup: str = ""
+    #: Synchroniser d'office la copie de travail quand le Deluge est branché.
+    auto_sync: bool = True
+
     # -- sérialisation ----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         """Dictionnaire JSON-sérialisable des réglages."""
@@ -250,6 +275,9 @@ class Settings:
             "midi_autoconnect": bool(self.midi_autoconnect),
             "midi_audition": bool(self.midi_audition),
             "midi_follow_tempo": bool(self.midi_follow_tempo),
+            "work_dir": self.work_dir,
+            "card_backup": self.card_backup,
+            "auto_sync": bool(self.auto_sync),
         }
 
     @classmethod
@@ -293,6 +321,9 @@ class Settings:
         s.midi_audition = _as_bool(g("midi_audition"), s.midi_audition)
         s.midi_follow_tempo = _as_bool(g("midi_follow_tempo"),
                                        s.midi_follow_tempo)
+        s.work_dir = _as_str(g("work_dir"), s.work_dir)
+        s.card_backup = _as_str(g("card_backup"), s.card_backup)
+        s.auto_sync = _as_bool(g("auto_sync"), s.auto_sync)
         return s
 
     # -- confort ----------------------------------------------------------
@@ -314,6 +345,72 @@ class Settings:
     def sd_root(self) -> Path | None:
         """Racine de la carte SD sous forme de `Path`, ou None si non réglée."""
         return Path(self.sd_path) if self.sd_path.strip() else None
+
+    def work_path(self) -> Path:
+        """Copie de travail de la carte."""
+        return Path(self.work_dir) if self.work_dir.strip() else DEFAULT_WORK_DIR
+
+    def card_backup_path(self) -> Path | None:
+        """Sauvegarde de la carte, ou ``None``."""
+        return Path(self.card_backup) if self.card_backup.strip() else None
+
+    def adopt_card_roles(self) -> bool:
+        """Reconnaît une ancienne carte de travail pour ce qu'elle est.
+
+        Avant la copie de travail, l'application travaillait dans le dossier
+        indiqué — chez l'utilisateur, la **sauvegarde** de sa carte. Un
+        dossier qui n'est ni la racine d'un lecteur ni la copie de travail
+        devient la sauvegarde. Rend ``True`` si un réglage a changé.
+        """
+        from .core.sdcard import is_drive_root
+
+        if self.card_backup.strip() or not self.sd_path.strip():
+            return False
+        chemin = Path(self.sd_path)
+        if is_drive_root(chemin) or same_folder(chemin, self.work_path()):
+            return False
+        self.card_backup = str(chemin)
+        return True
+
+    def card_role(self, root: Path | str | None) -> str:
+        """``travail``, ``sauvegarde``, ``carte`` (un lecteur) ou ``dossier``."""
+        from .core.sdcard import is_drive_root
+
+        if root is None or not str(root).strip():
+            return ""
+        if same_folder(root, self.work_path()):
+            return "travail"
+        sauvegarde = self.card_backup_path()
+        if sauvegarde is not None and same_folder(root, sauvegarde):
+            return "sauvegarde"
+        if is_drive_root(Path(root)):
+            return "carte"
+        return "dossier"
+
+    def open_card(self, root: Path | str) -> "SDCard":
+        """La carte à ``root``, en lecture seule si c'est la sauvegarde."""
+        from .core.sdcard import SDCard
+
+        if self.card_role(root) == "sauvegarde":
+            return SDCard(Path(root), read_only=True,
+                          read_only_reason=BACKUP_READ_ONLY)
+        return SDCard(Path(root))
+
+
+#: Ce qu'on dit quand une action voudrait écrire dans la sauvegarde.
+BACKUP_READ_ONLY = (
+    "Ce dossier est la sauvegarde de la carte : l'application le lit, elle "
+    "n'y écrit jamais. Elle travaille sur la carte du Deluge, par sa copie "
+    "de travail — Réglages ▸ Carte du Deluge.")
+
+
+def same_folder(a: Path | str, b: Path | str) -> bool:
+    """Même dossier, à la casse et aux séparateurs près."""
+    try:
+        return (os.path.normcase(os.path.abspath(str(a))).rstrip("\\/")
+                == os.path.normcase(os.path.abspath(str(b))).rstrip("\\/"))
+    except (TypeError, ValueError):
+        return False
 
 
 def load_settings() -> Settings:
@@ -435,10 +532,21 @@ class AppContext:
         """Vrai si un port MIDI est ouvert. Ne crée rien."""
         return bool(self.link is not None and self.link.is_connected)
 
-    def sd_or_warn(self, parent: Any = None) -> "SDCard | None":
-        """Retourne la carte SD, ou affiche un avertissement et retourne None."""
+    def sd_or_warn(self, parent: Any = None,
+                   write: bool = False) -> "SDCard | None":
+        """Retourne la carte SD, ou affiche un avertissement et retourne None.
+
+        ``write=True`` : l'action va écrire. Une carte en lecture seule — la
+        sauvegarde de la carte — est alors refusée, avec sa raison.
+        """
         if self.has_card:
-            return self.sd
+            if not (write and getattr(self.sd, "read_only", False)):
+                return self.sd
+            raison = (getattr(self.sd, "read_only_reason", "")
+                      or "Cet emplacement est en lecture seule.")
+            log.info("Écriture refusée : %s", raison)
+            self._inform(parent, "Rien n'est écrit ici", raison)
+            return None
         log.warning("Action refusée : carte SD absente ou invalide (%s)",
                     self.settings.sd_path or "aucun chemin")
         try:
@@ -454,6 +562,19 @@ class AppContext:
         except Exception:  # pragma: no cover - pas de QApplication
             log.exception("Affichage de l'avertissement « carte SD » impossible")
         return None
+
+    @staticmethod
+    def _inform(parent: Any, titre: str, texte: str) -> None:
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+        except ImportError:  # pragma: no cover - sans interface graphique
+            return
+        if QApplication.instance() is None:
+            return
+        try:
+            QMessageBox.information(parent, titre, texte)
+        except Exception:  # pragma: no cover
+            log.exception("Affichage d'une information impossible")
 
     # -- confort ----------------------------------------------------------
     def save(self) -> None:

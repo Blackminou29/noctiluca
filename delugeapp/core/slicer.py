@@ -381,6 +381,7 @@ def save_sliced_kit(sd: SDCard, sliceset: SliceSet, name: str = "",
     if not apply:
         return rel, ("%d tranches seraient écrites dans %s."
                      % (len(sliceset), rel))
+    sd.require_writable()
 
     kit = slices_to_kit(sliceset, titre)
     path = sd.abs(rel)
@@ -442,6 +443,7 @@ def export_slices(sd: SDCard, sliceset: SliceSet, folder: str,
               for i in range(len(sliceset))]
     if not apply:
         return prevus, []
+    sd.require_writable()
 
     path = sd.resolve_sample(sliceset.rel)
     if path is None:

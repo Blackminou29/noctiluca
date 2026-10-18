@@ -130,7 +130,63 @@ barre du haut, les menus, et les fenêtres ouvertes hors des pages.
 Reliez le Deluge au PC en USB : la pastille **Deluge** de la barre du haut
 passe au vert — l'application se connecte d'elle-même si la case en est
 cochée dans *Réglages › Deluge branché* — et la machine dit sa version
-(firmware communautaire c1.2.1 sur la vôtre, aller-retour de 0,3 ms).
+(aller-retour de 0,3 ms).
+
+### Sa carte reste dedans
+
+Avec le **firmware 1.3**, le Deluge ouvre sa carte au PC par le câble USB.
+L'application travaille alors sur une **copie de travail** qu'elle tient à
+l'image de la carte : ce que vous créez part sur la carte, ce que vous
+enregistrez sur le Deluge revient — à la connexion, après chaque écriture,
+au retour dans la fenêtre, jamais pendant que la machine joue.
+*Réglages › Carte du Deluge › Créer la copie de travail*, une fois : elle
+reprend de votre sauvegarde ce qui y est déjà et ne fait passer par le câble
+que le reste (une minute chez vous).
+
+* changé des deux côtés : les deux versions sont gardées ;
+* une suppression faite sur le PC ne part sur la carte **qu'avec votre
+  accord** ; une suppression faite sur le Deluge part dans l'historique de
+  la copie ;
+* **votre sauvegarde n'est que lue**. Elle se met à jour sur commande
+  (*Mettre à jour la sauvegarde*), sans que rien n'y soit jamais supprimé.
+
+Avec le firmware 1.2.1, la carte ne s'ouvre que glissée dans un lecteur du
+PC (*Réglages › Autre emplacement de carte*).
+
+### Envoyer au Deluge, et retour
+
+La carte restant dans la machine, l'Explorateur ne l'atteint plus : c'est
+l'application qui y pose vos sons. **Glissez des fichiers ou un dossier
+n'importe où sur la fenêtre** — un pack téléchargé, un bounce de votre
+logiciel de MAO —, ou *Fichier › Envoyer des fichiers au Deluge* (Ctrl+I),
+*Envoyer un dossier* (Ctrl+Maj+I), ou le bouton de la page *Échantillons*,
+qui envoie dans le dossier choisi dans son arbre.
+
+Le **plan** s'affiche avant toute copie : où va chaque fichier, ce qui est
+déjà sur la carte, ce que le Deluge refuserait, et **combien de temps le
+câble y mettra** — 45 Ko/s : un pack de 18 Mo, sept minutes ; de 271 Mo,
+près d'une heure trois quarts. Les fichiers partent ensuite en arrière-plan,
+ou à la prochaine connexion du Deluge ; l'écran de la barre du haut dit
+combien attendent (« 3 À ENVOYER »).
+
+* un pack qui a la forme d'une carte (`SAMPLES`, `SYNTHS`…) garde ses chemins,
+  que ses presets citent ; le reste va dans le dossier d'échantillons choisi ;
+* **rien d'existant n'est remplacé** : identique, il est laissé ; homonyme,
+  le nouveau est numéroté (« Kick 2.wav ») ;
+* les noms deviennent lisibles par le câble (« Été » devient « Ete ») et
+  les presets du pack suivent ;
+* un fichier que le Deluge refuserait — un WAV à en-tête étendu, comme en
+  écrivent beaucoup de logiciels de MAO — est converti sans perte audible ;
+  un quatre-canaux, un MP3, restent sur le PC, et le plan dit pourquoi ;
+* **pendant que le Deluge joue, rien ne passe** : un transfert s'arrête entre
+  deux blocs et reprend à l'arrêt.
+
+Dans l'autre sens, le panneau **Le Deluge et le PC** du tableau de bord
+liste ce qui est arrivé de la machine — un clic l'ouvre sur sa page —, et
+un son de la page *Échantillons* **se glisse vers l'Explorateur ou votre
+logiciel de MAO**. Quand la carte a reçu ce que votre sauvegarde n'a pas
+encore, *À faire maintenant* propose de la mettre à jour. Chaque échange
+s'écrit au journal, fichier par fichier.
 
 | | |
 |---|---|
@@ -394,6 +450,8 @@ delugeapp/
     midiport.py          MIDI et SysEx par winmm, sans dépendance
     midifollow.py        les 52 contrôleurs du mode MIDI Follow
     delugelink.py delugesysex.py      le lien vivant avec la machine
+    delugefiles.py cardsync.py        la carte par USB, la copie de travail
+    cardimport.py        envoyer au Deluge : du PC vers la carte
     render.py audio_out.py            moteur d'écoute et sortie audio
   ui/
     mainwindow.py        assemblage des neuf pages
@@ -402,12 +460,14 @@ delugeapp/
     tasks.py             travaux longs hors du fil de l'interface
     songexport.py        parcours commun des boutons « en morceau »
     livewindow.py        « Deluge en direct » : écran, tempo, son sélectionné
+    cardwork.py          la copie de travail tenue à l'image de la carte
+    sendfiles.py         glisser-déposer, plan et copie vers le Deluge
     pages/               une page par domaine
     widgets/             façade (écran, pads de navigation), potentiomètre,
                          enveloppe, forme d'onde, pads, piano…
 tests/
-  test_core.py           583 tests du cœur
-  test_ui.py             319 tests d'interface
+  test_core.py           646 tests du cœur
+  test_ui.py             344 tests d'interface
   deluge_simule.py       un Deluge simulé, qui répond comme la vraie machine
 SPEC.md                  contrat d'architecture : formats, règles, budgets
 ```
@@ -424,7 +484,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-902 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+990 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

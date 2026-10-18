@@ -3650,6 +3650,7 @@ class TestClicsReels(InteractionCase):
             "about": QMessageBox.about,
             "save": QFileDialog.getSaveFileName,
             "open": QFileDialog.getOpenFileName,
+            "opens": QFileDialog.getOpenFileNames,
             "dir": QFileDialog.getExistingDirectory,
             "text": QInputDialog.getText,
             "int": QInputDialog.getInt,
@@ -3664,6 +3665,7 @@ class TestClicsReels(InteractionCase):
         QMessageBox.about = staticmethod(lambda *a, **k: None)
         QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("", ""))
         QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("", ""))
+        QFileDialog.getOpenFileNames = staticmethod(lambda *a, **k: ([], ""))
         QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: "")
         QInputDialog.getText = staticmethod(lambda *a, **k: ("", False))
         QInputDialog.getInt = staticmethod(lambda *a, **k: (0, False))
@@ -3682,6 +3684,7 @@ class TestClicsReels(InteractionCase):
         QMessageBox.about = s["about"]
         QFileDialog.getSaveFileName = s["save"]
         QFileDialog.getOpenFileName = s["open"]
+        QFileDialog.getOpenFileNames = s["opens"]
         QFileDialog.getExistingDirectory = s["dir"]
         QInputDialog.getText = s["text"]
         QInputDialog.getInt = s["int"]
@@ -4364,6 +4367,7 @@ class TestMenusEtRaccourcis(MainWindowCase):
         self._sorties = {
             "save": QFileDialog.getSaveFileName,
             "open": QFileDialog.getOpenFileName,
+            "opens": QFileDialog.getOpenFileNames,
             "dir": QFileDialog.getExistingDirectory,
             "text": QInputDialog.getText,
             "int": QInputDialog.getInt,
@@ -4371,6 +4375,7 @@ class TestMenusEtRaccourcis(MainWindowCase):
         }
         QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("", ""))
         QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("", ""))
+        QFileDialog.getOpenFileNames = staticmethod(lambda *a, **k: ([], ""))
         QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: "")
         QInputDialog.getText = staticmethod(lambda *a, **k: ("", False))
         QInputDialog.getInt = staticmethod(lambda *a, **k: (0, False))
@@ -4382,6 +4387,7 @@ class TestMenusEtRaccourcis(MainWindowCase):
         s = self._sorties
         QFileDialog.getSaveFileName = s["save"]
         QFileDialog.getOpenFileName = s["open"]
+        QFileDialog.getOpenFileNames = s["opens"]
         QFileDialog.getExistingDirectory = s["dir"]
         QInputDialog.getText = s["text"]
         QInputDialog.getInt = s["int"]
@@ -5665,6 +5671,35 @@ class TestDelugeEnDirect(MainWindowCase):
         self.assertEqual(checklist(absent, 1), [
             (False, "USB : branchez le Deluge, puis « Connecter ».")])
 
+    def test_la_liste_lit_les_reglages_ecrits_par_la_machine(self):
+        """En 1.3, le Deluge écrit ses réglages MIDI Follow sur sa carte :
+        la liste les constate au lieu de les supposer."""
+        from delugeapp.core.delugelink import LinkState
+        from delugeapp.core.midifollow import FollowSettings
+        from delugeapp.ui.livewindow import checklist
+
+        etat = LinkState(supported=True, out_name="Deluge", in_name="Deluge",
+                         firmware="c1.3.0", files=True)
+
+        def phrases(follow, canal=1):
+            return [(fait, p) for fait, p in checklist(etat, canal, follow)]
+
+        accorde = phrases(FollowSettings(channel_a=1, feedback="a"))
+        self.assertIn((True, "Carte ouverte par USB : la copie de travail se "
+                       "tient à son image."), accorde)
+        self.assertTrue(any(fait and "Channel A = 1 (lu sur sa carte)" in p
+                            for fait, p in accorde))
+        self.assertFalse(any("Feedback" in p for _, p in accorde))
+        ecart = phrases(FollowSettings(channel_a=3, feedback="a"), canal=1)
+        self.assertTrue(any(not fait and "suit le canal 3" in p
+                            for fait, p in ecart))
+        eteint = phrases(FollowSettings())
+        self.assertTrue(any(not fait and "MIDI Follow est éteint" in p
+                            for fait, p in eteint))
+        sans_retour = phrases(FollowSettings(channel_a=1))
+        self.assertTrue(any(not fait and "Feedback = Channel A" in p
+                            for fait, p in sans_retour))
+
     def test_connecter_ouvre_les_bons_ports_et_recopie_l_ecran(self):
         from delugeapp.core import delugesysex as sx
 
@@ -5905,3 +5940,667 @@ class TestDelugeEnDirect(MainWindowCase):
         self.machine.horloge(150.0)
         win._service_link()
         self.assertEqual(boite._acc_bpm.value(), 96)
+
+
+class CarteUsbCase(MainWindowCase):
+    """Base des tests de la carte restée dans le Deluge : le Deluge simulé
+    en firmware 1.3, qui sert ses fichiers comme ``storage/smsysex.cpp``,
+    une carte, et la sauvegarde de l'utilisateur — jamais écrite."""
+
+    def setUp(self):
+        super().setUp()
+        import time as _time
+        from unittest import mock
+
+        from delugeapp.core import midiport
+        from delugeapp.core.delugefiles import from_fat
+
+        self._time = _time
+        base = Path(self._tmp.name)
+        self.carte = base / "carte_deluge"
+        self.sauvegarde = base / "SDCARD Deluge"
+        for rel, donnees, decale in (("SONGS/A.XML", b"<song a/>", True),
+                                     ("SYNTHS/P.XML", b"<sound p/>", True),
+                                     ("SAMPLES/K.WAV", bytes(range(256)) * 8,
+                                      True),
+                                     ("SONGS/NEUF.XML", b"<song neuf/>",
+                                      False)):
+            p = self.carte / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(donnees)
+            if decale:
+                os.utime(p, (1_700_000_000, 1_700_000_000))
+                q = self.sauvegarde / rel
+                q.parent.mkdir(parents=True, exist_ok=True)
+                q.write_bytes(donnees)
+                os.utime(q, (1_700_000_000 - 7200, 1_700_000_000 - 7200))
+            else:
+                nul = from_fat(0x21, 0)          # enregistré par le Deluge
+                os.utime(p, (nul, nul))
+        self.empreinte_sauvegarde = self._empreinte(self.sauvegarde)
+
+        reglages = self.ctx.settings
+        reglages.work_dir = str(base / "copie de travail")
+        reglages.card_backup = str(self.sauvegarde)
+        reglages.midi_autoconnect = False
+        self.machine = _deluge_simule().DelugeSimule(version=(1, 3, 0),
+                                                     carte=self.carte)
+        for nom, valeur in (("outputs", lambda: self.machine.devices("out")),
+                            ("inputs", lambda: self.machine.devices("in")),
+                            ("available", lambda: True)):
+            remplacement = mock.patch.object(midiport, nom, valeur)
+            remplacement.start()
+            self.addCleanup(remplacement.stop)
+        self.lien = self.ctx.ensure_link()
+        self.machine.brancher(self.lien)
+        self.addCleanup(self.lien.disconnect)
+        self.assertTrue(self.lien.connect())
+        self.assertTrue(self.lien.wait_files(5.0))
+
+    def tearDown(self):
+        self.assertEqual(self._empreinte(self.sauvegarde),
+                         self.empreinte_sauvegarde,
+                         "la sauvegarde a changé")
+        super().tearDown()
+
+    @staticmethod
+    def _empreinte(racine):
+        h = hashlib.sha256()
+        for p in sorted(Path(racine).rglob("*")):
+            if p.is_file():
+                st = p.stat()
+                h.update(str((p.relative_to(racine).as_posix(), st.st_size,
+                              st.st_mtime_ns)).encode())
+        return h.hexdigest()
+
+    def _attendre(self, condition, delai=20.0):
+        from delugeapp.ui import tasks
+
+        fin = self._time.monotonic() + delai
+        while self._time.monotonic() < fin:
+            _APP.processEvents()
+            # La condition n'est lue qu'une fois les fils arrêtés : sous
+            # Windows, lire un fichier qu'un fil est en train de remplacer
+            # est refusé — c'était mon test qui échouait, pas la copie.
+            if tasks.active_count() == 0:
+                try:
+                    if condition():
+                        return True
+                except OSError:
+                    pass
+            self._time.sleep(0.01)
+        return False
+
+    def _avec_copie(self):
+        """La fenêtre, la copie de travail créée depuis les Réglages."""
+        win = self.window()
+        travail = win.card_work
+        win._service_link()
+        win.go_to("Settings")
+        page = win._pages["Settings"]
+        page._refresh_work()
+        self.assertEqual(page._work_button.text(), "Créer la copie de travail")
+        self.assertTrue(page._work_button.isEnabled())
+        page._work_button.click()
+        self.assertTrue(self._attendre(travail.has_work_copy),
+                        travail.message)
+        self.assertTrue(self._attendre(lambda: not travail.busy))
+        return win, travail, page
+
+
+class TestCopieDeTravail(CarteUsbCase):
+    """La carte reste dans le Deluge : copie de travail et synchronisation,
+    depuis l'interface."""
+
+    # -- créer ----------------------------------------------------------------- #
+
+    def test_creer_la_copie_de_travail_depuis_les_reglages(self):
+        win, travail, page = self._avec_copie()
+        copie = Path(self.ctx.settings.work_dir)
+        for rel in ("SONGS/A.XML", "SYNTHS/P.XML", "SAMPLES/K.WAV",
+                    "SONGS/NEUF.XML"):
+            self.assertEqual((copie / rel).read_bytes(),
+                             (self.carte / rel).read_bytes(), rel)
+        # La copie de travail est désormais la carte de l'application.
+        self.assertEqual(self.ctx.settings.card_role(self.ctx.sd.root),
+                         "travail")
+        self.assertFalse(self.ctx.sd.read_only)
+        page._refresh_work()
+        self.assertEqual(page._work_button.text(), "Synchroniser maintenant")
+        self.assertIn("CARTE DU DELUGE", win._card_button.toolTip().upper())
+        # Seule la date du fichier enregistré par le Deluge a changé sur la
+        # carte : ce qui permettra de voir sa prochaine réécriture.
+        lectures = {n for n, _ in self.machine.carte_usb.commandes}
+        self.assertFalse(lectures & {"write", "delete", "rename", "move",
+                                     "copy"}, lectures)
+
+    def test_la_musique_de_la_sauvegarde_seule_est_proposee(self):
+        """Mesuré chez l'utilisateur : un kit créé par l'application dans la
+        sauvegarde, le 15 octobre, n'était jamais arrivé sur la carte."""
+        for rel, donnees in (("KITS/COMPAGNON 1.XML", b"<kit compagnon/>"),
+                             ("README.txt", b"ancien")):
+            p = self.sauvegarde / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(donnees)
+        self.empreinte_sauvegarde = self._empreinte(self.sauvegarde)
+        win, travail, _page = self._avec_copie()
+        self.assertTrue(self._attendre(
+            lambda: (self.carte / "KITS/COMPAGNON 1.XML").exists()
+            and not travail.busy))
+        self.assertEqual((self.carte / "KITS/COMPAGNON 1.XML").read_bytes(),
+                         b"<kit compagnon/>")
+        self.assertFalse((self.carte / "README.txt").exists())
+
+    # -- ensuite ---------------------------------------------------------------- #
+
+    def test_ce_que_l_application_ecrit_part_sur_la_carte(self):
+        win, travail, _page = self._avec_copie()
+        travail._timer.setInterval(10)
+        nouveau = Path(self.ctx.settings.work_dir) / "SONGS" / "CREE.XML"
+        nouveau.write_bytes(b"<song cree/>")
+        win._card_written()
+        self.assertTrue(self._attendre(
+            lambda: (self.carte / "SONGS/CREE.XML").exists()))
+        self.assertEqual((self.carte / "SONGS/CREE.XML").read_bytes(),
+                         b"<song cree/>")
+        self.assertIn("envoyé", travail.message)
+
+    def test_ce_que_le_deluge_enregistre_revient(self):
+        from delugeapp.core.delugefiles import from_fat
+
+        win, travail, _page = self._avec_copie()
+        p = self.carte / "SONGS" / "A.XML"
+        p.write_bytes(b"<song A/>")               # réenregistré sur la machine
+        nul = from_fat(0x21, 0)
+        os.utime(p, (nul, nul))
+        win.sync_deluge()
+        self.assertTrue(self._attendre(
+            lambda: (Path(self.ctx.settings.work_dir) / "SONGS/A.XML")
+            .read_bytes() == b"<song A/>"))
+
+    def test_pendant_la_lecture_la_synchronisation_attend(self):
+        win, travail, _page = self._avec_copie()
+        self.lien.running = True
+        self.assertFalse(travail.sync("essai"))
+        self.assertIn("joue", travail.message)
+        self.lien.running = False
+        travail.on_transport()
+        self.assertTrue(self._attendre(lambda: not travail.busy))
+        self.assertIn("Deluge", travail.message)
+
+    def test_une_suppression_attend_l_accord(self):
+        win, travail, page = self._avec_copie()
+        (Path(self.ctx.settings.work_dir) / "SONGS" / "A.XML").unlink()
+        win.sync_deluge()
+        self.assertTrue(self._attendre(lambda: not travail.busy
+                                       and travail.last_plan is not None
+                                       and travail.pending_deletions()))
+        self.assertTrue((self.carte / "SONGS/A.XML").exists())
+        page._refresh_work()
+        self.assertFalse(page._work_deletions.isHidden())
+        page._work_deletions.click()             # la question répond « oui »
+        self.assertTrue(self._attendre(
+            lambda: not (self.carte / "SONGS/A.XML").exists()))
+
+    def test_la_sauvegarde_ouverte_refuse_d_ecrire(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        vus = []
+        QMessageBox.information = staticmethod(
+            lambda *a, **k: vus.append(a[1] if len(a) > 1 else ""))
+        self.ctx.sd = self.ctx.settings.open_card(self.sauvegarde)
+        self.assertTrue(self.ctx.sd.read_only)
+        self.assertIsNone(self.ctx.sd_or_warn(None, write=True))
+        self.assertEqual(vus, ["Rien n'est écrit ici"])
+        self.assertIs(self.ctx.sd_or_warn(None), self.ctx.sd)
+
+    def test_chaque_commande_de_la_section_s_explique(self):
+        from delugeapp.ui import aide
+
+        win = self.window()
+        win.go_to("Settings")
+        page = win._pages["Settings"]
+        for bouton in (page._work_button, page._work_deletions,
+                       page._backup_choose, page._backup_update,
+                       page._auto_sync):
+            self.assertTrue(bouton.toolTip(), _libelle(bouton))
+        self.assertEqual(aide.manquantes(page, "Settings"), [])
+
+
+# --------------------------------------------------------------------------- #
+# Le PC et le Deluge, dans les deux sens (18 octobre 2026)
+# --------------------------------------------------------------------------- #
+
+def _son_court(chemin, frequence=220.0):
+    """Un son court, écrit par l'écrivain de l'application."""
+    t = np.linspace(0, 0.05, 2205, endpoint=False)
+    chemin = Path(chemin)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    wav.write(chemin, (0.5 * np.sin(2 * np.pi * frequence * t))
+              .astype(np.float32), 44100, 16)
+    return chemin
+
+
+def _pack_tj(racine):
+    """Un pack à l'image de « TJontheRoad Delugetions », téléchargé chez
+    l'utilisateur : ses presets sous ``TJ SYNTHS/SYNTHS``, ses sons sous
+    ``TJ SAMPLES``, et les parasites de macOS venus de l'archive."""
+    racine = Path(racine)
+    _son_court(racine / "TJ SAMPLES" / "TJ Kick" / "00-KICK.wav", 60)
+    preset = racine / "TJ SYNTHS" / "SYNTHS" / "Amb Air.XML"
+    preset.parent.mkdir(parents=True, exist_ok=True)
+    SynthPreset.new("Amb Air").save(preset, backup=False)
+    for parasite in ("TJ SAMPLES/TJ Kick/._00-KICK.wav",
+                     "__MACOSX/TJ SAMPLES/._00-KICK.wav"):
+        p = racine / parasite
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x00\x05\x16\x07")
+    return racine
+
+
+def _deposer(fenetre, *chemins):
+    """Un glisser-déposer de fichiers sur la fenêtre, comme depuis
+    l'Explorateur : entrée, survol, dépôt. Rend ``(accepté à l'entrée,
+    voile visible, ce que dit le voile, dépôt accepté)``."""
+    from PyQt6.QtCore import QMimeData, QPoint, QPointF, QUrl
+    from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+
+    donnees = QMimeData()
+    donnees.setUrls([QUrl.fromLocalFile(str(c)) for c in chemins])
+    point = QPoint(300, 300)
+    bouton, touches = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+    entree = QDragEnterEvent(point, Qt.DropAction.CopyAction, donnees,
+                             bouton, touches)
+    QApplication.sendEvent(fenetre, entree)
+    voile = (fenetre._drop_veil.isVisible(), fenetre._drop_veil.detail())
+    QApplication.sendEvent(fenetre, QDragMoveEvent(
+        point, Qt.DropAction.CopyAction, donnees, bouton, touches))
+    depot = QDropEvent(QPointF(point), Qt.DropAction.CopyAction, donnees,
+                       bouton, touches)
+    QApplication.sendEvent(fenetre, depot)
+    return entree.isAccepted(), voile[0], voile[1], depot.isAccepted()
+
+
+def _attendre_les_fils(condition, delai=20.0):
+    """Fait tourner la boucle Qt jusqu'à ce que les fils soient finis et la
+    condition vraie."""
+    import time as _time
+
+    from delugeapp.ui import tasks
+
+    fin = _time.monotonic() + delai
+    while _time.monotonic() < fin:
+        _APP.processEvents()
+        if tasks.active_count() == 0:
+            try:
+                if condition():
+                    return True
+            except OSError:
+                pass
+        _time.sleep(0.01)
+    return False
+
+
+class TestEnvoyerAuDelugeFenetre(MainWindowCase):
+    """Des fichiers du PC vers la carte, depuis la fenêtre : glisser-déposer,
+    menu Fichier, page Échantillons. La carte est ici un dossier ouvert
+    directement ; le plan est accepté en remplaçant ``SendDialog.exec``,
+    comme le ferait un clic sur « Envoyer »."""
+
+    def setUp(self):
+        super().setUp()
+        self.pc = Path(self._tmp.name) / "pc"
+        self.pack = _pack_tj(self.pc / "TJ Pack")
+
+    def _dialogue(self, reponse):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QDialog
+
+        from delugeapp.ui.sendfiles import SendDialog
+
+        code = (QDialog.DialogCode.Accepted if reponse
+                else QDialog.DialogCode.Rejected)
+        vus = []
+
+        def exec_(dialogue):
+            vus.append(dialogue.plan)
+            return code
+
+        remplacement = mock.patch.object(SendDialog, "exec", exec_)
+        remplacement.start()
+        self.addCleanup(remplacement.stop)
+        return vus
+
+    def test_glisser_un_pack_sur_la_fenetre(self):
+        plans = self._dialogue(True)
+        win = self.window()
+        accepte, voile, detail, depose = _deposer(win, self.pack)
+        self.assertTrue(accepte)
+        self.assertTrue(voile)
+        self.assertIn("dossier de la carte", detail)
+        self.assertTrue(depose)
+        self.assertFalse(win._drop_veil.isVisible())
+        self.assertTrue(_attendre_les_fils(
+            lambda: (self.root / "SYNTHS" / "Amb Air.XML").is_file()))
+        self.assertTrue((self.root / "SAMPLES" / "TJ Pack" / "TJ SAMPLES"
+                         / "TJ Kick" / "00-KICK.wav").is_file())
+        self.assertFalse(list(self.root.rglob("._*")))
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0].junk, 2)
+        # L'index le voit sans nouvelle analyse complète.
+        self.assertTrue(_attendre_les_fils(
+            lambda: "SYNTHS/Amb Air.XML" in self.lib.known_files("synth")))
+
+    def test_annuler_ne_copie_rien(self):
+        self._dialogue(False)
+        win = self.window()
+        avant = sorted(p.relative_to(self.root).as_posix()
+                       for p in self.root.rglob("*"))
+        _deposer(win, self.pack)
+        self.assertTrue(_attendre_les_fils(
+            lambda: "Rien n'a été envoyé" in win.statusBar().currentMessage()))
+        self.assertEqual(sorted(p.relative_to(self.root).as_posix()
+                                for p in self.root.rglob("*")), avant)
+
+    def test_ce_qui_n_est_pas_du_deluge_le_dit(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        (self.pc / "lisez-moi.txt").write_text("merci")
+        (self.pc / "chanson.mp3").write_bytes(b"ID3")
+        vus = []
+        with mock.patch.object(QMessageBox, "information",
+                               lambda *a, **k: vus.append(a[1:3])):
+            win = self.window()
+            _deposer(win, self.pc / "lisez-moi.txt", self.pc / "chanson.mp3")
+            self.assertTrue(_attendre_les_fils(lambda: vus))
+        titre, texte = vus[0]
+        self.assertEqual(titre, "Rien à envoyer au Deluge")
+        self.assertIn("WAV", texte)
+
+    def test_la_sauvegarde_refuse_l_envoi(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.ctx.settings.card_backup = str(self.root)
+        self.ctx.sd = self.ctx.settings.open_card(self.root)
+        self.assertTrue(self.ctx.sd.read_only)
+        avant = sorted(p.name for p in self.root.rglob("*"))
+        vus = []
+        with mock.patch.object(QMessageBox, "information",
+                               lambda *a, **k: vus.append(a[1])):
+            win = self.window()
+            accepte, _voile, detail, _depose = _deposer(win, self.pack)
+            self.assertTrue(_attendre_les_fils(lambda: vus))
+        self.assertIn("lecture seule", detail)
+        self.assertEqual(vus, ["Rien n'est écrit ici"])
+        self.assertEqual(sorted(p.name for p in self.root.rglob("*")), avant)
+
+    def test_le_menu_fichier_envoie_un_dossier(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        self._dialogue(True)
+        win = self.window()
+        action = next(a for entree in win.menuBar().actions()
+                      if entree.menu() is not None
+                      for a in entree.menu().actions()
+                      if a.text() == "Envoyer un dossier au Deluge…")
+        with mock.patch.object(QFileDialog, "getExistingDirectory",
+                               lambda *a, **k: str(self.pack)):
+            action.trigger()
+            self.assertTrue(_attendre_les_fils(
+                lambda: (self.root / "SYNTHS" / "Amb Air.XML").is_file()))
+
+    def test_la_page_echantillons_envoie_dans_le_dossier_choisi(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        self._dialogue(True)
+        son = _son_court(self.pc / "loose.wav")
+        win = self.window()
+        win.go_to("Samples")
+        page = win._pages["Samples"]
+        cible = None
+        a_voir = [page._tree.topLevelItem(0)]
+        while a_voir:
+            item = a_voir.pop()
+            if item.data(0, Qt.ItemDataRole.UserRole) == "SAMPLES/DRUMS/Kick":
+                cible = item
+            a_voir.extend(item.child(i) for i in range(item.childCount()))
+        page._tree.setCurrentItem(cible)
+        self.assertEqual(page._folder, "SAMPLES/DRUMS/Kick")
+        with mock.patch.object(QFileDialog, "getOpenFileNames",
+                               lambda *a, **k: ([str(son)], "")):
+            page._send_button.click()
+            self.assertTrue(_attendre_les_fils(
+                lambda: (self.root / "SAMPLES/DRUMS/Kick/loose.wav").is_file()))
+
+    def test_un_son_se_glisse_hors_de_la_liste(self):
+        win = self.window()
+        win.go_to("Samples")
+        page = win._pages["Samples"]
+        self.assertTrue(page._table.dragEnabled())
+        modele = page._model
+        index = modele.index(0, 0)
+        self.assertTrue(modele.flags(index) & Qt.ItemFlag.ItemIsDragEnabled)
+        donnees = modele.mimeData([index])
+        adresses = [Path(u.toLocalFile()) for u in donnees.urls()]
+        self.assertEqual(len(adresses), 1)
+        self.assertTrue(adresses[0].is_file())
+        self.assertEqual(adresses[0].parent.parent.parent.name, "SAMPLES")
+
+    def test_un_fichier_s_ouvre_sur_sa_page_malgre_les_filtres(self):
+        win = self.window()
+        win.go_to("Samples")
+        page = win._pages["Samples"]
+        page._search.setText("zzz")
+        page._reload()
+        self.assertEqual(page._model.rowCount(), 0)
+        win.go_to("Samples#SAMPLES/DRUMS/Snare/s.wav")
+        lignes = page._selected_rows()
+        self.assertEqual([r["rel"] for r in lignes],
+                         ["SAMPLES/DRUMS/Snare/s.wav"])
+        self.assertEqual(page._search.text(), "")
+        win.go_to("Songs#SONGS/M.XML")
+        songs = win._pages["Songs"]
+        indexes = songs._table.selectionModel().selectedRows()
+        self.assertEqual(
+            songs._model.row_at(songs._proxy.mapToSource(indexes[0]).row())
+            ["rel"], "SONGS/M.XML")
+
+
+class TestLeDelugeEtLePC(CarteUsbCase):
+    """L'envoi et la synchronisation face au Deluge simulé : ce qui attend,
+    ce qui part, ce qui s'arrête, ce qui se raconte."""
+
+    def _dialogue_accepte(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QDialog
+
+        from delugeapp.ui.sendfiles import SendDialog
+
+        remplacement = mock.patch.object(
+            SendDialog, "exec", lambda _d: QDialog.DialogCode.Accepted)
+        remplacement.start()
+        self.addCleanup(remplacement.stop)
+
+    def test_ce_qui_est_envoye_part_sur_le_deluge_et_se_raconte(self):
+        self._dialogue_accepte()
+        win, travail, _page = self._avec_copie()
+        travail._timer.setInterval(10)
+        pack = _pack_tj(Path(self._tmp.name) / "pc" / "TJ Pack")
+        with self.assertLogs("delugeapp.ui.cardwork", level="INFO") as journal:
+            accepte, _voile, detail, _depose = _deposer(win, pack)
+            self.assertIn("par le câble USB", detail)
+            self.assertTrue(self._attendre(
+                lambda: (self.carte / "SYNTHS" / "Amb Air.XML").is_file()
+                and not travail.busy and not travail.pending))
+        self.assertTrue((self.carte / "SAMPLES" / "TJ Pack" / "TJ SAMPLES"
+                         / "TJ Kick" / "00-KICK.wav").is_file())
+        dernier = travail.exchanges(1)[0]
+        self.assertIn("SYNTHS/Amb Air.XML", dernier.sent)
+        self.assertTrue(any("envoyé : SYNTHS/Amb Air.XML" in ligne
+                            for ligne in journal.output), journal.output)
+        self.assertNotIn("À ENVOYER", win._card_button._haut)
+
+    def test_debranche_les_fichiers_attendent_puis_partent(self):
+        win, travail, _page = self._avec_copie()
+        self.lien.disconnect()
+        self.assertIsNone(travail.files())
+        nouveau = Path(self.ctx.settings.work_dir) / "SONGS" / "ATTENTE.XML"
+        nouveau.write_bytes(b"<song attente/>")
+        win._card_written()
+        # Compté hors du fil de l'interface.
+        self.assertTrue(self._attendre(
+            lambda: travail.pending == [("SONGS/ATTENTE.XML", 15)]))
+        self.assertIn("1 À ENVOYER", win._card_button._haut)
+        win.go_to("Dashboard")
+        tableau = win._pages["Dashboard"]
+        self.assertEqual(tableau._link_state.text(), "Deluge débranché.")
+        self.assertIn("1 fichier(s) attendent le Deluge",
+                      tableau._link_detail.text())
+        self.assertFalse(tableau._sync_button.isEnabled())
+        # Rebranché : il part à la connexion.
+        self.machine.brancher(self.lien)
+        self.assertTrue(self.lien.connect())
+        self.assertTrue(self.lien.wait_files(5.0))
+        travail.on_files_known()
+        self.assertTrue(self._attendre(
+            lambda: (self.carte / "SONGS/ATTENTE.XML").is_file()
+            and not travail.busy))
+        self.assertEqual(travail.pending, [])
+        self.assertNotIn("À ENVOYER", win._card_button._haut)
+
+    def test_quand_le_deluge_joue_l_envoi_s_arrete_puis_reprend(self):
+        win, travail, _page = self._avec_copie()
+        travail._timer.setInterval(10)
+        carte_usb = self.machine.carte_usb
+        vrai = carte_usb.traite
+        lien = self.lien
+
+        def traite(data):
+            reponse = vrai(data)
+            if carte_usb.commandes and carte_usb.commandes[-1][0] == "write":
+                lien.running = True            # on appuie sur PLAY
+            return reponse
+
+        carte_usb.traite = traite
+        gros = Path(self.ctx.settings.work_dir) / "SAMPLES" / "GROS.WAV"
+        contenu = bytes((i * 13) % 256 for i in range(20_000))
+        gros.write_bytes(contenu)
+        win._card_written()
+        self.assertTrue(self._attendre(
+            lambda: not travail.busy and "reprendra" in travail.message))
+        self.assertFalse((self.carte / "SAMPLES/GROS.WAV").exists())
+        self.assertFalse([p for p in self.carte.rglob("~DC*")])
+        # On arrête la lecture : l'envoi reprend, et va au bout.
+        carte_usb.traite = vrai
+        lien.running = False
+        travail.on_transport()
+        self.assertTrue(self._attendre(
+            lambda: (self.carte / "SAMPLES/GROS.WAV").is_file()
+            and not travail.busy))
+        self.assertEqual((self.carte / "SAMPLES/GROS.WAV").read_bytes(),
+                         contenu)
+
+    def test_ce_qui_est_arrive_du_deluge_s_ouvre_d_un_clic(self):
+        win, travail, _page = self._avec_copie()
+        # La création a reçu NEUF.XML par le câble ; la page Morceaux doit
+        # l'avoir indexé.
+        self.assertTrue(self._attendre(
+            lambda: "SONGS/NEUF.XML" in self.ctx.lib.known_files("song")))
+        win.go_to("Dashboard")
+        tableau = win._pages["Dashboard"]
+        tableau.refresh_exchanges()
+        lignes = [tableau._arrivals.itemAt(i).widget()
+                  for i in range(tableau._arrivals.count())]
+        self.assertEqual([l.cible for l in lignes], ["Songs#SONGS/NEUF.XML"])
+        self.assertTrue(tableau._arrivals_title.isVisibleTo(tableau))
+        lignes[0].mouseReleaseEvent(_mouse(QEvent.Type.MouseButtonRelease, 5))
+        self.assertIs(win._stack.currentWidget(), win._pages["Songs"])
+        songs = win._pages["Songs"]
+        indexes = songs._table.selectionModel().selectedRows()
+        self.assertEqual(
+            songs._model.row_at(songs._proxy.mapToSource(indexes[0]).row())
+            ["rel"], "SONGS/NEUF.XML")
+
+    def test_la_sauvegarde_se_compare_et_se_met_a_jour_hors_du_fil(self):
+        import threading
+        from unittest import mock
+
+        from delugeapp.core import cardsync
+
+        win, travail, _page = self._avec_copie()
+        self.assertTrue(self._attendre(lambda: travail.backup_plan
+                                       is not None))
+        # NEUF.XML est sur la carte, pas dans la sauvegarde.
+        self.assertEqual(travail.backup_missing(), 1)
+        win.go_to("Dashboard")
+        tableau = win._pages["Dashboard"]
+        tableau.refresh()
+        self.assertIn("sauvegarde n'a pas encore 1 fichier",
+                      tableau._next_text.text())
+        # Le bandeau le dit : le panneau ne le répète pas.
+        self.assertFalse(tableau._backup_row.isVisibleTo(tableau))
+        fils = []
+        vrai = cardsync.update_backup
+
+        def espion(*args, **kwargs):
+            fils.append(threading.current_thread() is threading.main_thread())
+            return vrai(*args, **kwargs)
+
+        with mock.patch.object(cardsync, "update_backup", espion):
+            tableau._next_button.click()          # « oui » à la question
+            self.assertTrue(self._attendre(
+                lambda: (self.sauvegarde / "SONGS/NEUF.XML").is_file()
+                and len(fils) == 2))
+        self.assertEqual(fils, [False, False])
+        self.assertEqual((self.sauvegarde / "SONGS/NEUF.XML").read_bytes(),
+                         b"<song neuf/>")
+        self.assertEqual(travail.backup_missing(), 0)
+        # Le bandeau a suivi sans nouveau diagnostic.
+        self.assertNotIn("sauvegarde n'a pas encore",
+                         tableau._next_text.text())
+        # Mise à jour demandée : c'est la seule écriture voulue ici.
+        self.empreinte_sauvegarde = self._empreinte(self.sauvegarde)
+
+    def test_un_compte_ancien_ne_contredit_pas_la_synchronisation(self):
+        from delugeapp.core import cardsync
+
+        _win, travail, _page = self._avec_copie()
+        travail.refresh_pending()
+        ancien = travail._generation
+        # Une synchronisation finit avant le compte : c'est elle qui a raison.
+        travail._done((cardsync.SyncPlan(), cardsync.SyncResult(), 0.1, [],
+                       "essai"))
+        travail._pending_counted(ancien, [("SONGS/PERIME.XML", 1)])
+        self.assertEqual(travail.pending, [])
+        self.assertTrue(self._attendre(lambda: True))
+        self.assertEqual(travail.pending, [])
+
+    def test_un_travail_discret_n_efface_pas_le_message(self):
+        win, travail, _page = self._avec_copie()
+        win.statusBar().showMessage("12 fichier(s) posé(s) sur la carte.")
+        travail.refresh_pending()
+        travail.check_backup()
+        self.assertTrue(self._attendre(lambda: True))
+        self.assertEqual(win.statusBar().currentMessage(),
+                         "12 fichier(s) posé(s) sur la carte.")
+
+    def test_une_mise_a_jour_demandee_pendant_la_comparaison_attend(self):
+        win, travail, _page = self._avec_copie()
+        self.assertTrue(self._attendre(lambda: travail.backup_plan
+                                       is not None))
+        travail.check_backup()            # une comparaison repart…
+        self.assertTrue(travail._backup_busy)
+        travail.update_backup(win)        # … et l'on clique pendant ce temps
+        self.assertTrue(self._attendre(
+            lambda: (self.sauvegarde / "SONGS/NEUF.XML").is_file()))
+        self.empreinte_sauvegarde = self._empreinte(self.sauvegarde)

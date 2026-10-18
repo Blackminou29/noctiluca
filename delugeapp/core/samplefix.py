@@ -279,6 +279,7 @@ class FixPlan:
         3. si des longueurs ont changé, remise à l'échelle des bornes des
            presets et kits qui citent ces fichiers.
         """
+        sd.require_writable()
         return self._run(sd, lib, apply=True, backup=backup,
                          progress=progress, should_stop=should_stop)
 

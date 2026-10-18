@@ -50,7 +50,8 @@ from .theme import (
     lit_fill,
     page_color,
 )
-from .widgets.chrome import LedButton, LedStrip, NavPad, OledDisplay, Wordmark
+from .widgets.chrome import (DropVeil, LedButton, LedStrip, NavPad,
+                             OledDisplay, Wordmark)
 from .widgets.common import BusyBar, SearchBar, glow, human_size
 
 log = logging.getLogger(__name__)
@@ -148,6 +149,11 @@ class MainWindow(QMainWindow):
         body.addWidget(self._stack, 1)
         outer.addLayout(body, 1)
         self.setCentralWidget(central)
+        # Des fichiers du PC glissés n'importe où sur la fenêtre partent vers
+        # la carte du Deluge : depuis qu'elle reste dans la machine,
+        # l'Explorateur ne l'atteint plus.
+        self.setAcceptDrops(True)
+        self._drop_veil = DropVeil(central)
 
         self._build_status_bar()
         self._build_menus()
@@ -397,6 +403,137 @@ class MainWindow(QMainWindow):
             self._follow_tempo(lien.tempo)
         if evenements & {"identity", "ping", "tempo", "transport"}:
             self._refresh_deluge_chip()
+        if "files" in evenements:
+            self._safely(self.card_work.on_files_known)
+        if "transport" in evenements:
+            self._safely(self.card_work.on_transport)
+
+    # -- la copie de travail ------------------------------------------------ #
+
+    def _card_written(self) -> None:
+        """L'application a écrit : rafraîchir, et envoyer au Deluge."""
+        self.refresh_all()
+        self._safely(self.card_work.on_card_written)
+
+    def _work_received(self) -> None:
+        """Le Deluge a envoyé des fichiers : l'index doit les voir."""
+        page = self._pages.get("Dashboard") or self._create_page("Dashboard")
+        if page is not None and hasattr(page, "update_index"):
+            self._safely(page.update_index)
+        self.refresh_all()
+
+    def _card_work_changed(self) -> None:
+        self._refresh_header()
+        for cle, methode in (("Settings", "_refresh_work"),
+                             ("Dashboard", "refresh_exchanges")):
+            page = self._pages.get(cle)
+            if page is not None and hasattr(page, methode):
+                self._safely(getattr(page, methode))
+
+    def sync_deluge(self) -> None:
+        """Menu : synchroniser maintenant, ou créer la copie de travail."""
+        if self.card_work.files() is None:
+            self.statusBar().showMessage(
+                "Le Deluge n'ouvre pas sa carte par USB : branchez-le, avec "
+                "le firmware 1.3 ou plus récent.", 8000)
+            return
+        if not self.card_work.has_work_copy():
+            self.card_work.create_work_copy(self)
+            return
+        self.card_work.sync("demande")
+
+    # -- du PC vers le Deluge ------------------------------------------------- #
+
+    @staticmethod
+    def _start_folder() -> str:
+        telechargements = Path.home() / "Downloads"
+        return str(telechargements if telechargements.is_dir()
+                   else Path.home())
+
+    def send_to_deluge(self, paths=None, dest: str = "") -> None:
+        """Envoie des fichiers du PC vers la carte du Deluge.
+
+        Le plan est montré avant toute copie (:mod:`.sendfiles`). Sans
+        ``paths``, une fenêtre de choix s'ouvre — pour un dossier ou un
+        pack entier, :meth:`send_folder_to_deluge`, ou un glisser-déposer.
+        """
+        from .sendfiles import send_files
+
+        chemins = [p for p in (paths or []) if p]
+        if not chemins:
+            chemins, _filtre = QFileDialog.getOpenFileNames(
+                self, "Envoyer au Deluge", self._start_folder(),
+                "Sons, presets, kits et morceaux du Deluge "
+                "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;Tous les fichiers (*)")
+        if chemins:
+            send_files(self, chemins, dest or self._drop_destination())
+
+    def send_folder_to_deluge(self) -> None:
+        """Envoie un dossier entier — un pack téléchargé, par exemple."""
+        from .sendfiles import send_files
+
+        dossier = QFileDialog.getExistingDirectory(
+            self, "Envoyer un dossier au Deluge", self._start_folder())
+        if dossier:
+            send_files(self, [dossier], self._drop_destination())
+
+    def _drop_destination(self) -> str:
+        """Le dossier d'échantillons choisi sur la page Échantillons, s'il y
+        en a un : on dépose là où l'on regarde."""
+        page = self._stack.currentWidget()
+        dossier = str(getattr(page, "_folder", "") or "")
+        return dossier if dossier.upper().startswith("SAMPLES") else ""
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - API Qt
+        from .sendfiles import local_paths, where_it_goes
+
+        try:
+            if local_paths(event.mimeData()):
+                event.acceptProposedAction()
+                self._drop_veil.show_over(
+                    self.centralWidget().rect(),
+                    where_it_goes(self.ctx)
+                    or "Choisissez d'abord la carte, dans les réglages.")
+                return
+        except Exception as exc:       # noqa: BLE001 - un dépôt ne casse rien
+            log.debug("dépôt refusé : %s", exc)
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if self._drop_veil.isVisible():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._drop_veil.hide()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - API Qt
+        from .sendfiles import local_paths
+
+        self._drop_veil.hide()
+        chemins = local_paths(event.mimeData())
+        if not chemins:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        destination = self._drop_destination()
+        # Après le dépôt, pas pendant : l'Explorateur attend que le dépôt
+        # se termine, et une question posée ici le figerait avec nous.
+        QTimer.singleShot(0, lambda: self._safely(
+            lambda: self.send_to_deluge(chemins, destination)))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - API Qt
+        super().changeEvent(event)
+        try:
+            from PyQt6.QtCore import QEvent
+
+            if event.type() == QEvent.Type.ActivationChange \
+                    and self.isActiveWindow():
+                self.card_work.on_focus()
+        except Exception as exc:       # noqa: BLE001 - un retour ne casse rien
+            log.debug("retour dans la fenêtre : %s", exc)
 
     def _follow_tempo(self, bpm: float) -> None:
         """Les pages qui ont un tempo prennent celui de la machine.
@@ -536,6 +673,16 @@ class MainWindow(QMainWindow):
         self._link_timer.setInterval(40)
         self._link_timer.timeout.connect(self._service_link)
         self._link_timer.start()
+
+        # La carte reste dans le Deluge : la copie de travail se tient à son
+        # image (firmware 1.3, par USB). Les pages l'interrogent par le
+        # contexte.
+        from .cardwork import CardWork
+
+        self.card_work = CardWork(self)
+        self.ctx.card_work = self.card_work
+        self.card_work.stateChanged.connect(self._card_work_changed)
+        self.card_work.workChanged.connect(self._work_received)
         bar.showMessage("Prêt.")
 
     def _tick(self) -> None:
@@ -582,15 +729,38 @@ class MainWindow(QMainWindow):
         """
         path = self.ctx.settings.sd_path
         nom = Path(path).name if path else ""
+        role = self.ctx.settings.card_role(path) if path else ""
         if self.ctx.has_card:
             self._card_button.setText(f"  {path}")
             contenu = self._card_counts()
             etiquette = ("CARTE · " + contenu) if contenu else (
                 "CARTE · pas encore analysée")
-            self._card_button.set_display(etiquette, (nom or path).upper(),
-                                          "hi")
-            self._card_button.setToolTip(
-                f"{path}\n\nCliquez pour changer de carte.")
+            grand = (nom or path).upper()
+            infobulle = f"{path}\n\nCliquez pour changer de carte."
+            travail = getattr(self, "card_work", None)
+            if role == "travail":
+                grand = "CARTE DU DELUGE"
+                etiquette = ("COPIE DE TRAVAIL · " + contenu) if contenu \
+                    else "COPIE DE TRAVAIL"
+                # Ce qui attend le Deluge se lit là où l'on regarde.
+                if travail is not None and travail.busy:
+                    etiquette = "COPIE DE TRAVAIL · SYNCHRONISATION…"
+                elif travail is not None and travail.pending:
+                    etiquette = ("COPIE DE TRAVAIL · %d À ENVOYER"
+                                 % len(travail.pending))
+                etat = travail.summary() if travail is not None else ""
+                infobulle = ("Copie de travail de la carte, tenue à son "
+                             "image par USB :\n%s\n\n%s" % (path, etat)).strip()
+            elif role == "sauvegarde":
+                etiquette = "SAUVEGARDE · LECTURE SEULE"
+                infobulle = ("%s\n\nLa sauvegarde de la carte : "
+                             "l'application la lit, elle n'y écrit jamais. "
+                             "Réglages ▸ Carte du Deluge pour travailler sur "
+                             "la carte." % path)
+            self._card_button.set_display(etiquette, grand,
+                                          "warn" if role == "sauvegarde"
+                                          else "hi")
+            self._card_button.setToolTip(infobulle)
         elif path:
             self._card_button.setText(f"  {path}  (invalide)")
             self._card_button.set_display("CARTE INTROUVABLE",
@@ -640,6 +810,11 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Sauvegarder la carte",
                          lambda: self.go_to("Health"))
         file_menu.addSeparator()
+        self._add_action(file_menu, "Envoyer des fichiers au Deluge…",
+                         self.send_to_deluge, "Ctrl+I")
+        self._add_action(file_menu, "Envoyer un dossier au Deluge…",
+                         self.send_folder_to_deluge, "Ctrl+Shift+I")
+        file_menu.addSeparator()
         self._add_action(file_menu, "Quitter", self.close, "Ctrl+Q")
 
         edit_menu = bar.addMenu("&Édition")
@@ -656,6 +831,8 @@ class MainWindow(QMainWindow):
                          lambda: self.go_to("Health"))
         self._add_action(tools_menu, "Deluge en direct",
                          self.open_live_window, "Ctrl+D")
+        self._add_action(tools_menu, "Synchroniser avec le Deluge",
+                         self.sync_deluge, "Ctrl+Shift+D")
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Replier la barre latérale",
                          self.toggle_rail, "Ctrl+B")
@@ -783,14 +960,17 @@ class MainWindow(QMainWindow):
             "navigateRequested": self.go_to,
             "detectRequested": self._check_card,
             "scanFinished": self.refresh_all,
-            "cardModified": self.refresh_all,
-            "presetSaved": lambda _rel: self.refresh_all(),
-            "songWritten": lambda _rel: self.refresh_all(),
+            "cardModified": self._card_written,
+            "presetSaved": lambda _rel: self._card_written(),
+            "songWritten": lambda _rel: self._card_written(),
             "cardChanged": self._card_changed,
             "accentChanged": self._accent_changed,
             "resetIndexRequested": self.refresh_all,
             "openInGenerator": self._open_in_generator,
             "liveRequested": self.open_live_window,
+            "sendRequested": self.send_to_deluge,
+            "syncRequested": self.sync_deluge,
+            "backupRequested": lambda: self.card_work.update_backup(self),
         }
         for name, slot in connections.items():
             signal = getattr(page, name, None)
@@ -927,6 +1107,7 @@ class MainWindow(QMainWindow):
                 f"Carte : {self.ctx.settings.sd_path}", 6000)
             self._match_index_to_card()
             self._update_index_on_start()
+            self._safely(self.card_work.on_start)
             return
 
         found = []
@@ -968,7 +1149,7 @@ class MainWindow(QMainWindow):
             return
         self.ctx.settings.sd_path = text
         self.ctx.settings.add_recent(text)
-        self.ctx.sd = sdmod.SDCard(Path(text))
+        self.ctx.sd = self.ctx.settings.open_card(Path(text))
         try:
             self.ctx.save()
         except Exception:  # noqa: BLE001
@@ -981,6 +1162,7 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 log.exception("relecture de MIDI Follow impossible")
 
+        self._safely(self.card_work.refresh_pending)
         self._refresh_header()
         # Les pages déjà créées voient une carte différente : elles doivent
         # toutes être rafraîchies, pas seulement la visible.
@@ -1021,6 +1203,10 @@ class MainWindow(QMainWindow):
             ("Ctrl+G", "Générateur"),
             ("Ctrl+,", "Réglages"),
             ("Ctrl+O", "Choisir la carte"),
+            ("Ctrl+I", "Envoyer des fichiers au Deluge (ou glissez-les "
+                       "sur la fenêtre)"),
+            ("Ctrl+Maj+D", "Synchroniser avec le Deluge"),
+            ("Ctrl+D", "Deluge en direct"),
             ("Ctrl+B", "Replier la barre latérale"),
             ("Espace", "Écouter / arrêter"),
             ("Ctrl+1 … Ctrl+9", "Aller à la page correspondante"),

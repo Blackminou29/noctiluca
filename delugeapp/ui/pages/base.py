@@ -302,6 +302,14 @@ class Page(QWidget):
         """Carte SD, ou ``None`` après un avertissement à l'utilisateur."""
         return self.ctx.sd_or_warn(self)
 
+    def writable_card(self):
+        """La carte, si l'on peut y écrire ; sinon ``None``, après l'avoir dit.
+
+        La sauvegarde de la carte se lit sans jamais s'écrire : mieux vaut le
+        dire avant que l'utilisateur ne remplisse un nom ou ne valide un plan.
+        """
+        return self.ctx.sd_or_warn(self, write=True)
+
     def write_song(self, build: Callable, default_name: str) -> str:
         """Écrit un morceau du Deluge construit par ``build(carte)``.
 
@@ -349,10 +357,17 @@ class Page(QWidget):
         inconnu, ne fait rien — un raccourci approximatif ne doit jamais
         empêcher d'arriver sur la page.
 
+        ``hint`` peut aussi être un chemin de la carte — ``Songs#SONGS/Cool1.XML``
+        — : la page qui tient une liste sélectionne alors ce fichier. C'est
+        ainsi qu'un morceau reçu du Deluge s'ouvre d'un clic depuis le
+        tableau de bord.
+
         Les pages qui ont mieux à proposer redéfinissent la méthode.
         """
         from PyQt6.QtWidgets import QTabWidget
 
+        if "/" in str(hint or "") and self.reveal_item(str(hint)):
+            return
         cible = _sans_accents(hint)
         if not cible:
             return
@@ -362,6 +377,61 @@ class Page(QWidget):
                     onglets.setCurrentIndex(index)
                     return
         log.debug("partie introuvable sur %s : %r", self.TITLE, hint)
+
+    def reveal_item(self, rel: str) -> bool:
+        """Sélectionne dans la liste de la page le fichier ``rel``.
+
+        Si un filtre le cache — une recherche, une catégorie, un dossier —,
+        les filtres sont retirés et la liste rechargée. Rend ``False`` si la
+        page n'a pas de liste, ou si le fichier n'y est pas.
+        """
+        from ...core.sdcard import norm_rel
+
+        modele = getattr(self, "_model", None)
+        filtre = getattr(self, "_proxy", None)
+        table = getattr(self, "_table", None)
+        if modele is None or filtre is None or table is None:
+            return False
+        cle = norm_rel(rel)
+        for essai in range(2):
+            for i in range(modele.rowCount()):
+                ligne = modele.row_at(i)
+                try:
+                    trouve = norm_rel(ligne["rel"]) == cle
+                except (KeyError, IndexError, TypeError):
+                    trouve = False
+                if trouve:
+                    index = filtre.mapFromSource(modele.index(i, 0))
+                    if index.isValid():
+                        table.selectRow(index.row())
+                        table.scrollTo(index)
+                        return True
+            if essai == 0:
+                self._clear_filters()
+        return False
+
+    def _clear_filters(self) -> None:
+        """Retire recherche et filtres de la liste, puis la recharge."""
+        from PyQt6.QtWidgets import QCheckBox, QComboBox
+
+        recherche = getattr(self, "_search", None)
+        if recherche is not None and recherche.text():
+            recherche.blockSignals(True)
+            recherche.setText("")
+            recherche.blockSignals(False)
+        for nom, valeur in vars(self).items():
+            if nom.startswith("_only_") and isinstance(valeur, QCheckBox):
+                valeur.blockSignals(True)
+                valeur.setChecked(False)
+                valeur.blockSignals(False)
+            elif nom in ("_category", "_duration") \
+                    and isinstance(valeur, QComboBox):
+                valeur.setCurrentIndex(0)
+        if hasattr(self, "_folder"):
+            self._folder = ""
+        recharger = getattr(self, "_reload", None)
+        if callable(recharger):
+            recharger()
 
     def guard(self, fn: Callable[..., Any]) -> Callable[..., None]:
         """Enveloppe un gestionnaire de signal dans un ``try/except``.

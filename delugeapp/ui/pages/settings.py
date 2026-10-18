@@ -42,6 +42,7 @@ from ..theme import (
     GOLD,
     GREY,
     PAD,
+    PAD_AMBER,
     PAD_CYCLE,
     PAD_GREEN,
     PAD_RED,
@@ -108,6 +109,7 @@ class SettingsPage(Page):
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
 
+        self._build_work_card()
         self._build_card_card()
         self._build_deluge_card()
         self._build_audio_card()
@@ -119,14 +121,193 @@ class SettingsPage(Page):
 
     # -- carte SD ---------------------------------------------------------- #
 
-    def _build_card_card(self) -> None:
-        card = Card("Carte SD du Deluge")
+    def _build_work_card(self) -> None:
+        """La carte reste dans le Deluge : copie de travail et sauvegarde."""
+        card = Card("Carte du Deluge")
         body = card.body()
 
         hint = QLabel(
-            "Indiquez le dossier racine de la carte — celui qui contient "
-            "SONGS, SYNTHS, KITS et SAMPLES. Une sauvegarde de la carte sur "
-            "le disque dur fait tout aussi bien l'affaire.")
+            "La carte reste dans le Deluge. Avec le firmware 1.3, il l'ouvre "
+            "au PC par le câble USB : l'application travaille sur une "
+            "<b>copie de travail</b> qu'elle tient à son image — ce que vous "
+            "créez ici part sur la carte, ce que vous enregistrez sur le "
+            "Deluge revient. Votre <b>sauvegarde</b>, elle, n'est que lue.")
+        hint.setProperty("role", "subtitle")
+        hint.setWordWrap(True)
+        hint.setTextFormat(Qt.TextFormat.RichText)
+        body.addWidget(hint)
+
+        self._work_state = QLabel()
+        self._work_state.setWordWrap(True)
+        self._work_state.setTextFormat(Qt.TextFormat.RichText)
+        body.addWidget(self._work_state)
+
+        ligne = QHBoxLayout()
+        self._work_button = tool_button("Créer la copie de travail", "refresh",
+                                        primary=True)
+        self._work_button.setToolTip(
+            "Bâtit la copie de travail face à la carte du Deluge, ou la "
+            "synchronise : ce que le Deluge a enregistré descend, ce que "
+            "l'application a créé monte. Le plan est montré d'abord")
+        self._work_button.clicked.connect(self.guard(self._work_action))
+        ligne.addWidget(self._work_button)
+        self._work_deletions = tool_button("Suppressions à confirmer…",
+                                           "trash")
+        self._work_deletions.setToolTip(
+            "Des fichiers supprimés dans l'application existent encore sur "
+            "la carte : ils ne partent qu'avec votre accord")
+        self._work_deletions.clicked.connect(self.guard(self._work_delete))
+        ligne.addWidget(self._work_deletions)
+        ligne.addStretch(1)
+        body.addLayout(ligne)
+
+        self._auto_sync = QCheckBox(
+            "Synchroniser d'office quand le Deluge est branché")
+        self._auto_sync.setToolTip(
+            "À la connexion, après chaque écriture de l'application et au "
+            "retour dans la fenêtre — jamais pendant que la machine joue")
+        self._auto_sync.toggled.connect(self.guard(self._apply_auto_sync))
+        body.addWidget(self._auto_sync)
+
+        self._backup_state = QLabel()
+        self._backup_state.setWordWrap(True)
+        self._backup_state.setProperty("role", "subtitle")
+        body.addWidget(self._backup_state)
+        ligne = QHBoxLayout()
+        self._backup_choose = tool_button("Choisir la sauvegarde…", "folder")
+        self._backup_choose.setToolTip(
+            "Le dossier qui garde une copie complète de la carte, en cas de "
+            "problème. L'application le lit sans jamais y écrire")
+        self._backup_choose.clicked.connect(self.guard(self._choose_backup))
+        ligne.addWidget(self._backup_choose)
+        self._backup_update = tool_button("Mettre à jour la sauvegarde",
+                                          "backup")
+        self._backup_update.setToolTip(
+            "Écrit dans la sauvegarde : ajoute ce que la carte a de nouveau, "
+            "remplace ce qui a changé en gardant l'ancienne version, et n'y "
+            "supprime rien. Le plan est montré d'abord")
+        self._backup_update.clicked.connect(self.guard(self._update_backup))
+        ligne.addWidget(self._backup_update)
+        ligne.addStretch(1)
+        body.addLayout(ligne)
+
+        self._column.addWidget(card)
+
+    def _card_work(self):
+        return getattr(self.ctx, "card_work", None)
+
+    def _refresh_work(self) -> None:
+        """Remet la section « Carte du Deluge » à jour."""
+        travail = self._card_work()
+        reglages = self.ctx.settings
+        usb = travail is not None and travail.files() is not None
+        copie = travail is not None and travail.has_work_copy()
+        lien = getattr(self.ctx, "link", None)
+        branche = bool(lien is not None and lien.is_connected)
+        firmware = ""
+        if branche and getattr(lien, "identity", None) is not None:
+            firmware = lien.identity.version
+
+        lignes = []
+        if usb:
+            lignes.append('<span style="color:%s">✓</span>&nbsp;Le Deluge '
+                          "(firmware %s) ouvre sa carte par USB." % (
+                              PAD_GREEN, firmware or "1.3"))
+        elif branche and lien.state().files is False:
+            lignes.append('<span style="color:%s">○</span>&nbsp;Le Deluge '
+                          "(firmware %s) n'ouvre pas sa carte par USB : il "
+                          "faut le firmware 1.3, ou glisser la carte dans un "
+                          "lecteur du PC (« Autre emplacement » ci-dessous)."
+                          % (PAD_AMBER, firmware or "?"))
+        else:
+            lignes.append('<span style="color:%s">○</span>&nbsp;Branchez le '
+                          "Deluge en USB : la carte s'ouvre par le câble."
+                          % PAD_AMBER)
+        role = reglages.card_role(reglages.sd_path) if reglages.sd_path else ""
+        if copie:
+            lignes.append('<span style="color:%s">✓</span>&nbsp;Copie de '
+                          "travail : %s%s" % (
+                              PAD_GREEN, _html(str(reglages.work_path())),
+                              "" if role == "travail"
+                              else " — <i>pas la carte de l'application en "
+                              "ce moment</i>"))
+            if travail is not None and travail.summary():
+                lignes.append("&nbsp;&nbsp;&nbsp;" + _html(travail.summary()))
+        else:
+            lignes.append('<span style="color:%s">○</span>&nbsp;Pas encore de '
+                          "copie de travail. Elle se crée face à la carte, en "
+                          "reprenant de votre sauvegarde ce qui y est déjà."
+                          % PAD_AMBER)
+        self._work_state.setText("".join('<p style="margin:2px 0">%s</p>' % l
+                                         for l in lignes))
+
+        self._work_button.setText("Synchroniser maintenant" if copie
+                                  else "Créer la copie de travail")
+        self._work_button.setEnabled(bool(usb and travail is not None
+                                          and not travail.busy))
+        attente = travail.pending_deletions() if travail is not None else []
+        self._work_deletions.setVisible(bool(attente))
+        self._work_deletions.setText("Suppressions à confirmer (%d)…"
+                                     % len(attente))
+        self._auto_sync.blockSignals(True)
+        self._auto_sync.setChecked(bool(reglages.auto_sync))
+        self._auto_sync.blockSignals(False)
+
+        sauvegarde = reglages.card_backup_path()
+        if sauvegarde is None:
+            self._backup_state.setText(
+                "Sauvegarde de la carte : aucune choisie.")
+        else:
+            self._backup_state.setText(
+                "Sauvegarde de la carte : %s — lue, jamais écrite par le "
+                "travail de l'application." % sauvegarde)
+        self._backup_update.setEnabled(bool(sauvegarde is not None and copie))
+
+    def _work_action(self) -> None:
+        travail = self._card_work()
+        if travail is None:
+            return
+        if travail.has_work_copy():
+            travail.sync("demande")
+        else:
+            travail.create_work_copy(self)
+        self._refresh_work()
+
+    def _work_delete(self) -> None:
+        travail = self._card_work()
+        if travail is not None:
+            travail.confirm_deletions(self)
+
+    def _apply_auto_sync(self, checked: bool) -> None:
+        self.ctx.settings.auto_sync = bool(checked)
+        self.ctx.save()
+
+    def _choose_backup(self) -> None:
+        depart = (self.ctx.settings.card_backup
+                  or self.ctx.settings.sd_path or str(Path.home()))
+        choisi = QFileDialog.getExistingDirectory(
+            self, "Dossier de sauvegarde de la carte", depart)
+        if not choisi:
+            return
+        self.ctx.settings.card_backup = choisi
+        self.ctx.save()
+        self._refresh_work()
+
+    def _update_backup(self) -> None:
+        travail = self._card_work()
+        if travail is not None:
+            travail.update_backup(self)
+
+    def _build_card_card(self) -> None:
+        card = Card("Autre emplacement de carte")
+        body = card.body()
+
+        hint = QLabel(
+            "Une carte glissée dans un lecteur du PC — si le firmware du "
+            "Deluge n'ouvre pas sa carte par USB —, ou un autre dossier : "
+            "indiquez sa racine, celle qui contient SONGS, SYNTHS, KITS et "
+            "SAMPLES. La sauvegarde de la carte s'ouvre en lecture seule : "
+            "l'application n'y écrit jamais.")
         hint.setProperty("role", "subtitle")
         hint.setWordWrap(True)
         body.addWidget(hint)
@@ -867,6 +1048,10 @@ class SettingsPage(Page):
             self._refresh_midi()
         except Exception as exc:        # noqa: BLE001 - MIDI accessoire
             log.debug("état MIDI indisponible : %s", exc)
+        try:
+            self._refresh_work()
+        except Exception as exc:        # noqa: BLE001 - l'état n'est qu'affiché
+            log.debug("état de la carte indisponible : %s", exc)
         settings = self.ctx.settings
 
         self._path_edit.blockSignals(True)
@@ -908,3 +1093,8 @@ class SettingsPage(Page):
                 f" border: 2px solid {border}; border-radius: 6px; }}")
 
         self._refresh_index_label()
+
+
+def _html(texte: str) -> str:
+    return (str(texte).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))

@@ -31,7 +31,8 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-__all__ = ["AudioInfo", "probe", "read", "write", "peaks", "convert"]
+__all__ = ["AudioInfo", "probe", "read", "write", "peaks", "convert",
+           "deluge_problem"]
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -634,6 +635,154 @@ def probe(path: Path) -> AudioInfo:
     except Exception as exc:                            # garde-fou absolu
         log.debug("probe(%s) : erreur inattendue", p, exc_info=True)
         return AudioInfo(path=p, ok=False, error="erreur inattendue: %s" % exc)
+
+
+# ---------------------------------------------------------------------------
+# Ce que le Deluge lit
+# ---------------------------------------------------------------------------
+
+#: Fréquences d'échantillonnage que le firmware de la machine accepte.
+DELUGE_MIN_RATE = 5000
+DELUGE_MAX_RATE = 96000
+#: Extensions que son navigateur d'échantillons montre (``isAudioFilename``).
+DELUGE_EXT = (".wav", ".aif", ".aiff")
+
+
+def deluge_problem(path: Path) -> tuple[str, bool]:
+    """Pourquoi le Deluge refuserait ce fichier comme échantillon.
+
+    Rend ``("", False)`` s'il le lit, sinon ``(raison, réparable)`` :
+    *réparable* veut dire que :func:`convert` le rend lisible sans perte
+    audible — en-tête étendu, A-law, flottant 64 bits, fréquence hors bornes.
+
+    Les règles sont celles du firmware de la machine, lues dans son code
+    (1.3 bêta, commit ``102cf9f`` : ``AudioFileManager::loadAudioFile``,
+    ``AudioFile::loadFile``, ``isAudioFilename``) : conteneur ``RIFF/WAVE``
+    ou ``FORM/AIFF`` — ni RIFX, ni RF64, ni AIFC ; extension .wav, .aif ou
+    .aiff ; PCM 8, 16, 24 ou 32 bits, ou flottant 32 bits — **l'en-tête
+    étendu WAVE_FORMAT_EXTENSIBLE, qu'écrivent beaucoup de logiciels de MAO,
+    est refusé** ; mono ou stéréo ; de 5 000 à 96 000 Hz. Mesuré : les
+    1 745 échantillons de la carte de l'utilisateur et les 1 125 vrais WAV
+    de son PC les respectent tous ; ce contrôle sert à ce qui arrivera.
+    """
+    p = Path(path)
+    if p.name.startswith("."):
+        return "nom commençant par un point : le Deluge ne le montre pas", False
+    ext = p.suffix.lower()
+    if ext not in DELUGE_EXT + (".aifc",):
+        return ("extension %s : le Deluge ne lit que le WAV et l'AIFF"
+                % (ext or "absente")), False
+    try:
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            raisons, reparable = _deluge_header(f, size)
+    except (OSError, ValueError, struct.error) as exc:
+        return "illisible : %s" % exc, False
+    if ext == ".aifc" and reparable:
+        raisons.insert(0, "extension .aifc")
+    if not raisons:
+        return "", False
+    if not reparable:
+        return raisons[0], False
+    info = probe(p)
+    if not info.ok:
+        return "%s, et illisible ici : %s" % (raisons[0], info.error), False
+    return " ; ".join(raisons), True
+
+
+def _deluge_header(f, size: int) -> tuple[list[str], bool]:
+    """Les écarts d'un en-tête aux règles du firmware, et s'ils se réparent.
+
+    Parcourt les blocs comme ``AudioFile::loadFile`` : un écart sans remède
+    rend aussitôt ``([raison], False)``.
+    """
+    tete = f.read(12)
+    if len(tete) < 12:
+        return ["fichier vide ou tronqué"], False
+    magic, forme = tete[0:4], tete[8:12]
+    raisons: list[str] = []
+    if magic == b"RIFF" and forme == b"WAVE":
+        aiff, big = False, False
+    elif magic == b"FORM" and forme == b"AIFF":
+        aiff, big = True, True
+    elif magic in (b"RIFX", b"RF64", b"BW64") and forme == b"WAVE":
+        aiff, big = False, magic == b"RIFX"
+        raisons.append("conteneur %s" % magic.decode("ascii"))
+    elif magic == b"FORM" and forme == b"AIFC":
+        aiff, big = True, True
+        raisons.append("AIFC")
+    else:
+        return ["ni WAV ni AIFF"], False
+    u32 = ">I" if big else "<I"
+    pos, vu_format, vu_donnees, compte = 12, False, False, 0
+    while pos + 8 <= size and compte < _MAX_CHUNKS:
+        compte += 1
+        f.seek(pos)
+        entete = f.read(8)
+        if len(entete) < 8:
+            break
+        cid = entete[:4]
+        n = struct.unpack(u32, entete[4:8])[0]
+        if not aiff and cid == b"fmt ":
+            vu_format = True
+            d = f.read(min(n, 40))
+            if len(d) < 16:
+                return ["en-tête « fmt » incomplet"], False
+            e = ">" if big else "<"
+            tag, canaux, frequence, _debit, _bloc, bits = struct.unpack(
+                e + "HHIIHH", d[:16])
+            if tag == WAVE_FORMAT_EXTENSIBLE:
+                raisons.append("en-tête étendu (WAVE_FORMAT_EXTENSIBLE)")
+                tag = (struct.unpack(e + "H", d[24:26])[0] if len(d) >= 26
+                       else WAVE_FORMAT_PCM)
+            if tag == WAVE_FORMAT_PCM:
+                if bits not in (8, 16, 24, 32):
+                    raisons.append("PCM %d bits" % bits)
+            elif tag == WAVE_FORMAT_FLOAT:
+                if bits != 32:
+                    raisons.append("flottant %d bits" % bits)
+            elif tag in (WAVE_FORMAT_ALAW, WAVE_FORMAT_ULAW):
+                raisons.append("codage %s" % ("A-law" if tag == WAVE_FORMAT_ALAW
+                                              else "µ-law"))
+            else:
+                return ["format compressé (code 0x%04X) que ni le Deluge ni "
+                        "l'application ne savent lire" % tag], False
+            if canaux not in (1, 2):
+                return ["%d canaux : le Deluge ne lit que le mono et la stéréo"
+                        % canaux], False
+            if not DELUGE_MIN_RATE <= frequence <= DELUGE_MAX_RATE:
+                raisons.append("%d Hz, hors des 5 000 à 96 000 Hz qu'il lit"
+                               % frequence)
+        elif not aiff and cid == b"data":
+            vu_donnees = True
+        elif aiff and cid == b"COMM":
+            vu_format = True
+            d = f.read(min(n, 40))
+            if len(d) < 18:
+                return ["en-tête « COMM » incomplet"], False
+            canaux, _trames, bits = struct.unpack(">hIh", d[:8])
+            frequence = int(round(_ext80_to_float(d[8:18])))
+            if forme == b"AIFF" and n != 18:
+                raisons.append("en-tête « COMM » de %d octets" % n)
+            if forme == b"AIFC" and len(d) >= 22 \
+                    and d[18:22] not in _AIFC_ENCODINGS:
+                return ["compression AIFC « %s » que ni le Deluge ni "
+                        "l'application ne savent lire"
+                        % d[18:22].decode("latin-1", "replace")], False
+            if canaux not in (1, 2):
+                return ["%d canaux : le Deluge ne lit que le mono et la stéréo"
+                        % canaux], False
+            if forme == b"AIFF" and bits not in (8, 16, 24, 32):
+                raisons.append("%d bits" % bits)
+            if not DELUGE_MIN_RATE <= frequence <= DELUGE_MAX_RATE:
+                raisons.append("%d Hz, hors des 5 000 à 96 000 Hz qu'il lit"
+                               % frequence)
+        elif aiff and cid == b"SSND":
+            vu_donnees = True
+        pos += 8 + n + (n & 1)
+    if not (vu_format and vu_donnees):
+        return ["fichier abîmé : en-tête ou données absents"], False
+    return raisons, True
 
 
 def _read_raw(path: Path, max_frames: int | None, mono: bool,

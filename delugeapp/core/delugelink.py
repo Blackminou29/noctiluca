@@ -53,7 +53,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from . import delugesysex, midifollow, midiport
+from . import delugefiles, delugesysex, midifollow, midiport
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +137,9 @@ class LinkState:
     screen_frames: int = 0           # images ou différences reçues
     feedback: int = 0                # paramètres reçus en retour MIDI Follow
     error: str = ""                  # dernière erreur d'ouverture, en clair
+    #: Fichiers de la carte par USB : ``True`` (firmware 1.3 et suivants),
+    #: ``False`` (la machine ne le fait pas), ``None`` (pas encore su).
+    files: bool | None = None
 
     @property
     def connected(self) -> bool:
@@ -185,6 +188,10 @@ class DelugeLink:
         self._worker: threading.Thread | None = None
         self._stop = threading.Event()
         self.last_error = ""
+        #: Accès aux fichiers de la carte par USB (:mod:`delugefiles`), créé
+        #: à la connexion ; ``files.supported`` dit si la machine répond.
+        self.files: delugefiles.DelugeFiles | None = None
+        self._files_known = False
         self._reset_live()
 
     def _reset_live(self) -> None:
@@ -273,6 +280,7 @@ class DelugeLink:
             screen_frames=self.screen.frames,
             feedback=len(self.machine),
             error=self.last_error,
+            files=self.files.supported if self.files is not None else None,
         )
 
     # -- connexion ---------------------------------------------------------- #
@@ -325,7 +333,43 @@ class DelugeLink:
                 self._open_sysex(sorties, entrees, sortie, entree)
             self.identify()
             self.ping()
+            if sortie.is_deluge:
+                self._attach_files()
             return True
+
+    def _attach_files(self) -> None:
+        """Prépare l'accès aux fichiers par USB, et demande en arrière-plan
+        si la machine le connaît : la 1.2.1 se tait, et l'attente d'un
+        silence ne doit pas figer l'interface."""
+        client = delugefiles.DelugeFiles(self._send_sysex)
+        port = self._sx_in if self._sx_in.is_open else self._in
+        installer = getattr(port, "set_sysex_tap", None)
+        if installer is None:
+            return
+        installer(client.feed)
+        self.files = client
+
+        def sonde() -> None:
+            try:
+                client.probe()
+            except Exception as exc:   # noqa: BLE001 - un fil ne casse rien
+                log.debug("sonde des fichiers : %s", exc)
+            if self.files is client:
+                self._files_known = True
+                log.info("fichiers de la carte par USB : %s",
+                         "oui" if client.supported else "non")
+
+        self._files_thread = threading.Thread(target=sonde,
+                                              name="deluge-fichiers",
+                                              daemon=True)
+        self._files_thread.start()
+
+    def wait_files(self, timeout: float = 3.0) -> bool | None:
+        """Attend la fin de la sonde des fichiers ; rend sa réponse."""
+        fil = getattr(self, "_files_thread", None)
+        if fil is not None:
+            fil.join(max(0.0, float(timeout)))
+        return self.files.supported if self.files is not None else None
 
     def _open_sysex(self, sorties, entrees, sortie, entree) -> None:
         """Ouvre le troisième câble du Deluge, s'il existe."""
@@ -364,6 +408,12 @@ class DelugeLink:
         return deluges[0] if deluges else None
 
     def _close_ports(self) -> None:
+        for port in (self._in, self._sx_in):
+            retirer = getattr(port, "set_sysex_tap", None)
+            if retirer is not None:
+                retirer(None)
+        self.files = None
+        self._files_known = False
         for port in (self._out, self._in, self._sx_out, self._sx_in):
             try:
                 port.close()
@@ -425,7 +475,8 @@ class DelugeLink:
         """Vide les files, met l'état à jour, entretient les abonnements.
 
         Rend les évènements survenus : ``identity``, ``ping``, ``screen``,
-        ``tempo``, ``transport``, ``params``, ``notes``.
+        ``tempo``, ``transport``, ``params``, ``notes``, ``files`` (on sait
+        désormais si la carte s'ouvre par USB).
         """
         evenements: set[str] = set()
         if not self.is_connected:
@@ -447,6 +498,9 @@ class DelugeLink:
         if (self.identity is None and self._ident_tries < IDENTITY_TRIES
                 and maintenant - self._ident_sent >= IDENTITY_RETRY):
             self.identify()
+        if self._files_known:
+            self._files_known = False
+            evenements.add("files")
         if self.running and self._tick_seen and not self.clock_alive:
             # L'horloge s'est tue : la machine s'est arrêtée sans dire STOP
             # (câble tiré, horloge coupée dans ses réglages). Le dernier

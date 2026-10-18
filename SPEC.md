@@ -194,6 +194,30 @@ les traiter comme « toujours » plutôt que comme une probabilité.
 (`SAMPLES/Multisamples/…` alors que le dossier réel est `SAMPLES/MULTISAMPLES`).
 La résolution doit donc être insensible à la casse.
 
+### 1.8 Ce que le Deluge lit comme échantillon
+
+Lu dans le code du firmware de la machine (1.3 bêta, tag `beta` = commit `102cf9f`,
+celui du fichier `deluge-v1_3_0-beta+2026_10_18-102cf9f.bin` de sa carte) :
+`AudioFileManager::loadAudioFile`, `AudioFile::loadFile`, `isAudioFilename`.
+
+| | accepté | refusé (`FILE_UNSUPPORTED`) |
+|---|---|---|
+| nom | `.wav`, `.aif`, `.aiff`, sans point initial | tout le reste, `.aifc` compris |
+| conteneur | `RIFF…WAVE`, `FORM…AIFF` | `RIFX`, `RF64`/`BW64`, `FORM…AIFC` |
+| codage WAV | PCM 8/16/24/32 bits, flottant 32 bits | **`WAVE_FORMAT_EXTENSIBLE` (0xFFFE)**, A-law, µ-law, flottant 64, compressés |
+| AIFF | bloc `COMM` de 18 octets exactement, 8/16/24/32 bits | |
+| canaux | 1 ou 2 | 3 et plus |
+| fréquence | 5 000 à 96 000 Hz | au-delà |
+
+L'en-tête étendu est écrit par beaucoup de logiciels de MAO pour le 24 bits : le Deluge
+le refuse alors qu'il lirait les mêmes données sous un en-tête simple.
+
+> **Mesuré** (18 octobre 2026) : les 1 745 échantillons de la carte et les 1 125 vrais
+> WAV du PC de l'utilisateur (deux packs téléchargés) respectent tous ces règles ;
+> 169 autres fichiers `.wav` du PC sont des parasites `._*` de macOS. L'écrivain de
+> l'application (`wav.write`) produit des fichiers lisibles, sauf deux cas absents de
+> la carte : le flottant 64 bits, et l'AIFF flottant (écrit en AIFC).
+
 ---
 
 ## 2. Identité graphique (reprise du « Guide du Deluge » de l'utilisateur)
@@ -319,6 +343,9 @@ delugeapp/
     midifollow.py               # la carte des contrôleurs (§4.29)
     delugelink.py               # le lien vivant avec la machine (§4.30)
     delugesysex.py              # identité, ping, écran (§4.32)
+    delugefiles.py              # la carte par USB, firmware 1.3 (§4.33)
+    cardsync.py                 # copie de travail et synchronisation (§4.34)
+    cardimport.py               # envoyer au Deluge, du PC vers la carte (§4.35)
   ui/
     __init__.py
     theme.py
@@ -328,6 +355,8 @@ delugeapp/
     art.py
     songexport.py               # nommer, montrer le plan, écrire (§5.23)
     livewindow.py               # « Deluge en direct » (§5.17)
+    cardwork.py                 # la copie de travail, côté interface (§5.24)
+    sendfiles.py                # envoyer au Deluge : dépôt, plan, copie (§5.25)
     widgets/
       __init__.py
       common.py
@@ -384,10 +413,34 @@ class Settings:
     scan_analyze: bool = False     # analyse BPM/tonalité au scan (lent)
     index_on_start: bool = True    # au démarrage, analyse incrémentale en arrière-plan
                                    # (lecture seule ; 0,2 s sur la carte de référence)
+    midi_out / midi_in / midi_channel / midi_autoconnect / midi_audition /
+    midi_follow_tempo              # le Deluge branché (§5.17)
+    work_dir: str = ""             # copie de travail ; vide = DEFAULT_WORK_DIR
+    card_backup: str = ""          # sauvegarde de la carte : lue, jamais écrite
+    auto_sync: bool = True         # synchroniser d'office quand le Deluge est là
+    def work_path() -> Path
+    def card_backup_path() -> Path | None
+    def adopt_card_roles() -> bool # l'ancien dossier de travail -> sauvegarde
+    def card_role(root) -> str     # "travail" | "sauvegarde" | "carte" | "dossier"
+    def open_card(root) -> SDCard  # en lecture seule si c'est la sauvegarde
 
+DEFAULT_WORK_DIR: Path         # %LOCALAPPDATA%/DelugeCompanion/Carte
 def load_settings() -> Settings
 def save_settings(s: Settings) -> None
+AppContext.sd_or_warn(parent, write=False)   # write=True refuse la sauvegarde
 ```
+
+**La sauvegarde de la carte n'est jamais un dossier de travail.**
+L'utilisateur, le 18 octobre 2026 : « SDCARD Deluge est un emplacement de
+sauvegarde de ma carte SD qui n'est pas destiné à être le répertoire de
+travail ». L'application y avait pourtant réparé dix presets le
+11 octobre — que la carte n'a jamais reçus (mesuré par USB). Désormais :
+`SDCard.read_only` ; chaque fonction du cœur qui écrit appelle
+`sd.require_writable()` (`songwriter.write_song`, `organize.Plan.apply`,
+`samplefix.FixPlan.apply`, `deps.relink[_many]`, `slicer.save_sliced_kit`,
+`slicer.export_slices`, `backup.restore_backup`) ; l'interface prévient
+avant (`Page.writable_card`). Au démarrage, un dossier de travail qui n'est
+ni la racine d'un lecteur ni la copie de travail devient la sauvegarde.
 
 **`DELUGE_COMPANION_CONFIG`** impose le dossier de configuration
 (`CONFIG_ENV` dans le module). Deux usages : une installation portable, et
@@ -652,6 +705,16 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None, bit_depth: int
 Formats à gérer en lecture : WAV PCM 8/16/24/32 bits, WAV float 32/64, WAV extensible
 (`WAVE_FORMAT_EXTENSIBLE`), AIFF/AIFF-C PCM. Ne jamais lever d'exception : retourner
 `AudioInfo(ok=False, error=…)`.
+
+```python
+DELUGE_MIN_RATE = 5000; DELUGE_MAX_RATE = 96000; DELUGE_EXT = (".wav", ".aif", ".aiff")
+def deluge_problem(path) -> tuple[str, bool]   # ("", False) si le Deluge le lit,
+                                               # sinon (raison, réparable par convert)
+```
+`deluge_problem` applique les règles du firmware (§1.8) en parcourant les blocs comme lui ;
+*réparable* : en-tête étendu, RIFX, RF64, AIFC, A-law/µ-law, flottant 64, résolution
+inhabituelle, fréquence hors bornes — à condition que l'application sache lire le
+fichier. Jamais réparable : trois canaux et plus, codage compressé, fichier abîmé.
 
 ### 4.7 `delugeapp/core/audio_out.py`
 ```python
@@ -1595,7 +1658,7 @@ class MidiOut:  open/close/send/send_sysex(data, timeout=2.0)/note_on/
                 note_off/control_change/program_change/pitch_bend/realtime/
                 all_notes_off/play_note ; last_error
 class MidiIn(maxsize=4096, sysex=True):  open/close/poll -> list[MidiMessage]
-                                          ; dropped
+                                          ; dropped ; set_sysex_tap(tap)
 @dataclass(frozen=True)
 class MidiMessage: status, data1, data2, millis, stamp=0, data=b"",
                    arrived=0.0               # kind, channel, is_sysex
@@ -1660,6 +1723,10 @@ PARAM_LABELS: dict[str, str]          # clé -> libellé français (les 52)
 def load_map(card=None, path=None) -> dict[str, int]   # clé app -> CC
 def load_map_with_source(card=None, path=None) -> tuple[dict[str, int], str]
                                       # "" : valeurs d'usine du firmware
+FOLLOW_PLACES = ("SETTINGS/MIDIFollow.XML", "MIDIFollow.XML")   # 1.3, puis avant
+@dataclass(frozen=True)
+class FollowSettings: channel_a, channel_b, channel_c, kit_root_note, feedback
+def read_settings(card=None, path=None) -> FollowSettings | None
 def reverse_map(mapping) -> dict[int, str]             # CC -> clé
 def cc_value(raw: int, key: str = "") -> int           # 32 bits -> 0..127
 def raw_from_cc(value: int, key: str = "") -> int      # 0..127 -> 32 bits
@@ -1681,6 +1748,18 @@ changement d'instrument, puis à chaque bouton tourné. Un kit répond à partir
 de la note 36 (Follow ▸ Kit Root Note). L'interface dit d'où vient la table
 (`load_map_with_source`) : sans `MIDIFollow.XML` lu, ce sont les valeurs
 d'usine, et l'annoncer « lue sur la carte » serait faux.
+
+> **Mesuré en firmware 1.3** (18 octobre 2026). Le fichier a déménagé dans
+> `SETTINGS/MIDIFollow.XML`, ses assignations s'appellent `<cc_mappings>`
+> (`<defaultCCMappings>` en 1.2.1) — faute de le reconnaître, canaux et
+> note de base passaient pour des contrôleurs —, elles sont **79** (les 52
+> d'avant, inchangées, plus enveloppes 3 et 4, LFO 3 et 4, probabilités
+> d'arpège…), et le fichier porte enfin **les réglages de la machine** :
+> `<settings><channels><a><channel>` vaut le canal **+ 1** (256 = aucun),
+> `<kit_root_note><note>`, `<feedback><channel>a</channel>`. Chez
+> l'utilisateur : Channel A = 1, retour sur A, note 36. `read_settings` les
+> lit ; « Deluge en direct » les constate au lieu de les réclamer, et
+> signale un canal différent de celui de l'application.
 
 **Mesuré sur la carte de l'utilisateur** (firmware communautaire c1.2.1,
 `MIDIFollow.XML`, 56 entrées) :
@@ -1714,6 +1793,8 @@ class DelugeLink:
     identify() / ping() / hello() / set_screen(on) -> bool   # SysEx
     identity, latency_ms, screen, segments, tempo, running, machine, held,
     follow_source                        # ce que la machine a dit
+    files: DelugeFiles | None            # la carte par USB (§4.33), créé à la
+    wait_files(timeout) -> bool | None   # connexion, sondé en arrière-plan
     machine_values() -> dict[str, int]   # comme son écran : 0..50, ±25
     send_sound(sound, keys=None) -> int  # nombre de contrôleurs envoyés
     send_param(key, raw) -> bool         # un bouton qui tourne
@@ -1725,7 +1806,8 @@ class DelugeLink:
 class LinkState: supported, out_name, in_name, deluge_out, deluge_in,
                  ports_out, ports_in, follow_count, follow_source, sysex_name,
                  firmware, latency_ms, tempo, running, clock_alive, screen_on,
-                 screen_frames, feedback, error   # connected, verified, summary()
+                 screen_frames, feedback, error, files
+                                          # connected, verified, summary()
 ```
 
 **Les notes par le premier câble, les SysEx par le troisième.** Le firmware
@@ -1916,6 +1998,244 @@ pack_8bit_to_7bit / unpack_7bit_to_8bit / pack_8to7_rle / unpack_7to8_rle
   TB01 » (110 octets) et la réponse d'identité : un portage fautif et des
   vecteurs qu'il aurait produits seraient d'accord entre eux. Notre codeur
   redonne exactement les 110 octets émis.
+
+### 4.33 `delugeapp/core/delugefiles.py` — la carte, par le câble USB
+
+Le firmware **1.3** ouvre sa carte au PC par SysEx
+(`storage/smsysex.cpp`) ; la 1.2.1 non. Lu dans le code, puis mesuré sur la
+machine de l'utilisateur, mise à jour pour l'occasion.
+
+```python
+BLOCK = 1024; MAX_INCOMING = 1024; DIR_LINES = 25; MAX_PATH = 256; TIMEOUT = 5.0
+READ_RATE = 155 Kio/s; WRITE_RATE = 45 Kio/s; READ_AHEAD = 2   # mesurés, cf. plus bas
+STOPPED = -2; NOT_CONNECTED = -3          # codes du client, à côté des FRESULT
+def fat_stamp(epoch) -> (date, heure)     # FAT, heure locale, 2 s
+def from_fat(date, heure) -> float
+def result_text(code) -> str              # FRESULT en français
+def cable_time(read_bytes=0, write_bytes=0) -> str   # « environ 7 min »
+@dataclass(frozen=True)
+class CardEntry: name, size, date, time, attr ; is_dir, stamp, mtime, addressable
+class FileError(OSError): code, path
+class DelugeFiles(send, timeout=5.0):
+    feed(data, arrived) -> bool           # branché sur MidiIn.set_sysex_tap
+    probe(timeout=1.5) -> bool            # ping JSON ; la 1.2.1 se tait
+    open_session(tag) -> int              # numéros de message réservés
+    listdir(chemin) / exists(chemin) / walk(chemin, skip, progress)
+    read(chemin, progress) -> bytes       # deux demandes en vol
+    write_new(chemin, data, mtime, progress)  # jamais sur un nom pris
+    replace(chemin, data, mtime, progress)    # sans fenêtre de perte
+    mkdir / rename / delete / touch
+    stop_check: Callable[[], bool] | None # consulté entre deux blocs -> STOPPED
+```
+
+**Deux lectures d'avance, pas plus.** La machine met chaque SysEx de fichiers reçu en
+file (`smSysex::sysexReceived`, `deluge::deque`) et les traite un à un toutes les
+0,2 ms (`handleNextSysEx`, tâche répétée) : envoyer la demande suivante sans attendre la
+réponse est prévu. Mais elle **jette en silence** ce qui dépasse 1 024 paquets USB en
+attente d'envoi (`ConnectedUSBMIDIDevice::bufferMessage`, `MIDI_SEND_BUFFER_LEN_RING`), et
+une réponse de lecture de 1 024 octets en occupe environ 410 : deux tiennent, trois
+pourraient se perdre. Mesuré sur la machine, lecture seule : 126 à 129 Ko/s une demande
+à la fois, **154 à 160 Ko/s** avec deux, contenus identiques, aucune perte.
+
+**L'écriture, elle, reste une demande à la fois** — 45 Ko/s. Mesuré sans rien écrire (un
+ping que le firmware ne lit pas au-delà de son nom) : un SysEx de 1 000 octets met
+11 ms du PC à la machine ; un bloc d'écriture de 848 octets en prend 18 en tout. Les
+7 ms restantes (travail de la carte, réponse) se chevaucheraient avec l'envoi suivant —
+gain possible, mais qui ne se vérifie qu'en écrivant : à mesurer avec l'accord de
+l'utilisateur, dans un dossier neuf.
+
+**S'arrêter entre deux blocs.** `stop_check` est consulté avant chaque bloc lu ou écrit
+et à chaque dossier parcouru : un fichier de 8 Mo met trois minutes à monter, et l'on
+ne joue pas sur le Deluge pendant qu'on écrit sur sa carte. Une écriture interrompue
+retire son temporaire de la carte ; l'original n'a pas bougé. Plus de port (câble
+débranché) : `NOT_CONNECTED`, aussitôt, sans attendre cinq secondes de délai.
+
+Protocole : requête `F0 00 21 7B 01 04 <msgId> <JSON> [00 <7 bits>] F7`,
+réponse en `05` (en `04`, numéro 0, pour `session`). Le JSON de la machine
+n'échappe rien.
+
+**Ce que le code de la machine impose — et que ce module s'interdit :**
+
+* `open` en écriture **écrase** (`FA_CREATE_ALWAYS`) : on n'ouvre en
+  écriture qu'un nom temporaire neuf (`~DCxxxx.TMP`), puis `rename`, que la
+  machine refuse sur un nom pris (`FR_EXIST`) ;
+* `move` et `copy` **écrasent** la destination quand le renommage échoue :
+  jamais envoyés (un test le vérifie face au simulateur, qui les imite) ;
+* un SysEx **reçu** de plus de **1 024 octets** est abandonné sans réponse
+  (`incomingSysexBuffer[1024]`) : un bloc d'écriture de 1 024 octets codés
+  en faisait 1 230, et restait sans réponse. Les blocs écrits sont taillés
+  pour tenir (848 octets) ;
+* le bit 7 des noms se perd en route (le « è » de « dièse », 0x8A, arrive
+  en 0x0A) : lecture tolérante, nom abîmé mis à part (`unreachable`) ; un
+  nom non ASCII n'est jamais envoyé ;
+* **la machine n'a pas d'horloge** : ce qu'elle enregistre porte la date
+  nulle.
+
+> **Mesuré sur la machine** (firmware 1.3.0, 18 octobre 2026). Ping 1 ms ;
+> une page de dossier 5 à 17 ms ; toute la carte (4 318 fichiers, 182
+> dossiers) parcourue en 3,6 s ; lecture 113 à 128 Ko/s, écriture 45 Ko/s ;
+> contenus relus identiques octet pour octet. Essai d'écriture accordé par
+> l'utilisateur, dans un dossier neuf retiré ensuite : fichier neuf,
+> relecture, refus d'écrire sur un nom pris (l'original intact),
+> remplacement sans temporaire laissé, datation — tout vérifié.
+
+### 4.34 `delugeapp/core/cardsync.py` — la copie de travail
+
+```python
+META_DIR = ".deluge-companion"; MANIFEST = META_DIR + "/synchro.json"
+EXCHANGES = META_DIR + "/echanges.json"; BACKUP_STATE = META_DIR + "/sauvegarde.json"
+MAX_EXCHANGES = 200; MAX_NAMED = 300
+def is_junk(rel) -> bool              # corbeilles, Spotlight, ._*, temporaires
+                                      # (~DC*, .dc-tmp, .tmp~, *.xxxxxxxx.tmp),
+                                      # .bak et _BACKUP/ : restent sur le PC
+def scan_local(work) -> dict[str, LocalFile]
+def load_manifest(work) / save_manifest(work, records)
+class UsbCard(files, should_stop=None) / FolderCard(root)   # par USB, ou un dossier
+def plan_sync(card, local, manifest, backup=None) -> SyncPlan
+def apply_plan(plan, transport, work, manifest, *, allow_card_deletes=False,
+               progress=None, should_stop=None) -> SyncResult
+SyncResult: done, errors, renamed, stopped, items[(nature, chemin)], lost
+def pending_changes(work) -> [(chemin, taille)]       # ce qui attend le Deluge
+@dataclass class Exchange: when, reason, seconds, received, sent, conflicts,
+                           removed, deleted, errors, counts, stopped ; summary()
+def exchange_of(result, reason, seconds) -> Exchange
+def record_exchange(work, exchange) -> bool           # rien si l'échange est vide
+def load_exchanges(work, limit=None) -> [Exchange]    # le plus récent d'abord
+def recent_arrivals(work, limit=12, since=0) -> [(instant, chemin)]
+def update_backup(work, backup, apply=False, progress, should_stop) -> BackupUpdate
+def backup_state(work, backup=None) -> {"updated", "same"}
+SyncPlan.actions: Action(kind, rel, size, date, time, on_card, source)
+    kind ∈ adopt | copy_backup | pull | push | conflict | delete_local | delete_card
+```
+
+Synchronisation **à trois voies** — la carte, la copie, le manifeste de la
+dernière fois :
+
+* changé sur la carte seulement -> **reçu** ; dans la copie seulement ->
+  **envoyé** (`write_new` si la carte ne l'a pas, `replace` sinon) ;
+* changé des deux côtés -> **conflit** : la version du Deluge garde le nom,
+  celle du PC devient « … (PC) » des deux côtés ; rien n'est écrasé ;
+* supprimé sur le Deluge -> retiré de la copie, **dans son historique**
+  (`.deluge-companion/historique/<date>/`) ;
+* supprimé sur le PC -> **proposé** (`needs_consent`), jamais fait sans
+  `allow_card_deletes` ;
+* disparu des deux côtés -> oublié du manifeste.
+
+**La première fois**, la copie se bâtit face à la carte depuis la
+sauvegarde : même chemin, même taille, date décalée d'un fuseau constant ->
+copié localement (`copy_backup`). Mesuré : 4 295 fichiers sur 4 318 à
+exactement −7 200 s (une copie faite sur un Mac) ; la sauvegarde comptait
+en plus 4,2 Go de corbeilles et d'index de macOS. Copie de travail créée
+face au vrai Deluge, en isolement et sans rien écrire sur la carte :
+2 734 fichiers repris, 23 reçus par USB, **52 s** ; 2 757 fichiers à la
+bonne taille, 15 tirés au hasard relus identiques ; sauvegarde inchangée.
+
+**Ce que la sauvegarde a seule** (`SyncPlan.backup_only`, `backup_music()`)
+n'est jamais repris d'office — un fichier supprimé exprès sur le Deluge
+reviendrait —, mais **proposé** à la création de la copie de travail, pour
+la musique seulement (morceaux, presets, kits, échantillons) ;
+`take_from_backup` le recopie dans la copie, d'où la synchronisation
+l'envoie. Mesuré chez l'utilisateur : `KITS/COMPAGNON 1.XML`, créé par
+l'application **dans la sauvegarde** le 15 octobre, jamais arrivé sur la
+carte ; les quatre autres (ancien firmware, réglages déplacés par la 1.3,
+`README.txt`) restent dans la sauvegarde.
+
+**Reconnaître ce que le Deluge réécrit** : il date tout à zéro ; après
+chaque réception d'un fichier à date nulle, l'application le **date** sur
+la carte (métadonnée seule). Une réécriture par la machine le remet à zéro :
+le changement se voit sans relire le contenu.
+
+**La sauvegarde** ne change que par `update_backup(..., apply=True)` :
+ajouts, remplacements (l'ancienne version gardée dans
+`<sauvegarde>/.deluge-companion/remplaces/<date>/`), **aucune
+suppression** — ce que la carte n'a plus reste dans la sauvegarde.
+
+**Ne relire que ce qui a bougé.** Le plan comparait le contenu de chaque fichier commun :
+1,4 Go lus à chaque fois, **11,3 s à froid et 3,4 s ensuite** chez l'utilisateur — dans
+le fil de l'interface. Un fichier vérifié identique est désormais retenu dans
+`BACKUP_STATE` (taille et date des deux côtés) et n'est relu que si l'un d'eux bouge ;
+la mémoire ne vaut que pour la sauvegarde qu'elle nomme. `updated` garde la date de la
+dernière mise à jour faite par l'application.
+
+**Ce qui attend, ce qui a voyagé.** `pending_changes` compte, sans le câble, ce que la
+prochaine synchronisation enverrait (0,11 s sur les 2 758 fichiers). Chaque
+synchronisation qui a fait quelque chose est gardée (`record_exchange`) : ce qui est
+reçu, envoyé, changé des deux côtés, retiré, supprimé avec accord, les erreurs, la
+durée — les noms jusqu'à `MAX_NAMED` par échange, les nombres toujours. Une
+synchronisation qui n'a rien fait (celle du retour dans la fenêtre, le plus souvent)
+n'est pas gardée. `recent_arrivals` en tire la musique reçue du Deluge encore présente.
+
+**S'arrêter proprement.** `apply_plan` s'arrête sur `STOPPED` (demandé : la machine
+joue, la fenêtre se ferme) sans compter d'erreur, et sur `NOT_CONNECTED` ou deux délais
+dépassés de suite (`lost`) au lieu d'attendre cinq secondes par fichier restant. Ce qui
+est fait reste au manifeste. Un conflit écrit d'abord la version du PC sur la carte, puis
+la copie locale : un arrêt entre les deux ne laisse rien de local à moitié fait.
+
+> **Mesuré** (18 octobre 2026) : le manifeste de l'utilisateur dit que les dix presets
+> `rephazer` réparés dans la copie de travail sont partis sur la carte à 14 h 53 ; son
+> journal n'en disait rien. Les échanges s'y écrivent désormais (`ui/cardwork.py`).
+
+### 4.35 `delugeapp/core/cardimport.py` — envoyer au Deluge
+
+Depuis que la carte reste dans la machine, l'Explorateur ne l'atteint plus : ce module
+pose sur la carte de l'application — la copie de travail, d'où la synchronisation
+l'envoie, ou une carte dans un lecteur — les sons, presets, kits, morceaux et packs du PC.
+
+```python
+CARD_DIRS = ("SAMPLES", "SYNTHS", "KITS", "SONGS")
+def card_name(nom) -> str                 # ASCII, sans interdit FAT32, jamais tronqué
+def card_path(rel) -> str
+def scan_sources(chemins, progress=None, should_stop=None) -> ImportScan
+ImportScan: found [Found(path, size, kind, pack_rel, loose_rel, problem, fixable, refs)],
+            ignored [(chemin, raison)], junk, stopped ; has_loose_samples
+def card_files(racine) -> {clé : (chemin, taille)}
+def sample_folders(racine, depth=2) -> [str]           # SAMPLES, SAMPLES/DRUMS…
+def plan_import(scan, card_root, dest="SAMPLES", existing=None) -> ImportPlan
+ImportPlan: items [ImportItem(source, rel, kind, size, action, reason, original)],
+            ignored, junk, dest, missing {xml : [réfs]}, retarget {xml : {ancienne : nouvelle}}
+    action ∈ copy | convert | same | kept | refused ; to_copy, bytes_to_copy(),
+    cable_time(), summary(), to_text(), counts(), empty
+def apply_import(plan, sd, progress=None, should_stop=None) -> ImportResult
+ImportResult: written, converted, errors, stopped ; summary()
+```
+
+**Où va chaque fichier.**
+
+* un dossier déposé qui **a la forme d'une carte** — un enfant `SAMPLES`, `SYNTHS`,
+  `KITS` ou `SONGS`, cherché jusqu'à deux niveaux (« TJ SYNTHS/SYNTHS ») — garde ses
+  chemins : ses presets les citent ;
+* le reste est **en vrac** : les sons vont sous le dossier de destination (`SAMPLES` par
+  défaut, celui choisi dans l'arbre de la page Échantillons, ou celui du dialogue), en
+  gardant le nom du dossier déposé ; un preset (`<sound>`) va dans `SYNTHS`, un kit
+  (`<kit>`) dans `KITS`, un morceau (`<song>`) dans `SONGS` ;
+* un XML d'une autre racine (réglages de la machine), un MP3, un fichier MIDI, la
+  documentation, un firmware : **restent sur le PC**, avec leur raison ;
+* `._*`, `.DS_Store`, `__MACOSX`, les `.reapeaks` et `.asd` : écartés sans un mot.
+
+**Rien d'existant n'est remplacé.** Un fichier identique, octet pour octet, est « déjà
+sur la carte » ; un homonyme différent fait numéroter le nouveau (« Kick 2.wav ») — sauf
+dans un pack, où la carte garde le sien (« laissé tel quel »), le dire valant mieux
+que casser les chemins des presets. La copie ouvre un fichier **neuf** en exclusif : un
+fichier apparu entre le plan et la copie n'est pas écrasé. La sauvegarde, en lecture
+seule, refuse (`PermissionError`).
+
+**Les noms passent par le câble.** Le bit 7 s'y perd (mesuré) : `card_name` translittère
+(« Été » -> « Ete »), remplace les interdits de FAT32 par « _ », retire point et espace
+finaux, évite les noms réservés de Windows, et ne tronque rien — sauf un chemin au-delà
+de 240 signes. Dans un pack, **les presets suivent** : leurs références aux fichiers
+renommés sont réécrites dans la copie (`retarget`).
+
+**Ce que la machine refuserait** (§1.8) n'est pas copié tel quel : converti par
+`wav.convert` dans un dossier temporaire hors de la carte, revérifié, puis copié ;
+refusé avec sa raison quand ce n'est pas réparable. Un preset dont un échantillon
+resterait introuvable est signalé (`missing`).
+
+> **Mesuré** sur les deux packs téléchargés de l'utilisateur, face à sa copie de
+> travail, en simulation : « TJontheRoad Delugetions Free Pack » — 77 fichiers,
+> 18,3 Mio, environ 7 min par le câble, 6 parasites écartés, ses 36 presets dans
+> `SYNTHS` ; « postsolarpunk Multisamples » — 1 094 fichiers, 271 Mio, **environ
+> 1 h 43** par le câble, ses 766 références toutes résolues. Lecture des en-têtes et
+> plan : 0,02 à 0,27 s.
 
 ---
 
@@ -2573,6 +2893,105 @@ morceaux écrits ici portent une vignette de leur vue Morceau : une rangée par 
 section et l'état dans la barre latérale.
 
 ---
+
+### 5.24 La carte reste dans le Deluge
+
+`ui/cardwork.py` (`CardWork`, porté par la fenêtre et posé sur
+`ctx.card_work`) tient la copie de travail à l'image de la carte :
+
+* **à la connexion** d'un Deluge qui ouvre sa carte (évènement `files` du
+  lien) : synchronisation, ou invitation à créer la copie de travail ;
+* **après chaque écriture** de l'application (`cardModified`,
+  `presetSaved`, `songWritten`) : envoi deux secondes après la dernière ;
+* **au retour dans la fenêtre** (au plus toutes les 30 s) : réception de ce
+  que le Deluge a enregistré ;
+* **jamais pendant que la machine joue** : sa carte sert à jouer ; la
+  synchronisation attend l'arrêt (`on_transport`).
+
+Ce qui est reçu passe à l'index par l'analyse incrémentale du tableau de
+bord. Créer la copie de travail montre d'abord le plan (combien repris de
+la sauvegarde, combien par le câble, en combien de temps), puis la copie
+devient la carte de l'application et l'analyse part.
+
+**Réglages ▸ Carte du Deluge** : état (le Deluge ouvre-t-il sa carte ?
+quelle copie ?), « Créer la copie de travail » / « Synchroniser
+maintenant », « Suppressions à confirmer (N)… », synchronisation d'office,
+la sauvegarde (« lue, jamais écrite »), « Choisir la sauvegarde… »,
+« Mettre à jour la sauvegarde ». L'ancienne section devient « Autre
+emplacement de carte » : une carte glissée dans un lecteur du PC, pour un
+firmware sans accès USB. Menu Outils ▸ « Synchroniser avec le Deluge »
+(Ctrl+Maj+D). L'en-tête dit sur quoi l'on travaille : « CARTE DU DELUGE ·
+COPIE DE TRAVAIL », ou « SAUVEGARDE · LECTURE SEULE ».
+
+### 5.25 Le PC et le Deluge, dans les deux sens
+
+**Envoyer au Deluge** (`ui/sendfiles.py`) — un seul parcours, d'où qu'on parte :
+glisser-déposer de fichiers ou de dossiers **n'importe où sur la fenêtre** ; Fichier ▸
+« Envoyer des fichiers au Deluge… » (Ctrl+I) et « Envoyer un dossier au Deluge… »
+(Ctrl+Maj+I) ; « Envoyer au Deluge… » de la page Échantillons (dans le dossier choisi
+dans son arbre) ; « Envoyer des fichiers… » du tableau de bord.
+
+1. la lecture de ce qui est déposé (`scan_sources`) part hors du fil de l'interface ;
+2. `SendDialog` montre le plan : résumé, destination des sons hors d'un pack (le plan se
+   recalcule au changement), où part l'envoi et combien de temps le câble y mettra
+   (« Le Deluge ne doit pas jouer pendant l'envoi » ; au-delà de 30 min, conseil de
+   n'envoyer qu'une partie), avertissements (refusés, convertis, laissés, échantillons
+   introuvables), détail en chasse fixe — par la feuille de style (`role="mono"`), un
+   `setFont` y serait écrasé ;
+3. « Envoyer » : `apply_import` dans un fil, avec une boîte de progression ;
+4. l'index relit ce qui est arrivé (`update_index`), `_card_written` lance la
+   synchronisation : sur la copie de travail, les fichiers partent sur le Deluge deux
+   secondes plus tard, ou à sa prochaine connexion.
+
+Rien n'est écrit sans le plan accepté. Ce qui n'est pas du Deluge le dit (« Rien à
+envoyer au Deluge », avec les raisons) ; la sauvegarde refuse (« Rien n'est écrit
+ici »). Le dépôt est traité **après** son retour (`QTimer.singleShot(0)`) : une question
+posée pendant le dépôt figerait l'Explorateur qui l'attend. Les champs de recherche
+n'acceptent plus de dépôt (ils y écrivaient l'adresse du fichier).
+
+**Le voile** (`chrome.DropVeil`) couvre la fenêtre pendant le glisser : le treillis du
+guide en vert, un grand pad allumé, « DÉPOSEZ POUR ENVOYER AU DELUGE », et où partira le
+dépôt (`where_it_goes` : la copie de travail puis le câble, la prochaine connexion, une
+carte dans un lecteur, ou la sauvegarde qui refusera).
+
+**Vers le PC** : la liste des échantillons se glisse vers l'Explorateur ou un logiciel de
+MAO (`_SampleModel` : `ItemIsDragEnabled`, `mimeData` en adresses de fichiers) — une
+copie, la carte n'est pas touchée.
+
+**« Le Deluge et le PC »**, panneau du tableau de bord, juste sous « À faire
+maintenant », à la couleur de la pastille du Deluge connecté : un pad d'état (vert, la
+carte s'ouvre par USB ; or, branché sans firmware 1.3 ; gris, débranché ; ambre,
+synchronisation), ce qui attend le Deluge et le temps du câble, le dernier échange,
+« Reçu du Deluge » (six derniers fichiers de musique, chacun ouvre sa page sur lui :
+`Songs#SONGS/Cool1.XML`), « Synchroniser », « Envoyer des fichiers… », la zone de dépôt.
+Sur la sauvegarde ouverte : « lecture seule » et « Carte du Deluge… ». Sur une carte
+ouverte directement : la copie y est immédiate.
+
+**La sauvegarde en retard.** `CardWork.check_backup` compare, hors du fil de l'interface
+et sans rien dans la barre d'état (`run_task(quiet=True)`), la carte à la sauvegarde :
+au démarrage et après chaque réception. « À faire maintenant » propose alors « Mettre à
+jour la sauvegarde » — avant les échantillons manquants ; avec le miroir de la carte
+réglé, « Aucune sauvegarde de cette carte » ne s'affiche plus, puisqu'il en est une. Le
+panneau ne répète pas la phrase que le bandeau dit déjà, et le bandeau se recalcule sur
+le dernier diagnostic quand seul l'état de la carte change. Un clic sur « Mettre à jour »
+pendant une comparaison attend sa réponse.
+
+**L'en-tête** dit ce qui attend : « COPIE DE TRAVAIL · 3 À ENVOYER », ou
+« SYNCHRONISATION… ». Le compte (`refresh_pending`) passe hors du fil de l'interface —
+dans le fil, il figeait la fenêtre 0,3 s de plus au démarrage (mesuré : 0,52 s sans,
+0,84 s avec ; 0,57 s une fois déplacé) — et porte un numéro : un compte ancien, fini
+après une synchronisation, ne la contredit pas.
+
+**Pendant que la machine joue**, un transfert s'arrête entre deux blocs
+(`UsbCard(should_stop)`), et reprend à l'arrêt (`on_transport`) : « Le Deluge joue : la
+synchronisation s'est arrêtée et reprendra à l'arrêt ». Débranché pendant un transfert :
+« reprendra à sa prochaine connexion ». Chaque échange est gardé et écrit au journal :
+« Deluge — synchronisation (écriture) : 2 envoyé(s), en 0,4 s », puis un fichier par
+ligne tant qu'ils sont quarante au plus.
+
+**Ouvrir un fichier par son chemin** : `Page.focus_on` reconnaît un chemin de la carte ;
+`Page.reveal_item` le sélectionne dans la liste de la page, en retirant d'abord recherche,
+filtres et dossier qui le cacheraient.
 
 ## 6. Contraintes de robustesse
 

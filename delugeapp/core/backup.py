@@ -387,6 +387,8 @@ def restore_backup(info: BackupInfo, sd: SDCard,
         n'a pas pu mettre à l'abri n'est pas écrasé.
     :returns: ``(fichiers restaurés, erreurs)``.
     """
+    if apply:
+        sd.require_writable()
     errors: list[str] = []
     restored = 0
     files = _backup_files(info)

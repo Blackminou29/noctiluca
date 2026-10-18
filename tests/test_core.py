@@ -5461,6 +5461,69 @@ class TestMidiFollow(unittest.TestCase):
             lien.load_follow_map(None)
             self.assertEqual(lien.state().follow_source, "")
 
+    #: La forme du fichier en firmware 1.3, relevée sur la carte de
+    #: l'utilisateur (``SETTINGS/MIDIFollow.XML``), abrégée.
+    FOLLOW_13 = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<defaults>\n'
+        "\t<cc_mappings>\n\t\t<pitch>3</pitch>\n\t\t<volumePostFX>7</volumePostFX>"
+        "\n\t\t<lpfFrequency>74</lpfFrequency>\n\t\t<env3Attack>40</env3Attack>"
+        "\n\t</cc_mappings>\n\t<settings>\n\t\t<channels>\n"
+        "\t\t\t<a>\n\t\t\t\t<channel>1</channel>\n\t\t\t</a>\n"
+        "\t\t\t<b>\n\t\t\t\t<channel>256</channel>\n\t\t\t</b>\n"
+        "\t\t\t<track_1>\n\t\t\t\t<channel>256</channel>\n\t\t\t</track_1>\n"
+        "\t\t</channels>\n\t\t<kit_root_note>\n\t\t\t<note>36</note>\n"
+        "\t\t</kit_root_note>\n\t\t<feedback>\n\t\t\t<channel>a</channel>\n"
+        "\t\t\t<automation>disabled</automation>\n\t\t</feedback>\n"
+        "\t</settings>\n</defaults>\n")
+
+    def test_le_fichier_de_la_1_3_n_assigne_que_ses_controleurs(self):
+        """Mesuré : faute de reconnaître ``cc_mappings``, canaux et note de
+        base passaient pour des contrôleurs (80 au lieu de 79)."""
+        from delugeapp.core import midifollow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "MIDIFollow.XML"
+            chemin.write_text(self.FOLLOW_13, encoding="utf-8")
+            carte = midifollow.load_map(path=chemin)
+        self.assertEqual(carte.get("lpfFrequency"), 74)
+        self.assertEqual(carte.get("volume"), 7)
+        self.assertNotIn(1, [v for k, v in carte.items() if k != "pitchAdjust"])
+        self.assertEqual(set(carte.values()), {3, 7, 74, 40})
+
+    def test_les_reglages_de_la_machine_se_lisent(self):
+        """Le canal s'écrit + 1 ; 256 veut dire « aucun »."""
+        from delugeapp.core import midifollow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "MIDIFollow.XML"
+            chemin.write_text(self.FOLLOW_13, encoding="utf-8")
+            reglages = midifollow.read_settings(path=chemin)
+            self.assertEqual(reglages, midifollow.FollowSettings(
+                channel_a=1, channel_b=None, channel_c=None, kit_root_note=36,
+                feedback="a"))
+            ancien = Path(tmp) / "ancien.XML"
+            ancien.write_text('<?xml version="1.0"?><defaults>'
+                              "<defaultCCMappings><pitch>3</pitch>"
+                              "</defaultCCMappings></defaults>",
+                              encoding="utf-8")
+            self.assertIsNone(midifollow.read_settings(path=ancien))
+
+    def test_la_1_3_range_le_fichier_dans_settings(self):
+        from delugeapp.core import midifollow
+
+        class Carte:
+            pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Carte.root = Path(tmp)
+            (Path(tmp) / "SETTINGS").mkdir()
+            (Path(tmp) / "SETTINGS" / "MIDIFollow.XML").write_text(
+                self.FOLLOW_13, encoding="utf-8")
+            carte, source = midifollow.load_map_with_source(Carte())
+            self.assertEqual(source, "MIDIFollow.XML")
+            self.assertEqual(carte.get("lpfFrequency"), 74)
+            self.assertEqual(midifollow.read_settings(Carte()).channel_a, 1)
+
     def test_un_fichier_abime_retombe_sur_les_defauts(self):
         from delugeapp.core import midifollow
 
@@ -8260,8 +8323,18 @@ class TestLiaisonVivante(unittest.TestCase):
         self.assertEqual(etat.out_name, "Deluge")
         self.assertEqual(etat.in_name, "Deluge")
         self.assertEqual(etat.sysex_name, "MIDIOUT3 (Deluge)")
-        envoyes = [e[0] for e in self.machine.sorties[3].envoyes]
-        self.assertEqual(envoyes, ["sysex", "sysex"])
+        self.lien.wait_files(3.0)
+        # Rien que des demandes de lecture : identité, ping, et la sonde des
+        # fichiers par USB (que la 1.2.1 ignore).
+        from delugeapp.core import delugesysex as sx
+
+        sonde = bytes((0xF0,)) + sx.DELUGE_ID + bytes((0x04,))
+        envoyes = [e[1] for e in self.machine.sorties[3].envoyes]
+        self.assertEqual(envoyes[0], sx.identity_request())
+        self.assertEqual(envoyes[1][:6], bytes((0xF0,)) + sx.DELUGE_ID
+                         + bytes((sx.CMD_PING,)))
+        self.assertEqual([e[:6] for e in envoyes[2:]], [sonde])
+        self.assertIn(b'{"ping":{}}', envoyes[2])
         self.assertEqual(self.machine.sorties[1].envoyes, [])
 
     def test_la_machine_dit_sa_version_et_l_aller_retour_se_mesure(self):
@@ -8406,3 +8479,1178 @@ class TestLiaisonVivante(unittest.TestCase):
             [i * ecart for i in range(25)]), 120.0, places=6)
         self.assertIsNone(tempo_from_ticks([0, 10]))
         self.assertIsNone(tempo_from_ticks([5, 5, 5]))
+
+
+# --------------------------------------------------------------------------- #
+# La carte restée dans le Deluge : copie de travail et synchronisation
+# --------------------------------------------------------------------------- #
+
+def _empreinte_dossier(racine: Path) -> str:
+    """Empreinte d'un dossier entier : noms, tailles, dates et contenus."""
+    h = hashlib.sha256()
+    for p in sorted(Path(racine).rglob("*")):
+        if p.is_file():
+            st = p.stat()
+            h.update(p.relative_to(racine).as_posix().encode())
+            h.update(str((st.st_size, st.st_mtime_ns)).encode())
+            h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+class TestSynchroCarte(unittest.TestCase):
+    """``core/cardsync.py`` face à une carte simulée par un dossier.
+
+    La sauvegarde de l'utilisateur sert de point de départ et n'est jamais
+    modifiée ; la carte fait foi la première fois ; ce qui change des deux
+    côtés garde ses deux versions ; une suppression ne passe pas sans accord.
+    """
+
+    def setUp(self):
+        from delugeapp.core import cardsync
+
+        self.cs = cardsync
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.carte = base / "carte"
+        self.sauvegarde = base / "sauvegarde"
+        self.travail = base / "travail"
+        self.travail.mkdir()
+        # La carte, dans le Deluge.
+        self._ecrit(self.carte, "SONGS/A.XML", b"<song a/>", 1_700_000_000)
+        self._ecrit(self.carte, "SONGS/B.XML", b"<song b/>", 1_700_000_100)
+        self._ecrit(self.carte, "SYNTHS/P.XML", b"<sound p/>", 1_700_000_200)
+        self._ecrit(self.carte, "SAMPLES/K.WAV", bytes(range(256)) * 4,
+                    1_700_000_300)
+        # Enregistré par le Deluge : date nulle.
+        self._ecrit(self.carte, "SONGS/NEUF.XML", b"<song neuf/>", None)
+        # La sauvegarde : une copie faite sur un Mac — deux heures d'écart
+        # partout —, une version ancienne de B, et une corbeille.
+        for rel in ("SONGS/A.XML", "SYNTHS/P.XML", "SAMPLES/K.WAV"):
+            self._copie_decalee(rel, -7200)
+        self._ecrit(self.sauvegarde, "SONGS/B.XML", b"<song b ancien/>",
+                    1_600_000_000)
+        self._ecrit(self.sauvegarde, ".Trashes/501/X.WAV", b"poubelle", 1)
+        self._ecrit(self.sauvegarde, "SONGS/._A.XML", b"mac", 1)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _ecrit(racine, rel, donnees, mtime):
+        p = Path(racine) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(donnees)
+        if mtime is None:
+            # La date nulle de FAT : 1er janvier 1980, heure locale.
+            from delugeapp.core.delugefiles import from_fat
+            mtime = from_fat(0x21, 0)
+        os.utime(p, (mtime, mtime))
+
+    def _copie_decalee(self, rel, decalage):
+        source = self.carte / rel
+        st = source.stat()
+        self._ecrit(self.sauvegarde, rel, source.read_bytes(),
+                    st.st_mtime + decalage)
+
+    def _synchronise(self, **options):
+        transport = self.cs.FolderCard(self.carte)
+        manifeste = self.cs.load_manifest(self.travail)
+        plan = self.cs.plan_sync(transport.walk(),
+                                 self.cs.scan_local(self.travail), manifeste,
+                                 backup=options.pop("backup", None))
+        resultat = self.cs.apply_plan(plan, transport, self.travail,
+                                      manifeste, **options)
+        return plan, resultat
+
+    def _fichiers(self, racine):
+        return {p.relative_to(racine).as_posix(): p.read_bytes()
+                for p in Path(racine).rglob("*") if p.is_file()
+                and ".deluge-companion" not in p.parts}
+
+    # -- ce qui ne voyage pas ----------------------------------------------- #
+
+    def test_corbeilles_index_et_parasites_ne_voyagent_pas(self):
+        for rel in (".Trashes/501/X.WAV", ".Trash-59016/files/A.XML",
+                    ".Spotlight-V100/Store-V2/x", "System Volume Information/y",
+                    "SONGS/._A.XML", "SYNTHS/.DS_Store", "SONGS/~DC1A2B.TMP",
+                    ".deluge-companion/synchro.json",
+                    "SYNTHS/P.XML.2026-10-18_12h00.bak",
+                    "_BACKUP/SAMPLES/x.wav"):
+            self.assertTrue(self.cs.is_junk(rel), rel)
+        for rel in ("SONGS/A.XML", "SAMPLES/DRUMS/Kick/k.wav",
+                    "SETTINGS/MIDIFollow.XML", "SONGS/~ma chanson.XML"):
+            self.assertFalse(self.cs.is_junk(rel), rel)
+
+    # -- la première fois ---------------------------------------------------- #
+
+    def test_la_premiere_fois_part_de_la_sauvegarde_sans_la_toucher(self):
+        avant = _empreinte_dossier(self.sauvegarde)
+        plan, resultat = self._synchronise(backup=self.sauvegarde)
+        c = plan.counts()
+        # A, P et K : même taille, deux heures d'écart -> repris localement.
+        self.assertEqual(c["copy_backup"], 3, plan.actions)
+        # B diffère, NEUF est absent de la sauvegarde -> par le câble.
+        self.assertEqual(sorted(a.rel for a in plan.of("pull")),
+                         ["SONGS/B.XML", "SONGS/NEUF.XML"])
+        self.assertTrue(resultat.ok, resultat.errors)
+        self.assertEqual(self._fichiers(self.travail),
+                         self._fichiers(self.carte))
+        self.assertEqual(_empreinte_dossier(self.sauvegarde), avant)
+
+    def test_un_fichier_du_deluge_recoit_une_date_pour_la_suite(self):
+        self._synchronise(backup=self.sauvegarde)
+        transport = self.cs.FolderCard(self.carte)
+        neuf = transport.walk()["SONGS/NEUF.XML"]
+        self.assertNotEqual(neuf.date, 0)
+        # Rien n'a changé depuis : plus rien à faire.
+        plan, _ = self._synchronise()
+        self.assertTrue(plan.empty, plan.summary())
+
+    # -- ensuite ------------------------------------------------------------- #
+
+    def test_ce_que_le_deluge_reecrit_descend(self):
+        self._synchronise(backup=self.sauvegarde)
+        # Le Deluge réenregistre A : même taille, date nulle.
+        self._ecrit(self.carte, "SONGS/A.XML", b"<song A/>", None)
+        plan, resultat = self._synchronise()
+        self.assertEqual([a.rel for a in plan.of("pull")], ["SONGS/A.XML"])
+        self.assertTrue(resultat.ok)
+        self.assertEqual((self.travail / "SONGS/A.XML").read_bytes(),
+                         b"<song A/>")
+        self.assertTrue(self._synchronise()[0].empty)
+
+    def test_ce_que_l_application_cree_ou_modifie_monte(self):
+        self._synchronise(backup=self.sauvegarde)
+        self._ecrit(self.travail, "SONGS/CREE.XML", b"<song cree/>",
+                    time.time())
+        self._ecrit(self.travail, "SYNTHS/P.XML", b"<sound p modifie/>",
+                    time.time() + 10)
+        plan, resultat = self._synchronise()
+        self.assertEqual(sorted(a.rel for a in plan.of("push")),
+                         ["SONGS/CREE.XML", "SYNTHS/P.XML"])
+        self.assertTrue(resultat.ok, resultat.errors)
+        self.assertEqual((self.carte / "SONGS/CREE.XML").read_bytes(),
+                         b"<song cree/>")
+        self.assertEqual((self.carte / "SYNTHS/P.XML").read_bytes(),
+                         b"<sound p modifie/>")
+        self.assertTrue(self._synchronise()[0].empty)
+
+    def test_change_des_deux_cotes_les_deux_versions_restent(self):
+        self._synchronise(backup=self.sauvegarde)
+        self._ecrit(self.carte, "SONGS/B.XML", b"<song b deluge/>", None)
+        self._ecrit(self.travail, "SONGS/B.XML", b"<song b pc/>",
+                    time.time() + 20)
+        plan, resultat = self._synchronise()
+        self.assertEqual([a.rel for a in plan.of("conflict")], ["SONGS/B.XML"])
+        self.assertTrue(resultat.ok, resultat.errors)
+        self.assertEqual(resultat.renamed, [("SONGS/B.XML",
+                                             "SONGS/B (PC).XML")])
+        for racine in (self.carte, self.travail):
+            self.assertEqual((racine / "SONGS/B.XML").read_bytes(),
+                             b"<song b deluge/>")
+            self.assertEqual((racine / "SONGS/B (PC).XML").read_bytes(),
+                             b"<song b pc/>")
+        self.assertTrue(self._synchronise()[0].empty)
+
+    def test_supprime_sur_le_pc_rien_ne_part_sans_accord(self):
+        self._synchronise(backup=self.sauvegarde)
+        (self.travail / "SONGS/A.XML").unlink()
+        plan, resultat = self._synchronise()
+        self.assertEqual([a.rel for a in plan.needs_consent], ["SONGS/A.XML"])
+        self.assertTrue((self.carte / "SONGS/A.XML").exists())
+        self.assertEqual(resultat.done["delete_card"], 0)
+        plan, resultat = self._synchronise(allow_card_deletes=True)
+        self.assertFalse((self.carte / "SONGS/A.XML").exists())
+        self.assertEqual(resultat.done["delete_card"], 1)
+
+    def test_supprime_sur_le_deluge_va_dans_l_historique(self):
+        self._synchronise(backup=self.sauvegarde)
+        (self.carte / "SONGS/A.XML").unlink()
+        plan, resultat = self._synchronise()
+        self.assertEqual([a.rel for a in plan.of("delete_local")],
+                         ["SONGS/A.XML"])
+        self.assertFalse((self.travail / "SONGS/A.XML").exists())
+        historique = list((self.travail / ".deluge-companion/historique")
+                          .rglob("A.XML"))
+        self.assertEqual([p.read_bytes() for p in historique], [b"<song a/>"])
+
+    def test_la_sauvegarde_seule_est_proposee_jamais_reprise_d_office(self):
+        self._ecrit(self.sauvegarde, "KITS/COMPAGNON 1.XML", b"<kit/>", 1)
+        self._ecrit(self.sauvegarde, "README.txt", b"ancien", 1)
+        plan, _ = self._synchronise(backup=self.sauvegarde)
+        self.assertEqual([r for r, _ in plan.backup_only],
+                         ["KITS/COMPAGNON 1.XML", "README.txt"])
+        self.assertEqual([r for r, _ in plan.backup_music()],
+                         ["KITS/COMPAGNON 1.XML"])
+        self.assertFalse((self.travail / "KITS/COMPAGNON 1.XML").exists())
+        # Repris sur demande : il part au Deluge à la synchronisation.
+        self.assertEqual(self.cs.take_from_backup(
+            self.sauvegarde, self.travail, ["KITS/COMPAGNON 1.XML"]), 1)
+        plan, resultat = self._synchronise()
+        self.assertEqual([a.rel for a in plan.of("push")],
+                         ["KITS/COMPAGNON 1.XML"])
+        self.assertEqual((self.carte / "KITS/COMPAGNON 1.XML").read_bytes(),
+                         b"<kit/>")
+
+    def test_une_carte_simulee_n_ecrase_jamais_un_fichier_neuf(self):
+        from delugeapp.core.delugefiles import FileError
+
+        transport = self.cs.FolderCard(self.carte)
+        with self.assertRaises(FileError):
+            transport.write_new("SONGS/A.XML", b"x", time.time())
+        self.assertEqual((self.carte / "SONGS/A.XML").read_bytes(),
+                         b"<song a/>")
+
+    def test_disparu_des_deux_cotes_le_manifeste_l_oublie(self):
+        self._synchronise(backup=self.sauvegarde)
+        (self.carte / "SONGS/A.XML").unlink()
+        (self.travail / "SONGS/A.XML").unlink()
+        plan, _ = self._synchronise()
+        self.assertEqual(plan.forget, ["SONGS/A.XML"])
+        self.assertNotIn("SONGS/A.XML", self.cs.load_manifest(self.travail))
+
+
+class TestFichiersParUsb(unittest.TestCase):
+    """Les fichiers de la carte par le câble USB (firmware 1.3), à travers le
+    vrai lien MIDI et le Deluge simulé, qui sert ses fichiers comme
+    ``storage/smsysex.cpp`` — dangers compris."""
+
+    def setUp(self):
+        from delugeapp.core import midiport
+
+        self.midiport = midiport
+        self._tmp = tempfile.TemporaryDirectory()
+        self.racine = Path(self._tmp.name) / "carte"
+        (self.racine / "SONGS").mkdir(parents=True)
+        (self.racine / "SONGS" / "A.XML").write_bytes(b"<song a/>")
+        self._sauves = (midiport.outputs, midiport.inputs,
+                        midiport.available)
+        self.machine = None
+        self.lien = None
+
+    def tearDown(self):
+        if self.lien is not None:
+            self.lien.disconnect()
+        (self.midiport.outputs, self.midiport.inputs,
+         self.midiport.available) = self._sauves
+        self._tmp.cleanup()
+
+    def _branche(self, version=(1, 3, 0)):
+        from delugeapp.core.delugelink import DelugeLink
+
+        self.machine = _deluge_simule().DelugeSimule(version=version,
+                                                     carte=self.racine)
+        self.midiport.outputs = lambda: self.machine.devices("out")
+        self.midiport.inputs = lambda: self.machine.devices("in")
+        self.midiport.available = lambda: True
+        self.lien = DelugeLink()
+        self.machine.brancher(self.lien)
+        self.assertTrue(self.lien.connect())
+        self.lien.wait_files(5.0)
+        return self.lien.files
+
+    def _commandes(self, nom=None):
+        return [c for c in self.machine.carte_usb.commandes
+                if nom is None or c[0] == nom]
+
+    # -- savoir si la machine le fait ----------------------------------------- #
+
+    def test_la_1_2_1_ne_donne_pas_ses_fichiers_et_rien_ne_part(self):
+        files = self._branche(version=(1, 2, 1))
+        self.assertFalse(files.supported)
+        self.assertFalse(self.lien.state().files)
+        self.assertEqual(self._commandes(), [])
+
+    def test_la_1_3_les_donne_et_reserve_ses_numeros(self):
+        files = self._branche()
+        self.assertTrue(files.supported)
+        self.assertTrue(self.lien.state().files)
+        self.assertIn("files", self.lien.service())
+        self.assertEqual(files._ids, list(range(9, 16)))
+
+    # -- lire ---------------------------------------------------------------- #
+
+    def test_un_dossier_de_plus_de_vingt_cinq_entrees(self):
+        for i in range(60):
+            (self.racine / "SONGS" / ("S%02d.XML" % i)).write_bytes(b"x" * i)
+        files = self._branche()
+        noms = {e.name for e in files.listdir("/SONGS")}
+        self.assertEqual(len(noms), 61)
+        self.assertGreaterEqual(len(self._commandes("dir")), 3)
+
+    def test_lire_toutes_les_tailles_a_l_octet_pres(self):
+        import random
+
+        hasard = random.Random(7)
+        tailles = (0, 1, 7, 1023, 1024, 1025, 5000)
+        for n in tailles:
+            (self.racine / ("F%d.BIN" % n)).write_bytes(
+                bytes(hasard.randrange(256) for _ in range(n)))
+        files = self._branche()
+        for n in tailles:
+            self.assertEqual(files.read("/F%d.BIN" % n),
+                             (self.racine / ("F%d.BIN" % n)).read_bytes(), n)
+
+    # -- écrire sans jamais écraser -------------------------------------------- #
+
+    def test_un_fichier_neuf_passe_par_un_nom_temporaire(self):
+        files = self._branche()
+        donnees = bytes(range(256)) * 9
+        files.write_new("/SONGS/NOUVEAU.XML", donnees, mtime=1_700_000_000)
+        self.assertEqual((self.racine / "SONGS/NOUVEAU.XML").read_bytes(),
+                         donnees)
+        ouvertures = [a for n, a in self._commandes("open") if a.get("write")]
+        self.assertTrue(ouvertures)
+        self.assertTrue(all("/~DC" in a["path"] for a in ouvertures),
+                        ouvertures)
+        self.assertEqual(sorted(p.name for p in (self.racine / "SONGS")
+                                .iterdir()), ["A.XML", "NOUVEAU.XML"])
+
+    def test_aucun_message_ne_depasse_ce_que_la_machine_recoit(self):
+        """Mesuré : un bloc de 1 024 octets codé en faisait 1 230, et la
+        machine l'abandonnait sans répondre (``incomingSysexBuffer[1024]``)."""
+        files = self._branche()
+        files.write_new("/GROS.BIN", bytes(range(256)) * 40)      # 10 Ko
+        self.assertEqual(self.machine.trop_longs, [])
+        self.assertEqual((self.racine / "GROS.BIN").read_bytes(),
+                         bytes(range(256)) * 40)
+        self.assertTrue(all(len(e[1]) <= 1024
+                            for e in self.machine.sorties[3].envoyes))
+
+    def test_un_nom_pris_est_refuse_et_l_existant_reste_intact(self):
+        from delugeapp.core.delugefiles import FileError
+
+        files = self._branche()
+        with self.assertRaises(FileError) as erreur:
+            files.write_new("/songs/a.xml", b"ecrase ?")
+        self.assertEqual(erreur.exception.code, 8)
+        self.assertEqual((self.racine / "SONGS/A.XML").read_bytes(),
+                         b"<song a/>")
+        self.assertEqual([p.name for p in (self.racine / "SONGS").iterdir()],
+                         ["A.XML"])
+
+    def test_move_et_copy_qui_ecrasent_ne_partent_jamais(self):
+        files = self._branche()
+        files.write_new("/SONGS/B.XML", b"b")
+        files.replace("/SONGS/A.XML", b"<song a v2/>")
+        self.assertEqual(self._commandes("move") + self._commandes("copy"), [])
+
+    def test_remplacer_sans_laisser_de_trace(self):
+        files = self._branche()
+        files.replace("/SONGS/A.XML", b"<song a v2/>", mtime=1_700_000_000)
+        self.assertEqual((self.racine / "SONGS/A.XML").read_bytes(),
+                         b"<song a v2/>")
+        self.assertEqual([p.name for p in (self.racine / "SONGS").iterdir()],
+                         ["A.XML"])
+        entree = files.exists("/SONGS/A.XML")
+        from delugeapp.core.delugefiles import fat_stamp
+
+        self.assertEqual((entree.date, entree.time), fat_stamp(1_700_000_000))
+
+    def test_un_dossier_absent_est_cree(self):
+        files = self._branche()
+        files.write_new("/SONGS/NEUF/X.XML", b"x")
+        self.assertEqual((self.racine / "SONGS/NEUF/X.XML").read_bytes(), b"x")
+
+    # -- les noms ------------------------------------------------------------- #
+
+    def test_un_nom_accentue_n_est_pas_envoye(self):
+        from delugeapp.core.delugefiles import FileError
+
+        files = self._branche()
+        avant = len(self._commandes())
+        with self.assertRaises(FileError):
+            files.write_new("/SONGS/dièse.XML", b"x")
+        self.assertEqual(len(self._commandes()), avant)
+
+    def test_un_nom_abime_au_retour_est_mis_a_part(self):
+        """Mesuré : le bit 7 se perd, « è » revient en saut de ligne."""
+        (self.racine / "SONGS" / "Le Mans - D dièse.XML").write_bytes(b"d")
+        files = self._branche()
+        arbre = files.walk("/")
+        self.assertIn("SONGS/A.XML", arbre)
+        self.assertEqual(files.unreachable, ["SONGS/Le Mans - D di\nse.XML"])
+
+    # -- toute une synchronisation par le câble -------------------------------- #
+
+    def test_synchroniser_par_usb(self):
+        from delugeapp.core import cardsync
+
+        from delugeapp.core.delugefiles import from_fat
+
+        enregistre = self.racine / "SONGS" / "DELUGE.XML"
+        enregistre.write_bytes(b"<song du deluge/>")
+        nul = from_fat(0x21, 0)
+        os.utime(enregistre, (nul, nul))          # date nulle : le Deluge
+        files = self._branche()
+        carte = cardsync.UsbCard(files)
+        travail = Path(self._tmp.name) / "travail"
+        travail.mkdir()
+        manifeste = {}
+        plan = cardsync.plan_sync(carte.walk(), cardsync.scan_local(travail),
+                                  manifeste)
+        resultat = cardsync.apply_plan(plan, carte, travail, manifeste)
+        self.assertTrue(resultat.ok, resultat.errors)
+        self.assertEqual((travail / "SONGS/DELUGE.XML").read_bytes(),
+                         b"<song du deluge/>")
+        self.assertNotEqual(files.exists("/SONGS/DELUGE.XML").date, 0)
+        # Une création de l'application monte, et la suite est à jour.
+        (travail / "SONGS" / "PC.XML").write_bytes(b"<song pc/>")
+        plan = cardsync.plan_sync(carte.walk(), cardsync.scan_local(travail),
+                                  manifeste)
+        self.assertEqual([a.rel for a in plan.of("push")], ["SONGS/PC.XML"])
+        self.assertTrue(cardsync.apply_plan(plan, carte, travail,
+                                            manifeste).ok)
+        self.assertEqual((self.racine / "SONGS/PC.XML").read_bytes(),
+                         b"<song pc/>")
+        plan = cardsync.plan_sync(carte.walk(), cardsync.scan_local(travail),
+                                  manifeste)
+        self.assertTrue(plan.empty, plan.summary())
+
+
+class TestSauvegardeEnLectureSeule(unittest.TestCase):
+    """La sauvegarde de la carte se lit, elle ne s'écrit jamais.
+
+    L'utilisateur, le 18 octobre 2026 : « SDCARD Deluge est un emplacement
+    de sauvegarde de ma carte SD qui n'est pas destiné à être le répertoire
+    de travail ». L'application y avait pourtant réparé dix presets le
+    11 octobre — que la carte, elle, n'a jamais reçus (mesuré par USB).
+    """
+
+    def setUp(self):
+        from delugeapp.core.sdcard import SDCard
+
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.racine = base / "SDCARD Deluge"
+        for sous in ("SONGS", "SYNTHS", "KITS", "SAMPLES"):
+            (self.racine / sous).mkdir(parents=True)
+        preset = SynthPreset.new("P")
+        preset.sound.osc1.type = "sample"
+        preset.sound.osc1.file_name = "SAMPLES/A.wav"
+        preset.save(self.racine / "SYNTHS" / "P.XML", backup=False)
+        self.sd = SDCard(self.racine, read_only=True,
+                         read_only_reason="sauvegarde")
+        self.avant = _empreinte_dossier(self.racine)
+
+    def tearDown(self):
+        self.assertEqual(_empreinte_dossier(self.racine), self.avant,
+                         "la sauvegarde a changé")
+        self._tmp.cleanup()
+
+    def test_ecrire_un_morceau_est_refuse(self):
+        from delugeapp.core import songwriter
+
+        track = songwriter.synth_track(SynthPreset.new("BASSE"))
+        clip = songwriter.ClipSpec(track=0, length=songwriter.BAR, rows={
+            60: [Note(pos=0, length=96, velocity=100)]})
+        spec = songwriter.SongSpec(name="Essai", bpm=120.0, tracks=[track],
+                                   clips=[clip])
+        self.assertTrue(songwriter.write_song(self.sd, spec).rel)  # simuler
+        with self.assertRaises(PermissionError):
+            songwriter.write_song(self.sd, spec, apply=True)
+
+    def test_relier_les_references_est_refuse(self):
+        from delugeapp.core import deps
+
+        self.assertTrue(deps.relink(self.sd, "SAMPLES/A.wav", "SAMPLES/B.wav"))
+        with self.assertRaises(PermissionError):
+            deps.relink(self.sd, "SAMPLES/A.wav", "SAMPLES/B.wav", apply=True)
+        with self.assertRaises(PermissionError):
+            deps.relink_many(self.sd, {"SAMPLES/A.wav": "SAMPLES/B.wav"},
+                             apply=True)
+
+    def test_un_plan_de_rangement_ou_de_correction_est_refuse(self):
+        from delugeapp.core import organize, samplefix
+
+        with self.assertRaises(PermissionError):
+            organize.Plan().apply(self.sd, None)
+        with self.assertRaises(PermissionError):
+            samplefix.FixPlan().apply(self.sd, None)
+
+    def test_restaurer_dessus_est_refuse(self):
+        from delugeapp.core import backup
+
+        from datetime import datetime
+
+        with self.assertRaises(PermissionError):
+            backup.restore_backup(backup.BackupInfo(
+                Path(self._tmp.name) / "x", datetime.now()), self.sd,
+                apply=True)
+
+    def test_le_contexte_refuse_d_ecrire_sans_lever(self):
+        from delugeapp.config import AppContext, Settings
+
+        ctx = AppContext(settings=Settings(), sd=self.sd, lib=None,
+                         player=None)
+        self.assertIs(ctx.sd_or_warn(None), self.sd)            # lire : oui
+        self.assertIsNone(ctx.sd_or_warn(None, write=True))      # écrire : non
+
+
+class TestRolesDeLaCarte(unittest.TestCase):
+    """Copie de travail, sauvegarde, carte dans un lecteur : chacun son rôle."""
+
+    def setUp(self):
+        from delugeapp.config import Settings
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.reglages = Settings()
+        self.reglages.work_dir = str(self.base / "travail")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_l_ancien_dossier_de_travail_devient_la_sauvegarde(self):
+        sauvegarde = self.base / "SDCARD Deluge"
+        self.reglages.sd_path = str(sauvegarde)
+        self.assertTrue(self.reglages.adopt_card_roles())
+        self.assertEqual(self.reglages.card_backup, str(sauvegarde))
+        self.assertFalse(self.reglages.adopt_card_roles())     # une fois
+        self.assertEqual(self.reglages.card_role(sauvegarde), "sauvegarde")
+        carte = self.reglages.open_card(sauvegarde)
+        self.assertTrue(carte.read_only)
+        self.assertIn("sauvegarde", carte.read_only_reason)
+
+    def test_une_carte_dans_un_lecteur_ou_la_copie_de_travail_restent(self):
+        from delugeapp.core.sdcard import is_drive_root
+
+        self.assertTrue(is_drive_root(Path(Path.cwd().anchor)))
+        self.assertFalse(is_drive_root(self.base))
+        self.reglages.sd_path = Path.cwd().anchor
+        self.assertFalse(self.reglages.adopt_card_roles())
+        self.reglages.sd_path = self.reglages.work_dir
+        self.assertFalse(self.reglages.adopt_card_roles())
+        self.assertEqual(self.reglages.card_role(self.reglages.work_dir),
+                         "travail")
+        self.assertFalse(self.reglages.open_card(self.reglages.work_dir)
+                         .read_only)
+
+    def test_les_reglages_se_relisent(self):
+        from delugeapp.config import Settings
+
+        self.reglages.card_backup = "D:/sauvegarde"
+        self.reglages.auto_sync = False
+        relu = Settings.from_dict(self.reglages.to_dict())
+        self.assertEqual((relu.work_dir, relu.card_backup, relu.auto_sync),
+                         (self.reglages.work_dir, "D:/sauvegarde", False))
+
+
+# --------------------------------------------------------------------------- #
+# Le PC et le Deluge, dans les deux sens (18 octobre 2026)
+# --------------------------------------------------------------------------- #
+
+def _wav_a_la_main(chemin, tag=1, canaux=1, frequence=44100, bits=16,
+                   trames=64, magic=b"RIFF", sous_format=None,
+                   avec_donnees=True, donnees=None):
+    """Un WAV écrit octet par octet : ce qu'aucun écrivain soigneux ne
+    produit, mais que des logiciels de MAO écrivent — l'en-tête étendu,
+    l'A-law, le RIFX."""
+    import struct
+
+    e = ">" if magic == b"RIFX" else "<"
+    octets = max(1, (bits + 7) // 8)
+    bloc = canaux * octets
+    fmt = struct.pack(e + "HHIIHH", 0xFFFE if sous_format is not None else tag,
+                      canaux, frequence, frequence * bloc, bloc, bits)
+    if sous_format is not None:
+        fmt += struct.pack(e + "HHI", 22, bits, 0)
+        fmt += struct.pack(e + "H", sous_format) + bytes(14)
+    corps = b"WAVE" + b"fmt " + struct.pack(e + "I", len(fmt)) + fmt
+    if avec_donnees:
+        if donnees is None:
+            donnees = bytes((i * 37) % 256 for i in range(trames * bloc))
+        corps += b"data" + struct.pack(e + "I", len(donnees)) + donnees
+        if len(donnees) & 1:
+            corps += b"\x00"
+    chemin = Path(chemin)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_bytes(magic + struct.pack(e + "I", len(corps)) + corps)
+    return chemin
+
+
+def _son(chemin, frequence=220.0, duree=0.05, profondeur=16, canaux=1,
+         taux=44100):
+    """Un son court, écrit par l'écrivain de l'application."""
+    t = np.linspace(0, duree, int(taux * duree), endpoint=False)
+    signal = (0.5 * np.sin(2 * np.pi * frequence * t)).astype(np.float32)
+    if canaux > 1:
+        signal = np.stack([signal] * canaux, axis=1)
+    chemin = Path(chemin)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    wav.write(chemin, signal, taux, profondeur)
+    return chemin
+
+
+def _preset(chemin, *echantillons):
+    """Un preset de synthé, citant au plus deux échantillons."""
+    preset = SynthPreset.new(Path(chemin).stem)
+    for osc, rel in zip((preset.sound.osc1, preset.sound.osc2), echantillons):
+        osc.type = "sample"
+        osc.file_name = rel
+    Path(chemin).parent.mkdir(parents=True, exist_ok=True)
+    preset.save(Path(chemin), backup=False)
+    return Path(chemin)
+
+
+class TestCeQueLeDelugeLit(unittest.TestCase):
+    """``wav.deluge_problem`` : les règles de lecture du firmware de la
+    machine (1.3 bêta ``102cf9f``, ``AudioFile::loadFile``), fichier par
+    fichier. Mesuré : la carte et le PC de l'utilisateur les respectent
+    déjà partout — ces cas sont ceux qui arriveront d'ailleurs."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dossier = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_ce_que_l_application_ecrit_le_deluge_le_lit(self):
+        for nom, profondeur in (("p8.wav", 8), ("p16.wav", 16),
+                                ("p24.wav", 24), ("p32.wav", 32),
+                                ("f32.wav", "float32"), ("a16.aif", 16),
+                                ("a24.aiff", 24)):
+            chemin = _son(self.dossier / nom, profondeur=profondeur)
+            self.assertEqual(wav.deluge_problem(chemin), ("", False), nom)
+        for taux in (5000, 44100, 48000, 96000):
+            chemin = _son(self.dossier / ("t%d.wav" % taux), taux=taux)
+            self.assertEqual(wav.deluge_problem(chemin), ("", False), taux)
+        self.assertEqual(wav.deluge_problem(
+            _son(self.dossier / "st.wav", canaux=2)), ("", False))
+
+    def test_ce_que_la_conversion_repare(self):
+        cas = {
+            "etendu": _wav_a_la_main(self.dossier / "etendu.wav", bits=24,
+                                     sous_format=1),
+            "alaw": _wav_a_la_main(self.dossier / "alaw.wav", tag=6, bits=8),
+            "rifx": _wav_a_la_main(self.dossier / "rifx.wav", magic=b"RIFX"),
+            "flottant 64": _son(self.dossier / "f64.wav",
+                                profondeur="float64"),
+            "192 kHz": _son(self.dossier / "192k.wav", taux=192000),
+            "AIFF flottant": _son(self.dossier / "f.aif",
+                                  profondeur="float32"),
+        }
+        for nom, chemin in cas.items():
+            raison, reparable = wav.deluge_problem(chemin)
+            self.assertTrue(raison, nom)
+            self.assertTrue(reparable, "%s : %s" % (nom, raison))
+        self.assertIn("WAVE_FORMAT_EXTENSIBLE",
+                      wav.deluge_problem(cas["etendu"])[0])
+        self.assertIn("A-law", wav.deluge_problem(cas["alaw"])[0])
+
+    def test_ce_qui_ne_se_repare_pas(self):
+        quatre = _son(self.dossier / "quatre.wav", canaux=4)
+        adpcm = _wav_a_la_main(self.dossier / "adpcm.wav", tag=2, bits=4)
+        tronque = _wav_a_la_main(self.dossier / "tronque.wav",
+                                 avec_donnees=False)
+        mp3 = self.dossier / "chanson.mp3"
+        mp3.write_bytes(b"ID3" + bytes(100))
+        cache = self.dossier / "._kick.wav"
+        cache.write_bytes(b"\x00\x05\x16\x07" + bytes(80))
+        faux = self.dossier / "faux.wav"
+        faux.write_bytes(b"ceci n'est pas un son")
+        for chemin, mot in ((quatre, "canaux"), (adpcm, "compressé"),
+                            (tronque, "abîmé"), (mp3, ".mp3"),
+                            (cache, "point"), (faux, "ni WAV ni AIFF")):
+            raison, reparable = wav.deluge_problem(chemin)
+            self.assertIn(mot, raison, chemin.name)
+            self.assertFalse(reparable, chemin.name)
+
+
+class TestEnvoyerAuDeluge(unittest.TestCase):
+    """``core/cardimport.py`` : du PC vers la carte, sur des dossiers bâtis à
+    l'image des deux packs mesurés chez l'utilisateur — l'un à la forme de
+    la carte, l'autre non, avec ses parasites de macOS."""
+
+    def setUp(self):
+        from delugeapp.core import cardimport
+        from delugeapp.core.sdcard import SDCard
+
+        self.ci = cardimport
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.carte = base / "carte"
+        for sous in ("SONGS", "SYNTHS", "KITS", "SAMPLES/DRUMS/Kick"):
+            (self.carte / sous).mkdir(parents=True)
+        _son(self.carte / "SAMPLES/DRUMS/Kick/K1.wav", 60)
+        self.sd = SDCard(self.carte)
+        self.pc = base / "pc"
+        self.pc.mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plan(self, *sources, dest="SAMPLES"):
+        scan = self.ci.scan_sources([self.pc / s for s in sources])
+        return self.ci.plan_import(scan, self.carte, dest)
+
+    @staticmethod
+    def _rels(plan, *actions):
+        return sorted(i.rel for i in plan.of(*actions))
+
+    # -- les noms ----------------------------------------------------------- #
+
+    def test_un_nom_qui_passe_par_le_cable(self):
+        for brut, propre in (("Épée", "Epee"), ("a:b?c", "a_b_c"),
+                             ("fin. ", "fin"), ("CON", "_CON"),
+                             ("Straße", "Strasse"), ("Kick “dur”", "Kick 'dur'"),
+                             ("kick dist 10 [2022-07-05 164600].wav",
+                              "kick dist 10 [2022-07-05 164600].wav")):
+            self.assertEqual(self.ci.card_name(brut), propre, brut)
+            self.assertTrue(all(32 <= ord(c) < 127
+                                for c in self.ci.card_name(brut)))
+
+    # -- les packs ----------------------------------------------------------- #
+
+    def test_un_pack_a_la_forme_de_la_carte_garde_ses_chemins(self):
+        racine = self.pc / "postsolarpunk Multisamples"
+        for nom in ("kick 1 [2022-07-05].wav", "kick 2 [2022-07-05].wav"):
+            _son(racine / "SAMPLES/MULTISAMPLES/p23 kick map" / nom)
+        _preset(racine / "SYNTHS/Artists/postsolarpunk/P23Kick.XML",
+                "SAMPLES/MULTISAMPLES/p23 kick map/kick 1 [2022-07-05].wav",
+                "SAMPLES/Multisamples/P23 KICK MAP/kick 2 [2022-07-05].wav")
+        (racine / "README.txt").write_text("merci")
+        plan = self._plan("postsolarpunk Multisamples")
+        self.assertEqual(self._rels(plan, "copy"), [
+            "SAMPLES/MULTISAMPLES/p23 kick map/kick 1 [2022-07-05].wav",
+            "SAMPLES/MULTISAMPLES/p23 kick map/kick 2 [2022-07-05].wav",
+            "SYNTHS/Artists/postsolarpunk/P23Kick.XML"])
+        # La casse des références n'est pas fiable (SPEC §1.7) : FAT l'ignore.
+        self.assertEqual(plan.missing, {})
+        self.assertEqual([r for _c, r in plan.ignored if "documentation" in r],
+                         ["documentation : reste sur le PC"])
+
+    def test_un_pack_sans_la_forme_de_la_carte(self):
+        """« TJontheRoad Delugetions » : ``TJ SYNTHS/SYNTHS/*.XML`` va dans
+        SYNTHS ; ``TJ SAMPLES`` garde son nom sous la destination."""
+        racine = self.pc / "TJ Pack"
+        _son(racine / "TJ SAMPLES/TJ Kick/00-KICK.wav")
+        _preset(racine / "TJ SYNTHS/SYNTHS/Amb Air.XML")
+        for parasite in ("__MACOSX/TJ SAMPLES/._00-KICK.wav",
+                         "TJ SAMPLES/.DS_Store", "TJ SAMPLES/TJ Kick/._00-KICK.wav",
+                         "TJ SAMPLES/TJ Kick/00-KICK.wav.reapeaks"):
+            p = racine / parasite
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"\x00\x05\x16\x07")
+        plan = self._plan("TJ Pack")
+        self.assertEqual(self._rels(plan, "copy"), [
+            "SAMPLES/TJ Pack/TJ SAMPLES/TJ Kick/00-KICK.wav",
+            "SYNTHS/Amb Air.XML"])
+        self.assertGreaterEqual(plan.junk, 4)
+        self.assertEqual(plan.ignored, [])
+
+    def test_en_vrac_dans_la_destination_choisie(self):
+        _son(self.pc / "kick.wav")
+        _preset(self.pc / "Bass.XML")
+        plan = self._plan("kick.wav", "Bass.XML", dest="SAMPLES/DRUMS/Kick")
+        self.assertEqual(self._rels(plan, "copy"),
+                         ["SAMPLES/DRUMS/Kick/kick.wav", "SYNTHS/Bass.XML"])
+        # Une destination hors de SAMPLES n'en est pas une.
+        plan = self._plan("kick.wav", dest="SONGS/ailleurs")
+        self.assertEqual(self._rels(plan, "copy"), ["SAMPLES/kick.wav"])
+
+    # -- rien d'existant n'est remplacé ---------------------------------------- #
+
+    def test_identique_deja_la_numerote_ou_garde(self):
+        k1 = self.carte / "SAMPLES/DRUMS/Kick/K1.wav"
+        (self.pc / "same").mkdir()
+        (self.pc / "same" / "K1.wav").write_bytes(k1.read_bytes())
+        _son(self.pc / "autre" / "K1.wav", 90)
+        _son(self.pc / "pack/SAMPLES/DRUMS/Kick/K1.wav", 120)
+        plan = self.ci.plan_import(self.ci.scan_sources(
+            [self.pc / "same" / "K1.wav", self.pc / "autre" / "K1.wav"]),
+            self.carte, "SAMPLES/DRUMS/Kick")
+        self.assertEqual(self._rels(plan, "same"),
+                         ["SAMPLES/DRUMS/Kick/K1.wav"])
+        self.assertEqual(self._rels(plan, "copy"),
+                         ["SAMPLES/DRUMS/Kick/K1 2.wav"])
+        plan = self._plan("pack")
+        self.assertEqual(self._rels(plan, "kept"),
+                         ["SAMPLES/DRUMS/Kick/K1.wav"])
+        self.assertIn("presets du pack", plan.of("kept")[0].reason)
+        avant = k1.read_bytes()
+        self.ci.apply_import(plan, self.sd)
+        self.assertEqual(k1.read_bytes(), avant)
+
+    def test_apparu_entre_le_plan_et_la_copie_n_est_pas_ecrase(self):
+        _son(self.pc / "snare.wav", 200)
+        plan = self._plan("snare.wav")
+        intrus = self.carte / "SAMPLES" / "snare.wav"
+        intrus.write_bytes(b"ecrit entre-temps")
+        resultat = self.ci.apply_import(plan, self.sd)
+        self.assertEqual(resultat.written, [])
+        self.assertEqual(len(resultat.errors), 1)
+        self.assertEqual(intrus.read_bytes(), b"ecrit entre-temps")
+
+    def test_la_sauvegarde_refuse_l_envoi(self):
+        from delugeapp.core.sdcard import SDCard
+
+        _son(self.pc / "snare.wav")
+        plan = self._plan("snare.wav")
+        avant = _empreinte_dossier(self.carte)
+        with self.assertRaises(PermissionError):
+            self.ci.apply_import(plan, SDCard(self.carte, read_only=True))
+        self.assertEqual(_empreinte_dossier(self.carte), avant)
+
+    # -- noms nettoyés : le pack suit ------------------------------------------ #
+
+    def test_un_nom_accentue_est_nettoye_et_le_preset_suit(self):
+        racine = self.pc / "pack"
+        _son(racine / "SAMPLES/Été/Clé.wav")
+        _preset(racine / "SYNTHS/Ré.XML", "SAMPLES/Été/Clé.wav")
+        plan = self._plan("pack")
+        self.assertEqual(self._rels(plan, "copy"),
+                         ["SAMPLES/Ete/Cle.wav", "SYNTHS/Re.XML"])
+        self.assertEqual(plan.retarget, {"SYNTHS/Re.XML": {
+            "SAMPLES/Été/Clé.wav": "SAMPLES/Ete/Cle.wav"}})
+        self.assertEqual(plan.missing, {})
+        resultat = self.ci.apply_import(plan, self.sd)
+        self.assertEqual(resultat.errors, [])
+        relu = SynthPreset.load(self.carte / "SYNTHS/Re.XML")
+        self.assertEqual(relu.sound.osc1.file_name, "SAMPLES/Ete/Cle.wav")
+        for p in self.carte.rglob("*"):
+            self.assertTrue(all(ord(c) < 128 for c in p.name), p.name)
+
+    def test_un_echantillon_introuvable_est_signale(self):
+        _preset(self.pc / "pack/SYNTHS/Seul.XML", "SAMPLES/ABSENT/x.wav")
+        plan = self._plan("pack")
+        self.assertEqual(plan.missing,
+                         {"SYNTHS/Seul.XML": ["SAMPLES/ABSENT/x.wav"]})
+        self.assertIn("introuvables", plan.to_text())
+
+    # -- ce que le Deluge ne lit pas --------------------------------------------- #
+
+    def test_ce_que_le_deluge_ne_lit_pas_reste_sur_le_pc(self):
+        for nom, contenu in (("chanson.mp3", b"ID3"), ("motif.mid", b"MThd"),
+                             ("lisez-moi.txt", b"merci"),
+                             ("deluge-c1_2_1.bin", b"\x00"),
+                             ("reglages.XML", b"<midiFollow/>"),
+                             ("bizarre.foo", b"?")):
+            (self.pc / nom).write_bytes(contenu)
+        plan = self._plan("chanson.mp3", "motif.mid", "lisez-moi.txt",
+                          "deluge-c1_2_1.bin", "reglages.XML", "bizarre.foo")
+        self.assertEqual(plan.items, [])
+        raisons = " | ".join(r for _c, r in plan.ignored)
+        for mot in ("WAV", "MIDI", "documentation", "firmware", "réglage",
+                    "pas un fichier du Deluge"):
+            self.assertIn(mot, raisons)
+
+    def test_un_en_tete_etendu_est_converti_sans_perte(self):
+        source = _son(self.pc / "pc24.wav", profondeur=24)
+        brut = source.read_bytes()
+        debut = brut.find(b"data")
+        taille = int.from_bytes(brut[debut + 4:debut + 8], "little")
+        # Le même son, avec l'en-tête étendu qu'écrivent des logiciels de MAO.
+        _wav_a_la_main(self.pc / "etendu.wav", bits=24, sous_format=1,
+                       donnees=brut[debut + 8:debut + 8 + taille])
+        plan = self._plan("etendu.wav")
+        self.assertEqual(self._rels(plan, "convert"), ["SAMPLES/etendu.wav"])
+        resultat = self.ci.apply_import(plan, self.sd)
+        self.assertEqual(resultat.converted, ["SAMPLES/etendu.wav"])
+        sur_la_carte = self.carte / "SAMPLES/etendu.wav"
+        self.assertEqual(wav.deluge_problem(sur_la_carte), ("", False))
+        avant, _ = wav.read(source)
+        apres, _ = wav.read(sur_la_carte)
+        self.assertEqual(wav.probe(sur_la_carte).bit_depth, 24)
+        self.assertTrue(np.array_equal(avant, apres))
+
+    def test_quatre_canaux_sont_refuses(self):
+        _son(self.pc / "quad.wav", canaux=4)
+        plan = self._plan("quad.wav")
+        self.assertEqual(self._rels(plan, "refused"), ["SAMPLES/quad.wav"])
+        self.assertTrue(plan.empty)
+        self.ci.apply_import(plan, self.sd)
+        self.assertFalse((self.carte / "SAMPLES/quad.wav").exists())
+
+    # -- le temps du câble -------------------------------------------------------- #
+
+    def test_le_plan_dit_le_temps_du_cable(self):
+        from delugeapp.core.delugefiles import cable_time
+
+        # Les deux packs de l'utilisateur.
+        self.assertEqual(cable_time(write_bytes=int(18.3 * 1024 * 1024)),
+                         "environ 7 min")
+        self.assertEqual(cable_time(write_bytes=int(271.2 * 1024 * 1024)),
+                         "environ 1 h 43")
+        self.assertEqual(cable_time(write_bytes=100_000), "quelques secondes")
+        self.assertEqual(cable_time(read_bytes=4_000_000), "environ 30 s")
+
+    def test_les_dossiers_proposes(self):
+        self.assertEqual(self.ci.sample_folders(self.carte),
+                         ["SAMPLES", "SAMPLES/DRUMS", "SAMPLES/DRUMS/Kick"])
+
+
+class TestCableEnFile(unittest.TestCase):
+    """Le câble USB face au Deluge simulé : deux lectures d'avance, un
+    transfert qui s'arrête entre deux blocs, un câble débranché."""
+
+    def setUp(self):
+        from delugeapp.core import midiport
+        from delugeapp.core.delugelink import DelugeLink
+
+        self.midiport = midiport
+        self._tmp = tempfile.TemporaryDirectory()
+        self.racine = Path(self._tmp.name) / "carte"
+        (self.racine / "SONGS").mkdir(parents=True)
+        (self.racine / "SONGS" / "A.XML").write_bytes(b"<song a/>")
+        self._sauves = (midiport.outputs, midiport.inputs,
+                        midiport.available)
+        self.machine = _deluge_simule().DelugeSimule(version=(1, 3, 0),
+                                                     carte=self.racine)
+        midiport.outputs = lambda: self.machine.devices("out")
+        midiport.inputs = lambda: self.machine.devices("in")
+        midiport.available = lambda: True
+        self.lien = DelugeLink()
+        self.machine.brancher(self.lien)
+        self.assertTrue(self.lien.connect())
+        self.lien.wait_files(5.0)
+        self.files = self.lien.files
+
+    def tearDown(self):
+        self.lien.disconnect()
+        (self.midiport.outputs, self.midiport.inputs,
+         self.midiport.available) = self._sauves
+        self._tmp.cleanup()
+
+    def _lectures(self):
+        return sum(1 for n, _ in self.machine.carte_usb.commandes
+                   if n == "read")
+
+    def test_deux_lectures_en_vol(self):
+        import queue
+
+        donnees = bytes((i * 7) % 256 for i in range(10_000))
+        (self.racine / "GROS.BIN").write_bytes(donnees)
+        vus: list[int] = []
+        compter = self._lectures
+
+        class FileComptee(queue.Queue):
+            def get(self, *args, **kwargs):
+                vus.append(compter())
+                return super().get(*args, **kwargs)
+
+        self.files._replies = FileComptee()
+        self.assertEqual(self.files.read("/GROS.BIN"), donnees)
+        # À la première attente d'un bloc, deux demandes sont déjà parties.
+        premier = next(i for i, n in enumerate(vus) if n)
+        self.assertEqual(vus[premier], 2)
+        self.assertEqual(self._lectures(), 10)
+
+    def test_un_transfert_s_arrete_entre_deux_blocs(self):
+        from delugeapp.core.delugefiles import STOPPED, FileError
+
+        blocs = []
+        self.files.stop_check = lambda: len(blocs) >= 3
+        with self.assertRaises(FileError) as arret:
+            self.files.write_new("/SONGS/GROS.XML", bytes(10_000), mtime=None,
+                                 progress=lambda n, t: blocs.append(n))
+        self.assertEqual(arret.exception.code, STOPPED)
+        self.assertEqual(len(blocs), 3)
+        # Ni le fichier, ni son temporaire : la carte est comme avant.
+        self.assertEqual(sorted(p.name for p in (self.racine / "SONGS")
+                                .iterdir()), ["A.XML"])
+        self.files.stop_check = lambda: True
+        with self.assertRaises(FileError) as arret:
+            self.files.read("/SONGS/A.XML")
+        self.assertEqual(arret.exception.code, STOPPED)
+
+    def test_un_cable_debranche_le_dit_tout_de_suite(self):
+        from delugeapp.core.delugefiles import NOT_CONNECTED, FileError
+
+        # Débranché : plus aucun port — le lien retomberait sinon sur le
+        # premier câble.
+        for port in self.machine.sorties.values():
+            port.close()
+        debut = time.monotonic()
+        with self.assertRaises(FileError) as erreur:
+            self.files.listdir("/")
+        self.assertEqual(erreur.exception.code, NOT_CONNECTED)
+        self.assertLess(time.monotonic() - debut, 1.0)
+
+
+class TestEchangesAvecLeDeluge(unittest.TestCase):
+    """Ce qui attend, ce qui a voyagé, et une synchronisation qui s'arrête
+    proprement (``core/cardsync.py``)."""
+
+    def setUp(self):
+        from delugeapp.core import cardsync
+
+        self.cs = cardsync
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.carte = base / "carte"
+        self.travail = base / "travail"
+        self.sauvegarde = base / "sauvegarde"
+        self.travail.mkdir()
+        TestSynchroCarte._ecrit(self.carte, "SONGS/A.XML", b"<song a/>",
+                                1_700_000_000)
+        TestSynchroCarte._ecrit(self.carte, "SYNTHS/P.XML", b"<sound p/>",
+                                1_700_000_100)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _synchronise(self, transport=None, **options):
+        transport = transport or self.cs.FolderCard(self.carte)
+        manifeste = self.cs.load_manifest(self.travail)
+        plan = self.cs.plan_sync(transport.walk(),
+                                 self.cs.scan_local(self.travail), manifeste)
+        return plan, self.cs.apply_plan(plan, transport, self.travail,
+                                        manifeste, **options)
+
+    def _carte_qui_cede(self, code, apres=0):
+        from delugeapp.core.delugefiles import FileError
+
+        cs = self.cs
+
+        class CarteQuiCede(cs.FolderCard):
+            envois = 0
+
+            def write_new(self, rel, data, mtime, progress=None):
+                type(self).envois += 1
+                if type(self).envois > apres:
+                    raise FileError("essai", code=code)
+                super().write_new(rel, data, mtime, progress)
+
+        return CarteQuiCede(self.carte)
+
+    def _trois_creations(self):
+        self._synchronise()
+        for nom in ("C1", "C2", "C3"):
+            TestSynchroCarte._ecrit(self.travail, "SONGS/%s.XML" % nom,
+                                    b"<song %s/>" % nom.encode(),
+                                    time.time())
+
+    def test_les_temporaires_ne_voyagent_jamais(self):
+        for rel in ("SAMPLES/a.wav.dc-tmp", "SAMPLES/b.wav.tmp~",
+                    "SYNTHS/P.ab12cd_9.tmp"):
+            self.assertTrue(self.cs.is_junk(rel), rel)
+        for rel in ("SONGS/tmp.XML", "SAMPLES/temp.wav"):
+            self.assertFalse(self.cs.is_junk(rel), rel)
+
+    def test_un_arret_garde_ce_qui_est_fait(self):
+        from delugeapp.core.delugefiles import STOPPED
+
+        self._trois_creations()
+        _plan, resultat = self._synchronise(self._carte_qui_cede(STOPPED, 1))
+        self.assertTrue(resultat.stopped)
+        self.assertFalse(resultat.lost)
+        self.assertEqual(resultat.errors, [])
+        self.assertEqual(resultat.done["push"], 1)
+        # La suite part à la synchronisation suivante, et rien ne repart deux
+        # fois.
+        plan, resultat = self._synchronise()
+        self.assertEqual(len(plan.of("push")), 2)
+        self.assertTrue(resultat.ok)
+        self.assertTrue(self._synchronise()[0].empty)
+
+    def test_un_cable_debranche_arrete_tout_de_suite(self):
+        from delugeapp.core.delugefiles import NOT_CONNECTED
+
+        self._trois_creations()
+        carte = self._carte_qui_cede(NOT_CONNECTED)
+        _plan, resultat = self._synchronise(carte)
+        self.assertTrue(resultat.lost)
+        self.assertEqual(resultat.errors, ["le Deluge a été débranché"])
+        self.assertEqual(type(carte).envois, 1)
+
+    def test_deux_silences_arretent(self):
+        self._trois_creations()
+        carte = self._carte_qui_cede(15)
+        _plan, resultat = self._synchronise(carte)
+        self.assertTrue(resultat.lost)
+        self.assertIn("le Deluge ne répond plus", resultat.errors)
+        self.assertEqual(type(carte).envois, 2)
+
+    def test_l_historique_raconte_chaque_echange(self):
+        _plan, resultat = self._synchronise()
+        echange = self.cs.exchange_of(resultat, "connexion", 1.5)
+        self.assertEqual(sorted(echange.received),
+                         ["SONGS/A.XML", "SYNTHS/P.XML"])
+        self.assertTrue(self.cs.record_exchange(self.travail, echange))
+        TestSynchroCarte._ecrit(self.travail, "SONGS/CREE.XML", b"<song/>",
+                                time.time())
+        _plan, resultat = self._synchronise()
+        self.cs.record_exchange(self.travail,
+                                self.cs.exchange_of(resultat, "écriture"))
+        # Une synchronisation qui n'a rien fait ne s'écrit pas.
+        _plan, resultat = self._synchronise()
+        self.assertFalse(self.cs.record_exchange(
+            self.travail, self.cs.exchange_of(resultat, "retour")))
+        gardes = self.cs.load_exchanges(self.travail)
+        self.assertEqual([e.reason for e in gardes], ["écriture", "connexion"])
+        self.assertEqual(gardes[0].sent, ["SONGS/CREE.XML"])
+        self.assertEqual(gardes[0].summary(), "1 envoyé(s)")
+        self.assertEqual(gardes[1].summary(), "2 reçu(s)")
+        # Pas plus de deux cents.
+        for i in range(self.cs.MAX_EXCHANGES + 5):
+            self.cs.record_exchange(self.travail, self.cs.Exchange(
+                when=time.time() + i, reason="x", counts={"push": 1}))
+        self.assertEqual(len(self.cs.load_exchanges(self.travail)),
+                         self.cs.MAX_EXCHANGES)
+
+    def test_les_arrivees_recentes(self):
+        TestSynchroCarte._ecrit(self.carte, "SAMPLES/RECORD/REC00001.WAV",
+                                b"RIFF", None)
+        TestSynchroCarte._ecrit(self.carte, "SETTINGS/MIDIFollow.XML",
+                                b"<x/>", None)
+        _plan, resultat = self._synchronise()
+        self.cs.record_exchange(self.travail,
+                                self.cs.exchange_of(resultat, "connexion"))
+        arrivees = [rel for _quand, rel in
+                    self.cs.recent_arrivals(self.travail)]
+        self.assertEqual(sorted(arrivees), ["SAMPLES/RECORD/REC00001.WAV",
+                                            "SONGS/A.XML", "SYNTHS/P.XML"])
+        (self.travail / "SONGS/A.XML").unlink()
+        self.assertNotIn("SONGS/A.XML",
+                         [r for _q, r in self.cs.recent_arrivals(self.travail)])
+
+    def test_ce_qui_attend_d_etre_envoye(self):
+        self.assertEqual(self.cs.pending_changes(self.travail), [])
+        self._synchronise()
+        self.assertEqual(self.cs.pending_changes(self.travail), [])
+        TestSynchroCarte._ecrit(self.travail, "SONGS/CREE.XML", b"<song/>",
+                                time.time())
+        TestSynchroCarte._ecrit(self.travail, "SYNTHS/P.XML", b"<sound P2/>",
+                                time.time() + 5)
+        self.assertEqual(self.cs.pending_changes(self.travail),
+                         [("SONGS/CREE.XML", 7), ("SYNTHS/P.XML", 11)])
+
+    def test_la_sauvegarde_ne_relit_que_ce_qui_a_bouge(self):
+        from unittest import mock
+
+        self._synchronise()
+        for rel in ("SONGS/A.XML", "SYNTHS/P.XML"):
+            TestSynchroCarte._ecrit(self.sauvegarde, rel,
+                                    (self.travail / rel).read_bytes(),
+                                    1_600_000_000)
+        appels = []
+        vrai = self.cs._same_content
+
+        def compte(a, b):
+            appels.append(Path(a).name)
+            return vrai(a, b)
+
+        with mock.patch.object(self.cs, "_same_content", compte):
+            plan = self.cs.update_backup(self.travail, self.sauvegarde)
+            self.assertEqual(plan.summary(), "déjà à jour")
+            self.assertEqual(len(appels), 2)
+            appels.clear()
+            self.cs.update_backup(self.travail, self.sauvegarde)
+            self.assertEqual(appels, [])
+            TestSynchroCarte._ecrit(self.travail, "SONGS/A.XML", b"<song A/>",
+                                    time.time())
+            plan = self.cs.update_backup(self.travail, self.sauvegarde)
+            self.assertEqual(appels, ["A.XML"])
+            self.assertEqual(plan.replaced, ["SONGS/A.XML"])
+        self.assertEqual(self.cs.backup_state(self.travail,
+                                              self.sauvegarde)["updated"], 0)
+        self.cs.update_backup(self.travail, self.sauvegarde, apply=True)
+        self.assertGreater(self.cs.backup_state(self.travail,
+                                                self.sauvegarde)["updated"], 0)
+        self.assertEqual((self.sauvegarde / "SONGS/A.XML").read_bytes(),
+                         b"<song A/>")
+        # Une autre sauvegarde ne profite pas de ce que l'on sait de celle-ci.
+        self.assertEqual(self.cs.backup_state(self.travail,
+                                              self.carte), {})

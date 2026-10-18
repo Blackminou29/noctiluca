@@ -184,7 +184,7 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
              on_progress: Callable[[Any], None] | None = None,
              on_error: Callable[[str], None] | None = None,
              title: str = "Traitement…", modal: bool = False,
-             **kwargs: Any) -> Worker:
+             quiet: bool = False, **kwargs: Any) -> Worker:
     """Lance ``fn`` dans un fil secondaire et retourne son :class:`Worker`.
 
     :param parent: widget d'ancrage — sert à trouver la barre d'état et à
@@ -196,6 +196,10 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
         et affiché dans la barre d'état.
     :param modal: ``True`` affiche une :class:`QProgressDialog` annulable
         plutôt qu'un simple message dans la barre d'état.
+    :param quiet: un travail de fond que l'utilisateur n'a pas demandé
+        (compter ce qui attend le Deluge, comparer la sauvegarde) : rien dans
+        la barre d'état — ni pendant, ni l'effacement de la fin, qui
+        emportait le message qu'on venait d'y lire.
 
     Le fil est nettoyé automatiquement à la fin, dans tous les cas.
     """
@@ -207,7 +211,7 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
     worker.setParent(None)
     thread._worker = worker  # type: ignore[attr-defined]
 
-    status = None if modal else _status_bar(parent)
+    status = None if (modal or quiet) else _status_bar(parent)
     dialog: QProgressDialog | None = None
     if modal:
         dialog = QProgressDialog(title, "Annuler", 0, 0,
