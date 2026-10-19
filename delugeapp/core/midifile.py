@@ -18,6 +18,8 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import tr
+
 log = logging.getLogger(__name__)
 
 #: Résolution par défaut, multiple des 24 ticks par noire du Deluge.
@@ -225,7 +227,8 @@ def pattern_to_midi(path: Path, pattern, row_map: dict[str, int] | None,
     Toutes les pistes sont réunies sur le canal 10, celui des percussions.
     """
     mapping = dict(row_map or {})
-    drum = MidiTrack(name=pattern.name or "Rythme", channel=DRUM_CHANNEL)
+    drum = MidiTrack(name=tr(pattern.name) if pattern.name else tr("Rythme"),
+                     channel=DRUM_CHANNEL)
 
     ratio = DEFAULT_PPQ / float(max(1, pattern.ppq))
     per_step = pattern.ticks_per_step
@@ -254,7 +257,7 @@ def progression_to_midi(path: Path, chords: list[dict], bpm: float,
     ``notes`` et sa durée en ``bars``.
     """
     resolution = max(1, int(ppq))
-    track = MidiTrack(name="Accords", channel=0)
+    track = MidiTrack(name=tr("Accords"), channel=0)
     position = 0
     for chord in (chords or []):
         notes = chord.get("notes") or []
@@ -295,7 +298,9 @@ def parts_to_midi(path: Path, parts: dict, bpm: float,
     for index, (name, events) in enumerate((parts or {}).items()):
         if not events:
             continue
-        track = MidiTrack(name=name,
+        # Le nom de la partie (« Accords ») reste la clé de son canal ; la
+        # piste se nomme dans la langue de l'interface.
+        track = MidiTrack(name=tr(name),
                           channel=PART_CHANNELS.get(name, 3 + index))
         for event in events:
             velocity = max(1, min(127, int(event.velocity * 127 // 100)))
@@ -304,7 +309,7 @@ def parts_to_midi(path: Path, parts: dict, bpm: float,
         tracks.append(track)
     if tracks:
         write_midi(path, tracks, bpm=bpm, ppq=resolution,
-                   markers=[(int(round(step * per_step)), text)
+                   markers=[(int(round(step * per_step)), tr(text))
                             for step, text in (markers or [])])
     return len(tracks)
 

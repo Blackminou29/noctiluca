@@ -58,6 +58,7 @@ from datetime import datetime
 from typing import Callable
 
 from . import delugesysex
+from ..i18n import N_, tr
 
 log = logging.getLogger(__name__)
 
@@ -104,33 +105,34 @@ NOT_CONNECTED = -3     # plus de port : le câble est débranché
 
 #: Codes ``FRESULT`` de FatFs, en clair (``fatfs/ff.h``).
 _RESULTATS = {
-    0: "réussi",
-    1: "erreur matérielle de la carte",
-    2: "erreur interne du système de fichiers",
-    3: "carte non prête",
-    4: "fichier introuvable",
-    5: "dossier introuvable",
-    6: "nom invalide",
-    7: "accès refusé ou dossier plein",
-    8: "existe déjà",
-    9: "fichier non ouvert",
-    10: "carte protégée en écriture",
-    11: "lecteur invalide",
-    12: "fichier non ouvert sur la machine",
-    13: "aucun système de fichiers FAT",
-    14: "formatage interrompu",
-    15: "délai dépassé",
-    16: "fichier verrouillé",
-    17: "mémoire insuffisante",
-    18: "trop de fichiers ouverts",
-    19: "paramètre invalide",
+    0: N_("réussi"),
+    1: N_("erreur matérielle de la carte"),
+    2: N_("erreur interne du système de fichiers"),
+    3: N_("carte non prête"),
+    4: N_("fichier introuvable"),
+    5: N_("dossier introuvable"),
+    6: N_("nom invalide"),
+    7: N_("accès refusé ou dossier plein"),
+    8: N_("existe déjà"),
+    9: N_("fichier non ouvert"),
+    10: N_("carte protégée en écriture"),
+    11: N_("lecteur invalide"),
+    12: N_("fichier non ouvert sur la machine"),
+    13: N_("aucun système de fichiers FAT"),
+    14: N_("formatage interrompu"),
+    15: N_("délai dépassé"),
+    16: N_("fichier verrouillé"),
+    17: N_("mémoire insuffisante"),
+    18: N_("trop de fichiers ouverts"),
+    19: N_("paramètre invalide"),
 }
 FR_OK, FR_NO_FILE, FR_NO_PATH, FR_EXIST = 0, 4, 5, 8
 
 
 def result_text(code: int) -> str:
-    """Un code ``FRESULT`` en français."""
-    return _RESULTATS.get(int(code), "erreur %d" % int(code))
+    """Un code ``FRESULT`` en clair, dans la langue de l'interface."""
+    texte = _RESULTATS.get(int(code))
+    return tr(texte) if texte else tr("erreur %d") % int(code)
 
 
 def cable_time(read_bytes: int = 0, write_bytes: int = 0) -> str:
@@ -138,13 +140,13 @@ def cable_time(read_bytes: int = 0, write_bytes: int = 0) -> str:
     secondes = (max(0, int(read_bytes)) / READ_RATE
                 + max(0, int(write_bytes)) / WRITE_RATE)
     if secondes < 10:
-        return "quelques secondes"
+        return tr("quelques secondes")
     if secondes < 90:
-        return "environ %d s" % round(secondes, -1)
+        return tr("environ %d s") % round(secondes, -1)
     if secondes < 3600:
-        return "environ %d min" % max(2, round(secondes / 60))
+        return tr("environ %d min") % max(2, round(secondes / 60))
     heures, minutes = divmod(int(round(secondes / 60)), 60)
-    return "environ %d h %02d" % (heures, minutes)
+    return tr("environ %d h %02d") % (heures, minutes)
 
 
 class FileError(OSError):
@@ -300,14 +302,14 @@ class DelugeFiles:
 
     def _emit(self, corps: bytes) -> None:
         if not self._send(corps):
-            raise FileError("le Deluge n'est pas connecté",
+            raise FileError(tr("le Deluge n'est pas connecté"),
                             code=NOT_CONNECTED)
 
     def _check_stop(self, chemin: str = "") -> None:
         """Lève :data:`STOPPED` si l'on a demandé l'arrêt."""
         arret = self.stop_check
         if arret is not None and arret():
-            raise FileError("transfert interrompu", code=STOPPED, path=chemin)
+            raise FileError(tr("transfert interrompu"), code=STOPPED, path=chemin)
 
     def request(self, commande: dict, payload: bytes | None = None,
                 timeout: float | None = None) -> tuple[dict, bytes]:
@@ -328,7 +330,7 @@ class DelugeFiles:
             while True:
                 reste = limite - time.monotonic()
                 if reste <= 0:
-                    raise FileError("le Deluge n'a pas répondu à « %s »"
+                    raise FileError(tr("le Deluge n'a pas répondu à « %s »")
                                     % next(iter(commande)), code=15)
                 try:
                     data, arrivee = self._replies.get(timeout=reste)
@@ -363,16 +365,16 @@ class DelugeFiles:
             # est gardé tel quel, et :attr:`CardEntry.addressable` l'écarte.
             objet = json.loads(texte.decode("cp437"), strict=False)
         except (ValueError, UnicodeDecodeError) as exc:
-            raise FileError("réponse illisible du Deluge : %s" % exc) from exc
+            raise FileError(tr("réponse illisible du Deluge : %s") % exc) from exc
         if not isinstance(objet, dict):
-            raise FileError("réponse inattendue du Deluge")
+            raise FileError(tr("réponse inattendue du Deluge"))
         return objet, delugesysex.unpack_7bit_to_8bit(brut) if brut else b""
 
     @staticmethod
     def _part(objet: dict, cle: str) -> dict:
         partie = objet.get(cle)
         if not isinstance(partie, dict):
-            raise FileError("réponse sans « %s »" % cle)
+            raise FileError(tr("réponse sans « %s »") % cle)
         return partie
 
     def _check(self, partie: dict, quoi: str, chemin: str = "") -> None:
@@ -387,10 +389,10 @@ class DelugeFiles:
         """Chemin absolu de la carte, vérifié avant de partir."""
         propre = "/" + str(chemin or "").replace("\\", "/").strip("/")
         if not _ascii(propre):
-            raise FileError("nom non ASCII, impossible à transmettre en "
-                            "SysEx : %s" % propre, code=6, path=propre)
+            raise FileError(tr("nom non ASCII, impossible à transmettre en "
+                               "SysEx : %s") % propre, code=6, path=propre)
         if len(propre) > MAX_PATH:
-            raise FileError("chemin trop long pour la machine : %s" % propre,
+            raise FileError(tr("chemin trop long pour la machine : %s") % propre,
                             code=6, path=propre)
         return propre
 
@@ -439,7 +441,7 @@ class DelugeFiles:
             objet, _ = self.request({"dir": {"path": chemin, "offset": offset,
                                              "lines": DIR_LINES}})
             partie = self._part(objet, "^dir")
-            self._check(partie, "lecture du dossier", chemin)
+            self._check(partie, tr("lecture du dossier"), chemin)
             page = partie.get("list") or []
             for e in page:
                 nom = str(e.get("name", ""))
@@ -510,7 +512,7 @@ class DelugeFiles:
         finally:
             self._close(fid)
         if len(recu) != taille:
-            raise FileError("lecture incomplète de %s : %d octets sur %d"
+            raise FileError(tr("lecture incomplète de %s : %d octets sur %d")
                             % (chemin, len(recu), taille), path=chemin)
         return recu
 
@@ -547,7 +549,7 @@ class DelugeFiles:
                 self._check(partie, "lecture", chemin)
                 n = int(partie.get("size", 0))
                 if len(donnees) < n:
-                    raise FileError("bloc tronqué en lecture de %s" % chemin,
+                    raise FileError(tr("bloc tronqué en lecture de %s") % chemin,
                                     path=chemin)
                 if n <= 0:
                     # Plus court qu'annoncé : ne plus rien demander au-delà.
@@ -570,7 +572,7 @@ class DelugeFiles:
         while True:
             reste = limite - time.monotonic()
             if reste <= 0:
-                raise FileError("le Deluge n'a pas répondu à « %s »" % quoi,
+                raise FileError(tr("le Deluge n'a pas répondu à « %s »") % quoi,
                                 code=15)
             try:
                 data, _arrivee = self._replies.get(timeout=reste)
@@ -606,7 +608,7 @@ class DelugeFiles:
         """
         chemin = self._path(chemin)
         if self.exists(chemin) is not None:
-            raise FileError("existe déjà sur la carte : %s" % chemin,
+            raise FileError(tr("existe déjà sur la carte : %s") % chemin,
                             code=FR_EXIST, path=chemin)
         temporaire = self._temporary(chemin)
         self._upload(temporaire, bytes(data), progress)
@@ -663,14 +665,14 @@ class DelugeFiles:
                                   suffixe)
             if nom.casefold() not in pris:
                 return _join(dossier, nom)
-        raise FileError("aucun nom temporaire libre dans %s" % dossier)
+        raise FileError(tr("aucun nom temporaire libre dans %s") % dossier)
 
     def _upload(self, chemin: str, data: bytes,
                 progress: Callable[[int, int], None] | None) -> None:
         # « write »: 1 crée — et écrase : on n'ouvre ainsi qu'un nom neuf.
         objet, _ = self.request({"open": {"path": chemin, "write": 1}})
         partie = self._part(objet, "^open")
-        self._check(partie, "création", chemin)
+        self._check(partie, tr("création"), chemin)
         fid = int(partie.get("fid", 0))
         envoye = 0
         try:
@@ -682,9 +684,9 @@ class DelugeFiles:
                                                    "size": len(bloc)}},
                                         payload=bloc)
                 partie = self._part(objet, "^write")
-                self._check(partie, "écriture", chemin)
+                self._check(partie, tr("écriture"), chemin)
                 if int(partie.get("size", -1)) != len(bloc):
-                    raise FileError("bloc écrit incomplet : %s" % chemin,
+                    raise FileError(tr("bloc écrit incomplet : %s") % chemin,
                                     path=chemin)
                 envoye += len(bloc)
                 if progress is not None:
@@ -714,8 +716,8 @@ class DelugeFiles:
     def _verify_size(self, chemin: str, taille: int) -> None:
         entree = self.exists(chemin)
         if entree is None or entree.size != taille:
-            raise FileError("vérification après écriture : %s fait %s octets "
-                            "au lieu de %d" % (chemin, getattr(entree, "size",
+            raise FileError(tr("vérification après écriture : %s fait %s octets "
+                               "au lieu de %d") % (chemin, getattr(entree, "size",
                                                                "?"), taille),
                             path=chemin)
 
@@ -735,7 +737,7 @@ class DelugeFiles:
         objet, _ = self.request({"mkdir": commande})
         partie = self._part(objet, "^mkdir")
         if int(partie.get("err", 0) or 0) != FR_EXIST:
-            self._check(partie, "création du dossier", chemin)
+            self._check(partie, tr("création du dossier"), chemin)
 
     def rename(self, ancien: str, nouveau: str) -> None:
         """Renomme ; refusé si ``nouveau`` existe (``FR_EXIST``)."""

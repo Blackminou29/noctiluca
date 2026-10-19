@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from ..i18n import N_, clock, full_date, tr
 from .sdcard import (
     AUDIO_EXT,
     STD_DIRS,
@@ -34,6 +35,7 @@ from .sdcard import (
     norm_rel,
     safe_deluge_name,
 )
+from .units import human_size
 
 log = logging.getLogger(__name__)
 
@@ -66,15 +68,15 @@ class BackupInfo:
     @property
     def name(self) -> str:
         """Nom affichable : date et libellé."""
-        stamp = self.when.strftime("%d/%m/%Y à %Hh%M")
-        return f"{stamp} — {self.label}" if self.label else stamp
+        stamp = tr("%s à %s") % (full_date(self.when), clock(self.when))
+        return f"{stamp} — {tr(self.label)}" if self.label else stamp
 
     def summary(self) -> str:
         """Résumé en une ligne."""
-        kind = "avec échantillons" if self.include_samples else "sans échantillons"
-        size = (f"{self.bytes / 2 ** 30:.2f} Gio" if self.bytes >= 2 ** 30
-                else f"{self.bytes / 2 ** 20:.1f} Mio")
-        return f"{self.name} — {self.files} fichiers, {size} ({kind})"
+        kind = (tr("avec échantillons") if self.include_samples
+                else tr("sans échantillons"))
+        return tr("%s — %d fichiers, %s (%s)") % (
+            self.name, self.files, human_size(self.bytes), kind)
 
 
 def _manifest_path(folder: Path) -> Path:
@@ -254,13 +256,15 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
             base.resolve().relative_to(dossier.resolve())
         except (ValueError, OSError):
             continue
-        raise OSError("le dossier de sauvegarde est dans %s, sur la carte "
-                      "elle-même : choisissez-en un autre" % top)
+        raise OSError(tr("le dossier de sauvegarde est dans %s, sur la "
+                         "carte elle-même : choisissez-en un autre") % top)
     base.mkdir(parents=True, exist_ok=True)
 
     when = datetime.now()
     stamp = when.strftime(STAMP_FORMAT)
-    suffix = f"_{safe_deluge_name(label)}" if label else ""
+    # Le libellé reste la clé (le manifeste) ; le dossier, lui, se nomme
+    # dans la langue de l'interface.
+    suffix = f"_{safe_deluge_name(tr(label))}" if label else ""
     folder = base / f"{stamp}{suffix}"
     index = 2
     while folder.exists():
@@ -275,7 +279,7 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
             except Exception:  # noqa: BLE001
                 pass
 
-    _report("Inventaire des fichiers à sauvegarder…")
+    _report(tr("Inventaire des fichiers à sauvegarder…"))
     files = _files_to_backup(sd, include_samples)
     copied = 0
     total = 0
@@ -295,7 +299,7 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
         except (OSError, shutil.Error) as exc:
             log.warning("fichier non sauvegardé %s : %s", rel, exc)
         if i % 50 == 0 or i == len(files):
-            _report(f"Sauvegarde — {i}/{len(files)} fichiers")
+            _report(tr("Sauvegarde — %d/%d fichiers") % (i, len(files)))
 
     info = BackupInfo(path=folder, when=when, files=copied, bytes=total,
                       label=label, include_samples=include_samples,
@@ -312,7 +316,7 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
     _write_manifest(folder, info)
 
     if zip_it:
-        _report("Compression…")
+        _report(tr("Compression…"))
         archive = folder.with_suffix(".zip")
         try:
             # ``strict_timestamps=False`` est indispensable : le format ZIP ne
@@ -393,7 +397,7 @@ def restore_backup(info: BackupInfo, sd: SDCard,
     restored = 0
     files = _backup_files(info)
     if not files:
-        return 0, [f"Sauvegarde vide ou illisible : {info.path}"]
+        return 0, [tr("Sauvegarde vide ou illisible : %s") % info.path]
 
     def _report(text: str) -> None:
         if progress is not None:
@@ -407,7 +411,7 @@ def restore_backup(info: BackupInfo, sd: SDCard,
         try:
             archive = zipfile.ZipFile(info.path)
         except (OSError, zipfile.BadZipFile) as exc:
-            return 0, [f"Archive illisible : {exc}"]
+            return 0, [tr("Archive illisible : %s") % exc]
 
     abri: Path | None = None
     abrites = 0
@@ -422,10 +426,11 @@ def restore_backup(info: BackupInfo, sd: SDCard,
             if abri is None:
                 base = Path(safety_dir)
                 stamp = datetime.now().strftime(STAMP_FORMAT)
-                abri = base / f"{stamp}_avant restauration"
+                nom = "%s_%s" % (stamp, tr("avant restauration"))
+                abri = base / nom
                 index = 2
                 while abri.exists():
-                    abri = base / f"{stamp}_avant restauration ({index})"
+                    abri = base / f"{nom} ({index})"
                     index += 1
                 abri.mkdir(parents=True)
             copie = abri / rel
@@ -435,14 +440,15 @@ def restore_backup(info: BackupInfo, sd: SDCard,
             abrites_octets += copie.stat().st_size
             return True
         except (OSError, shutil.Error) as exc:
-            errors.append(f"{rel} : copie de sécurité impossible ({exc}), "
-                          f"fichier laissé tel quel")
+            errors.append(tr("%s : copie de sécurité impossible (%s), "
+                             "fichier laissé tel quel") % (rel, exc))
             return False
 
     try:
         for i, (rel, source) in enumerate(sorted(files.items()), 1):
             if ".." in rel.replace("\\", "/").split("/") or ":" in rel:
-                errors.append(f"{rel} : chemin hors de la carte, ignoré")
+                errors.append(tr("%s : chemin hors de la carte, ignoré")
+                              % rel)
                 continue
             dst = sd.abs(rel)
             try:
@@ -468,16 +474,16 @@ def restore_backup(info: BackupInfo, sd: SDCard,
                         shutil.copy2(src, dst)
                 restored += 1
             except (OSError, shutil.Error, zipfile.BadZipFile) as exc:
-                errors.append(f"{rel} : {exc}")
+                errors.append(tr("%s : %s") % (rel, exc))
             if i % 50 == 0:
-                _report(f"Restauration — {i}/{len(files)}")
+                _report(tr("Restauration — %d/%d") % (i, len(files)))
     finally:
         if archive is not None:
             archive.close()
         if abri is not None:
             _write_manifest(abri, BackupInfo(
                 path=abri, when=datetime.now(), files=abrites,
-                bytes=abrites_octets, label="avant restauration",
+                bytes=abrites_octets, label=N_("avant restauration"),
                 include_samples=(abri / "SAMPLES").is_dir(),
                 source=str(sd.root)))
 

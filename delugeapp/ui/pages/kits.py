@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.fixedpoint import to_display
+from ...i18n import N_, tr, tr_stored
 from ..theme import PAD, PAD_GREEN, PAD_RED
 from ..widgets.common import (
     Card,
@@ -50,14 +51,15 @@ log = logging.getLogger(__name__)
 class KitsPage(Page):
     """Kits de batterie."""
 
-    TITLE = "Kits"
-    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
-                    "Vous verrez ici les rangées de chaque kit, les sons "
-                    "qu'elles utilisent et celles qui sont cassées.")
+    TITLE = N_("Kits")
+    EMPTY_DETAIL = N_("Indiquez l'emplacement de votre carte dans les "
+                      "réglages. Vous verrez ici les rangées de chaque kit, "
+                      "les sons qu'elles utilisent et celles qui sont "
+                      "cassées.")
     ICON = "kit"
     #: Aide du séquenceur d'essai, quand le motif a bien des rangées.
-    AIDE_MOTIF = ("Cliquez les pads pour composer un motif, puis écoutez le "
-                  "kit ou exportez le motif en MIDI.")
+    AIDE_MOTIF = N_("Cliquez les pads pour composer un motif, puis écoutez "
+                    "le kit ou exportez le motif en MIDI.")
 
     kitChosen = pyqtSignal(str)
 
@@ -77,32 +79,32 @@ class KitsPage(Page):
         outer.setSpacing(8)
 
         header, actions = self.header(
-            "Kits", "Rangées, échantillons et rangées cassées")
+            tr("Kits"), tr("Rangées, échantillons et rangées cassées"))
         outer.addWidget(header)
 
-        listen = tool_button("Écouter la rangée", "play", primary=True)
+        listen = tool_button(tr("Écouter la rangée"), "play", primary=True)
         listen.clicked.connect(self.guard(self._listen_row))
         actions.addWidget(listen)
 
-        listen_all = tool_button("Écouter le kit", "wave")
+        listen_all = tool_button(tr("Écouter le kit"), "wave")
         listen_all.clicked.connect(self.guard(self._listen_kit))
         actions.addWidget(listen_all)
 
-        stop = tool_button("Arrêter", "stop")
+        stop = tool_button(tr("Arrêter"), "stop")
         stop.clicked.connect(self.guard(self._stop))
         actions.addWidget(stop)
 
-        export = tool_button("Motif en MIDI", "export",
-                             "Exporter le motif d'essai en fichier MIDI")
+        export = tool_button(tr("Motif en MIDI"), "export",
+                             tr("Exporter le motif d'essai en fichier MIDI"))
         export.clicked.connect(self.guard(self._export_midi))
         actions.addWidget(export)
 
-        song = tool_button("Motif en morceau", "song")
+        song = tool_button(tr("Motif en morceau"), "song")
         song.clicked.connect(self.guard(self._song_from_motif))
         actions.addWidget(song)
 
         row = QHBoxLayout()
-        self._search = SearchBar("Rechercher un kit…")
+        self._search = SearchBar(tr("Rechercher un kit…"))
         self._search.searchChanged.connect(self.guard(lambda _t: self._reload()))
         row.addWidget(self._search, 1)
         holder = QWidget()
@@ -141,7 +143,7 @@ class KitsPage(Page):
         column.setSpacing(8)
 
         head = Card("")
-        self._name = ElidedLabel("Aucun kit sélectionné")
+        self._name = ElidedLabel(tr("Aucun kit sélectionné"))
         self._name.setProperty("role", "title")
         head.body().addWidget(self._name)
         self._path = ElidedLabel("")
@@ -152,11 +154,11 @@ class KitsPage(Page):
         head.body().addWidget(self._summary)
         column.addWidget(head)
 
-        rows_card = Card("Rangées")
+        rows_card = Card(tr("Rangées"))
         self._rows = QTableWidget(0, 6)
         self._rows.setHorizontalHeaderLabels(
-            ["Rangée", "Échantillon", "Présent", "Volume", "Decay",
-             "Polyphonie"])
+            [tr("Rangée"), tr("Échantillon"), tr("Présent"), tr("Volume"),
+             tr("Decay"), tr("Polyphonie")])
         self._rows.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
         self._rows.verticalHeader().setVisible(False)
@@ -169,14 +171,14 @@ class KitsPage(Page):
         rows_card.body().addWidget(self._rows)
         column.addWidget(rows_card, 2)
 
-        seq_card = Card("Motif d'essai")
-        self._seq_hint = QLabel(self.AIDE_MOTIF)
+        seq_card = Card(tr("Motif d'essai"))
+        self._seq_hint = QLabel(tr(self.AIDE_MOTIF))
         self._seq_hint.setProperty("role", "subtitle")
         self._seq_hint.setWordWrap(True)
         seq_card.body().addWidget(self._seq_hint)
 
         genre_row = QHBoxLayout()
-        genre_label = QLabel("Motif de départ")
+        genre_label = QLabel(tr("Motif de départ"))
         genre_label.setProperty("role", "subtitle")
         genre_row.addWidget(genre_label)
         self._genre = QComboBox()
@@ -214,10 +216,12 @@ class KitsPage(Page):
         # poussait les autres hors du cadre, sous une barre de défilement
         # horizontale.
         return [
-            ("Nom", get("name"), 190, left),
-            ("Dossier", dossier, 100, left),
-            ("Rangées", get("summary"), 90, left),
-            ("Taille", get("size"), 80, right, human_size),
+            (tr("Nom"), get("name"), 190, left),
+            (tr("Dossier"), dossier, 100, left),
+            # « 16 rangées », gardé en français dans l'index.
+            (tr("Rangées"), get("summary"), 90, left,
+             lambda v: "—" if v is None else tr_stored(str(v))),
+            (tr("Taille"), get("size"), 80, right, human_size),
         ]
 
     # -- chargement --------------------------------------------------------- #
@@ -241,7 +245,7 @@ class KitsPage(Page):
                     self.guard(lambda *_a: self._on_kit_selected()))
         else:
             self._model.set_rows(rows)
-        self._count.setText(f"{len(rows)} kit(s)")
+        self._count.setText(tr("%d kit(s)") % len(rows))
 
     def _on_kit_selected(self) -> None:
         if self._model is None or self._proxy is None:
@@ -273,7 +277,7 @@ class KitsPage(Page):
         except Exception as exc:  # noqa: BLE001
             log.debug("kit illisible %s : %s", rel, exc)
             self._kit = None
-            self._summary.setText(f"Fichier illisible : {exc}")
+            self._summary.setText(tr("Fichier illisible : %s") % exc)
             self._rows.setRowCount(0)
             return
 
@@ -291,15 +295,16 @@ class KitsPage(Page):
             # « SAMPLES/ARTISTS/Phil Elverum/ » huit fois pousse le nom hors
             # de la colonne. Le chemin entier reste dans l'infobulle.
             court = ref.replace("\\", "/").rsplit("/", 1)[-1]
-            file_item = QTableWidgetItem(court or "— aucun échantillon —")
+            file_item = QTableWidgetItem(court
+                                         or tr("— aucun échantillon —"))
             file_item.setToolTip(ref)
             self._rows.setItem(index, 1, file_item)
 
             if not ref:
-                present, label = False, "vide"
+                present, label = False, tr("vide")
             else:
                 present = self.sd.resolve_sample(ref) is not None
-                label = "oui" if present else "ABSENT"
+                label = tr("oui") if present else tr("ABSENT")
             if not present:
                 broken += 1
             state = QTableWidgetItem(label)
@@ -318,12 +323,12 @@ class KitsPage(Page):
         total = len(kit.rows)
         if broken:
             self._summary.setText(
-                f"{total} rangée(s), dont {broken} sans échantillon "
-                f"jouable — ces pads resteront muets sur la machine.")
+                tr("%d rangée(s), dont %d sans échantillon jouable — ces "
+                   "pads resteront muets sur la machine.") % (total, broken))
             self._summary.setStyleSheet(f"color: {PAD_RED};")
         else:
             self._summary.setText(
-                f"{total} rangée(s), toutes jouables.")
+                tr("%d rangée(s), toutes jouables.") % total)
             self._summary.setStyleSheet(f"color: {PAD_GREEN};")
 
         self._load_beat()
@@ -354,13 +359,13 @@ class KitsPage(Page):
             names = [row.name for row in self._kit.rows[:4]]
             pattern.tracks = {name: [] for name in names}
             self._seq_hint.setText(
-                "Aucune rangée de ce kit ne porte un nom de batterie "
-                "(KICK, SNARE, HAT…) : le motif « %s » n'a rien à "
-                "déclencher ici. La grille part vide sur les premières "
-                "rangées — cliquez les pads pour composer le vôtre."
+                tr("Aucune rangée de ce kit ne porte un nom de batterie "
+                   "(KICK, SNARE, HAT…) : le motif « %s » n'a rien à "
+                   "déclencher ici. La grille part vide sur les premières "
+                   "rangées — cliquez les pads pour composer le vôtre.")
                 % self._genre.currentText())
         else:
-            self._seq_hint.setText(self.AIDE_MOTIF)
+            self._seq_hint.setText(tr(self.AIDE_MOTIF))
         self._pattern = pattern
         self._sequencer.set_pattern(pattern)
 
@@ -381,14 +386,14 @@ class KitsPage(Page):
     def _listen_row(self) -> None:
         row = self._selected_kit_row()
         if row is None:
-            self.say("Choisissez une rangée.")
+            self.say(tr("Choisissez une rangée."))
             return
-        self.say(f"Rendu de « {row.name} »…")
+        self.say(tr("Rendu de « %s »…") % row.name)
         self.run(self._render_row, row.sound,
                  on_result=self.guard(self._play),
                  on_error=self.guard(
-                     lambda m: self.say(f"Rendu impossible : {m}")),
-                 title="Rendu de la rangée")
+                     lambda m: self.say(tr("Rendu impossible : %s") % m)),
+                 title=tr("Rendu de la rangée"))
 
     def _render_row(self, sound):
         from ...core import render
@@ -398,16 +403,16 @@ class KitsPage(Page):
 
     def _listen_kit(self) -> None:
         if self._kit is None:
-            self.say("Aucun kit sélectionné.")
+            self.say(tr("Aucun kit sélectionné."))
             return
         if self._jouer_sur_le_deluge():
             return
-        self.say("Rendu du kit…")
+        self.say(tr("Rendu du kit…"))
         self.run(self._render_kit, self._kit, self._pattern,
                  on_result=self.guard(self._play),
                  on_error=self.guard(
-                     lambda m: self.say(f"Rendu impossible : {m}")),
-                 title="Rendu du kit")
+                     lambda m: self.say(tr("Rendu impossible : %s") % m)),
+                 title=tr("Rendu du kit"))
 
     def _jouer_sur_le_deluge(self) -> bool:
         """Envoie le motif d'essai à la machine, si elle est branchée.
@@ -430,8 +435,8 @@ class KitsPage(Page):
         if not lien.play_pattern(self._pattern, bpm=128, row_notes=rangees,
                                  repeats=2):
             return False
-        self.say("Motif joué sur le Deluge (canal %d, rangées à partir de "
-                 "C1)." % lien.channel)
+        self.say(tr("Motif joué sur le Deluge (canal %d, rangées à partir "
+                    "de C1).") % lien.channel)
         return True
 
     def _render_kit(self, kit, pattern):
@@ -446,10 +451,10 @@ class KitsPage(Page):
         try:
             self.player.set_volume(self.ctx.settings.preview_volume)
             self.player.play_array(audio, 44100)
-            self.say("Lecture…")
+            self.say(tr("Lecture…"))
         except Exception as exc:  # noqa: BLE001
             log.debug("lecture impossible : %s", exc)
-            self.say(f"Lecture impossible : {exc}")
+            self.say(tr("Lecture impossible : %s") % exc)
 
     def _stop(self) -> None:
         if self.player is not None:
@@ -464,26 +469,26 @@ class KitsPage(Page):
         """Exporte le motif d'essai en fichier MIDI."""
         pattern = self._sequencer.pattern()
         if pattern is None or not any(pattern.tracks.values()):
-            self.say("Composez d'abord un motif.")
+            self.say(tr("Composez d'abord un motif."))
             return
 
         from PyQt6.QtWidgets import QFileDialog
 
         from ...core import midifile
 
-        default = f"{Path(self._current).stem or 'motif'}.mid"
+        default = "%s.mid" % (Path(self._current).stem or tr("motif"))
         chosen, _filter = QFileDialog.getSaveFileName(
-            self, "Exporter le motif en MIDI", default,
-            "Fichier MIDI (*.mid)")
+            self, tr("Exporter le motif en MIDI"), default,
+            tr("Fichier MIDI (*.mid)"))
         if not chosen:
             return
         try:
             midifile.pattern_to_midi(Path(chosen), pattern, None, 128)
         except Exception as exc:  # noqa: BLE001
             log.exception("export MIDI impossible")
-            self.say(f"Export impossible : {exc}")
+            self.say(tr("Export impossible : %s") % exc)
             return
-        self.say(f"Motif exporté : {Path(chosen).name}")
+        self.say(tr("Motif exporté : %s") % Path(chosen).name)
 
     # -- morceau du Deluge -------------------------------------------------- #
 
@@ -497,10 +502,10 @@ class KitsPage(Page):
         """
         pattern = self._sequencer.pattern()
         if pattern is None or not any(pattern.tracks.values()):
-            self.say("Composez d'abord un motif.")
+            self.say(tr("Composez d'abord un motif."))
             return
         if self._kit is None or not self._current:
-            self.say("Choisissez d'abord un kit.")
+            self.say(tr("Choisissez d'abord un kit."))
             return
         rel = self._current
         model = self._kit
@@ -511,7 +516,7 @@ class KitsPage(Page):
             doc = dxml.load(card.abs(rel))
             root = doc.root if doc.root.tag == "kit" else doc.root.find("kit")
             if root is None:
-                raise ValueError("ce fichier ne contient pas de kit")
+                raise ValueError(tr("ce fichier ne contient pas de kit"))
             rows = songwriter.drum_rows(pattern.tracks, model)
             dossier = str(Path(rel).parent).replace("\\", "/")
             return songwriter.pattern_song(
@@ -520,7 +525,7 @@ class KitsPage(Page):
                 folder=dossier if dossier not in ("", ".") else "KITS",
                 sd=card)
 
-        self.write_song(build, f"{Path(rel).stem} motif")
+        self.write_song(build, tr("%s motif") % Path(rel).stem)
 
 
     # -- rafraîchissement --------------------------------------------------- #

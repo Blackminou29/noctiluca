@@ -30,6 +30,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 
+from ..i18n import N_, tr
 from .fixedpoint import INT32_MAX, INT32_MIN, from_display
 from .genres import ROLES, GenreProfile, genre as get_genre
 from .model import (
@@ -935,33 +936,35 @@ def suggest_name(opts: GenOptions, seed: int) -> str:
 
 
 def describe(preset: SynthPreset) -> str:
-    """Description française du son, telle qu'on la lirait dans un magazine."""
+    """Description du son, telle qu'on la lirait dans un magazine, dans la
+    langue de l'interface."""
     sound = preset.sound
     parts: list[str] = []
 
-    labels = {"subtractive": "soustractive", "fm": "FM", "ringmod": "ring mod"}
-    parts.append(f"Synthèse {labels.get(sound.mode, sound.mode)}")
+    labels = {"subtractive": N_("soustractive"), "fm": "FM",
+              "ringmod": N_("ring mod")}
+    parts.append(tr("Synthèse %s") % tr(labels.get(sound.mode, sound.mode)))
 
     oscs = sound.osc_label(sound.osc1)
     if sound.display("oscBVolume") > 6:
         oscs += f" + {sound.osc_label(sound.osc2)}"
-    parts.append(f"oscillateurs {oscs}")
+    parts.append(tr("oscillateurs %s") % oscs)
 
     cutoff = sound.display("lpfFrequency")
     resonance = sound.display("lpfResonance")
     if cutoff < 16:
-        colour = "très sombre"
+        colour = tr("très sombre")
     elif cutoff < 28:
-        colour = "sombre"
+        colour = tr("sombre")
     elif cutoff < 40:
-        colour = "équilibré"
+        colour = tr("équilibré")
     else:
-        colour = "brillant"
-    filtre = f"filtre {sound.lpf_mode} {colour}"
+        colour = tr("brillant")
+    filtre = tr("filtre %s %s") % (sound.lpf_mode, colour)
     if resonance > 32:
-        filtre += ", très résonant"
+        filtre += tr(", très résonant")
     elif resonance > 18:
-        filtre += ", résonant"
+        filtre += tr(", résonant")
     parts.append(filtre)
 
     from .fixedpoint import to_display
@@ -970,53 +973,55 @@ def describe(preset: SynthPreset) -> str:
     r = to_display(sound.env1.release)
     s = to_display(sound.env1.sustain)
     if a < 6:
-        shape = "attaque immédiate"
+        shape = tr("attaque immédiate")
     elif a < 18:
-        shape = "attaque douce"
+        shape = tr("attaque douce")
     else:
-        shape = "attaque lente"
+        shape = tr("attaque lente")
     if s < 8:
-        shape += ", son percussif"
+        shape += tr(", son percussif")
     elif r > 30:
-        shape += ", longue extinction"
+        shape += tr(", longue extinction")
     parts.append(shape)
 
     if sound.unison_num > 2:
-        parts.append(f"{sound.unison_num} voix désaccordées")
+        parts.append(tr("%d voix désaccordées") % sound.unison_num)
 
-    jeu = {"mono": "jeu monophonique", "legato": "jeu legato"}.get(
+    jeu = {"mono": tr("jeu monophonique"), "legato": tr("jeu legato")}.get(
         sound.polyphonic, "")
     if sound.display("portamento") > 0:
-        jeu = (jeu + ", glissé d'une note à l'autre") if jeu else             "glissé d'une note à l'autre"
+        glisse = tr("glissé d'une note à l'autre")
+        jeu = "%s, %s" % (jeu, glisse) if jeu else glisse
     if jeu:
         parts.append(jeu)
 
-    divisions = {5: "noires", 6: "croches", 7: "doubles-croches",
-                 8: "triples-croches"}
-    fx = [f"delay en {divisions[sound.delay_sync_level]}"
+    divisions = {5: N_("noires"), 6: N_("croches"), 7: N_("doubles-croches"),
+                 8: N_("triples-croches")}
+    fx = [tr("delay en %s") % tr(divisions[sound.delay_sync_level])
           if f == "delay" and sound.delay_sync_level in divisions else f
           for f in sound.fx_list()]
     if fx:
-        parts.append("effets : " + ", ".join(fx).lower())
+        parts.append(tr("effets : %s") % ", ".join(fx).lower())
 
     if sound.mode == "fm":
         ecart = sound.modulator1.transpose
         if ecart:
-            parts.append(f"modulateur à {ecart:+d} demi-tons")
+            parts.append(tr("modulateur à %+d demi-tons") % ecart)
         else:
-            parts.append("modulateur à l'unisson")
+            parts.append(tr("modulateur à l'unisson"))
 
     if sound.arp.is_on:
-        sens = {"up": "montant", "down": "descendant", "upDown": "aller-retour",
-                "random": "aléatoire", "asPlayed": "dans l'ordre joué"}
+        sens = {"up": N_("montant"), "down": N_("descendant"),
+                "upDown": N_("aller-retour"), "random": N_("aléatoire"),
+                "asPlayed": N_("dans l'ordre joué")}
+        mode = sound.arp.note_mode or "up"
+        texte = tr("arpégiateur %s") % tr(sens.get(mode, mode))
         division = divisions.get(sound.arp.sync_level, "")
-        texte = "arpégiateur " + sens.get(sound.arp.note_mode or "up",
-                                          sound.arp.note_mode or "")
         if division:
-            texte += f" en {division}"
+            texte += tr(" en %s") % tr(division)
         parts.append(texte)
 
     if sound.patch_cables:
-        parts.append(f"{len(sound.patch_cables)} modulation(s)")
+        parts.append(tr("%d modulation(s)") % len(sound.patch_cables))
 
     return ". ".join(parts) + "."

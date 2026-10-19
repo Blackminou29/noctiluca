@@ -53,6 +53,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from ..i18n import tr
 from . import delugefiles, delugesysex, midifollow, midiport
 
 log = logging.getLogger(__name__)
@@ -154,19 +155,19 @@ class LinkState:
     def summary(self) -> str:
         """Phrase d'état, prête pour la barre de statut."""
         if not self.supported:
-            return "MIDI indisponible sur cette machine."
+            return tr("MIDI indisponible sur cette machine.")
         if not self.out_name:
             if self.error:
-                return "Deluge non connecté : %s." % self.error
+                return tr("Deluge non connecté : %s.") % self.error
             if any("deluge" in n.casefold() for n in self.ports_out):
-                return "Deluge détecté, mais pas encore connecté."
-            return "Aucun Deluge détecté. Branchez-le en USB."
+                return tr("Deluge détecté, mais pas encore connecté.")
+            return tr("Aucun Deluge détecté. Branchez-le en USB.")
         qui = "Deluge" if self.deluge_out else self.out_name
         if self.firmware:
             qui += " " + self.firmware
         if self.in_name:
-            return "Connecté à %s, dans les deux sens." % qui
-        return "Connecté à %s (envoi seulement)." % qui
+            return tr("Connecté à %s, dans les deux sens.") % qui
+        return tr("Connecté à %s (envoi seulement).") % qui
 
 
 class DelugeLink:

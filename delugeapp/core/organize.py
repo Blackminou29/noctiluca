@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from ..i18n import N_, integer, plural, tr
 from . import deps
 from .analysis import DRUM_CATEGORIES
 from .db import Library
@@ -36,6 +37,7 @@ from .sdcard import (
     norm_rel,
     safe_deluge_name,
 )
+from .units import human_size
 
 log = logging.getLogger(__name__)
 
@@ -94,20 +96,24 @@ class Plan:
         return out
 
     def summary(self) -> str:
-        """Résumé en français, affichable tel quel."""
+        """Résumé dans la langue de l'interface, affichable tel quel."""
         if not self.ops:
-            return "Aucune modification à faire."
-        labels = {"move": "déplacement", "rename": "renommage",
-                  "delete": "suppression", "mkdir": "création de dossier",
-                  "relink": "références à réécrire"}
+            return tr("Aucune modification à faire.")
+        labels = {"move": (N_("%d déplacement"), N_("%d déplacements")),
+                  "rename": (N_("%d renommage"), N_("%d renommages")),
+                  "delete": (N_("%d suppression"), N_("%d suppressions")),
+                  "mkdir": (N_("%d création de dossier"),
+                            N_("%d créations de dossier")),
+                  "relink": (N_("%d référence à réécrire"),
+                             N_("%d références à réécrire"))}
         counts = self.counts()
         parts = []
         for kind, count in sorted(counts.items(), key=lambda kv: -kv[1]):
-            label = labels.get(kind, kind)
-            if count > 1 and not label.endswith("s"):
-                label += "s"
-            parts.append(f"{count} {label}")
-        head = f"{self.title} : " if self.title else ""
+            if kind in labels:
+                parts.append(plural(count, *labels[kind]) % count)
+            else:
+                parts.append("%d %s" % (count, kind))
+        head = tr("%s : ") % self.title if self.title else ""
         return head + ", ".join(parts) + "."
 
     def to_text(self) -> str:
@@ -159,7 +165,8 @@ class Plan:
                 op.src.mkdir(parents=True, exist_ok=True)
                 done += 1
             except OSError as exc:
-                errors.append(f"Création de {op.src} impossible : {exc}")
+                errors.append(tr("Création de %s impossible : %s")
+                              % (op.src, exc))
 
         # 2. Déplacements et renommages
         for op in self.ops:
@@ -168,12 +175,13 @@ class Plan:
             _report(op.src.name)
             try:
                 if not op.src.exists():
-                    errors.append(f"{sd.rel(op.src)} : fichier introuvable")
+                    errors.append(tr("%s : fichier introuvable")
+                                  % sd.rel(op.src))
                     continue
                 if op.dst.exists() and not _same_file(op.src, op.dst):
                     errors.append(
-                        f"{sd.rel(op.dst)} existe déjà : {sd.rel(op.src)} "
-                        f"n'a pas été déplacé")
+                        tr("%s existe déjà : %s n'a pas été déplacé")
+                        % (sd.rel(op.dst), sd.rel(op.src)))
                     continue
                 op.dst.parent.mkdir(parents=True, exist_ok=True)
                 old_rel = sd.rel(op.src)
@@ -184,7 +192,8 @@ class Plan:
                 lib.move(_kind_of(old_rel), old_rel, new_rel)
                 done += 1
             except (OSError, shutil.Error) as exc:
-                errors.append(f"Déplacement de {sd.rel(op.src)} impossible : {exc}")
+                errors.append(tr("Déplacement de %s impossible : %s")
+                              % (sd.rel(op.src), exc))
 
         # 3. Références à rediriger, de deux provenances :
         #    - une suppression de doublon pointe vers l'exemplaire conservé ;
@@ -203,8 +212,9 @@ class Plan:
             garde = sd.abs(mapping.get(sd.rel(op.dst), sd.rel(op.dst)))
             if not _identical(op.src, garde):
                 refuses.add(index)
-                errors.append(f"{sd.rel(op.src)} conservé : il ne correspond "
-                              f"plus à {sd.rel(garde)} octet pour octet")
+                errors.append(tr("%s conservé : il ne correspond plus à %s "
+                                 "octet pour octet")
+                              % (sd.rel(op.src), sd.rel(garde)))
 
         redirections: dict[str, str] = {}
         for index, op in enumerate(self.ops):
@@ -222,7 +232,7 @@ class Plan:
         relink_ok = True
         if mapping:
             sd.invalidate_cache()
-            _report("Réécriture des références…")
+            _report(tr("Réécriture des références…"))
             failures: list[str] = []
             try:
                 changed = deps.relink_many(sd, mapping, apply=True,
@@ -232,7 +242,7 @@ class Plan:
                 log.info("%d fichier(s) XML mis à jour", len(changed))
             except Exception as exc:  # noqa: BLE001
                 log.exception("réécriture des références en échec")
-                failures.append(f"Réécriture des références : {exc}")
+                failures.append(tr("Réécriture des références : %s") % exc)
             if failures:
                 relink_ok = False
                 errors.extend(failures)
@@ -247,8 +257,9 @@ class Plan:
             if op.kind != "delete" or index in refuses:
                 continue
             if op.dst is not None and not relink_ok:
-                errors.append(f"{sd.rel(op.src)} conservé : ses références "
-                              f"n'ont pas pu être toutes redirigées")
+                errors.append(tr("%s conservé : ses références n'ont pas "
+                                 "pu être toutes redirigées")
+                              % sd.rel(op.src))
                 continue
             _report(op.src.name)
             try:
@@ -261,7 +272,8 @@ class Plan:
                 lib.forget(_kind_of(sd.rel(op.src)), sd.rel(op.src))
                 done += 1
             except OSError as exc:
-                errors.append(f"Suppression de {sd.rel(op.src)} impossible : {exc}")
+                errors.append(tr("Suppression de %s impossible : %s")
+                              % (sd.rel(op.src), exc))
 
         sd.invalidate_cache()
         # L'index suit les fichiers : le diagnostic relancé juste après doit
@@ -335,7 +347,7 @@ def plan_auto_classify_drums(sd: SDCard, lib: Library) -> Plan:
     les échantillons classés ``Other`` sont laissés où ils sont, parce qu'un
     rangement douteux est plus gênant qu'un fichier non rangé.
     """
-    plan = Plan(title="Classement automatique des percussions")
+    plan = Plan(title=tr("Classement automatique des percussions"))
     try:
         from . import analysis
         from . import wav
@@ -371,7 +383,7 @@ def plan_auto_classify_drums(sd: SDCard, lib: Library) -> Plan:
         if norm_rel(str(Path(rel).parent)) == norm_rel(dst_dir):
             continue
         plan.ops.append(Op("move", path, sd.abs(f"{dst_dir}/{path.name}"),
-                           f"reconnu comme « {category} »"))
+                           tr("reconnu comme « %s »") % category))
     return plan
 
 
@@ -386,7 +398,7 @@ def plan_dedupe(sd: SDCard, lib: Library,
     :param keep: lequel garder — ``shortest_path`` (défaut), ``longest_path``,
         ``most_used``, ``oldest`` ou ``newest``.
     """
-    plan = Plan(title="Suppression des doublons")
+    plan = Plan(title=tr("Suppression des doublons"))
     if keep not in KEEP_STRATEGIES:
         log.warning("critère de conservation inconnu : %r", keep)
         keep = "shortest_path"
@@ -415,8 +427,9 @@ def plan_dedupe(sd: SDCard, lib: Library,
             if path is None:
                 continue
             used = row["used_count"] or 0
-            note = (f"identique à {kept['rel']}"
-                    + (f" ; {used} référence(s) redirigée(s)" if used else ""))
+            note = (tr("identique à %s") % kept["rel"]
+                    + (tr(" ; %d référence(s) redirigée(s)") % used
+                       if used else ""))
             # dst porte le fichier conservé : apply() redirigera les références.
             plan.ops.append(Op("delete", path, kept_path, note))
     return plan
@@ -470,7 +483,7 @@ def plan_rename(sd: SDCard, items: list[str], pattern: str,
     :param pattern: motif, cf. :func:`_format_pattern`.
     :param apply_case: ``'upper'``, ``'lower'``, ``'title'`` ou ``''``.
     """
-    plan = Plan(title="Renommage")
+    plan = Plan(title=tr("Renommage"))
     rows_by_rel: dict[str, object] = {}
     if lib is not None:
         try:
@@ -503,7 +516,8 @@ def plan_rename(sd: SDCard, items: list[str], pattern: str,
         if norm_rel(sd.rel(path)) == key:
             continue
         taken.add(key)
-        plan.ops.append(Op("rename", path, dst, f"motif « {pattern} »"))
+        plan.ops.append(Op("rename", path, dst,
+                           tr("motif « %s »") % pattern))
     return plan
 
 
@@ -513,7 +527,7 @@ def plan_flatten(sd: SDCard, folder: str) -> Plan:
     Les collisions de noms sont évitées en préfixant le nom du sous-dossier
     d'origine, ce qui garde l'information plutôt que de numéroter.
     """
-    plan = Plan(title=f"Mise à plat de {folder}")
+    plan = Plan(title=tr("Mise à plat de %s") % folder)
     base = sd.resolve_sample(folder)
     if base is None or not base.is_dir():
         return plan
@@ -538,7 +552,7 @@ def plan_flatten(sd: SDCard, folder: str) -> Plan:
             name = f"{prefix} - {path.name}"
         seen.add(name.lower())
         plan.ops.append(Op("move", path, base / name,
-                           f"remonté de {path.parent.name}"))
+                           tr("remonté de %s") % path.parent.name))
     return plan
 
 
@@ -548,7 +562,7 @@ def plan_group_by(sd: SDCard, lib: Library, key: str) -> Plan:
     :param key: ``'category'``, ``'bpm'``, ``'key'``, ``'duration'`` ou
         ``'artist'``.
     """
-    plan = Plan(title=f"Regroupement par {key}")
+    plan = Plan(title=tr("Regroupement par %s") % key)
     for row in lib.search_samples(limit=100000):
         rel = row["rel"]
         path = sd.resolve_sample(rel)
@@ -585,13 +599,15 @@ def _bucket_for(row, key: str) -> str:
         dur = row["duration"] or 0.0
         if dur <= 0:
             return ""
+        # Des noms de dossiers, dans la langue de l'interface au moment du
+        # rangement.
         if dur < 1:
-            return "Moins de 1 s"
+            return tr("Moins de 1 s")
         if dur < 5:
-            return "1 a 5 s"
+            return tr("1 a 5 s")
         if dur < 30:
-            return "5 a 30 s"
-        return "Plus de 30 s"
+            return tr("5 a 30 s")
+        return tr("Plus de 30 s")
     if key == "artist":
         parts = Path(row["rel"]).parts
         return parts[2] if len(parts) > 3 and parts[1].upper() == "ARTISTS" else ""
@@ -605,7 +621,7 @@ def plan_purge_junk(sd: SDCard) -> Plan:
     écartées du parcours, et leur suppression n'est pas du ressort de cette
     application.
     """
-    plan = Plan(title="Nettoyage des fichiers parasites")
+    plan = Plan(title=tr("Nettoyage des fichiers parasites"))
     # Parcours par ``os.scandir`` plutôt que ``rglob`` : les dossiers ignorés
     # sont élagués au lieu d'être parcourus puis écartés, seuls des noms —
     # des chaînes — sont comparés, et sous Windows la taille vient avec
@@ -643,7 +659,8 @@ def plan_purge_junk(sd: SDCard) -> Plan:
             log.debug("dossier illisible pendant le nettoyage : %s", exc)
     for chemin, size in sorted(junk, key=lambda item: Path(item[0])):
         plan.ops.append(Op("delete", Path(chemin), None,
-                           f"fichier parasite ({size} octets)"))
+                           tr("fichier parasite (%s octets)")
+                           % integer(size)))
         plan.size += size
     return plan
 
@@ -656,7 +673,7 @@ def plan_archive_unused(sd: SDCard, lib: Library,
     « aucun XML de cette carte ne le cite », ce qui n'empêche pas
     l'utilisateur d'y tenir.
     """
-    plan = Plan(title="Archivage des échantillons inutilisés")
+    plan = Plan(title=tr("Archivage des échantillons inutilisés"))
     base = str(dest or DEFAULT_UNUSED_DIR).strip("/") or DEFAULT_UNUSED_DIR
     for row in lib.unused_samples():
         rel = row["rel"]
@@ -671,15 +688,15 @@ def plan_archive_unused(sd: SDCard, lib: Library,
             inner = inner.relative_to("SAMPLES")
         except ValueError:
             pass
-        size_mb = (row["size"] or 0) / (1024 * 1024)
         plan.ops.append(Op("move", path, sd.abs(f"{base}/{inner.as_posix()}"),
-                           f"inutilisé ({size_mb:.1f} Mio)"))
+                           tr("inutilisé (%s)")
+                           % human_size(row["size"] or 0)))
     return plan
 
 
 def plan_fix_names(sd: SDCard, lib: Library) -> Plan:
     """Corrige les noms incompatibles avec FAT32 ou l'écran du Deluge."""
-    plan = Plan(title="Correction des noms de fichiers")
+    plan = Plan(title=tr("Correction des noms de fichiers"))
     seen: set[str] = set()
 
     def _consider(rel: str, path: Path | None) -> None:
@@ -729,12 +746,12 @@ def _preset_names_in_songs(sd: SDCard) -> set[str]:
 
 def plan_create_drum_folders(sd: SDCard) -> Plan:
     """Crée l'arborescence ``SAMPLES/DRUMS/<catégorie>`` attendue par le Deluge."""
-    plan = Plan(title="Création de l'arborescence des percussions")
+    plan = Plan(title=tr("Création de l'arborescence des percussions"))
     for category in DRUM_CATEGORIES:
         if category == "Other":
             continue
         target = sd.abs(f"SAMPLES/DRUMS/{category}")
         if not target.is_dir():
             plan.ops.append(Op("mkdir", target, None,
-                               "dossier de percussion standard"))
+                               tr("dossier de percussion standard")))
     return plan

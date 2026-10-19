@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.scan import scan_card
+from ...i18n import N_, clock, day_month, integer, tr
 from ..theme import (
     GOLD,
     GREY,
@@ -82,11 +83,14 @@ ISSUE_DESTINATION: dict[str, str] = {
 #: Où s'ouvre un fichier reçu du Deluge, selon son dossier : page, et ce
 #: qu'il est, en un mot.
 ARRIVAL_PAGES: dict[str, tuple[str, str]] = {
-    "SONGS": ("Songs", "morceau"),
-    "SYNTHS": ("Synths", "preset"),
-    "KITS": ("Kits", "kit"),
-    "SAMPLES": ("Samples", "son"),
+    "SONGS": ("Songs", N_("morceau")),
+    "SYNTHS": ("Synths", N_("preset")),
+    "KITS": ("Kits", N_("kit")),
+    "SAMPLES": ("Samples", N_("son")),
 }
+
+#: Le nom des pages où mènent les anomalies, pour dire où l'on va.
+_PAGE_NAMES = {"Health": N_("Santé")}
 
 
 def _quand(instant: float) -> str:
@@ -94,12 +98,17 @@ def _quand(instant: float) -> str:
     moment = datetime.fromtimestamp(float(instant))
     jour = moment.date()
     if jour == date.today():
-        texte = "aujourd'hui"
-    elif jour == date.today() - timedelta(days=1):
-        texte = "hier"
-    else:
-        texte = "le %s" % moment.strftime("%d/%m")
-    return "%s à %s" % (texte, moment.strftime("%Hh%M"))
+        return tr("aujourd'hui à %s") % clock(moment)
+    if jour == date.today() - timedelta(days=1):
+        return tr("hier à %s") % clock(moment)
+    return tr("le %s à %s") % (day_month(moment), clock(moment))
+
+
+def _lieu(cible: str) -> str:
+    """« Health#Manquants » dit à l'utilisateur : « Santé › Manquants »."""
+    page, _diese, partie = cible.partition("#")
+    nom = tr(_PAGE_NAMES.get(page, page))
+    return "%s › %s" % (nom, tr(partie)) if partie else nom
 
 
 class _LigneAnomalie(QWidget):
@@ -125,7 +134,7 @@ class _LigneAnomalie(QWidget):
 class DashboardPage(Page):
     """Vue d'ensemble de la carte."""
 
-    TITLE = "Tableau de bord"
+    TITLE = N_("Tableau de bord")
     ICON = "dashboard"
 
     #: Demande d'aller sur une autre page, par son nom de classe abrégé.
@@ -163,7 +172,7 @@ class DashboardPage(Page):
         # barre d'en-tête de la fenêtre garde le « Analyser » global
         # (Ctrl+R), un seul au lieu de deux voisins identiques.
         header, _actions = self.header(
-            "Tableau de bord", "Ce que contient la carte, et son état")
+            tr("Tableau de bord"), tr("Ce que contient la carte, et son état"))
         outer.addWidget(header)
 
         self._progress = BusyBar()
@@ -211,7 +220,7 @@ class DashboardPage(Page):
 
     def _build_next_step(self) -> QWidget:
         """Le bandeau « et maintenant ? », caché quand il n'a rien à dire."""
-        self._next_card = Card("À faire maintenant", color=self.color)
+        self._next_card = Card(tr("À faire maintenant"), color=self.color)
         body = self._next_card.body()
 
         row = QHBoxLayout()
@@ -278,10 +287,10 @@ class DashboardPage(Page):
         compte = sum(int((stats or {}).get(cle, 0) or 0)
                      for cle in ("samples", "synths", "kits", "songs"))
         if compte == 0:
-            return ("Cette carte n'a jamais été lue. L'analyse construit "
-                    "l'index qui fait vivre toutes les autres pages — elle "
-                    "ne modifie rien.",
-                    "Analyser la carte", "@scan", "refresh", self.color)
+            return (tr("Cette carte n'a jamais été lue. L'analyse construit "
+                       "l'index qui fait vivre toutes les autres pages — "
+                       "elle ne modifie rien."),
+                    tr("Analyser la carte"), "@scan", "refresh", self.color)
 
         anomalies = {i.code: i for i in getattr(report, "issues", ())}
 
@@ -293,10 +302,10 @@ class DashboardPage(Page):
         manque = anomalies.get("NO_BACKUP")
         miroir = self.ctx.settings.card_backup_path()
         if manque is not None and (miroir is None or not miroir.is_dir()):
-            return ("Aucune sauvegarde de cette carte. Avant toute "
-                    "correction, une copie complète évite de perdre des "
-                    "mois de travail.",
-                    "Sauvegarder", "Health#Sauvegardes", "backup",
+            return (tr("Aucune sauvegarde de cette carte. Avant toute "
+                       "correction, une copie complète évite de perdre des "
+                       "mois de travail."),
+                    tr("Sauvegarder"), "Health#Sauvegardes", "backup",
                     page_color("Health"))
 
         # Ce que le Deluge vient d'enregistrer n'est nulle part ailleurs que
@@ -306,43 +315,43 @@ class DashboardPage(Page):
         en_retard = travail.backup_missing() if (
             travail is not None and travail.working_on_copy()) else 0
         if en_retard:
-            return ("Votre sauvegarde n'a pas encore %d fichier(s) de la "
-                    "carte — ce que vous avez enregistré sur le Deluge ou "
-                    "créé ici depuis sa dernière mise à jour." % en_retard,
-                    "Mettre à jour la sauvegarde", "@backup", "backup",
+            return (tr("Votre sauvegarde n'a pas encore %d fichier(s) de la "
+                       "carte — ce que vous avez enregistré sur le Deluge ou "
+                       "créé ici depuis sa dernière mise à jour.") % en_retard,
+                    tr("Mettre à jour la sauvegarde"), "@backup", "backup",
                     page_color("Health"))
 
         absents = anomalies.get("MISSING_SAMPLE")
         if absents is not None and absents.count:
-            return ("%d échantillon(s) réclamé(s) par des presets sont "
-                    "absents de la carte : ces pads resteront muets sur la "
-                    "machine." % absents.count,
-                    "Les retrouver", "Health#Manquants", "warning",
+            return (tr("%d échantillon(s) réclamé(s) par des presets sont "
+                       "absents de la carte : ces pads resteront muets sur "
+                       "la machine.") % absents.count,
+                    tr("Les retrouver"), "Health#Manquants", "warning",
                     page_color("Health"))
 
         doublons = anomalies.get("DUPLICATE_SAMPLE")
         if doublons is not None and doublons.count:
-            return ("%d fichier(s) en double, vérifiés octet par octet : "
-                    "de la place à récupérer sans rien perdre."
+            return (tr("%d fichier(s) en double, vérifiés octet par octet "
+                       ": de la place à récupérer sans rien perdre.")
                     % doublons.count,
-                    "Voir les doublons", "Health#Doublons", "copy",
+                    tr("Voir les doublons"), "Health#Doublons", "copy",
                     page_color("Health"))
 
         inutilises = anomalies.get("ORPHAN_SAMPLE")
         if inutilises is not None and inutilises.count > 200:
-            return ("%d échantillons ne servent à aucun preset, kit ni "
-                    "morceau. Les archiver allège la carte sans rien "
-                    "supprimer." % inutilises.count,
-                    "Les ranger", "Health#Inutilisés", "folder",
+            return (tr("%d échantillons ne servent à aucun preset, kit ni "
+                       "morceau. Les archiver allège la carte sans rien "
+                       "supprimer.") % inutilises.count,
+                    tr("Les ranger"), "Health#Inutilisés", "folder",
                     page_color("Health"))
 
         # Rien ne cloche : on propose de créer, ce pour quoi la carte est
         # faite.
-        return ("La carte est en ordre. De quoi fabriquer un son : le "
-                "générateur part d'un genre et vous rend un preset prêt à "
-                "enregistrer.",
-                "Générer un preset", "Generator#Preset de synthé", "wand",
-                page_color("Generator"))
+        return (tr("La carte est en ordre. De quoi fabriquer un son : le "
+                   "générateur part d'un genre et vous rend un preset prêt "
+                   "à enregistrer."),
+                tr("Générer un preset"), "Generator#Preset de synthé",
+                "wand", page_color("Generator"))
 
     # -- le Deluge et le PC ---------------------------------------------------- #
 
@@ -354,7 +363,7 @@ class DashboardPage(Page):
         un échange ne laissait qu'un message de dix secondes dans la barre
         d'état, et rien ne disait ce qui attendait la prochaine connexion.
         """
-        card = Card("Le Deluge et le PC", color=PAD_GREEN)
+        card = Card(tr("Le Deluge et le PC"), color=PAD_GREEN)
         self._exchanges_card = card
         body = card.body()
 
@@ -373,19 +382,20 @@ class DashboardPage(Page):
         self._link_detail.setWordWrap(True)
         textes.addWidget(self._link_detail)
         haut.addLayout(textes, 1)
-        self._sync_button = tool_button("Synchroniser", "refresh",
+        self._sync_button = tool_button(tr("Synchroniser"), "refresh",
                                         color=PAD_GREEN)
         # Une lambda, pas ``emit`` lui-même : ``emit`` accepte tout, et
         # ``guard`` lui transmettrait le booléen de ``clicked``.
         self._sync_button.clicked.connect(
             self.guard(lambda: self.syncRequested.emit()))
         haut.addWidget(self._sync_button)
-        self._send_button = tool_button("Envoyer des fichiers…", "import",
-                                        color=PAD_GREEN)
+        self._send_button = tool_button(tr("Envoyer des fichiers…"),
+                                        "import", color=PAD_GREEN)
         self._send_button.clicked.connect(
             self.guard(lambda: self.sendRequested.emit([], "")))
         haut.addWidget(self._send_button)
-        self._goto_card_button = tool_button("Carte du Deluge…", "settings",
+        self._goto_card_button = tool_button(tr("Carte du Deluge…"),
+                                             "settings",
                                              color=page_color("Settings"))
         self._goto_card_button.clicked.connect(
             self.guard(lambda: self.navigateRequested.emit("Settings")))
@@ -394,7 +404,7 @@ class DashboardPage(Page):
         hote.setLayout(haut)
         body.addWidget(hote)
 
-        self._arrivals_title = QLabel("Reçu du Deluge")
+        self._arrivals_title = QLabel(tr("Reçu du Deluge"))
         self._arrivals_title.setProperty("role", "subtitle")
         body.addWidget(self._arrivals_title)
         self._arrivals = QVBoxLayout()
@@ -406,7 +416,7 @@ class DashboardPage(Page):
         self._backup_text = QLabel("")
         self._backup_text.setWordWrap(True)
         ligne.addWidget(self._backup_text, 1)
-        self._backup_button = tool_button("Mettre à jour la sauvegarde",
+        self._backup_button = tool_button(tr("Mettre à jour la sauvegarde"),
                                           "backup",
                                           color=page_color("Health"))
         self._backup_button.clicked.connect(
@@ -416,9 +426,9 @@ class DashboardPage(Page):
         self._backup_row.setLayout(ligne)
         body.addWidget(self._backup_row)
 
-        self._drop_hint = QLabel(
+        self._drop_hint = QLabel(tr(
             "Glissez sur la fenêtre des sons, des presets ou un pack entier : "
-            "ils partent sur le Deluge, le plan montré d'abord.")
+            "ils partent sur le Deluge, le plan montré d'abord."))
         self._drop_hint.setWordWrap(True)
         self._drop_hint.setProperty("role", "subtitle")
         self._drop_hint.setStyleSheet(
@@ -464,45 +474,46 @@ class DashboardPage(Page):
                                     and self._next_target != "@backup")
         if manque:
             self._backup_text.setText(
-                "Votre sauvegarde n'a pas encore %d fichier(s) de la carte."
-                % manque)
+                tr("Votre sauvegarde n'a pas encore %d fichier(s) de la "
+                   "carte.") % manque)
 
         if role == "sauvegarde":
             self._set_link(GREY, "backup",
-                           "Vous regardez la sauvegarde de la carte, en "
-                           "lecture seule.",
-                           "Pour échanger avec le Deluge, l'application "
-                           "travaille sur sa carte : Réglages ▸ Carte du "
-                           "Deluge.")
+                           tr("Vous regardez la sauvegarde de la carte, en "
+                              "lecture seule."),
+                           tr("Pour échanger avec le Deluge, l'application "
+                              "travaille sur sa carte : Réglages ▸ Carte du "
+                              "Deluge."))
             return
         if not sur_la_copie:
             self._set_link(PAD_CYAN, "folder",
-                           "Carte ouverte directement%s." % (
-                               " dans un lecteur du PC" if role == "carte"
-                               else ""),
-                           "Ce que vous y envoyez est copié tout de suite. "
-                           "Avec le firmware 1.3, la carte peut rester dans "
-                           "le Deluge : Réglages ▸ Carte du Deluge.")
+                           tr("Carte ouverte directement dans un lecteur du "
+                              "PC.") if role == "carte"
+                           else tr("Carte ouverte directement."),
+                           tr("Ce que vous y envoyez est copié tout de suite. "
+                              "Avec le firmware 1.3, la carte peut rester "
+                              "dans le Deluge : Réglages ▸ Carte du Deluge."))
             return
 
         if travail.busy:
             couleur, icone, etat = (PAD_AMBER, "refresh",
-                                    "Synchronisation avec le Deluge…")
+                                    tr("Synchronisation avec le Deluge…"))
         elif usb:
             couleur, icone, etat = (PAD_GREEN, "midi",
-                                    "Deluge branché : sa carte s'ouvre par "
-                                    "le câble USB.")
+                                    tr("Deluge branché : sa carte s'ouvre par "
+                                       "le câble USB."))
         elif connecte:
             couleur, icone, etat = (GOLD, "midi",
-                                    "Deluge branché, mais sa carte ne s'ouvre "
-                                    "pas par USB : il faut le firmware 1.3.")
+                                    tr("Deluge branché, mais sa carte ne "
+                                       "s'ouvre pas par USB : il faut le "
+                                       "firmware 1.3."))
         else:
-            couleur, icone, etat = GREY, "midi", "Deluge débranché."
+            couleur, icone, etat = GREY, "midi", tr("Deluge débranché.")
         details = [travail.pending_text() + "." if travail.pending
-                   else "Tout ce qui est ici est aussi sur le Deluge."]
+                   else tr("Tout ce qui est ici est aussi sur le Deluge.")]
         derniers = travail.exchanges(1)
         if derniers:
-            details.append("Dernier échange %s : %s."
+            details.append(tr("Dernier échange %s : %s.")
                            % (_quand(derniers[0].when), derniers[0].summary()))
         self._set_link(couleur, icone, etat, " ".join(details))
         self._sync_button.setEnabled(usb and not travail.busy)
@@ -517,7 +528,7 @@ class DashboardPage(Page):
     def _arrival_row(self, quand: float, rel: str) -> QWidget:
         """Une ligne « reçu du Deluge », qui ouvre le fichier sur sa page."""
         cle, nature = ARRIVAL_PAGES.get(rel.split("/", 1)[0].upper(),
-                                        ("Samples", "fichier"))
+                                        ("Samples", N_("fichier")))
         cible = "%s#%s" % (cle, rel)
         ligne = _LigneAnomalie(cible)
         disposition = QHBoxLayout(ligne)
@@ -527,7 +538,7 @@ class DashboardPage(Page):
         pastille.setStyleSheet("color: %s;" % page_color(cle))
         disposition.addWidget(pastille)
         disposition.addWidget(ElidedLabel(Path(rel).stem), 1)
-        for texte, largeur in ((nature, 70), (_quand(quand), 130)):
+        for texte, largeur in ((tr(nature), 70), (_quand(quand), 130)):
             etiquette = QLabel(texte)
             etiquette.setProperty("role", "subtitle")
             etiquette.setFixedWidth(largeur)
@@ -535,14 +546,14 @@ class DashboardPage(Page):
         fleche = QLabel("›")
         fleche.setStyleSheet("color: %s;" % GREY)
         disposition.addWidget(fleche)
-        ligne.setToolTip("%s\n\nCliquez pour l'ouvrir." % rel)
+        ligne.setToolTip(tr("%s\n\nCliquez pour l'ouvrir.") % rel)
         ligne.clicked.connect(
             self.guard(lambda _c=False, d=cible: self.navigateRequested.emit(d)))
         return ligne
 
     def _build_tiles(self) -> QWidget:
         """Les six tuiles chiffrées."""
-        card = Card("Contenu de la carte", color=self.color)
+        card = Card(tr("Contenu de la carte"), color=self.color)
         grid = QGridLayout()
         grid.setSpacing(8)
 
@@ -553,14 +564,14 @@ class DashboardPage(Page):
         # pas de curseur de main : une tuile qui ne réagit pas ne doit pas
         # faire croire qu'elle est cliquable.
         definitions = (
-            ("samples", "Échantillons", "samples", page_color("Samples"),
+            ("samples", tr("Échantillons"), "samples", page_color("Samples"),
              "Samples"),
-            ("synths", "Presets de synthé", "synth", page_color("Synths"),
+            ("synths", tr("Presets de synthé"), "synth", page_color("Synths"),
              "Synths"),
-            ("kits", "Kits", "kit", page_color("Kits"), "Kits"),
-            ("songs", "Morceaux", "song", page_color("Songs"), "Songs"),
-            ("audio", "Durée d'audio", "wave", pad_color(5), ""),
-            ("space", "Espace libre", "backup", pad_color(7), ""),
+            ("kits", tr("Kits"), "kit", page_color("Kits"), "Kits"),
+            ("songs", tr("Morceaux"), "song", page_color("Songs"), "Songs"),
+            ("audio", tr("Durée d'audio"), "wave", pad_color(5), ""),
+            ("space", tr("Espace libre"), "backup", pad_color(7), ""),
         )
         self._tiles_grid = grid
         self._tile_order = [definition[0] for definition in definitions]
@@ -571,14 +582,14 @@ class DashboardPage(Page):
                 tile.clicked.connect(
                     self.guard(lambda _c=False, t=target:
                                self.navigateRequested.emit(t)))
-                tile.setToolTip(f"Ouvrir la page « {label} »")
+                tile.setToolTip(tr("Ouvrir la page « %s »") % label)
             grid.addWidget(tile, index // 3, index % 3)
             self._tiles[key] = tile
         card.body().addLayout(grid)
         return card
 
     def _build_card_info(self) -> QWidget:
-        card = Card("Carte", color=self.color)
+        card = Card(tr("Carte"), color=self.color)
         body = card.body()
 
         self._card_path = ElidedLabel("—")
@@ -607,13 +618,13 @@ class DashboardPage(Page):
         row.addWidget(self._last_scan, 1)
 
         self._scan_button = tool_button(
-            "Analyser la carte", "refresh",
-            "Relit la carte et met l'index à jour  (Ctrl+R)", primary=True)
+            tr("Analyser la carte"), "refresh",
+            tr("Relit la carte et met l'index à jour  (Ctrl+R)"), primary=True)
         self._scan_button.clicked.connect(self.guard(self._start_scan))
         row.addWidget(self._scan_button)
 
-        self._stop_button = tool_button("Arrêter", "stop",
-                                        "Interrompre l'analyse en cours")
+        self._stop_button = tool_button(tr("Arrêter"), "stop",
+                                        tr("Interrompre l'analyse en cours"))
         self._stop_button.clicked.connect(self.guard(self._stop_scan))
         self._stop_button.setVisible(False)
         row.addWidget(self._stop_button)
@@ -622,14 +633,14 @@ class DashboardPage(Page):
         return card
 
     def _build_health(self) -> QWidget:
-        card = Card("État de santé", color=page_color("Health"))
+        card = Card(tr("État de santé"), color=page_color("Health"))
         body = card.body()
 
         row = QHBoxLayout()
         row.setSpacing(14)
         self._score = ScoreRing(size=84)
         row.addWidget(self._score)
-        self._verdict = QLabel("Analyse non lancée")
+        self._verdict = QLabel(tr("Analyse non lancée"))
         self._verdict.setProperty("role", "subtitle")
         self._verdict.setWordWrap(True)
         row.addWidget(self._verdict, 1)
@@ -639,8 +650,8 @@ class DashboardPage(Page):
         self._issues.setSpacing(3)
         body.addLayout(self._issues)
 
-        open_health = tool_button("Voir le détail", "health",
-                                  "Ouvrir le diagnostic complet",
+        open_health = tool_button(tr("Voir le détail"), "health",
+                                  tr("Ouvrir le diagnostic complet"),
                                   color=page_color("Health"))
         open_health.clicked.connect(
             self.guard(lambda: self.navigateRequested.emit("Health")))
@@ -656,22 +667,22 @@ class DashboardPage(Page):
         et mène **à l'onglet exact** : trois clics économisés sur une
         sauvegarde, et le gris ne cache plus la hiérarchie.
         """
-        card = Card("Actions rapides", color=self.color)
+        card = Card(tr("Actions rapides"), color=self.color)
         grid = QGridLayout()
         grid.setSpacing(6)
         shortcuts = (
-            ("Générer un preset", "wand", "Generator#Preset de synthé",
-             "Fabriquer un son de synthé par genre"),
-            ("Construire un kit", "kit", "Generator#Kit de batterie",
-             "Assembler un kit de batterie à partir de la carte"),
-            ("Chercher les doublons", "copy", "Health#Doublons",
-             "Trouver les échantillons présents plusieurs fois"),
-            ("Échantillons manquants", "warning", "Health#Manquants",
-             "Les sons que des presets réclament sans les trouver"),
-            ("Sauvegarder la carte", "backup", "Health#Sauvegardes",
-             "Copier la carte avant d'y toucher"),
-            ("Boîte à outils", "tools", "Toolbox",
-             "Gammes, tempos, conversions et aide-mémoire"),
+            (tr("Générer un preset"), "wand", "Generator#Preset de synthé",
+             tr("Fabriquer un son de synthé par genre")),
+            (tr("Construire un kit"), "kit", "Generator#Kit de batterie",
+             tr("Assembler un kit de batterie à partir de la carte")),
+            (tr("Chercher les doublons"), "copy", "Health#Doublons",
+             tr("Trouver les échantillons présents plusieurs fois")),
+            (tr("Échantillons manquants"), "warning", "Health#Manquants",
+             tr("Les sons que des presets réclament sans les trouver")),
+            (tr("Sauvegarder la carte"), "backup", "Health#Sauvegardes",
+             tr("Copier la carte avant d'y toucher")),
+            (tr("Boîte à outils"), "tools", "Toolbox",
+             tr("Gammes, tempos, conversions et aide-mémoire")),
         )
         for index, (label, icon, target, aide) in enumerate(shortcuts):
             button = tool_button(label, icon, aide,
@@ -687,7 +698,7 @@ class DashboardPage(Page):
         return card
 
     def _build_folders(self) -> QWidget:
-        card = Card("Répartition des échantillons",
+        card = Card(tr("Répartition des échantillons"),
                     color=page_color("Samples"))
         self._folders = QVBoxLayout()
         self._folders.setSpacing(4)
@@ -721,7 +732,7 @@ class DashboardPage(Page):
         if card is None:
             return
         if self._worker is not None:
-            self.say("Une analyse est déjà en cours.")
+            self.say(tr("Une analyse est déjà en cours."))
             return
 
         settings = self.ctx.settings
@@ -730,7 +741,7 @@ class DashboardPage(Page):
         self._progress.setVisible(True)
         self._progress.set_busy(True)
         self._progress_label.setVisible(True)
-        self._progress_label.setText("Inventaire de la carte…")
+        self._progress_label.setText(tr("Inventaire de la carte…"))
 
         self._worker = self.run(
             scan_card, card, self.lib,
@@ -740,12 +751,12 @@ class DashboardPage(Page):
             on_result=self.guard(self._scan_done),
             on_progress=self._scan_progress,
             on_error=self.guard(self._scan_failed),
-            title="Analyse de la carte")
+            title=tr("Analyse de la carte"))
 
     def _stop_scan(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-            self.say("Arrêt demandé…")
+            self.say(tr("Arrêt demandé…"))
 
     def _scan_progress(self, payload) -> None:
         """Affiche l'avancement sans jamais lever."""
@@ -774,10 +785,10 @@ class DashboardPage(Page):
         if automatique:
             relus = (result.samples + result.presets + result.kits
                      + result.songs - result.skipped)
-            self.say("Index à jour : rien n'a changé sur la carte."
+            self.say(tr("Index à jour : rien n'a changé sur la carte.")
                      if relus <= 0 else
-                     f"Index à jour : {relus} fichier(s) relu(s) depuis la "
-                     f"dernière analyse.")
+                     tr("Index à jour : %d fichier(s) relu(s) depuis la "
+                        "dernière analyse.") % relus)
         else:
             self.say(result.summary())
         if result.errors:
@@ -794,7 +805,7 @@ class DashboardPage(Page):
     def _scan_failed(self, message: str) -> None:
         self._auto_scan = False
         self._scan_end()
-        self.say(f"Analyse impossible : {message}")
+        self.say(tr("Analyse impossible : %s") % message)
 
     # -- rafraîchissement --------------------------------------------------- #
 
@@ -816,8 +827,7 @@ class DashboardPage(Page):
             return {}
 
     def _fill_tiles(self, stats: dict) -> None:
-        self._tiles["samples"].set_value(f"{stats.get('samples', 0):,}"
-                                         .replace(",", " "))
+        self._tiles["samples"].set_value(integer(stats.get("samples", 0)))
         self._tiles["synths"].set_value(stats.get("synths", 0))
         self._tiles["kits"].set_value(stats.get("kits", 0))
         self._tiles["songs"].set_value(stats.get("songs", 0))
@@ -835,11 +845,11 @@ class DashboardPage(Page):
         # l'ordinateur, pas ceux d'une carte.
         sur_carte = self.sd is None or self.sd.is_volume
         self._tiles["space"].set_label(
-            "Espace libre" if sur_carte else "Libre sur le disque")
+            tr("Espace libre") if sur_carte else tr("Libre sur le disque"))
 
     def _fill_card_info(self, stats: dict) -> None:
         if self.sd is None:
-            self._card_path.setText("Aucune carte")
+            self._card_path.setText(tr("Aucune carte"))
             return
         self._card_path.setText(str(self.sd.root))
 
@@ -856,18 +866,18 @@ class DashboardPage(Page):
             echantillons = human_size(stats.get('sample_bytes', 0))
             if self.sd.is_volume:
                 self._card_detail.setText(
-                    f"{human_size(used)} utilisés sur {human_size(total)} — "
-                    f"dont {echantillons} d'échantillons")
+                    tr("%s utilisés sur %s — dont %s d'échantillons")
+                    % (human_size(used), human_size(total), echantillons))
             else:
                 self._card_detail.setText(
-                    f"Copie dans un dossier : {echantillons} d'échantillons. "
-                    f"Le disque qui la contient a {human_size(free)} libres "
-                    f"sur {human_size(total)} — une carte SD, elle, fait "
-                    f"souvent 32 Gio.")
+                    tr("Copie dans un dossier : %s d'échantillons. Le disque "
+                       "qui la contient a %s libres sur %s — une carte SD, "
+                       "elle, fait souvent 32 Gio.")
+                    % (echantillons, human_size(free), human_size(total)))
         else:
             self._space_bar.setRange(0, 100)
             self._space_bar.setValue(0)
-            self._card_detail.setText("Espace disque indisponible.")
+            self._card_detail.setText(tr("Espace disque indisponible."))
 
         last = stats.get("last_scan") or ""
         # Carte déjà analysée : le « Analyser » de l'en-tête suffit, et le
@@ -875,11 +885,11 @@ class DashboardPage(Page):
         self._scan_button.setVisible(not last)
         if last:
             self._last_scan.setText(
-                "Dernière analyse : " + human_datetime(last))
+                tr("Dernière analyse : %s") % human_datetime(last))
         else:
             self._last_scan.setText(
-                "Carte jamais analysée — lancez l'analyse pour remplir "
-                "les pages.")
+                tr("Carte jamais analysée — lancez l'analyse pour remplir "
+                   "les pages."))
 
     def _fill_health(self, stats: dict | None = None):
         """Résume la santé : score et trois anomalies les plus graves.
@@ -909,8 +919,8 @@ class DashboardPage(Page):
             self._score.setText("—")
             self._score.set_color(GREY)
             self._verdict.setText(
-                "Carte pas encore analysée : l'état de santé sera calculé "
-                "après la première analyse.")
+                tr("Carte pas encore analysée : l'état de santé sera calculé "
+                   "après la première analyse."))
             return None
         try:
             from ...core import health as health_mod
@@ -921,7 +931,7 @@ class DashboardPage(Page):
         except Exception as exc:  # noqa: BLE001
             log.debug("diagnostic impossible : %s", exc)
             self._score.setText("—")
-            self._verdict.setText("Diagnostic indisponible.")
+            self._verdict.setText(tr("Diagnostic indisponible."))
             return None
 
         self._score.setText(f"{report.score}")
@@ -949,15 +959,15 @@ class DashboardPage(Page):
             fleche.setStyleSheet(f"color: {GREY};")
             layout.addWidget(fleche)
 
-            row.setToolTip("%s\n\nCliquez pour ouvrir « %s »."
-                           % (issue.detail, cible.replace("#", " › ")))
+            row.setToolTip(tr("%s\n\nCliquez pour ouvrir « %s ».")
+                           % (issue.detail, _lieu(cible)))
             row.clicked.connect(
                 self.guard(lambda _c=False, d=cible:
                            self.navigateRequested.emit(d)))
             self._issues.addWidget(row)
 
         if not worst:
-            ok = QLabel("Aucune anomalie détectée.")
+            ok = QLabel(tr("Aucune anomalie détectée."))
             ok.setStyleSheet(f"color: {PAD_GREEN};")
             self._issues.addWidget(ok)
         return report
@@ -982,7 +992,7 @@ class DashboardPage(Page):
             log.debug("répartition indisponible : %s", exc)
             folders = []
         if not folders:
-            empty = QLabel("Lancez une analyse pour voir la répartition.")
+            empty = QLabel(tr("Lancez une analyse pour voir la répartition."))
             empty.setProperty("role", "subtitle")
             self._folders.addWidget(empty)
             return

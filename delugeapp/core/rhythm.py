@@ -18,6 +18,8 @@ import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..i18n import N_, plural, tr
+
 if TYPE_CHECKING:                  # import circulaire à l'exécution
     from .model import Note
 
@@ -144,7 +146,7 @@ class Pattern:
         en lisant un journal ou un test.
         """
         if not self.tracks:
-            return "(motif vide)"
+            return tr("(motif vide)")
         width = max((len(name) for name in self.tracks), default=0)
         lines: list[str] = []
         for track, steps in self.tracks.items():
@@ -246,7 +248,7 @@ def euclid_pattern(spec: dict[str, tuple[int, int, int]]) -> Pattern:
 
     steps = max((count for _p, count, _r in clean.values()), default=16)
     steps = max(1, steps)
-    pattern = Pattern(name="Euclidien", steps=steps)
+    pattern = Pattern(name=tr("Euclidien"), steps=steps)
     for track, (pulses, count, rotation) in clean.items():
         cells = euclid(pulses, count, rotation)
         # Une piste plus courte que le motif est répétée pour le remplir.
@@ -426,8 +428,8 @@ def genre_beat(genre: str, bars: int = 1, seed: int | None = None,
 
     count = max(1, int(bars))
     steps = STEPS_PER_BAR * count
-    pattern = Pattern(name=f"{key} ({count} mesure{'s' if count > 1 else ''})",
-                      steps=steps)
+    pattern = Pattern(name="%s (%s)" % (key, plural(
+        count, N_("%d mesure"), N_("%d mesures")) % count), steps=steps)
 
     for track, row in grid.items():
         for bar in range(count):
@@ -496,11 +498,11 @@ _SPARSE_GENRES = ("ambient", "downtempo", "dubstep", "boards_of_canada")
 
 #: Variations proposées, avec leur libellé.
 VARIATIONS: dict[str, str] = {
-    "fantômes": "notes fantômes de caisse claire autour des temps",
-    "charleys": "charleys plus serrés, accentués à contretemps",
-    "percussion": "une percussion euclidienne en plus",
-    "grosse caisse": "une grosse caisse syncopée en fin de mesure",
-    "ouverture": "un charleston ouvert qui respire en fin de phrase",
+    N_("fantômes"): N_("notes fantômes de caisse claire autour des temps"),
+    N_("charleys"): N_("charleys plus serrés, accentués à contretemps"),
+    N_("percussion"): N_("une percussion euclidienne en plus"),
+    N_("grosse caisse"): N_("une grosse caisse syncopée en fin de mesure"),
+    N_("ouverture"): N_("un charleston ouvert qui respire en fin de phrase"),
 }
 
 
@@ -593,7 +595,8 @@ def variation(pattern: Pattern, genre: str = "", seed: int | None = None,
             add("HatO", last + rng.choice((10, 14)), rng.randint(76, 92))
     for steps in out.tracks.values():
         steps.sort(key=lambda s: float(s.pos))
-    out.name = pattern.name.split(" (")[0] + " — " + ", ".join(choices)
+    out.name = (pattern.name.split(" (")[0] + " — "
+                + ", ".join(tr(c) for c in choices))
     return out
 
 
@@ -619,17 +622,18 @@ def swing_offsets(percent: float) -> list[float]:
 #: « MPC 54 »…) ne correspondaient à aucun réglage réel, et « MPC 54 »
 #: avançait même certains pas.
 GROOVES: dict[str, list[float]] = {
-    "droit": [0.0] * 16,
-    "MPC 54 %": swing_offsets(54),
-    "MPC 58 %": swing_offsets(58),
-    "MPC 62 %": swing_offsets(62),
-    "MPC 66 %": swing_offsets(66),
-    "MPC 71 %": swing_offsets(71),
+    N_("droit"): [0.0] * 16,
+    N_("MPC 54 %"): swing_offsets(54),
+    N_("MPC 58 %"): swing_offsets(58),
+    N_("MPC 62 %"): swing_offsets(62),
+    N_("MPC 66 %"): swing_offsets(66),
+    N_("MPC 71 %"): swing_offsets(71),
     # Jeu « derrière le temps » : les contretemps traînent, de plus en plus
     # dans la croche.
-    "laid-back": [0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2],
+    N_("laid-back"): [0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2],
     # Jeu « devant le temps » : les contretemps anticipent.
-    "en avant": [0, -1, -1, -2, 0, -1, -1, -2, 0, -1, -1, -2, 0, -1, -1, -2],
+    N_("en avant"): [0, -1, -1, -2, 0, -1, -1, -2, 0, -1, -1, -2, 0, -1, -1,
+                     -2],
 }
 
 

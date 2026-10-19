@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from ..core import cardimport
 from ..core.delugefiles import WRITE_RATE
+from ..i18n import tr
 from . import tasks
 from .theme import PAD, PAD_AMBER
 
@@ -66,18 +67,18 @@ def where_it_goes(ctx) -> str:
         return ""
     role = ctx.settings.card_role(sd.root)
     if role == "sauvegarde":
-        return ("La sauvegarde est ouverte, en lecture seule : rien n'y sera "
-                "copié.")
+        return tr("La sauvegarde est ouverte, en lecture seule : rien n'y "
+                  "sera copié.")
     if role == "travail":
         travail = getattr(ctx, "card_work", None)
         if travail is not None and travail.files() is not None:
-            return ("Dans la copie de travail, puis sur le Deluge par le "
-                    "câble USB.")
-        return ("Dans la copie de travail : ils partiront sur le Deluge à sa "
-                "prochaine connexion.")
+            return tr("Dans la copie de travail, puis sur le Deluge par le "
+                      "câble USB.")
+        return tr("Dans la copie de travail : ils partiront sur le Deluge à "
+                  "sa prochaine connexion.")
     if role == "carte":
-        return "Directement sur la carte, dans le lecteur du PC."
-    return "Dans le dossier de la carte, %s." % sd.root
+        return tr("Directement sur la carte, dans le lecteur du PC.")
+    return tr("Dans le dossier de la carte, %s.") % sd.root
 
 
 def _context(ctx, plan: cardimport.ImportPlan) -> str:
@@ -87,12 +88,13 @@ def _context(ctx, plan: cardimport.ImportPlan) -> str:
     if sd is None or ctx.settings.card_role(sd.root) != "travail" \
             or plan.empty:
         return texte
-    texte += " Par le câble : %s." % plan.cable_time()
-    texte += (" Le Deluge ne doit pas jouer pendant l'envoi : la "
-              "synchronisation s'arrête quand il joue, et reprend à l'arrêt.")
+    texte += " " + tr("Par le câble : %s.") % plan.cable_time()
+    texte += " " + tr("Le Deluge ne doit pas jouer pendant l'envoi : la "
+                      "synchronisation s'arrête quand il joue, et reprend à "
+                      "l'arrêt.")
     if plan.bytes_to_copy() / WRITE_RATE > LONG_SECONDS:
-        texte += (" C'est long : vous pouvez n'envoyer qu'une partie, en "
-                  "glissant seulement les dossiers utiles.")
+        texte += " " + tr("C'est long : vous pouvez n'envoyer qu'une partie, "
+                          "en glissant seulement les dossiers utiles.")
     return texte
 
 
@@ -109,7 +111,7 @@ class SendDialog(QDialog):
                  context: Callable[[cardimport.ImportPlan], str] | None = None,
                  parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Envoyer au Deluge")
+        self.setWindowTitle(tr("Envoyer au Deluge"))
         self.resize(900, 600)
         self._scan = scan
         self._root = Path(card_root)
@@ -129,14 +131,14 @@ class SendDialog(QDialog):
         self._dest_box: QComboBox | None = None
         if scan.has_loose_samples:
             ligne = QHBoxLayout()
-            etiquette = QLabel("Les sons hors d'un pack vont dans")
+            etiquette = QLabel(tr("Les sons hors d'un pack vont dans"))
             etiquette.setProperty("role", "subtitle")
             ligne.addWidget(etiquette)
             self._dest_box = QComboBox()
             self._dest_box.setToolTip(
-                "Un dossier de SAMPLES : les sons y gardent le nom du "
-                "dossier déposé. Les packs à la forme de la carte gardent, "
-                "eux, leurs propres chemins — leurs presets les citent")
+                tr("Un dossier de SAMPLES : les sons y gardent le nom du "
+                   "dossier déposé. Les packs à la forme de la carte gardent, "
+                   "eux, leurs propres chemins — leurs presets les citent"))
             dossiers = cardimport.sample_folders(self._root)
             voulu = cardimport.card_path(dest) or "SAMPLES"
             if voulu not in dossiers:
@@ -171,12 +173,12 @@ class SendDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel)
         self._ok = boutons.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok.setText("Envoyer")
+        self._ok.setText(tr("Envoyer"))
         self._ok.setObjectName("Primary")
-        self._ok.setToolTip("Copie les fichiers prévus sur la carte ; rien "
-                            "d'existant n'est remplacé")
+        self._ok.setToolTip(tr("Copie les fichiers prévus sur la carte ; rien "
+                               "d'existant n'est remplacé"))
         boutons.button(QDialogButtonBox.StandardButton.Cancel).setText(
-            "Annuler")
+            tr("Annuler"))
         boutons.accepted.connect(self.accept)
         boutons.rejected.connect(self.reject)
         layout.addWidget(boutons)
@@ -207,19 +209,20 @@ def _warnings(plan: cardimport.ImportPlan) -> list[str]:
     c = plan.counts()
     lignes = []
     if c.get("refused"):
-        lignes.append("⚠ %d fichier(s) que le Deluge refuserait ne partiront "
-                      "pas — leur raison est dans le détail." % c["refused"])
+        lignes.append(tr("⚠ %d fichier(s) que le Deluge refuserait ne "
+                         "partiront pas — leur raison est dans le détail.")
+                      % c["refused"])
     if c.get("convert"):
-        lignes.append("%d fichier(s) seront convertis pour que le Deluge les "
-                      "lise, sans perte audible." % c["convert"])
+        lignes.append(tr("%d fichier(s) seront convertis pour que le Deluge "
+                         "les lise, sans perte audible.") % c["convert"])
     if c.get("kept"):
-        lignes.append("%d fichier(s) du pack existent déjà sur la carte avec "
-                      "un autre contenu : la carte garde les siens."
+        lignes.append(tr("%d fichier(s) du pack existent déjà sur la carte "
+                         "avec un autre contenu : la carte garde les siens.")
                       % c["kept"])
     if plan.missing:
-        lignes.append("⚠ %d preset(s), kit(s) ou morceau(x) citent des "
-                      "échantillons introuvables : ces sons resteront muets."
-                      % len(plan.missing))
+        lignes.append(tr("⚠ %d preset(s), kit(s) ou morceau(x) citent des "
+                         "échantillons introuvables : ces sons resteront "
+                         "muets.") % len(plan.missing))
     return lignes
 
 
@@ -239,10 +242,11 @@ def send_files(window, paths, dest: str = "") -> bool:
         return False
     tasks.run_task(
         window, cardimport.scan_sources, chemins,
-        title="Lecture de ce qui est déposé",
+        title=tr("Lecture de ce qui est déposé"),
         on_result=lambda scan: _show_plan(window, sd, scan, dest),
         on_error=lambda m: window.statusBar().showMessage(
-            "Lecture impossible : %s" % m, 8000))
+            tr("Lecture des fichiers impossible : %s") % m,
+            8000))
     return True
 
 
@@ -253,27 +257,29 @@ def _show_plan(window, sd, scan: cardimport.ImportScan, dest: str) -> None:
         lignes = ["  •  %s — %s" % (Path(c).name, r)
                   for c, r in scan.ignored[:10]]
         if len(scan.ignored) > 10:
-            lignes.append("  … et %d autres" % (len(scan.ignored) - 10))
+            lignes.append("  " + tr("… et %d autres")
+                          % (len(scan.ignored) - 10))
         QMessageBox.information(
-            window, "Rien à envoyer au Deluge",
-            "Rien de ce qui est déposé n'est un son, un preset, un kit ou un "
-            "morceau du Deluge." + ("\n\n" + "\n".join(lignes)
-                                    if lignes else ""))
+            window, tr("Rien à envoyer au Deluge"),
+            tr("Rien de ce qui est déposé n'est un son, un preset, un kit ou "
+               "un morceau du Deluge.") + ("\n\n" + "\n".join(lignes)
+                                          if lignes else ""))
         return
     dialogue = SendDialog(scan, sd.root, dest or "SAMPLES",
                           lambda plan: _context(window.ctx, plan), window)
     if dialogue.exec() != QDialog.DialogCode.Accepted:
-        window.statusBar().showMessage("Rien n'a été envoyé.", 4000)
+        window.statusBar().showMessage(tr("Rien n'a été envoyé."), 4000)
         return
     plan = dialogue.plan
     if plan.empty:
         return
     tasks.run_task(
         window, cardimport.apply_import, plan, sd,
-        title="Copie sur la carte", modal=True,
+        title=tr("Copie sur la carte"), modal=True,
         on_result=lambda r: _sent(window, r),
         on_error=lambda m: QMessageBox.warning(
-            window, "Envoi interrompu", "La copie s'est arrêtée : %s" % m))
+            window, tr("Envoi interrompu"),
+            tr("La copie s'est arrêtée : %s") % m))
 
 
 def _sent(window, resultat: cardimport.ImportResult) -> None:
@@ -284,9 +290,10 @@ def _sent(window, resultat: cardimport.ImportResult) -> None:
     sd = window.ctx.sd
     if (resultat.written and sd is not None
             and window.ctx.settings.card_role(sd.root) == "travail"):
-        texte += (" — en route vers le Deluge" if travail is not None
-                  and travail.files() is not None
-                  else " — ils partiront à la prochaine connexion du Deluge")
+        texte += (" — " + tr("en route vers le Deluge")
+                  if travail is not None and travail.files() is not None
+                  else " — " + tr("ils partiront à la prochaine connexion du "
+                                  "Deluge"))
     window.statusBar().showMessage(texte + ".", 10000)
     if resultat.written:
         # L'index les voit tout de suite : une analyse incrémentale, qui ne
@@ -298,6 +305,6 @@ def _sent(window, resultat: cardimport.ImportResult) -> None:
         window._card_written()
     if resultat.errors:
         QMessageBox.warning(
-            window, "Envoi incomplet",
-            "%d fichier(s) n'ont pas pu être copiés :\n\n%s"
+            window, tr("Envoi incomplet"),
+            tr("%d fichier(s) n'ont pas pu être copiés :\n\n%s")
             % (len(resultat.errors), "\n".join(resultat.errors[:10])))

@@ -68,31 +68,60 @@ def _setup_logging(verbose: bool = False) -> Path | None:
         return None
 
 
-def _translate_qt(app):
-    """Les boutons standard de Qt en français : « Oui », « Non », « Annuler ».
+#: Le traducteur de Qt installé, à retirer quand la langue change.
+_qt_translator = None
 
-    Les questions posées par ``QMessageBox`` affichaient « Yes » et « No »
-    au milieu d'une application entièrement en français. La traduction est
-    livrée avec PyQt6 ; il suffisait de la charger.
 
-    Rend le traducteur installé, ou ``None`` s'il n'a pas pu l'être.
+def _translate_qt(app, language: str = "fr"):
+    """Les boutons standard de Qt dans la langue de l'interface.
+
+    En français, « Oui », « Non », « Annuler » : les questions posées par
+    ``QMessageBox`` affichaient « Yes » et « No » au milieu d'une
+    application en français. La traduction est livrée avec PyQt6 ; il
+    suffisait de la charger. En anglais, Qt parle déjà la langue : le
+    traducteur français est retiré, sinon il resterait d'une fenêtre à
+    l'autre.
+
+    Rend le traducteur installé, ou ``None``.
     """
+    global _qt_translator
     try:
         from PyQt6.QtCore import QLibraryInfo, QLocale, QTranslator
 
+        if _qt_translator is not None:
+            app.removeTranslator(_qt_translator)
+            _qt_translator = None
+        if language != "fr":
+            return None
         traducteur = QTranslator(app)
         dossier = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
         if (traducteur.load(QLocale(QLocale.Language.French), "qtbase", "_",
                             dossier)
                 and app.installTranslator(traducteur)):
+            _qt_translator = traducteur
             return traducteur
     except Exception:  # noqa: BLE001 - une traduction absente ne bloque rien
         logging.getLogger("delugeapp").debug("traduction de Qt indisponible")
     return None
 
 
+def _choose_language() -> str:
+    """Prend la langue des réglages, avant même la ligne de commande : son
+    aide parle ainsi la langue choisie. Rend le code retenu."""
+    from delugeapp import i18n
+
+    try:
+        from delugeapp.config import load_settings
+
+        return i18n.set_language(load_settings().language)
+    except Exception:  # noqa: BLE001 - des réglages illisibles : le défaut
+        return i18n.set_language(i18n.DEFAULT)
+
+
 def _install_excepthook() -> None:
     """Détourne les exceptions non rattrapées vers le journal et l'écran."""
+    from delugeapp.i18n import tr
+
     log = logging.getLogger("delugeapp")
 
     def handler(kind, value, tb) -> None:
@@ -109,11 +138,11 @@ def _install_excepthook() -> None:
                 return
             box = QMessageBox()
             box.setIcon(QMessageBox.Icon.Critical)
-            box.setWindowTitle("Erreur inattendue")
-            box.setText(
+            box.setWindowTitle(tr("Erreur inattendue"))
+            box.setText(tr(
                 "Une erreur inattendue est survenue.\n\n"
                 "L'application reste ouverte, mais l'action en cours a "
-                "échoué. Le détail est dans le journal.")
+                "échoué. Le détail est dans le journal."))
             box.setInformativeText(f"{kind.__name__} : {value}")
             box.setDetailedText(detail)
             box.exec()
@@ -124,26 +153,34 @@ def _install_excepthook() -> None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    from delugeapp.i18n import tr
+
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="Deluge Companion — gestion de carte SD, génération de "
-                    "presets et outils de composition pour Synthstrom "
-                    "Deluge.")
-    parser.add_argument("--sd", metavar="CHEMIN",
-                        help="emplacement de la carte SD à utiliser")
+        description=tr("Deluge Companion — gestion de carte SD, génération de "
+                       "presets et outils de composition pour Synthstrom "
+                       "Deluge."))
+    parser.add_argument("--sd", metavar=tr("CHEMIN"),
+                        help=tr("emplacement de la carte SD à utiliser"))
     parser.add_argument("--reset-db", action="store_true",
-                        help="vide l'index avant de démarrer")
+                        help=tr("vide l'index avant de démarrer"))
     parser.add_argument("--no-splash", action="store_true",
-                        help="ne pas afficher l'écran de démarrage")
+                        help=tr("ne pas afficher l'écran de démarrage"))
     parser.add_argument("--verbose", action="store_true",
-                        help="journal détaillé sur la console")
+                        help=tr("journal détaillé sur la console"))
     parser.add_argument("--version", action="store_true",
-                        help="affiche la version et quitte")
+                        help=tr("affiche la version et quitte"))
     return parser.parse_args(argv)
 
 
 def _build_context(args: argparse.Namespace):
-    """Construit l'``AppContext``, en rattrapant chaque défaillance."""
+    """Construit l'``AppContext``, en rattrapant chaque défaillance.
+
+    La langue des réglages est prise ici, avant que la fenêtre ne se
+    construise : c'est ainsi qu'un changement de langue s'applique au
+    redémarrage de la fenêtre.
+    """
+    from delugeapp import i18n
     from delugeapp.config import (CONFIG_DIR, AppContext, load_settings,
                                   save_settings)
     from delugeapp.core.audio_out import Player
@@ -152,6 +189,7 @@ def _build_context(args: argparse.Namespace):
 
     log = logging.getLogger("delugeapp")
     settings = load_settings()
+    i18n.set_language(settings.language)
 
     if args.sd:
         settings.sd_path = str(Path(args.sd).expanduser())
@@ -177,9 +215,9 @@ def _build_context(args: argparse.Namespace):
             log.info("index vidé à la demande")
     except Exception:
         log.exception("index inutilisable")
-        raise SystemExit(
+        raise SystemExit(i18n.tr(
             "L'index de la carte n'a pas pu être ouvert. "
-            f"Vérifiez les droits sur {CONFIG_DIR}.")
+            "Vérifiez les droits sur {dossier}.").format(dossier=CONFIG_DIR))
 
     card = None
     if settings.sd_path.strip():
@@ -283,8 +321,74 @@ def _splash(app):
     return splash
 
 
+def _dispose(window) -> None:
+    """Détruit une fenêtre fermée avant d'en bâtir une autre : ses minuteries
+    et ses pages ne doivent pas survivre à côté de la nouvelle."""
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    try:
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(None,
+                                          QEvent.Type.DeferredDelete.value)
+    except RuntimeError:
+        pass                            # déjà détruite par Qt
+
+
+def _run_windows(app, args: argparse.Namespace, splash=None) -> int:
+    """Ouvre la fenêtre, et la rouvre tant qu'elle demande un redémarrage.
+
+    Changer de langue redémarre la fenêtre dans le même processus : elle se
+    ferme comme à l'ordinaire — question si un travail tourne, état gardé,
+    fils arrêtés, contexte fermé —, puis tout se reconstruit, réglages,
+    index, carte et lecteur, dans la nouvelle langue. Les textes se
+    traduisent à leur création : seule une fenêtre neuve change de langue.
+    """
+    from delugeapp import i18n
+    from delugeapp.ui import icons, tasks
+    from delugeapp.ui.mainwindow import MainWindow
+    from delugeapp.ui.theme import GOLD, apply_theme
+
+    log = logging.getLogger("delugeapp")
+    code = 0
+    while True:
+        ctx = _build_context(args)
+        _translate_qt(app, i18n.language())
+        apply_theme(app, ctx.settings.theme_accent or GOLD)
+        app.setWindowIcon(icons.app_icon(256))
+
+        window = MainWindow(ctx)
+        window.show()
+        if splash is not None:
+            splash.finish(window)
+            splash = None
+
+        try:
+            code = app.exec()
+        finally:
+            # Rempart : si la boucle Qt se termine autrement que par la
+            # fermeture de la fenêtre, les fils doivent tout de même être
+            # arrêtés — un QThread encore vivant fait planter le processus
+            # à la sortie.
+            tasks.stop_all(3000)
+            try:
+                ctx.close()
+            except Exception:  # noqa: BLE001
+                log.exception("fermeture du contexte en échec")
+
+        if not getattr(window, "restart_requested", False):
+            return code
+        log.info("redémarrage de la fenêtre (langue : %s)",
+                 ctx.settings.language)
+        # L'index ne se vide qu'au premier démarrage, s'il était demandé.
+        args.reset_db = False
+        _dispose(window)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Lance l'application. Retourne le code de sortie."""
+    _choose_language()
+    from delugeapp.i18n import tr
+
     args = _parse_args(argv)
 
     if args.version:
@@ -300,20 +404,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from PyQt6.QtWidgets import QApplication
     except ImportError:
-        sys.stderr.write(
+        sys.stderr.write(tr(
             "PyQt6 est nécessaire pour lancer l'application.\n"
-            "Installez-le avec :  pip install PyQt6 numpy\n")
+            "Installez-le avec :  pip install PyQt6 numpy\n"))
         return 2
 
     from delugeapp.config import APP_NAME, APP_ORG
-    from delugeapp.ui import icons, tasks
-    from delugeapp.ui.theme import GOLD, apply_theme
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_ORG)
     app.setApplicationDisplayName(APP_NAME)
-    _translate_qt(app)
 
     _install_excepthook()
 
@@ -323,31 +424,12 @@ def main(argv: list[str] | None = None) -> int:
             splash = _splash(app)
         except Exception:  # noqa: BLE001 - un écran d'attente est accessoire
             log.exception("écran de démarrage impossible")
-
-    ctx = _build_context(args)
-    apply_theme(app, ctx.settings.theme_accent or GOLD)
-    app.setWindowIcon(icons.app_icon(256))
-
-    from delugeapp.ui.mainwindow import MainWindow
-
-    window = MainWindow(ctx)
-    window.show()
-    if splash is not None:
-        splash.finish(window)
     if log_path is not None:
         log.info("journal : %s", log_path)
 
     try:
-        return app.exec()
+        return _run_windows(app, args, splash)
     finally:
-        # Rempart : si la boucle Qt se termine autrement que par la fermeture
-        # de la fenêtre, les fils doivent tout de même être arrêtés — un
-        # QThread encore vivant fait planter le processus à la sortie.
-        tasks.stop_all(3000)
-        try:
-            ctx.close()
-        except Exception:  # noqa: BLE001
-            log.exception("fermeture du contexte en échec")
         log.info("arrêt de Deluge Companion")
 
 

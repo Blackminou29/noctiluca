@@ -19,12 +19,16 @@ from __future__ import annotations
 import logging
 import random
 
+from ..i18n import N_, is_english, untranslated
+
 log = logging.getLogger(__name__)
 
 #: Noms français. Les altérations suivent l'usage : on écrit « Mib » plutôt
 #: que « Ré# », parce que c'est ainsi qu'un musicien francophone les lit.
-NOTE_NAMES_FR = ("Do", "Do#", "Ré", "Mib", "Mi", "Fa", "Fa#", "Sol", "Sol#",
-                 "La", "Sib", "Si")
+#: Les fonctions de nommage prennent les noms anglais quand l'interface
+#: parle anglais (``french=None``).
+NOTE_NAMES_FR = untranslated(("Do", "Do#", "Ré", "Mib", "Mi", "Fa", "Fa#",
+                              "Sol", "Sol#", "La", "Sib", "Si"))
 NOTE_NAMES_EN = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#",
                  "B")
 
@@ -33,35 +37,37 @@ NOTE_NAMES_EN = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#",
 OCTAVE_OFFSET = 2
 
 #: Gammes, par intervalles en demi-tons depuis la tonique.
+#: Les noms servent de clés (morceaux, réglages) : ils restent en français
+#: et se traduisent à l'affichage.
 SCALES: dict[str, tuple[int, ...]] = {
-    "majeur": (0, 2, 4, 5, 7, 9, 11),
-    "mineur": (0, 2, 3, 5, 7, 8, 10),
-    "mineur harmonique": (0, 2, 3, 5, 7, 8, 11),
-    "mineur mélodique": (0, 2, 3, 5, 7, 9, 11),
-    "dorien": (0, 2, 3, 5, 7, 9, 10),
-    "phrygien": (0, 1, 3, 5, 7, 8, 10),
-    "lydien": (0, 2, 4, 6, 7, 9, 11),
-    "mixolydien": (0, 2, 4, 5, 7, 9, 10),
-    "locrien": (0, 1, 3, 5, 6, 8, 10),
-    "phrygien dominant": (0, 1, 4, 5, 7, 8, 10),
-    "lydien b7": (0, 2, 4, 6, 7, 9, 10),
-    "pentatonique majeure": (0, 2, 4, 7, 9),
-    "pentatonique mineure": (0, 3, 5, 7, 10),
-    "blues": (0, 3, 5, 6, 7, 10),
-    "par tons": (0, 2, 4, 6, 8, 10),
-    "diminuée": (0, 2, 3, 5, 6, 8, 9, 11),
-    "diminuée demi-ton": (0, 1, 3, 4, 6, 7, 9, 10),
-    "hongroise mineure": (0, 2, 3, 6, 7, 8, 11),
-    "hijaz": (0, 1, 4, 5, 7, 8, 10),
-    "in sen": (0, 1, 5, 7, 10),
-    "hirajoshi": (0, 2, 3, 7, 8),
-    "kumoi": (0, 2, 3, 7, 9),
-    "égyptienne": (0, 2, 5, 7, 10),
-    "prométhée": (0, 2, 4, 6, 9),
+    N_("majeur"): (0, 2, 4, 5, 7, 9, 11),
+    N_("mineur"): (0, 2, 3, 5, 7, 8, 10),
+    N_("mineur harmonique"): (0, 2, 3, 5, 7, 8, 11),
+    N_("mineur mélodique"): (0, 2, 3, 5, 7, 9, 11),
+    N_("dorien"): (0, 2, 3, 5, 7, 9, 10),
+    N_("phrygien"): (0, 1, 3, 5, 7, 8, 10),
+    N_("lydien"): (0, 2, 4, 6, 7, 9, 11),
+    N_("mixolydien"): (0, 2, 4, 5, 7, 9, 10),
+    N_("locrien"): (0, 1, 3, 5, 6, 8, 10),
+    N_("phrygien dominant"): (0, 1, 4, 5, 7, 8, 10),
+    N_("lydien b7"): (0, 2, 4, 6, 7, 9, 10),
+    N_("pentatonique majeure"): (0, 2, 4, 7, 9),
+    N_("pentatonique mineure"): (0, 3, 5, 7, 10),
+    N_("blues"): (0, 3, 5, 6, 7, 10),
+    N_("par tons"): (0, 2, 4, 6, 8, 10),
+    N_("diminuée"): (0, 2, 3, 5, 6, 8, 9, 11),
+    N_("diminuée demi-ton"): (0, 1, 3, 4, 6, 7, 9, 10),
+    N_("hongroise mineure"): (0, 2, 3, 6, 7, 8, 11),
+    N_("hijaz"): (0, 1, 4, 5, 7, 8, 10),
+    N_("in sen"): (0, 1, 5, 7, 10),
+    N_("hirajoshi"): (0, 2, 3, 7, 8),
+    N_("kumoi"): (0, 2, 3, 7, 9),
+    N_("égyptienne"): (0, 2, 5, 7, 10),
+    N_("prométhée"): (0, 2, 4, 6, 9),
     # Deux gammes que propose le firmware c1.x sous ces noms.
-    "marva": (0, 1, 4, 6, 7, 9, 11),
-    "arabe": (0, 2, 4, 5, 6, 8, 10),
-    "chromatique": tuple(range(12)),
+    N_("marva"): (0, 1, 4, 6, 7, 9, 11),
+    N_("arabe"): (0, 2, 4, 5, 6, 8, 10),
+    N_("chromatique"): tuple(range(12)),
 }
 
 #: Nom qu'affiche le Deluge (firmware c1.2.1, ``model/scale/preset_scales.h``)
@@ -117,36 +123,38 @@ _ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII")
 #: Les degrés sont notés en chiffres romains ; la casse est recalculée à
 #: partir de la gamme, donc ``i`` et ``I`` désignent le même degré.
 PROGRESSIONS: dict[str, list[list[str]]] = {
-    "pop": [["I", "V", "VI", "IV"], ["I", "IV", "V", "I"],
+    N_("pop"): [["I", "V", "VI", "IV"], ["I", "IV", "V", "I"],
             ["VI", "IV", "I", "V"]],
-    "mélancolique": [["I", "VI", "III", "VII"], ["I", "VII", "VI", "VII"],
+    N_("mélancolique"): [["I", "VI", "III", "VII"], ["I", "VII", "VI", "VII"],
                      ["I", "III", "VI", "IV"]],
-    "house": [["I", "IV", "VI", "V"], ["II", "V", "I", "VI"],
+    N_("house"): [["I", "IV", "VI", "V"], ["II", "V", "I", "VI"],
               ["I", "VI", "II", "V"]],
-    "deep": [["I", "III", "IV", "VI"], ["I", "VII", "III", "VI"]],
-    "techno": [["I", "I", "VI", "VI"], ["I", "VII", "I", "VII"],
+    N_("deep"): [["I", "III", "IV", "VI"], ["I", "VII", "III", "VI"]],
+    N_("techno"): [["I", "I", "VI", "VI"], ["I", "VII", "I", "VII"],
                ["I", "VI", "VII", "VI"]],
-    "trance": [["VI", "IV", "I", "V"], ["I", "V", "VI", "IV"],
+    N_("trance"): [["VI", "IV", "I", "V"], ["I", "V", "VI", "IV"],
                ["VI", "VII", "I", "V"]],
-    "ambient": [["I", "IV", "I", "V"], ["I", "III", "IV", "I"],
+    N_("ambient"): [["I", "IV", "I", "V"], ["I", "III", "IV", "I"],
                 ["I", "VI", "IV", "I"]],
-    "jazz": [["II", "V", "I", "I"], ["I", "VI", "II", "V"],
+    N_("jazz"): [["II", "V", "I", "I"], ["I", "VI", "II", "V"],
              ["III", "VI", "II", "V"]],
-    "blues": [["I", "I", "IV", "I"], ["I", "IV", "I", "V"]],
-    "épique": [["VI", "VII", "I", "I"], ["I", "VII", "VI", "VII"],
+    N_("blues"): [["I", "I", "IV", "I"], ["I", "IV", "I", "V"]],
+    N_("épique"): [["VI", "VII", "I", "I"], ["I", "VII", "VI", "VII"],
                ["IV", "V", "VI", "VI"]],
-    "tendu": [["I", "VII", "VI", "V"], ["I", "II", "III", "IV"]],
-    "lumineux": [["I", "IV", "V", "IV"], ["I", "V", "IV", "I"]],
+    N_("tendu"): [["I", "VII", "VI", "V"], ["I", "II", "III", "IV"]],
+    N_("lumineux"): [["I", "IV", "V", "IV"], ["I", "V", "IV", "I"]],
 }
 
 #: Couleurs d'accords : ce qu'on empile sur chaque degré de la gamme.
 CHORD_COLORS: dict[str, str] = {
-    "triades": "trois sons : fondamentale, tierce, quinte",
-    "septièmes": "la septième de la gamme en plus (jazz, house, lo-fi)",
-    "neuvièmes": "septième et neuvième ; jouées sans la fondamentale, que "
-                 "tient la basse (deep house, nappes)",
-    "suspendus": "la tierce remplacée par la quarte ou la seconde "
-                 "(trance, techno mélodique)",
+    N_("triades"): N_("trois sons : fondamentale, tierce, quinte"),
+    N_("septièmes"): N_("la septième de la gamme en plus (jazz, house, "
+                        "lo-fi)"),
+    N_("neuvièmes"): N_("septième et neuvième ; jouées sans la "
+                        "fondamentale, que tient la basse (deep house, "
+                        "nappes)"),
+    N_("suspendus"): N_("la tierce remplacée par la quarte ou la seconde "
+                        "(trance, techno mélodique)"),
 }
 
 #: Couleur habituelle de chaque ambiance ; les autres restent en triades.
@@ -186,14 +194,19 @@ _build_camelot()
 # Noms de notes
 # --------------------------------------------------------------------------- #
 
-def note_to_name(midi: int, french: bool = True,
+def _french(french: bool | None) -> bool:
+    """``None`` : les noms de la langue de l'interface."""
+    return (not is_english()) if french is None else bool(french)
+
+
+def note_to_name(midi: int, french: bool | None = None,
                  with_octave: bool = True) -> str:
     """Nom d'une note MIDI : ``60`` -> ``Do3`` (ou ``C3``)."""
     try:
         value = int(midi)
     except (TypeError, ValueError):
         return ""
-    names = NOTE_NAMES_FR if french else NOTE_NAMES_EN
+    names = NOTE_NAMES_FR if _french(french) else NOTE_NAMES_EN
     name = names[value % 12]
     if not with_octave:
         return name
@@ -259,7 +272,7 @@ def name_to_note(name: str) -> int:
 # Orthographe selon la tonalité
 # --------------------------------------------------------------------------- #
 
-_LETTERS_FR = ("Do", "Ré", "Mi", "Fa", "Sol", "La", "Si")
+_LETTERS_FR = untranslated(("Do", "Ré", "Mi", "Fa", "Sol", "La", "Si"))
 _LETTERS_EN = ("C", "D", "E", "F", "G", "A", "B")
 _LETTER_PC = (0, 2, 4, 5, 7, 9, 11)
 _ACCIDENTALS = {0: "", 1: "#", 2: "##", -1: "b", -2: "bb"}
@@ -278,7 +291,7 @@ def _seven_note_parent(intervals: tuple[int, ...]) -> tuple[int, ...] | None:
 
 
 def scale_spelling(root: int, scale: str,
-                   french: bool = True) -> dict[int, str]:
+                   french: bool | None = None) -> dict[int, str]:
     """Nom de chaque note de la gamme, épelé selon la tonalité.
 
     Dans une gamme de sept notes, chaque nom de note sert **une fois** :
@@ -301,6 +314,7 @@ def scale_spelling(root: int, scale: str,
         tonic = int(root) % 12
     except (TypeError, ValueError):
         return {}
+    french = _french(french)
     letters = _LETTERS_FR if french else _LETTERS_EN
 
     best: tuple[int, dict[int, str]] | None = None
@@ -331,7 +345,7 @@ def scale_spelling(root: int, scale: str,
 
 
 def spell(midi: int, spelling: dict[int, str] | None,
-          with_octave: bool = True, french: bool = True) -> str:
+          with_octave: bool = True, french: bool | None = None) -> str:
     """Nom d'une note selon une orthographe de tonalité.
 
     Hors de la gamme (ou sans orthographe), retombe sur
@@ -350,7 +364,7 @@ def spell(midi: int, spelling: dict[int, str] | None,
     shift = name.count("#") - name.count("b")
     # « Sib » commence par « Si » sans être un si bémol de « S » : seules
     # les altérations finales comptent, d'où le compte sur la fin du nom.
-    letters = _LETTERS_FR if french else _LETTERS_EN
+    letters = _LETTERS_FR if _french(french) else _LETTERS_EN
     base = next((l for l in sorted(letters, key=len, reverse=True)
                  if name.startswith(l)), name)
     tail = name[len(base):]
@@ -409,8 +423,9 @@ def deluge_scale_name(scale: str) -> str:
 
 
 #: Gammes de sept notes, dans l'ordre où l'on cherche un « mode parent ».
-_PARENT_MODES = ("majeur", "mineur", "dorien", "mixolydien", "phrygien",
-                 "lydien", "mineur harmonique", "mineur mélodique", "locrien")
+_PARENT_MODES = untranslated((
+    "majeur", "mineur", "dorien", "mixolydien", "phrygien", "lydien",
+    "mineur harmonique", "mineur mélodique", "locrien"))
 
 
 def deluge_mode_notes(scale: str, official: bool = False) -> list[int]:
@@ -597,7 +612,7 @@ _CHORD_SUFFIX = {"maj": "", "min": "m", "dim": "°", "aug": "+",
                  "m7b5": "ø7", "dim7": "°7", "mMaj7": "m(maj7)"}
 
 
-def chord_symbol(root: int, chord: str, french: bool = True,
+def chord_symbol(root: int, chord: str, french: bool | None = None,
                  spelling: dict[int, str] | None = None) -> str:
     """Nom lisible d'un accord : ``Lam``, ``Sol7``, ``Siø7``, ``Lab``.
 
@@ -790,9 +805,10 @@ def progression(root: int, scale: str, name: str = "",
 #: Fonction harmonique de chaque degré (0 = I) : tonique, sous-dominante,
 #: dominante. Deux accords de même fonction se remplacent sans casser le
 #: sens de la phrase — le vi pour le I, le ii pour le IV, le vii° pour le V.
-FUNCTIONS: dict[int, str] = {0: "tonique", 2: "tonique", 5: "tonique",
-                             1: "sous-dominante", 3: "sous-dominante",
-                             4: "dominante", 6: "dominante"}
+FUNCTIONS: dict[int, str] = {0: N_("tonique"), 2: N_("tonique"),
+                             5: N_("tonique"), 1: N_("sous-dominante"),
+                             3: N_("sous-dominante"), 4: N_("dominante"),
+                             6: N_("dominante")}
 
 
 def _chord_entry(root: int, scale: str, index: int, colour: str,

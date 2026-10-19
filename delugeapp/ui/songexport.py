@@ -21,6 +21,8 @@ from typing import Callable
 
 from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
+from ..i18n import tr
+
 log = logging.getLogger(__name__)
 
 __all__ = ["export_song"]
@@ -43,16 +45,16 @@ def export_song(parent, ctx, build: Callable, default_name: str,
     try:
         spec = build(card)
     except ValueError as exc:
-        say(f"Morceau impossible : {exc}.")
+        say(tr("Morceau impossible : %s.") % exc)
         return ""
     except Exception as exc:  # noqa: BLE001 - rempart, cf. SPEC §6.3
         log.exception("construction du morceau impossible")
-        say(f"Morceau impossible : {exc}")
+        say(tr("Morceau impossible : %s") % exc)
         return ""
 
     name, ok = QInputDialog.getText(
-        parent, "Écrire un morceau",
-        "Nom du morceau, dans SONGS (il sera assaini pour la carte) :",
+        parent, tr("Écrire un morceau"),
+        tr("Nom du morceau, dans SONGS (il sera assaini pour la carte) :"),
         QLineEdit.EchoMode.Normal, default_name)
     if not ok or not str(name or "").strip():
         return ""
@@ -60,22 +62,23 @@ def export_song(parent, ctx, build: Callable, default_name: str,
 
     plan = songwriter.write_song(card, spec, apply=False)
     if not plan.ok:
-        say(f"Morceau impossible : {plan.error}.")
+        say(tr("Morceau impossible : %s.") % plan.error)
         return ""
     if getattr(ctx.settings, "confirm_writes", True):
         answer = QMessageBox.question(
-            parent, "Écrire le morceau",
-            plan.text() + "\n\nÉcrire ce nouveau fichier sur la carte ? "
-            "Aucun fichier existant n'est remplacé.",
+            parent, tr("Écrire le morceau"),
+            plan.text() + "\n\n" + tr("Écrire ce nouveau fichier sur la "
+                                       "carte ? Aucun fichier existant n'est "
+                                       "remplacé."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes)
         if answer != QMessageBox.StandardButton.Yes:
-            say("Rien n'a été écrit.")
+            say(tr("Rien n'a été écrit."))
             return ""
 
     done = songwriter.write_song(card, spec, apply=True)
     if not done.applied:
-        say(f"Morceau non écrit : {done.error}.")
+        say(tr("Morceau non écrit : %s.") % done.error)
         return ""
     try:
         from ..core.scan import index_songs
@@ -83,8 +86,11 @@ def export_song(parent, ctx, build: Callable, default_name: str,
         index_songs(card, ctx.lib, [card.abs(done.rel)])
     except Exception:  # noqa: BLE001 - l'index se rattrapera à l'analyse
         log.exception("indexation du morceau impossible")
-    absents = (f" — {len(done.missing)} échantillon(s) absent(s) de la "
-               f"carte" if done.missing else "")
-    say(f"Morceau écrit : {done.rel}{absents}. Il se charge sur le Deluge "
-        f"comme tout autre morceau.")
+    if done.missing:
+        say(tr("Morceau écrit : %s — %d échantillon(s) absent(s) de la carte. "
+               "Il se charge sur le Deluge comme tout autre morceau.")
+            % (done.rel, len(done.missing)))
+    else:
+        say(tr("Morceau écrit : %s. Il se charge sur le Deluge comme tout "
+               "autre morceau.") % done.rel)
     return done.rel

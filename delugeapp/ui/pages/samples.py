@@ -49,6 +49,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core import samplefix, similarity, slicer, wav
+from ...i18n import N_, decimal, integer, tr
 from ..theme import GREY, PAD, category_color
 from ..widgets.common import (
     clear_layout,
@@ -82,11 +83,11 @@ NL = chr(10)
 
 #: Filtres de durée proposés, en secondes.
 DURATION_FILTERS: tuple[tuple[str, float, float], ...] = (
-    ("Toutes durées", 0.0, 0.0),
-    ("Très court (< 0,5 s)", 0.0, 0.5),
-    ("Court (0,5 à 2 s)", 0.5, 2.0),
-    ("Moyen (2 à 10 s)", 2.0, 10.0),
-    ("Long (plus de 10 s)", 10.0, 0.0),
+    (N_("Toutes durées"), 0.0, 0.0),
+    (N_("Très court (< 0,5 s)"), 0.0, 0.5),
+    (N_("Court (0,5 à 2 s)"), 0.5, 2.0),
+    (N_("Moyen (2 à 10 s)"), 2.0, 10.0),
+    (N_("Long (plus de 10 s)"), 10.0, 0.0),
 )
 
 #: Nombre de pics calculés pour l'aperçu.
@@ -129,29 +130,29 @@ class ProcessDialog(QDialog):
 
     def __init__(self, count: int, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Traiter les échantillons")
+        self.setWindowTitle(tr("Traiter les échantillons"))
         self.setMinimumWidth(460)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(PAD, PAD, PAD, PAD)
         layout.setSpacing(8)
 
-        titre = QLabel("%d échantillon(s) sélectionné(s)" % count)
+        titre = QLabel(tr("%d échantillon(s) sélectionné(s)") % count)
         titre.setProperty("role", "title")
         layout.addWidget(titre)
 
         form = QFormLayout()
         form.setSpacing(6)
 
-        self._mono = QCheckBox("Mélanger en mono")
+        self._mono = QCheckBox(tr("Mélanger en mono"))
         self._mono.setToolTip(
-            "Divise la taille par deux. La longueur ne change pas.")
+            tr("Divise la taille par deux. La longueur ne change pas."))
         form.addRow(self._mono)
 
-        self._dc = QCheckBox("Retirer la composante continue")
+        self._dc = QCheckBox(tr("Retirer la composante continue"))
         form.addRow(self._dc)
 
-        self._norm = QCheckBox("Normaliser la crête à")
+        self._norm = QCheckBox(tr("Normaliser la crête à"))
         self._norm_db = QDoubleSpinBox()
         self._norm_db.setRange(-24.0, 0.0)
         self._norm_db.setDecimals(1)
@@ -160,7 +161,7 @@ class ProcessDialog(QDialog):
         self._norm_db.setSuffix("  dBFS")
         form.addRow(self._norm, self._norm_db)
 
-        self._trim = QCheckBox("Couper le silence sous")
+        self._trim = QCheckBox(tr("Couper le silence sous"))
         self._trim_db = QDoubleSpinBox()
         self._trim_db.setRange(-90.0, -20.0)
         self._trim_db.setDecimals(0)
@@ -168,7 +169,7 @@ class ProcessDialog(QDialog):
         self._trim_db.setSuffix("  dB")
         form.addRow(self._trim, self._trim_db)
 
-        self._fade = QCheckBox("Fondus d'entrée et de sortie de")
+        self._fade = QCheckBox(tr("Fondus d'entrée et de sortie de"))
         self._fade_ms = QDoubleSpinBox()
         self._fade_ms.setRange(0.5, 500.0)
         self._fade_ms.setDecimals(1)
@@ -176,7 +177,7 @@ class ProcessDialog(QDialog):
         self._fade_ms.setSuffix("  ms")
         form.addRow(self._fade, self._fade_ms)
 
-        self._rate = QCheckBox("Rééchantillonner à")
+        self._rate = QCheckBox(tr("Rééchantillonner à"))
         self._rate_box = QComboBox()
         for value in samplefix.STANDARD_RATES + (32000, 22050):
             self._rate_box.addItem("%d Hz" % value, value)
@@ -184,12 +185,12 @@ class ProcessDialog(QDialog):
 
         layout.addLayout(form)
 
-        note = QLabel(
+        note = QLabel(tr(
             "Le rééchantillonnage et la coupe du silence changent la "
             "longueur des fichiers : les bornes des presets qui les citent "
             "sont recalées, et les fichiers utilisés par un morceau sont "
             "écartés. Les originaux sont conservés dans "
-            "<b>%s/</b>." % samplefix.BACKUP_ROOT)
+            "<b>%s/</b>.") % samplefix.BACKUP_ROOT)
         note.setWordWrap(True)
         note.setStyleSheet("color: %s;" % GREY)
         layout.addWidget(note)
@@ -198,10 +199,10 @@ class ProcessDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel)
         ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok.setText("Simuler")
+        ok.setText(tr("Simuler"))
         ok.setObjectName("Primary")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
-            "Annuler")
+            tr("Annuler"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -264,7 +265,7 @@ class SliceDialog(QDialog):
         #: Morceau écrit depuis ce dialogue (chemin relatif), s'il y en a un.
         self.written_song = ""
 
-        self.setWindowTitle("Découper en kit — %s" % Path(rel).name)
+        self.setWindowTitle(tr("Découper en kit — %s") % Path(rel).name)
         self.resize(900, 620)
 
         layout = QVBoxLayout(self)
@@ -288,7 +289,7 @@ class SliceDialog(QDialog):
 
         self._list = QTableWidget(0, 4)
         self._list.setHorizontalHeaderLabels(
-            ["#", "Début", "Durée", "Trames"])
+            ["#", tr("Début"), tr("Durée"), tr("Trames")])
         self._list.verticalHeader().setVisible(False)
         self._list.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
@@ -302,17 +303,18 @@ class SliceDialog(QDialog):
 
         buttons = QDialogButtonBox()
         self._write = buttons.addButton(
-            "Écrire le kit", QDialogButtonBox.ButtonRole.AcceptRole)
+            tr("Écrire le kit"), QDialogButtonBox.ButtonRole.AcceptRole)
         self._write.setObjectName("Primary")
         self._export = buttons.addButton(
-            "Exporter en fichiers…", QDialogButtonBox.ButtonRole.ActionRole)
+            tr("Exporter en fichiers…"),
+            QDialogButtonBox.ButtonRole.ActionRole)
         self._song = buttons.addButton(
-            "Écrire en morceau", QDialogButtonBox.ButtonRole.ActionRole)
+            tr("Écrire en morceau"), QDialogButtonBox.ButtonRole.ActionRole)
         self._song.setToolTip(
-            "Écrit sur la carte un morceau neuf dans SONGS : le kit des "
-            "tranches et un clip qui rejoue la boucle tranche par tranche, à "
-            "sa place. Aucun fichier existant n'est remplacé.")
-        buttons.addButton("Fermer", QDialogButtonBox.ButtonRole.RejectRole)
+            tr("Écrit sur la carte un morceau neuf dans SONGS : le kit des "
+               "tranches et un clip qui rejoue la boucle tranche par "
+               "tranche, à sa place. Aucun fichier existant n'est remplacé."))
+        buttons.addButton(tr("Fermer"), QDialogButtonBox.ButtonRole.RejectRole)
         self._write.clicked.connect(self._do_write)
         self._export.clicked.connect(self._do_export)
         self._song.clicked.connect(self._do_song)
@@ -325,44 +327,44 @@ class SliceDialog(QDialog):
     # -- construction ------------------------------------------------------- #
 
     def _build_controls(self) -> QWidget:
-        box = QGroupBox("Coupes")
+        box = QGroupBox(tr("Coupes"))
         row = QHBoxLayout(box)
         row.setSpacing(10)
 
         self._mode = QComboBox()
-        self._mode.addItem("Sur les attaques", "transients")
-        self._mode.addItem("En divisions égales", "grid")
+        self._mode.addItem(tr("Sur les attaques"), "transients")
+        self._mode.addItem(tr("En divisions égales"), "grid")
         self._mode.currentIndexChanged.connect(self._recompute)
-        row.addWidget(QLabel("Placement :"))
+        row.addWidget(QLabel(tr("Placement :")))
         row.addWidget(self._mode)
 
         self._count = QSpinBox()
         self._count.setRange(1, slicer.MAX_SLICES)
         self._count.setValue(slicer.DEFAULT_SLICES)
         self._count.valueChanged.connect(self._recompute)
-        row.addWidget(QLabel("Tranches :"))
+        row.addWidget(QLabel(tr("Tranches :")))
         row.addWidget(self._count)
 
         self._sens = QSlider(Qt.Orientation.Horizontal)
         self._sens.setRange(20, 300)
         self._sens.setValue(100)
         self._sens.setFixedWidth(120)
-        self._sens.setToolTip("Sensibilité de la détection d'attaques")
+        self._sens.setToolTip(tr("Sensibilité de la détection d'attaques"))
         self._sens.valueChanged.connect(self._recompute)
-        row.addWidget(QLabel("Sensibilité :"))
+        row.addWidget(QLabel(tr("Sensibilité :")))
         row.addWidget(self._sens)
 
-        self._quant = QCheckBox("Aligner sur le tempo")
+        self._quant = QCheckBox(tr("Aligner sur le tempo"))
         self._quant.setToolTip(
-            "Ramène les coupes détectées sur la grille : un break rejoué "
-            "reste en place.")
+            tr("Ramène les coupes détectées sur la grille : un break rejoué "
+               "reste en place."))
         self._quant.stateChanged.connect(self._recompute)
         row.addWidget(self._quant)
 
         row.addStretch(1)
 
-        self._listen = tool_button("Écouter", "play",
-                                   "Écouter la tranche sélectionnée")
+        self._listen = tool_button(tr("Écouter"), "play",
+                                   tr("Écouter la tranche sélectionnée"))
         self._listen.clicked.connect(self._play_selected)
         row.addWidget(self._listen)
         return box
@@ -379,8 +381,9 @@ class SliceDialog(QDialog):
             peaks = wav.peaks(path, buckets=1400)
             self._wave.set_peaks(peaks, info.duration, info.sample_rate)
             self._title.setText(
-                "%s — %.2f s, %d Hz, %d canal(aux)"
-                % (self.rel, info.duration, info.sample_rate, info.channels))
+                tr("%s — %s s, %d Hz, %d canal(aux)")
+                % (self.rel, decimal(info.duration, 2), info.sample_rate,
+                   info.channels))
         except Exception as exc:  # noqa: BLE001 - un aperçu n'est pas vital
             log.debug("aperçu impossible pour %s : %s", self.rel, exc)
             self._wave.clear()
@@ -402,7 +405,7 @@ class SliceDialog(QDialog):
                 quantize=attaques and self._quant.isChecked())
         except Exception as exc:  # noqa: BLE001
             log.exception("découpage impossible")
-            self._summary.setText("Découpage impossible : %s" % exc)
+            self._summary.setText(tr("Découpage impossible : %s") % exc)
             return
 
         self._wave.set_markers(
@@ -419,7 +422,7 @@ class SliceDialog(QDialog):
         self._list.setRowCount(len(self.sliceset))
         for index, tranche in enumerate(self.sliceset.slices):
             valeurs = ("%d" % (index + 1),
-                       "%.3f s" % (tranche.start / sr),
+                       "%s s" % decimal(tranche.start / sr, 3),
                        "%.0f ms" % (tranche.seconds(self.sliceset.sr) * 1000),
                        "%d" % tranche.frames)
             for colonne, texte in enumerate(valeurs):
@@ -470,12 +473,12 @@ class SliceDialog(QDialog):
         rel, message = slicer.save_sliced_kit(card, self.sliceset,
                                               apply=False)
         if not rel:
-            QMessageBox.warning(self, "Découpage", message)
+            QMessageBox.warning(self, tr("Découpage"), message)
             return
         if QMessageBox.question(
-                self, "Écrire le kit",
-                "%s\n\nChaque rangée jouera une portion de %s : aucun "
-                "fichier audio n'est dupliqué.\n\nContinuer ?"
+                self, tr("Écrire le kit"),
+                tr("%s\n\nChaque rangée jouera une portion de %s : aucun "
+                   "fichier audio n'est dupliqué.\n\nContinuer ?")
                 % (message, Path(self.rel).name),
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No,
@@ -485,7 +488,7 @@ class SliceDialog(QDialog):
 
         rel, message = slicer.save_sliced_kit(card, self.sliceset, apply=True)
         if not rel:
-            QMessageBox.warning(self, "Découpage", message)
+            QMessageBox.warning(self, tr("Découpage"), message)
             return
         self.written = rel
         try:
@@ -494,7 +497,7 @@ class SliceDialog(QDialog):
             index_presets(card, self.ctx.lib, [card.abs(rel)])
         except Exception:  # noqa: BLE001 - l'index se rattrapera à l'analyse
             log.exception("indexation du kit découpé impossible")
-        QMessageBox.information(self, "Kit écrit", message)
+        QMessageBox.information(self, tr("Kit écrit"), message)
         self.accept()
 
     def _do_song(self) -> None:
@@ -521,13 +524,13 @@ class SliceDialog(QDialog):
         prevus, erreurs = slicer.export_slices(card, self.sliceset, dossier,
                                                apply=False)
         if erreurs:
-            QMessageBox.warning(self, "Export", "\n".join(erreurs[:8]))
+            QMessageBox.warning(self, tr("Export"), "\n".join(erreurs[:8]))
             return
         if QMessageBox.question(
-                self, "Exporter les tranches",
-                "%d fichiers seraient écrits dans %s.\n\nCe n'est pas "
-                "nécessaire pour jouer le découpage sur le Deluge : le kit "
-                "suffit et n'occupe rien de plus.\n\nContinuer ?"
+                self, tr("Exporter les tranches"),
+                tr("%d fichiers seraient écrits dans %s.\n\nCe n'est pas "
+                   "nécessaire pour jouer le découpage sur le Deluge : le kit "
+                   "suffit et n'occupe rien de plus.\n\nContinuer ?")
                 % (len(prevus), dossier),
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No,
@@ -539,24 +542,25 @@ class SliceDialog(QDialog):
                                                apply=True)
         if erreurs:
             QMessageBox.warning(
-                self, "Export partiel",
-                "%d fichiers écrits, %d en échec :%s%s"
+                self, tr("Export partiel"),
+                tr("%d fichiers écrits, %d en échec :%s%s")
                 % (len(ecrits), len(erreurs), NL + NL,
                    NL.join(erreurs[:8])))
         else:
             QMessageBox.information(
-                self, "Export terminé",
-                "%d fichiers écrits dans %s." % (len(ecrits), dossier))
+                self, tr("Export terminé"),
+                tr("%d fichiers écrits dans %s.") % (len(ecrits), dossier))
         self.written = dossier
 
 
 class SamplesPage(Page):
     """Bibliothèque d'échantillons."""
 
-    TITLE = "Échantillons"
-    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
-                    "Vous retrouverez ici toute la bibliothèque : forme "
-                    "d'onde, écoute d'un clic, étiquettes et sons proches.")
+    TITLE = N_("Échantillons")
+    EMPTY_DETAIL = N_("Indiquez l'emplacement de votre carte dans les "
+                      "réglages. Vous retrouverez ici toute la "
+                      "bibliothèque : forme d'onde, écoute d'un clic, "
+                      "étiquettes et sons proches.")
     ICON = "samples"
 
     #: Un échantillon a été choisi : utile aux autres pages (générateur).
@@ -591,43 +595,44 @@ class SamplesPage(Page):
         outer.setSpacing(8)
 
         header, actions = self.header(
-            "Échantillons", "Parcourir, écouter et ranger la bibliothèque")
+            tr("Échantillons"),
+            tr("Parcourir, écouter et ranger la bibliothèque"))
         outer.addWidget(header)
 
-        self._play_button = tool_button("Écouter", "play", primary=True)
+        self._play_button = tool_button(tr("Écouter"), "play", primary=True)
         self._play_button.clicked.connect(self.guard(self._play))
         actions.addWidget(self._play_button)
 
-        stop = tool_button("Arrêter", "stop")
+        stop = tool_button(tr("Arrêter"), "stop")
         stop.clicked.connect(self.guard(self._stop))
         actions.addWidget(stop)
 
         self._reveal_button = tool_button(
-            "Dans l'explorateur", "folder",
-            "Ouvrir le dossier contenant le fichier")
+            tr("Dans l'explorateur"), "folder",
+            tr("Ouvrir le dossier contenant le fichier"))
         self._reveal_button.clicked.connect(self.guard(self._reveal))
         actions.addWidget(self._reveal_button)
 
         self._process_button = tool_button(
-            "Traiter…", "tools",
-            "Mono, normalisation, rééchantillonnage, fondus… sur la "
-            "sélection")
+            tr("Traiter…"), "tools",
+            tr("Mono, normalisation, rééchantillonnage, fondus… sur la "
+               "sélection"))
         self._process_button.clicked.connect(self.guard(self._process))
         actions.addWidget(self._process_button)
 
         self._slice_button = tool_button(
-            "Découper…", "grid",
-            "Découper une boucle en kit : un pad par tranche")
+            tr("Découper…"), "grid",
+            tr("Découper une boucle en kit : un pad par tranche"))
         self._slice_button.clicked.connect(self.guard(self._slice))
         actions.addWidget(self._slice_button)
 
         self._similar_button = tool_button(
-            "Sons proches", "search",
-            "Trouver les échantillons qui ressemblent au son sélectionné")
+            tr("Sons proches"), "search",
+            tr("Trouver les échantillons qui ressemblent au son sélectionné"))
         self._similar_button.clicked.connect(self.guard(self._toggle_similar))
         actions.addWidget(self._similar_button)
 
-        self._send_button = tool_button("Envoyer au Deluge…", "import")
+        self._send_button = tool_button(tr("Envoyer au Deluge…"), "import")
         self._send_button.clicked.connect(self.guard(self._send))
         actions.addWidget(self._send_button)
 
@@ -668,41 +673,41 @@ class SamplesPage(Page):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
-        self._search = SearchBar("Rechercher un échantillon…")
+        self._search = SearchBar(tr("Rechercher un échantillon…"))
         self._search.searchChanged.connect(self.guard(lambda _t: self._reload()))
         row.addWidget(self._search, 2)
 
         self._category = QComboBox()
-        self._category.addItem("Toutes catégories", "")
+        self._category.addItem(tr("Toutes catégories"), "")
         self._category.activated.connect(self.guard(lambda _i: self._reload()))
         row.addWidget(self._category, 1)
 
         self._duration = QComboBox()
         for label, low, high in DURATION_FILTERS:
-            self._duration.addItem(label, (low, high))
+            self._duration.addItem(tr(label), (low, high))
         self._duration.activated.connect(self.guard(lambda _i: self._reload()))
         row.addWidget(self._duration, 1)
 
-        self._only_unused = QCheckBox("Inutilisés")
+        self._only_unused = QCheckBox(tr("Inutilisés"))
         self._only_unused.setToolTip(
-            "Échantillons qu'aucun preset, kit ni morceau ne cite")
+            tr("Échantillons qu'aucun preset, kit ni morceau ne cite"))
         self._only_unused.toggled.connect(self.guard(lambda _c: self._reload()))
         row.addWidget(self._only_unused)
 
-        self._only_fav = QCheckBox("Favoris")
+        self._only_fav = QCheckBox(tr("Favoris"))
         self._only_fav.toggled.connect(self.guard(lambda _c: self._reload()))
         row.addWidget(self._only_fav)
 
-        self._only_missing = QCheckBox("Manquants")
+        self._only_missing = QCheckBox(tr("Manquants"))
         self._only_missing.setToolTip(
-            "Fichiers réclamés par un preset mais absents de la carte")
+            tr("Fichiers réclamés par un preset mais absents de la carte"))
         self._only_missing.toggled.connect(
             self.guard(lambda _c: self._reload()))
         row.addWidget(self._only_missing)
         return host
 
     def _build_tree(self) -> QWidget:
-        card = Card("Dossiers", color=self.color)
+        card = Card(tr("Dossiers"), color=self.color)
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setMinimumWidth(190)
@@ -738,7 +743,7 @@ class SamplesPage(Page):
         une zone défilante, l'aperçu garde sa hauteur naturelle quand il y a
         la place, et se parcourt quand il n'y en a pas.
         """
-        card = Card("Aperçu", color=self.color)
+        card = Card(tr("Aperçu"), color=self.color)
         exterieur = card.body()
         defilante = QScrollArea()
         defilante.setWidgetResizable(True)
@@ -750,7 +755,7 @@ class SamplesPage(Page):
         defilante.setWidget(interieur)
         exterieur.addWidget(defilante)
 
-        self._name = ElidedLabel("Aucun échantillon sélectionné")
+        self._name = ElidedLabel(tr("Aucun échantillon sélectionné"))
         self._name.setProperty("role", "title")
         body.addWidget(self._name)
 
@@ -772,23 +777,23 @@ class SamplesPage(Page):
         side.setSpacing(6)
 
         stars_row = QHBoxLayout()
-        stars_label = QLabel("Note")
+        stars_label = QLabel(tr("Note"))
         stars_label.setProperty("role", "subtitle")
         stars_row.addWidget(stars_label)
         self._stars = StarRating(0)
         self._stars.setToolTip(
-            "Note de 1 à 5 étoiles, gardée dans l'index de l'application "
-            "et non sur la carte")
+            tr("Note de 1 à 5 étoiles, gardée dans l'index de l'application "
+               "et non sur la carte"))
         self._stars.changed.connect(self.guard(self._set_stars))
         stars_row.addWidget(self._stars)
         stars_row.addStretch(1)
         side.addLayout(stars_row)
 
-        self._fav = QCheckBox("Favori")
+        self._fav = QCheckBox(tr("Favori"))
         self._fav.toggled.connect(self.guard(self._set_favorite))
         side.addWidget(self._fav)
 
-        tags_label = QLabel("Étiquettes")
+        tags_label = QLabel(tr("Étiquettes"))
         tags_label.setProperty("role", "subtitle")
         side.addWidget(tags_label)
         self._tags_row = QHBoxLayout()
@@ -826,7 +831,7 @@ class SamplesPage(Page):
         def get(key, default=None):
             return lambda row: (row[key] if key in row.keys() else default)
 
-        proximite = [("Proximité", get("closeness"), 90, right,
+        proximite = [(tr("Proximité"), get("closeness"), 90, right,
                       lambda v: "%d %%" % v if v is not None else "—")] \
             if with_closeness else []
 
@@ -855,19 +860,19 @@ class SamplesPage(Page):
             if bits and int(bits) != 16:
                 bouts.append("%d b" % int(bits))
             if (champ("channels") or 1) > 1:
-                bouts.append("stéréo")
+                bouts.append(tr("stéréo"))
             return " · ".join(bouts)
 
         return proximite + [
-            ("Nom", get("name"), 260, left),
-            ("Dossier", dossier, 130, left),
-            ("Catégorie", get("category"), 132, left, None, _pastille),
-            ("Durée", get("duration"), 80, right, human_duration),
-            ("Tonalité", get("key"), 70, left),
+            (tr("Nom"), get("name"), 260, left),
+            (tr("Dossier"), dossier, 130, left),
+            (tr("Catégorie"), get("category"), 132, left, None, _pastille),
+            (tr("Durée"), get("duration"), 80, right, human_duration),
+            (tr("Tonalité"), get("key"), 70, left),
             # Vide = format courant. Rempli = ce qui mérite un regard.
-            ("Format", format_court, 100, left),
-            ("Taille", get("size"), 85, right, human_size),
-            ("Usages", get("used_count"), 65, right),
+            (tr("Format"), format_court, 100, left),
+            (tr("Taille"), get("size"), 85, right, human_size),
+            (tr("Usages"), get("used_count"), 65, right),
         ]
 
     # -- chargement --------------------------------------------------------- #
@@ -883,8 +888,8 @@ class SamplesPage(Page):
         rows = self._selected_rows()
         if not rows:
             QMessageBox.information(
-                self, "Aucune sélection",
-                "Sélectionnez le son dont vous cherchez les semblables.")
+                self, tr("Aucune sélection"),
+                tr("Sélectionnez le son dont vous cherchez les semblables."))
             return
 
         rel = rows[0]["rel"]
@@ -892,25 +897,25 @@ class SamplesPage(Page):
             self._space = similarity.build_space(self.lib)
         if not self._space.has(rel):
             QMessageBox.information(
-                self, "Pas encore analysé",
-                "Ce son n'a pas de descripteurs acoustiques.\n\n"
-                "Lancez une analyse de la carte avec l'analyse acoustique "
-                "activée (Réglages), puis recommencez.")
+                self, tr("Pas encore analysé"),
+                tr("Ce son n'a pas de descripteurs acoustiques.\n\n"
+                   "Lancez une analyse de la carte avec l'analyse acoustique "
+                   "activée (Réglages), puis recommencez."))
             return
 
         matches = similarity.similar(self.lib, rel, limit=60,
                                      space=self._space)
         if not matches:
-            self.say("Aucun son proche trouvé.")
+            self.say(tr("Aucun son proche trouvé."))
             return
 
         self._similar_to = rel
         self._similar_rows = [
             ScoredRow(m.row, m.closeness, m.distance) for m in matches
             if m.row is not None]
-        self._similar_button.setText("Toute la liste")
+        self._similar_button.setText(tr("Toute la liste"))
         self._reload()
-        self.say("%d son(s) proches de %s — %s"
+        self.say(tr("%d son(s) proches de %s — %s")
                  % (len(self._similar_rows), Path(rel).name,
                     similarity.describe(self._space.rows.get(
                         similarity.norm_rel(rel)))))
@@ -921,7 +926,7 @@ class SamplesPage(Page):
             return
         self._similar_to = ""
         self._similar_rows = []
-        self._similar_button.setText("Sons proches")
+        self._similar_button.setText(tr("Sons proches"))
         self._reload()
 
     def _reload(self) -> None:
@@ -929,9 +934,9 @@ class SamplesPage(Page):
         if self._similar_to:
             self._fill_table(self._similar_rows, with_closeness=True)
             self._count.setText(
-                "%d son(s) proches de « %s », du plus proche au plus "
-                "lointain" % (len(self._similar_rows),
-                              Path(self._similar_to).name))
+                tr("%d son(s) proches de « %s », du plus proche au plus "
+                   "lointain") % (len(self._similar_rows),
+                                  Path(self._similar_to).name))
             return
 
         low, high = self._duration.currentData() or (0.0, 0.0)
@@ -952,10 +957,12 @@ class SamplesPage(Page):
         self._fill_table(rows)
 
         total = len(rows)
-        suffix = ""
         if self._only_missing.isChecked():
-            suffix = " — fichiers réclamés par un preset mais absents"
-        self._count.setText(f"{total} échantillon(s) affiché(s){suffix}")
+            self._count.setText(
+                tr("%d échantillon(s) affiché(s) — fichiers réclamés par un "
+                   "preset mais absents") % total)
+        else:
+            self._count.setText(tr("%d échantillon(s) affiché(s)") % total)
 
     def _fill_table(self, rows, with_closeness: bool = False) -> None:
         """Pose les lignes dans la table, en ajustant les colonnes."""
@@ -1015,7 +1022,7 @@ class SamplesPage(Page):
                 totaux[chemin] = totaux.get(chemin, 0) + int(count)
 
         total = sum(int(c) for _n, c in folders)
-        root = QTreeWidgetItem(["Tous les sons  (%d)" % total])
+        root = QTreeWidgetItem([tr("Tous les sons  (%d)") % total])
         root.setData(0, Qt.ItemDataRole.UserRole, "")
         self._tree.addTopLevelItem(root)
 
@@ -1119,7 +1126,8 @@ class SamplesPage(Page):
         path = self.sd.resolve_sample(rel) if self.sd is not None else None
         if path is None:
             self._wave.clear()
-            self._info.set_rows([("Fichier", "introuvable sur la carte")])
+            self._info.set_rows([(tr("Fichier"),
+                                  tr("introuvable sur la carte"))])
             self._usage.setText("")
             return
 
@@ -1138,27 +1146,27 @@ class SamplesPage(Page):
         # Quatre lignes séparées répétaient ce que la colonne « Format » de
         # la table dit déjà, et volaient la hauteur à la forme d'onde.
         if info.ok:
-            canaux = {1: "mono", 2: "stéréo"}.get(info.channels,
-                                                  "%d canaux" % info.channels)
-            format_long = "%s Hz · %d bits · %s" % (
-                "{:,}".format(int(info.sample_rate)).replace(",", " "),
-                info.bit_depth, canaux)
+            canaux = {1: tr("mono"), 2: tr("stéréo")}.get(
+                info.channels, tr("%d canaux") % info.channels)
+            format_long = tr("%s Hz · %d bits · %s") % (
+                integer(info.sample_rate), info.bit_depth, canaux)
             if info.fmt and info.fmt.lower() not in ("pcm", "wav"):
                 format_long += " · %s" % info.fmt
         else:
             format_long = "—"
 
         details: list[tuple[str, object]] = [
-            ("Durée", human_duration(info.duration) if info.ok else "—"),
-            ("Format", format_long),
-            ("Taille", human_size(row["size"] if "size" in row.keys() else 0)),
+            (tr("Durée"), human_duration(info.duration) if info.ok else "—"),
+            (tr("Format"), format_long),
+            (tr("Taille"),
+             human_size(row["size"] if "size" in row.keys() else 0)),
         ]
         if not info.ok and info.error:
-            details.append(("Erreur", info.error))
+            details.append((tr("Erreur"), info.error))
         for key in ("bpm", "key", "category"):
             if key in row.keys() and row[key]:
-                label = {"bpm": "Tempo", "key": "Tonalité",
-                         "category": "Catégorie"}[key]
+                label = {"bpm": tr("Tempo"), "key": tr("Tonalité"),
+                         "category": tr("Catégorie")}[key]
                 value = (f"{row[key]:.0f} BPM" if key == "bpm"
                          else row[key])
                 details.append((label, value))
@@ -1177,9 +1185,9 @@ class SamplesPage(Page):
 
         count = row["used_count"] if "used_count" in row.keys() else 0
         if count:
-            self._usage.setText(f"Utilisé par {count} fichier(s).")
+            self._usage.setText(tr("Utilisé par %d fichier(s).") % count)
         else:
-            self._usage.setText("Utilisé par aucun fichier de la carte.")
+            self._usage.setText(tr("Utilisé par aucun fichier de la carte."))
 
     def _fill_tags(self, rel: str) -> None:
         clear_layout(self._tags_row)
@@ -1200,14 +1208,14 @@ class SamplesPage(Page):
             return
         path = self.sd.resolve_sample(self._current)
         if path is None:
-            self.say("Fichier introuvable.")
+            self.say(tr("Fichier introuvable."))
             return
         try:
             self.player.set_volume(self.ctx.settings.preview_volume)
             self.player.play_file(path)
         except Exception as exc:  # noqa: BLE001 - audio indisponible
             log.debug("lecture impossible : %s", exc)
-            self.say(f"Lecture impossible : {exc}")
+            self.say(tr("Lecture impossible : %s") % exc)
 
     def _play_from(self, _seconds: float) -> None:
         """Le moteur d'aperçu ne sait pas démarrer à une position donnée."""
@@ -1225,7 +1233,7 @@ class SamplesPage(Page):
             return
         path = self.sd.resolve_sample(self._current)
         if path is None:
-            self.say("Fichier introuvable.")
+            self.say(tr("Fichier introuvable."))
             return
         from PyQt6.QtCore import QUrl
         from PyQt6.QtGui import QDesktopServices
@@ -1241,10 +1249,11 @@ class SamplesPage(Page):
 
         depart = Path.home() / "Downloads"
         choisis, _filtre = QFileDialog.getOpenFileNames(
-            self, "Envoyer au Deluge",
+            self, tr("Envoyer au Deluge"),
             str(depart if depart.is_dir() else Path.home()),
-            "Sons, presets, kits et morceaux du Deluge "
-            "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;Tous les fichiers (*)")
+            tr("Sons, presets, kits et morceaux du Deluge "
+               "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;"
+               "Tous les fichiers (*)"))
         if choisis:
             dossier = self._folder if self._folder.upper().startswith(
                 "SAMPLES") else ""
@@ -1286,7 +1295,7 @@ class SamplesPage(Page):
         if not self._current:
             return
         self.lib.set_rating("sample", self._current, stars=int(value))
-        self.say(f"Note : {value}/5")
+        self.say(tr("Note : %d/5") % value)
 
     def _set_favorite(self, checked: bool) -> None:
         if not self._current:
@@ -1319,14 +1328,14 @@ class SamplesPage(Page):
         rows = self._selected_rows()
         if not rows:
             QMessageBox.information(
-                self, "Aucune sélection",
-                "Sélectionnez la boucle à découper dans la liste.")
+                self, tr("Aucune sélection"),
+                tr("Sélectionnez la boucle à découper dans la liste."))
             return
         if len(rows) > 1:
             QMessageBox.information(
-                self, "Un seul échantillon",
-                "Le découpage porte sur une boucle à la fois : "
-                "%d sont sélectionnées." % len(rows))
+                self, tr("Un seul échantillon"),
+                tr("Le découpage porte sur une boucle à la fois : "
+                   "%d sont sélectionnées.") % len(rows))
             return
 
         dialog = SliceDialog(self.ctx, rows[0]["rel"], self)
@@ -1334,7 +1343,7 @@ class SamplesPage(Page):
         if dialog.written_song:
             self.songWritten.emit(dialog.written_song)
         if dialog.written:
-            self.say("Découpage écrit : %s" % dialog.written)
+            self.say(tr("Découpage écrit : %s") % dialog.written)
             self.cardModified.emit()
             self._reload()
 
@@ -1348,8 +1357,8 @@ class SamplesPage(Page):
         rows = self._selected_rows()
         if not rows:
             QMessageBox.information(
-                self, "Aucune sélection",
-                "Sélectionnez les échantillons à traiter dans la liste.")
+                self, tr("Aucune sélection"),
+                tr("Sélectionnez les échantillons à traiter dans la liste."))
             return
 
         dialog = ProcessDialog(len(rows), self)
@@ -1361,20 +1370,21 @@ class SamplesPage(Page):
                                      **dialog.actions())
         if not plan:
             motif = (plan.skipped[0].skipped if plan.skipped
-                     else "aucun traitement coché")
-            self.say("Rien à faire : %s." % motif)
+                     else tr("aucun traitement coché"))
+            self.say(tr("Rien à faire : %s.") % motif)
             return
 
-        confirm = PlanDialog(plan, self, "Traitement des échantillons")
+        confirm = PlanDialog(plan, self, tr("Traitement des échantillons"))
         if confirm.exec() != QDialog.DialogCode.Accepted:
-            self.say("Traitement annulé.")
+            self.say(tr("Traitement annulé."))
             return
 
-        self.say("Traitement de %d fichier(s)…" % len(plan))
+        self.say(tr("Traitement de %d fichier(s)…") % len(plan))
         self.run(self._do_process, plan, card,
                  on_result=self.guard(self._process_done),
-                 on_error=self.guard(lambda m: self.say("Échec : %s" % m)),
-                 title="Traitement")
+                 on_error=self.guard(
+                     lambda m: self.say(tr("Échec : %s") % m)),
+                 title=tr("Traitement"))
 
     def _do_process(self, plan, card, progress=None, should_stop=None):
         return plan.apply(card, self.lib, progress=progress,
@@ -1384,14 +1394,14 @@ class SamplesPage(Page):
         if result is None:
             return
         if result.failed:
-            detail = NL.join("%s : %s" % (rel, msg)
+            detail = NL.join(tr("%s : %s") % (rel, msg)
                              for rel, msg in result.failed[:12])
             QMessageBox.warning(
-                self, "Traitement partiel",
-                "%d fichier(s) traités, %d en échec :%s%s"
+                self, tr("Traitement partiel"),
+                tr("%d fichier(s) traités, %d en échec :%s%s")
                 % (len(result.done), len(result.failed), NL + NL, detail))
         if result.backup_dir:
-            self.say("%s Originaux dans %s."
+            self.say(tr("%s Originaux dans %s.")
                      % (result.summary(), result.backup_dir))
         else:
             self.say(result.summary())
@@ -1407,7 +1417,7 @@ class SamplesPage(Page):
         current = self._category.currentData() or ""
         self._category.blockSignals(True)
         self._category.clear()
-        self._category.addItem("Toutes catégories", "")
+        self._category.addItem(tr("Toutes catégories"), "")
         try:
             for name, count in self.lib.categories("sample"):
                 self._category.addItem(f"{name} ({count})", name)

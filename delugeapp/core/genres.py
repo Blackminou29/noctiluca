@@ -22,17 +22,20 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from ..i18n import N_, tr
+
 log = logging.getLogger(__name__)
 
 #: Rôles qu'un preset peut tenir dans un morceau.
 ROLES: tuple[str, ...] = ("bass", "lead", "pad", "pluck", "keys", "stab",
                           "fx", "drone", "arp", "bell")
 
-#: Libellés français des rôles, pour l'interface.
+#: Libellés des rôles, pour l'interface — traduits par :func:`role_label`.
 ROLE_LABELS = {
-    "bass": "Basse", "lead": "Lead", "pad": "Nappe", "pluck": "Pincé",
-    "keys": "Clavier", "stab": "Accord bref", "fx": "Effet",
-    "drone": "Bourdon", "arp": "Arpège", "bell": "Cloche",
+    "bass": N_("Basse"), "lead": N_("Lead"), "pad": N_("Nappe"),
+    "pluck": N_("Pincé"), "keys": N_("Clavier"), "stab": N_("Accord bref"),
+    "fx": N_("Effet"), "drone": N_("Bourdon"), "arp": N_("Arpège"),
+    "bell": N_("Cloche"),
 }
 
 #: Couleurs reprises de ``PAD_CYCLE`` (cf. SPEC §2), citées en clair pour que
@@ -245,8 +248,8 @@ def _add(profile: GenreProfile) -> None:
 
 _add(GenreProfile(
     key="acid", label="Acid", color=_YELLOW, bpm=(125, 140),
-    description="La 303 et rien d'autre : une dent de scie, un filtre très "
-                "résonant et une enveloppe qui claque.",
+    description=N_("La 303 et rien d'autre : une dent de scie, un filtre très "
+                   "résonant et une enveloppe qui claque."),
     osc_types=[("saw", 3.0), ("square", 2.0), ("analogSaw", 1.5)],
     filter_mode=[("24dB", 3.0), ("24dBDrive", 2.0)],
     cutoff=(10, 32), resonance=(24, 44),
@@ -274,8 +277,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="techno", label="Techno", color=_CYAN, bpm=(128, 145),
-    description="Sons secs et métalliques, peu de réverbération, tout dans "
-                "l'attaque et la pression.",
+    description=N_("Sons secs et métalliques, peu de réverbération, tout dans "
+                   "l'attaque et la pression."),
     osc_types=[("saw", 3.0), ("square", 2.5), ("analogSquare", 1.5),
                ("sine", 0.8)],
     filter_mode=[("24dB", 3.0), ("12dB", 1.5), ("24dBDrive", 1.5)],
@@ -299,8 +302,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="detroit", label="Detroit", color=_INDIGO, bpm=(120, 132),
-    description="L'école de Detroit : accords chauds, cordes synthétiques et "
-                "une mélancolie tenue.",
+    description=N_("L'école de Detroit : accords chauds, cordes synthétiques et "
+                   "une mélancolie tenue."),
     osc_types=[("saw", 3.0), ("square", 1.5), ("triangle", 1.2)],
     filter_mode=[("24dB", 2.0), ("12dB", 2.5)],
     cutoff=(24, 44), resonance=(0, 12),
@@ -317,8 +320,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="minimal", label="Minimal", color=_GREEN, bpm=(122, 132),
-    description="Peu de matière, beaucoup d'espace : des sons courts, "
-                "discrets, qui laissent respirer le rythme.",
+    description=N_("Peu de matière, beaucoup d'espace : des sons courts, "
+                   "discrets, qui laissent respirer le rythme."),
     osc_types=[("sine", 2.5), ("triangle", 2.0), ("square", 1.5),
                ("saw", 1.0)],
     filter_mode=[("12dB", 3.0), ("24dB", 1.5)],
@@ -336,8 +339,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="house", label="House", color=_ORANGE, bpm=(118, 128),
-    description="Rond et dansant : des accords pleins, un filtre souple et "
-                "un grain chaleureux.",
+    description=N_("Rond et dansant : des accords pleins, un filtre souple et "
+                   "un grain chaleureux."),
     osc_types=[("saw", 3.0), ("square", 2.0), ("triangle", 1.0)],
     filter_mode=[("12dB", 3.0), ("24dB", 2.0)],
     cutoff=(24, 44), resonance=(0, 12),
@@ -357,8 +360,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="deep_house", label="Deep house", color=_MINT, bpm=(118, 126),
-    description="Feutré et profond : des accords doux, un filtre bas et "
-                "beaucoup de réverbération.",
+    description=N_("Feutré et profond : des accords doux, un filtre bas et "
+                   "beaucoup de réverbération."),
     osc_types=[("saw", 2.5), ("triangle", 2.0), ("sine", 1.5)],
     filter_mode=[("12dB", 3.0), ("24dB", 1.5)],
     cutoff=(18, 36), resonance=(0, 8),
@@ -375,8 +378,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="trance", label="Trance", color=_BLUE, bpm=(132, 142),
-    description="Large et montant : des nappes désaccordées, des arpèges "
-                "rapides et beaucoup d'espace.",
+    description=N_("Large et montant : des nappes désaccordées, des arpèges "
+                   "rapides et beaucoup d'espace."),
     osc_types=[("saw", 3.5), ("square", 1.5)],
     filter_mode=[("24dB", 3.0), ("12dB", 1.5)],
     cutoff=(26, 48), resonance=(0, 14),
@@ -404,8 +407,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="psytrance", label="Psytrance", color=_PURPLE, bpm=(138, 150),
-    description="Basses roulantes et leads tordus, modulations rapides et "
-                "filtre très résonant.",
+    description=N_("Basses roulantes et leads tordus, modulations rapides et "
+                   "filtre très résonant."),
     osc_types=[("saw", 3.0), ("square", 2.5), ("analogSaw", 1.5)],
     filter_mode=[("24dB", 3.0), ("24dBDrive", 2.0), ("SVF_Band", 1.0)],
     cutoff=(14, 38), resonance=(12, 34),
@@ -429,8 +432,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="dnb", label="Drum and bass", color=_RED, bpm=(170, 178),
-    description="Basses lourdes et agressives, attaque immédiate, filtre qui "
-                "balaye.",
+    description=N_("Basses lourdes et agressives, attaque immédiate, filtre qui "
+                   "balaye."),
     osc_types=[("saw", 3.0), ("square", 2.0), ("sine", 1.5),
                ("analogSaw", 1.0)],
     filter_mode=[("24dB", 3.0), ("24dBDrive", 2.5)],
@@ -452,8 +455,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="jungle", label="Jungle", color=_GREEN, bpm=(160, 172),
-    description="Basses rondes à la jamaïcaine et nappes lointaines, sur un "
-                "grain d'échantillonneur.",
+    description=N_("Basses rondes à la jamaïcaine et nappes lointaines, sur un "
+                   "grain d'échantillonneur."),
     osc_types=[("sine", 2.5), ("triangle", 2.0), ("saw", 2.0)],
     filter_mode=[("24dB", 2.5), ("12dB", 2.0)],
     cutoff=(10, 30), resonance=(0, 12),
@@ -470,8 +473,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="dubstep", label="Dubstep", color=_MAGENTA, bpm=(138, 145),
-    description="Basses déformées et parlantes : beaucoup de modulation, de "
-                "résonance et de saleté.",
+    description=N_("Basses déformées et parlantes : beaucoup de modulation, de "
+                   "résonance et de saleté."),
     osc_types=[("saw", 3.0), ("square", 2.5), ("analogSquare", 2.0)],
     filter_mode=[("24dBDrive", 3.0), ("24dB", 2.0), ("SVF_Band", 1.5)],
     cutoff=(8, 34), resonance=(14, 38),
@@ -497,8 +500,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="ambient", label="Ambient", color=_MINT, bpm=(60, 90),
-    description="Sans rythme et sans bords : attaques lentes, réverbération "
-                "immense, mouvement imperceptible.",
+    description=N_("Sans rythme et sans bords : attaques lentes, réverbération "
+                   "immense, mouvement imperceptible."),
     osc_types=[("sine", 3.0), ("triangle", 2.5), ("saw", 1.2),
                ("wavetable", 1.0)],
     filter_mode=[("12dB", 3.0), ("24dB", 1.5)],
@@ -524,8 +527,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="berlin_school", label="Berlin school", color=_AMBER, bpm=(90, 120),
-    description="Séquences hypnotiques à la Tangerine Dream : arpèges "
-                "synchronisés et filtre qui respire.",
+    description=N_("Séquences hypnotiques à la Tangerine Dream : arpèges "
+                   "synchronisés et filtre qui respire."),
     osc_types=[("saw", 3.0), ("square", 2.0), ("triangle", 1.5)],
     filter_mode=[("24dB", 3.0), ("12dB", 2.0)],
     cutoff=(18, 42), resonance=(6, 22),
@@ -548,8 +551,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="synthwave", label="Synthwave", color=_PINK, bpm=(100, 118),
-    description="Nostalgie des années 80 : nappes larges, basses rondes et "
-                "beaucoup de chorus.",
+    description=N_("Nostalgie des années 80 : nappes larges, basses rondes et "
+                   "beaucoup de chorus."),
     osc_types=[("saw", 3.0), ("square", 2.0), ("triangle", 1.5)],
     filter_mode=[("12dB", 3.0), ("24dB", 2.0)],
     cutoff=(24, 46), resonance=(0, 12),
@@ -570,8 +573,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="lofi", label="Lo-fi", color=_ORANGE, bpm=(70, 95),
-    description="Doux et usé : bande passante réduite, grain numérique, "
-                "légers désaccords.",
+    description=N_("Doux et usé : bande passante réduite, grain numérique, "
+                   "légers désaccords."),
     osc_types=[("triangle", 2.5), ("sine", 2.0), ("saw", 2.0),
                ("square", 1.0)],
     filter_mode=[("12dB", 3.0), ("24dB", 1.5)],
@@ -591,8 +594,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="idm", label="IDM", color=_CYAN, bpm=(90, 160),
-    description="Timbres instables et imprévisibles : modulations croisées, "
-                "formes d'onde inhabituelles.",
+    description=N_("Timbres instables et imprévisibles : modulations croisées, "
+                   "formes d'onde inhabituelles."),
     osc_types=[("wavetable", 2.5), ("square", 2.0), ("saw", 2.0),
                ("triangle", 1.5), ("sine", 1.0)],
     filter_mode=[("SVF_Band", 2.0), ("24dB", 2.0), ("12dB", 2.0),
@@ -621,8 +624,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="industrial", label="Industrial", color=_RED, bpm=(120, 150),
-    description="Métallique et abrasif : bruit, distorsion et résonances "
-                "dures.",
+    description=N_("Métallique et abrasif : bruit, distorsion et résonances "
+                   "dures."),
     osc_types=[("square", 3.0), ("saw", 2.5), ("analogSquare", 2.0)],
     filter_mode=[("24dBDrive", 3.0), ("24dB", 2.0), ("SVF_Band", 1.5)],
     cutoff=(12, 38), resonance=(12, 36),
@@ -644,8 +647,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="electro", label="Electro", color=_BLUE, bpm=(124, 136),
-    description="Basses carrées et leads tranchants, dans l'esprit des "
-                "boîtes à rythmes de Miami.",
+    description=N_("Basses carrées et leads tranchants, dans l'esprit des "
+                   "boîtes à rythmes de Miami."),
     osc_types=[("square", 3.0), ("saw", 2.5), ("analogSquare", 1.5)],
     filter_mode=[("24dB", 3.0), ("12dB", 2.0)],
     cutoff=(18, 40), resonance=(6, 22),
@@ -662,8 +665,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="hardcore", label="Hardcore", color=_MAGENTA, bpm=(160, 200),
-    description="Rapide et saturé : attaque brutale, distorsion franche, "
-                "aucune subtilité.",
+    description=N_("Rapide et saturé : attaque brutale, distorsion franche, "
+                   "aucune subtilité."),
     osc_types=[("saw", 3.0), ("square", 3.0), ("analogSaw", 2.0)],
     filter_mode=[("24dBDrive", 3.0), ("24dB", 2.0)],
     cutoff=(20, 46), resonance=(8, 28),
@@ -685,8 +688,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="downtempo", label="Downtempo", color=_AMBER, bpm=(80, 110),
-    description="Posé et chaleureux : enveloppes souples, grain analogique, "
-                "beaucoup d'espace.",
+    description=N_("Posé et chaleureux : enveloppes souples, grain analogique, "
+                   "beaucoup d'espace."),
     osc_types=[("triangle", 2.5), ("saw", 2.5), ("sine", 2.0)],
     filter_mode=[("12dB", 3.0), ("24dB", 1.5)],
     cutoff=(18, 38), resonance=(0, 10),
@@ -702,8 +705,8 @@ _add(GenreProfile(
 
 _add(GenreProfile(
     key="funk", label="Funk", color=_YELLOW, bpm=(100, 120),
-    description="Nerveux et rebondissant : basses pincées, filtre sensible à "
-                "la vélocité, enveloppes courtes.",
+    description=N_("Nerveux et rebondissant : basses pincées, filtre sensible à "
+                   "la vélocité, enveloppes courtes."),
     osc_types=[("saw", 3.0), ("square", 2.5), ("triangle", 1.0)],
     filter_mode=[("24dB", 2.5), ("12dB", 2.5)],
     cutoff=(20, 44), resonance=(6, 22),
@@ -726,8 +729,8 @@ _add(GenreProfile(
 _add(GenreProfile(
     key="boards_of_canada", label="Boards of Canada", color=_PURPLE,
     bpm=(70, 100),
-    description="Mélancolie de bande magnétique : désaccords doux, filtre "
-                "feutré, mouvement lent et irrégulier.",
+    description=N_("Mélancolie de bande magnétique : désaccords doux, filtre "
+                   "feutré, mouvement lent et irrégulier."),
     osc_types=[("triangle", 2.5), ("sine", 2.0), ("saw", 2.0),
                ("wavetable", 1.0)],
     filter_mode=[("12dB", 3.0), ("24dB", 1.5)],
@@ -787,5 +790,5 @@ def genres_for_bpm(bpm: float) -> list[str]:
 
 
 def role_label(role: str) -> str:
-    """Libellé français d'un rôle."""
-    return ROLE_LABELS.get(role, role)
+    """Libellé d'un rôle, dans la langue de l'interface."""
+    return tr(ROLE_LABELS.get(role, role))

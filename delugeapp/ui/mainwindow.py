@@ -22,7 +22,7 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings, Qt, QTimer
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -39,8 +39,10 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import __version__
+from .. import i18n
 from ..config import APP_NAME, AppContext
 from ..core import sdcard as sdmod
+from ..i18n import LANGUAGES, N_, decimal, integer, tr, untranslated
 from . import icons, tasks
 from .theme import (
     GOLD,
@@ -72,6 +74,13 @@ TOPBAR_HEIGHT = 56
 TOPBAR_MEDIUM = 1360
 TOPBAR_NARROW = 1180
 
+#: Ce que l'écran et la recherche peuvent céder aux menus, au plus : en
+#: deçà, le nom de la carte et le mot cherché ne se lisent plus.
+HEADER_SCREEN_MIN = 150
+HEADER_SEARCH_MIN = 110
+#: Marge gardée en plus : le style arrondit les largeurs des boutons.
+HEADER_SLACK = 8
+
 #: Clés de persistance de la géométrie et de la page courante.
 _GEOMETRY_KEY = "window/geometry"
 _STATE_KEY = "window/state"
@@ -100,6 +109,25 @@ def _page_classes():
             GeneratorPage, ToolboxPage, HealthPage, SettingsPage)
 
 
+#: La question du redémarrage, par (langue choisie, langue de la phrase).
+#: Volontairement bilingue : elle s'affiche dans les deux langues à la fois.
+_RESTART_TEXT: dict[tuple[str, str], str] = untranslated({
+    ("en", "en"): "Deluge Companion will restart in English. Restart now?",
+    ("en", "fr"): "Deluge Companion va redémarrer en anglais. Redémarrer "
+                  "maintenant ?",
+    ("fr", "fr"): "Deluge Companion va redémarrer en français. Redémarrer "
+                  "maintenant ?",
+    ("fr", "en"): "Deluge Companion will restart in French. Restart now?",
+})
+
+#: Ce que dit la barre d'état quand le redémarrage est remis à plus tard,
+#: dans la langue encore affichée.
+_LATER_TEXT: dict[str, str] = untranslated({
+    "fr": "La nouvelle langue s'appliquera au prochain démarrage.",
+    "en": "The new language will apply at the next start.",
+})
+
+
 def _short_name(cls) -> str:
     """``DashboardPage`` -> ``Dashboard`` : la clé de navigation."""
     name = cls.__name__
@@ -124,6 +152,11 @@ class MainWindow(QMainWindow):
         self._live_window = None
         #: Dernier tempo de la machine transmis aux pages (arrondi).
         self._tempo_suivi: int | None = None
+        #: Vrai quand la fenêtre se ferme pour se rouvrir — dans une autre
+        #: langue. ``main.py`` la reconstruit alors au lieu de quitter.
+        self.restart_requested = False
+        #: Les entrées du menu Langue, par code.
+        self._language_actions: dict[str, QAction] = {}
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(icons.app_icon(256))
@@ -189,6 +222,7 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(host)
         row.setContentsMargins(12, 0, 12, 0)
         row.setSpacing(8)
+        self._header_row = row
 
         self._wordmark = Wordmark(host)
         row.addWidget(self._wordmark)
@@ -200,7 +234,7 @@ class MainWindow(QMainWindow):
         # d'état en surimpression. Un clic mène aux réglages de la carte.
         self._card_button = OledDisplay(host)
         self._card_button.setToolTip(
-            "Emplacement de la carte — cliquez pour le changer")
+            tr("Emplacement de la carte — cliquez pour le changer"))
         self._card_button.clicked.connect(
             lambda: self.go_to("Settings"))
         row.addWidget(self._card_button)
@@ -212,15 +246,15 @@ class MainWindow(QMainWindow):
         self._deluge_chip.clicked.connect(self.guard_deluge_chip)
         row.addWidget(self._deluge_chip)
 
-        self._search = SearchBar("Rechercher partout…")
+        self._search = SearchBar(tr("Rechercher partout…"))
         self._search.setFixedWidth(240)
         self._search.searchChanged.connect(self._global_search)
         row.addWidget(self._search)
 
-        self._scan_button = QPushButton("Analyser", host)
+        self._scan_button = QPushButton(tr("Analyser"), host)
         self._scan_button.setObjectName("Primary")
         self._scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._scan_button.setToolTip("Relire la carte  (Ctrl+R)")
+        self._scan_button.setToolTip(tr("Relire la carte  (Ctrl+R)"))
         self._scan_button.clicked.connect(self.scan_card)
         row.addWidget(self._scan_button)
         self._light_scan_button(self.ctx.settings.theme_accent or GOLD)
@@ -228,7 +262,7 @@ class MainWindow(QMainWindow):
         # La touche PLAY de la machine : ronde, verte et rayonnante pendant
         # une lecture.
         self._play_button = LedButton("play", "", host)
-        self._play_button.setToolTip("Écouter ou arrêter  (Espace)")
+        self._play_button.setToolTip(tr("Écouter ou arrêter  (Espace)"))
         self._play_button.clicked.connect(self.toggle_play)
         row.addWidget(self._play_button)
 
@@ -257,6 +291,11 @@ class MainWindow(QMainWindow):
         passaient dans un débordement « » ». L'écran et la recherche
         rétrécissent, « COMPANION » et l'étiquette « DELUGE » s'effacent ;
         tout revient en élargissant.
+
+        Les menus passent avant l'écran et la recherche, qui leur cèdent ce
+        qu'il faut. La largeur des menus dépend de la langue : avec le menu
+        Langue, il manquait 56 px en français à 980 px, et 20 px encore à
+        1 360 px — « Aide » sortait de la barre sans que rien ne le montre.
         """
         try:
             if largeur >= TOPBAR_MEDIUM:
@@ -265,12 +304,42 @@ class MainWindow(QMainWindow):
                 ecran, recherche, compact, legende = 260, 200, False, False
             else:
                 ecran, recherche, compact, legende = 196, 150, True, False
-            self._card_button.set_preferred_width(ecran)
-            self._search.setFixedWidth(recherche)
             self._wordmark.set_compact(compact)
             self._deluge_chip.set_caption_visible(legende)
+            manque = self._header_demand(ecran, recherche) - int(largeur)
+            if manque > 0:
+                # Moitié chacun, dans la limite de ce qui reste lisible.
+                cede_ecran = min(manque - manque // 2, ecran - HEADER_SCREEN_MIN)
+                ecran -= cede_ecran
+                recherche -= min(manque - cede_ecran,
+                                 recherche - HEADER_SEARCH_MIN)
+            self._card_button.set_preferred_width(ecran)
+            self._search.setFixedWidth(recherche)
         except Exception as exc:       # noqa: BLE001 - un ajustement ne casse rien
             log.debug("barre du haut non ajustée : %s", exc)
+
+    def _header_demand(self, ecran: int, recherche: int) -> int:
+        """Largeur que demande la barre du haut, écran et recherche à ces
+        largeurs, menus entiers."""
+        row = self._header_row
+        marges = row.contentsMargins()
+        total = marges.left() + marges.right() + HEADER_SLACK
+        elements = 0
+        for index in range(row.count()):
+            element = row.itemAt(index)
+            widget = element.widget()
+            if widget is None:
+                total += element.sizeHint().width()
+            elif widget.isHidden():
+                continue
+            elif widget is self._card_button:
+                total += ecran
+            elif widget is self._search:
+                total += recherche
+            else:
+                total += widget.sizeHint().width()
+            elements += 1
+        return total + row.spacing() * max(0, elements - 1)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - API Qt
         super().resizeEvent(event)
@@ -319,11 +388,11 @@ class MainWindow(QMainWindow):
         if connecte:
             teinte, etat = PAD_GREEN, self._chip_details(lien)
         elif detecte:
-            teinte, etat = GOLD, "détecté — cliquez pour connecter"
+            teinte, etat = GOLD, tr("détecté — cliquez pour connecter")
         else:
-            teinte, etat = GREY, "absent"
+            teinte, etat = GREY, tr("absent")
         self._deluge_chip.set_state(teinte, connecte or detecte)
-        self._deluge_chip.setToolTip("Deluge %s" % etat)
+        self._deluge_chip.setToolTip(tr("Deluge %s") % etat)
 
     def _poll_midi(self) -> None:
         """Surveille l'apparition et la disparition de la machine.
@@ -350,15 +419,16 @@ class MainWindow(QMainWindow):
                 if lien.connect(reglages.midi_out, reglages.midi_in,
                                 card=self.ctx.sd):
                     self.statusBar().showMessage(
-                        "Deluge branché : " + lien.state().summary(), 8000)
+                        tr("Deluge branché : %s") % lien.state().summary(),
+                        8000)
             else:
                 self.statusBar().showMessage(
-                    "Deluge branché. Connectez-le dans les réglages.", 8000)
+                    tr("Deluge branché. Connectez-le dans les réglages."), 8000)
         elif connecte and not present:
             # Débranché pendant l'utilisation : on referme proprement, sinon
             # le port reste ouvert sur un appareil qui n'existe plus.
             lien.disconnect()
-            self.statusBar().showMessage("Deluge débranché.", 6000)
+            self.statusBar().showMessage(tr("Deluge débranché."), 6000)
 
         self._deluge_seen = present
         self._refresh_deluge_chip()
@@ -369,14 +439,13 @@ class MainWindow(QMainWindow):
     def _chip_details(lien) -> str:
         """Infobulle de la pastille quand la machine est connectée."""
         etat = lien.state()
-        morceaux = ["connecté"]
+        morceaux = [tr("connecté")]
         if etat.firmware:
-            morceaux.append("firmware %s" % etat.firmware)
+            morceaux.append(tr("firmware %s") % etat.firmware)
         if etat.tempo is not None:
-            tempo = ("%.1f" % etat.tempo).replace(".", ",")
-            morceaux.append("%s BPM%s" % (tempo,
+            morceaux.append("%s BPM%s" % (decimal(etat.tempo, 1),
                                           " ▶" if etat.running else ""))
-        morceaux.append("cliquez pour le voir en direct")
+        morceaux.append(tr("cliquez pour le voir en direct"))
         return " — ".join(morceaux)
 
     def _service_link(self) -> None:
@@ -393,7 +462,7 @@ class MainWindow(QMainWindow):
             return
         if "identity" in evenements and lien.identity is not None:
             self.statusBar().showMessage(
-                "Deluge identifié : firmware %s." % lien.identity.version,
+                tr("Deluge identifié : firmware %s.") % lien.identity.version,
                 6000)
             reglages = self._pages.get("Settings")
             if reglages is not None and hasattr(reglages, "_refresh_midi"):
@@ -434,8 +503,8 @@ class MainWindow(QMainWindow):
         """Menu : synchroniser maintenant, ou créer la copie de travail."""
         if self.card_work.files() is None:
             self.statusBar().showMessage(
-                "Le Deluge n'ouvre pas sa carte par USB : branchez-le, avec "
-                "le firmware 1.3 ou plus récent.", 8000)
+                tr("Le Deluge n'ouvre pas sa carte par USB : branchez-le, avec "
+                   "le firmware 1.3 ou plus récent."), 8000)
             return
         if not self.card_work.has_work_copy():
             self.card_work.create_work_copy(self)
@@ -462,9 +531,10 @@ class MainWindow(QMainWindow):
         chemins = [p for p in (paths or []) if p]
         if not chemins:
             chemins, _filtre = QFileDialog.getOpenFileNames(
-                self, "Envoyer au Deluge", self._start_folder(),
-                "Sons, presets, kits et morceaux du Deluge "
-                "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;Tous les fichiers (*)")
+                self, tr("Envoyer au Deluge"), self._start_folder(),
+                tr("Sons, presets, kits et morceaux du Deluge "
+                   "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;"
+                   "Tous les fichiers (*)"))
         if chemins:
             send_files(self, chemins, dest or self._drop_destination())
 
@@ -473,7 +543,7 @@ class MainWindow(QMainWindow):
         from .sendfiles import send_files
 
         dossier = QFileDialog.getExistingDirectory(
-            self, "Envoyer un dossier au Deluge", self._start_folder())
+            self, tr("Envoyer un dossier au Deluge"), self._start_folder())
         if dossier:
             send_files(self, [dossier], self._drop_destination())
 
@@ -493,7 +563,7 @@ class MainWindow(QMainWindow):
                 self._drop_veil.show_over(
                     self.centralWidget().rect(),
                     where_it_goes(self.ctx)
-                    or "Choisissez d'abord la carte, dans les réglages.")
+                    or tr("Choisissez d'abord la carte, dans les réglages."))
                 return
         except Exception as exc:       # noqa: BLE001 - un dépôt ne casse rien
             log.debug("dépôt refusé : %s", exc)
@@ -558,8 +628,8 @@ class MainWindow(QMainWindow):
                 log.debug("tempo non transmis à une page : %s", exc)
         if suivis:
             self.statusBar().showMessage(
-                "Tempo du Deluge : %d BPM, repris par les outils." % arrondi,
-                4000)
+                tr("Tempo du Deluge : %d BPM, repris par les outils.")
+                % arrondi, 4000)
 
     def open_live_window(self) -> None:
         """Ouvre — ou ramène devant — la fenêtre « Deluge en direct »."""
@@ -592,9 +662,9 @@ class MainWindow(QMainWindow):
             # rangée de pads de la machine, et l'on repère une destination à
             # la teinte avant même d'avoir lu l'étiquette. Le chiffre est
             # celui du raccourci.
-            button = NavPad(cls.TITLE, cls.ICON, page_color(key), index,
+            button = NavPad(tr(cls.TITLE), cls.ICON, page_color(key), index,
                             self._rail)
-            button.setToolTip(f"{cls.TITLE}  (Ctrl+{index})")
+            button.setToolTip(f"{tr(cls.TITLE)}  (Ctrl+{index})")
             button.setProperty("navColor", page_color(key))
             button.clicked.connect(
                 lambda _c=False, k=key: self.go_to(k))
@@ -603,13 +673,13 @@ class MainWindow(QMainWindow):
 
         column.addStretch(1)
 
-        self._fold_button = QPushButton("  Replier", self._rail)
+        self._fold_button = QPushButton("  " + tr("Replier"), self._rail)
         self._fold_button.setObjectName("NavButton")
         self._fold_button.setIcon(icons.icon("chevron-left", GREY, 14))
         self._fold_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._fold_button.setToolTip(
-            "Réduire la colonne à ses pads, pour donner la place aux "
-            "listes  (Ctrl+B)")
+            tr("Réduire la colonne à ses pads, pour donner la place aux "
+               "listes  (Ctrl+B)"))
         self._fold_button.clicked.connect(self.toggle_rail)
         column.addWidget(self._fold_button)
         return self._rail
@@ -621,15 +691,16 @@ class MainWindow(QMainWindow):
                                  else RAIL_NARROW)
         for key, button in self._buttons.items():
             cls = self._classes[key]
-            button.setText(f"  {cls.TITLE}" if self._rail_wide else "")
-        self._fold_button.setText("  Replier" if self._rail_wide else "")
+            button.setText("  " + tr(cls.TITLE) if self._rail_wide else "")
+        self._fold_button.setText("  " + tr("Replier") if self._rail_wide
+                                  else "")
         self._fold_button.setIcon(
             icons.icon("chevron-left" if self._rail_wide else "chevron-right",
                        GREY, 14))
         self._fold_button.setToolTip(
-            "Réduire la colonne à ses pads, pour donner la place aux "
-            "listes  (Ctrl+B)" if self._rail_wide else
-            "Déplier la colonne et ses étiquettes  (Ctrl+B)")
+            tr("Réduire la colonne à ses pads, pour donner la place aux "
+               "listes  (Ctrl+B)") if self._rail_wide else
+            tr("Déplier la colonne et ses étiquettes  (Ctrl+B)"))
 
     # -- barre d'état ------------------------------------------------------- #
 
@@ -683,14 +754,14 @@ class MainWindow(QMainWindow):
         self.ctx.card_work = self.card_work
         self.card_work.stateChanged.connect(self._card_work_changed)
         self.card_work.workChanged.connect(self._work_received)
-        bar.showMessage("Prêt.")
+        bar.showMessage(tr("Prêt."))
 
     def _tick(self) -> None:
         """Met à jour les indicateurs de la barre d'état."""
         try:
             player = self.ctx.player
             playing = bool(player is not None and player.is_playing)
-            self._playing.setText("● lecture" if playing else "")
+            self._playing.setText(tr("● lecture") if playing else "")
             self._playing.setStyleSheet(
                 f"color: {PAD_GREEN};" if playing else "")
             self._play_button.set_icon_name("stop" if playing else "play")
@@ -714,11 +785,11 @@ class MainWindow(QMainWindow):
             log.debug("statistiques indisponibles : %s", exc)
             return ""
         morceaux = []
-        for cle, nom in (("samples", "sons"), ("synths", "presets"),
-                         ("kits", "kits"), ("songs", "morceaux")):
+        for cle, nom in (("samples", N_("sons")), ("synths", N_("presets")),
+                         ("kits", N_("kits")), ("songs", N_("morceaux"))):
             valeur = int((stats or {}).get(cle, 0) or 0)
             if valeur:
-                morceaux.append(f"{valeur:,} {nom}".replace(",", " "))
+                morceaux.append("%s %s" % (integer(valeur), tr(nom)))
         return " · ".join(morceaux)
 
     def _refresh_header(self) -> None:
@@ -733,47 +804,49 @@ class MainWindow(QMainWindow):
         if self.ctx.has_card:
             self._card_button.setText(f"  {path}")
             contenu = self._card_counts()
-            etiquette = ("CARTE · " + contenu) if contenu else (
-                "CARTE · pas encore analysée")
+            etiquette = (tr("CARTE · %s") % contenu) if contenu else (
+                tr("CARTE · pas encore analysée"))
             grand = (nom or path).upper()
-            infobulle = f"{path}\n\nCliquez pour changer de carte."
+            infobulle = tr("%s\n\nCliquez pour changer de carte.") % path
             travail = getattr(self, "card_work", None)
             if role == "travail":
-                grand = "CARTE DU DELUGE"
-                etiquette = ("COPIE DE TRAVAIL · " + contenu) if contenu \
-                    else "COPIE DE TRAVAIL"
+                grand = tr("CARTE DU DELUGE")
+                etiquette = (tr("COPIE DE TRAVAIL · %s") % contenu) \
+                    if contenu else tr("COPIE DE TRAVAIL")
                 # Ce qui attend le Deluge se lit là où l'on regarde.
                 if travail is not None and travail.busy:
-                    etiquette = "COPIE DE TRAVAIL · SYNCHRONISATION…"
+                    etiquette = tr("COPIE DE TRAVAIL · SYNCHRONISATION…")
                 elif travail is not None and travail.pending:
-                    etiquette = ("COPIE DE TRAVAIL · %d À ENVOYER"
+                    etiquette = (tr("COPIE DE TRAVAIL · %d À ENVOYER")
                                  % len(travail.pending))
                 etat = travail.summary() if travail is not None else ""
-                infobulle = ("Copie de travail de la carte, tenue à son "
-                             "image par USB :\n%s\n\n%s" % (path, etat)).strip()
+                infobulle = (tr("Copie de travail de la carte, tenue à son "
+                                "image par USB :\n%s\n\n%s")
+                             % (path, etat)).strip()
             elif role == "sauvegarde":
-                etiquette = "SAUVEGARDE · LECTURE SEULE"
-                infobulle = ("%s\n\nLa sauvegarde de la carte : "
-                             "l'application la lit, elle n'y écrit jamais. "
-                             "Réglages ▸ Carte du Deluge pour travailler sur "
-                             "la carte." % path)
+                etiquette = tr("SAUVEGARDE · LECTURE SEULE")
+                infobulle = (tr("%s\n\nLa sauvegarde de la carte : "
+                                "l'application la lit, elle n'y écrit jamais. "
+                                "Réglages ▸ Carte du Deluge pour travailler "
+                                "sur la carte.") % path)
             self._card_button.set_display(etiquette, grand,
                                           "warn" if role == "sauvegarde"
                                           else "hi")
             self._card_button.setToolTip(infobulle)
         elif path:
-            self._card_button.setText(f"  {path}  (invalide)")
-            self._card_button.set_display("CARTE INTROUVABLE",
+            self._card_button.setText("  " + tr("%s  (invalide)") % path)
+            self._card_button.set_display(tr("CARTE INTROUVABLE"),
                                           (nom or path).upper(), "error")
             self._card_button.setToolTip(
-                f"{path}\n\nCe dossier ne contient pas d'arborescence "
-                f"Deluge. Cliquez pour en choisir un autre.")
+                tr("%s\n\nCe dossier ne contient pas d'arborescence "
+                   "Deluge. Cliquez pour en choisir un autre.") % path)
         else:
-            self._card_button.setText("  Aucune carte — cliquez pour choisir")
-            self._card_button.set_display("AUCUNE CARTE",
-                                          "CLIQUEZ POUR CHOISIR", "warn")
+            self._card_button.setText(
+                "  " + tr("Aucune carte — cliquez pour choisir"))
+            self._card_button.set_display(tr("AUCUNE CARTE"),
+                                          tr("CLIQUEZ POUR CHOISIR"), "warn")
             self._card_button.setToolTip(
-                "Aucune carte choisie. Cliquez pour indiquer où elle est.")
+                tr("Aucune carte choisie. Cliquez pour indiquer où elle est."))
 
         free = total = 0
         if self.ctx.sd is not None:
@@ -784,9 +857,10 @@ class MainWindow(QMainWindow):
         if not total:
             self._space.setText("")
         elif self.ctx.sd.is_volume:
-            self._space.setText(f"{human_size(free)} libres")
+            self._space.setText(tr("%s libres") % human_size(free))
         else:
-            self._space.setText(f"{human_size(free)} libres sur le disque")
+            self._space.setText(tr("%s libres sur le disque")
+                                % human_size(free))
 
         # Ne pas proposer ce qui ne peut pas marcher : sans carte, « Analyser »
         # ne pouvait que répondre par un avertissement. Un bouton éteint qui
@@ -794,53 +868,81 @@ class MainWindow(QMainWindow):
         prete = bool(self.ctx.has_card)
         self._scan_button.setEnabled(prete)
         self._scan_button.setToolTip(
-            "Relire la carte et mettre l'index à jour  (Ctrl+R)" if prete
-            else "Indiquez d'abord l'emplacement de la carte")
+            tr("Relire la carte et mettre l'index à jour  (Ctrl+R)") if prete
+            else tr("Indiquez d'abord l'emplacement de la carte"))
 
     # -- menus et raccourcis ------------------------------------------------ #
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
 
-        file_menu = bar.addMenu("&Fichier")
-        self._add_action(file_menu, "Choisir la carte…", self._choose_card,
+        file_menu = bar.addMenu(tr("&Fichier"))
+        self._add_action(file_menu, tr("Choisir la carte…"), self._choose_card,
                          "Ctrl+O")
-        self._add_action(file_menu, "Analyser la carte", self.scan_card,
+        self._add_action(file_menu, tr("Analyser la carte"), self.scan_card,
                          "Ctrl+R")
-        self._add_action(file_menu, "Sauvegarder la carte",
+        self._add_action(file_menu, tr("Sauvegarder la carte"),
                          lambda: self.go_to("Health"))
         file_menu.addSeparator()
-        self._add_action(file_menu, "Envoyer des fichiers au Deluge…",
+        self._add_action(file_menu, tr("Envoyer des fichiers au Deluge…"),
                          self.send_to_deluge, "Ctrl+I")
-        self._add_action(file_menu, "Envoyer un dossier au Deluge…",
+        self._add_action(file_menu, tr("Envoyer un dossier au Deluge…"),
                          self.send_folder_to_deluge, "Ctrl+Shift+I")
         file_menu.addSeparator()
-        self._add_action(file_menu, "Quitter", self.close, "Ctrl+Q")
+        self._add_action(file_menu, tr("Quitter"), self.close, "Ctrl+Q")
 
-        edit_menu = bar.addMenu("&Édition")
-        self._add_action(edit_menu, "Rechercher", self._focus_search, "Ctrl+F")
-        self._add_action(edit_menu, "Réglages…",
+        edit_menu = bar.addMenu(tr("&Édition"))
+        self._add_action(edit_menu, tr("Rechercher"), self._focus_search,
+                         "Ctrl+F")
+        self._add_action(edit_menu, tr("Réglages…"),
                          lambda: self.go_to("Settings"), "Ctrl+,")
 
-        tools_menu = bar.addMenu("&Outils")
-        self._add_action(tools_menu, "Générateur de presets",
+        tools_menu = bar.addMenu(tr("&Outils"))
+        self._add_action(tools_menu, tr("Générateur de presets"),
                          lambda: self.go_to("Generator"), "Ctrl+G")
-        self._add_action(tools_menu, "Boîte à outils",
+        self._add_action(tools_menu, tr("Boîte à outils"),
                          lambda: self.go_to("Toolbox"))
-        self._add_action(tools_menu, "Santé de la carte",
+        self._add_action(tools_menu, tr("Santé de la carte"),
                          lambda: self.go_to("Health"))
-        self._add_action(tools_menu, "Deluge en direct",
+        self._add_action(tools_menu, tr("Deluge en direct"),
                          self.open_live_window, "Ctrl+D")
-        self._add_action(tools_menu, "Synchroniser avec le Deluge",
+        self._add_action(tools_menu, tr("Synchroniser avec le Deluge"),
                          self.sync_deluge, "Ctrl+Shift+D")
         tools_menu.addSeparator()
-        self._add_action(tools_menu, "Replier la barre latérale",
+        self._add_action(tools_menu, tr("Replier la barre latérale"),
                          self.toggle_rail, "Ctrl+B")
 
-        help_menu = bar.addMenu("&Aide")
-        self._add_action(help_menu, "Raccourcis clavier", self._show_shortcuts,
-                         "F1")
-        self._add_action(help_menu, "À propos", self._show_about)
+        self._build_language_menu(bar)
+
+        help_menu = bar.addMenu(tr("&Aide"))
+        self._add_action(help_menu, tr("Raccourcis clavier"),
+                         self._show_shortcuts, "F1")
+        self._add_action(help_menu, tr("À propos"), self._show_about)
+
+    def _build_language_menu(self, bar) -> None:
+        """Le menu Langue : chaque langue écrite dans la sienne.
+
+        « Français » et « English » ne se traduisent pas : qui a choisi par
+        mégarde une langue qu'il ne lit pas doit retrouver la sienne d'un
+        coup d'œil. La langue retenue est cochée — celle des réglages, qui
+        peut attendre le prochain démarrage.
+        """
+        menu = bar.addMenu(tr("&Langue"))
+        groupe = QActionGroup(self)
+        groupe.setExclusive(True)
+        choisie = i18n.normalize(self.ctx.settings.language)
+        for code, nom in LANGUAGES:
+            action = QAction(nom, self)
+            action.setCheckable(True)
+            action.setChecked(code == choisie)
+            action.setData(code)
+            action.triggered.connect(
+                lambda _checked=False, c=code:
+                self._safely(lambda: self.choose_language(c)))
+            groupe.addAction(action)
+            menu.addAction(action)
+            self._language_actions[code] = action
+        self._language_menu = menu
 
     def _add_action(self, menu, label: str, slot, shortcut: str = "") -> QAction:
         action = QAction(label, self)
@@ -857,7 +959,7 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001 - rempart, cf. SPEC §6.3
             log.exception("action de menu en échec")
             self.statusBar().showMessage(
-                "Action impossible : voir le journal.", 8000)
+                tr("Action impossible : voir le journal."), 8000)
 
     def _build_shortcuts(self) -> None:
         """``Ctrl+1`` à ``Ctrl+9`` pour les pages, ``Espace`` pour l'écoute."""
@@ -940,7 +1042,8 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             log.exception("création de la page %s impossible", key)
             self.statusBar().showMessage(
-                f"La page « {cls.TITLE} » n'a pas pu être ouverte.", 8000)
+                tr("La page « %s » n'a pas pu être ouverte.") % tr(cls.TITLE),
+                8000)
             return None
 
         self._pages[key] = page
@@ -992,7 +1095,8 @@ class MainWindow(QMainWindow):
             preset = SynthPreset.load(card.abs(rel))
         except Exception:  # noqa: BLE001
             log.exception("preset illisible pour le générateur : %s", rel)
-            self.statusBar().showMessage(f"Preset illisible : {rel}", 8000)
+            self.statusBar().showMessage(tr("Preset illisible : %s") % rel,
+                                         8000)
             return
         self.go_to("Generator")
         page = self._pages.get("Generator")
@@ -1032,7 +1136,7 @@ class MainWindow(QMainWindow):
         try:
             if player.is_playing:
                 player.stop()
-                self.statusBar().showMessage("Lecture arrêtée.", 4000)
+                self.statusBar().showMessage(tr("Lecture arrêtée."), 4000)
                 return
         except Exception as exc:  # noqa: BLE001
             log.debug("état du lecteur indisponible : %s", exc)
@@ -1075,8 +1179,8 @@ class MainWindow(QMainWindow):
         try:
             if forget_other_card(self.ctx.sd, self.ctx.lib):
                 self.statusBar().showMessage(
-                    "Nouvelle carte : lancez « Analyser la carte » pour "
-                    "l'indexer.", 0)
+                    tr("Nouvelle carte : lancez « Analyser la carte » pour "
+                       "l'indexer."), 0)
         except Exception:  # noqa: BLE001
             log.exception("comparaison de l'index et de la carte impossible")
 
@@ -1104,7 +1208,7 @@ class MainWindow(QMainWindow):
         self._refresh_header()
         if self.ctx.has_card:
             self.statusBar().showMessage(
-                f"Carte : {self.ctx.settings.sd_path}", 6000)
+                tr("Carte : %s") % self.ctx.settings.sd_path, 6000)
             self._match_index_to_card()
             self._update_index_on_start()
             self._safely(self.card_work.on_start)
@@ -1119,9 +1223,9 @@ class MainWindow(QMainWindow):
         if found:
             lines = "\n".join(f"  •  {p}" for p in found[:6])
             answer = QMessageBox.question(
-                self, "Carte Deluge détectée",
-                f"{len(found)} carte(s) trouvée(s) :\n\n{lines}\n\n"
-                f"Utiliser « {found[0]} » ?",
+                self, tr("Carte Deluge détectée"),
+                tr("%d carte(s) trouvée(s) :\n\n%s\n\nUtiliser « %s » ?")
+                % (len(found), lines, found[0]),
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes)
@@ -1132,13 +1236,13 @@ class MainWindow(QMainWindow):
         # Aucune carte : on ouvre les réglages, qui expliquent quoi faire.
         self.go_to("Settings")
         self.statusBar().showMessage(
-            "Indiquez l'emplacement de votre carte SD pour commencer.",
+            tr("Indiquez l'emplacement de votre carte SD pour commencer."),
             0)
 
     def _choose_card(self) -> None:
         start = self.ctx.settings.sd_path or str(Path.home())
         chosen = QFileDialog.getExistingDirectory(
-            self, "Choisir la racine de la carte Deluge", start)
+            self, tr("Choisir la racine de la carte Deluge"), start)
         if chosen:
             self._card_changed(chosen)
 
@@ -1174,10 +1278,10 @@ class MainWindow(QMainWindow):
 
         if self.ctx.has_card:
             self.statusBar().showMessage(
-                f"Carte : {text} — lancez une analyse (Ctrl+R).", 0)
+                tr("Carte : %s — lancez une analyse (Ctrl+R).") % text, 0)
         else:
             self.statusBar().showMessage(
-                f"« {text} » ne contient pas d'arborescence Deluge.", 0)
+                tr("« %s » ne contient pas d'arborescence Deluge.") % text, 0)
 
     def _accent_changed(self, colour: str) -> None:
         """Réapplique la feuille de style avec le nouvel accent."""
@@ -1190,28 +1294,85 @@ class MainWindow(QMainWindow):
             # icône et son halo suivent la nouvelle couleur.
             self._light_scan_button(colour)
             self.statusBar().showMessage(
-                "Couleur d'accent appliquée à la façade.", 4000)
+                tr("Couleur d'accent appliquée à la façade."), 4000)
         except Exception:  # noqa: BLE001
             log.exception("application du thème impossible")
+
+    # -- langue ------------------------------------------------------------- #
+
+    def choose_language(self, code: str) -> None:
+        """Menu Langue : retient la langue, puis propose de redémarrer.
+
+        Les textes se traduisent à la création des widgets : seule une
+        fenêtre neuve change de langue. Le choix est enregistré tout de
+        suite — « Plus tard » le garde pour le prochain démarrage — et la
+        question est posée **dans les deux langues** : celui qui vient de
+        choisir une langue qu'il lit mal doit comprendre ce qui va se
+        passer.
+        """
+        code = i18n.normalize(code)
+        self.ctx.settings.language = code
+        try:
+            self.ctx.save()
+        except Exception:  # noqa: BLE001
+            log.exception("enregistrement de la langue impossible")
+        self._mark_language(code)
+        if code == i18n.language():
+            return
+        affichee = i18n.language()
+        lignes = [_RESTART_TEXT[(code, code)]]
+        if affichee != code:
+            lignes.append(_RESTART_TEXT[(code, affichee)])
+        reponse = QMessageBox.question(
+            self, untranslated("Langue / Language"), "\n".join(lignes),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if reponse == QMessageBox.StandardButton.Yes:
+            self.restart()
+        else:
+            self.statusBar().showMessage(
+                _LATER_TEXT[affichee], 8000)
+
+    def _mark_language(self, code: str) -> None:
+        """Coche la langue retenue dans le menu."""
+        for cle, action in self._language_actions.items():
+            action.setChecked(cle == code)
+
+    def restart(self) -> bool:
+        """Ferme la fenêtre pour qu'elle se rouvre aussitôt.
+
+        La fermeture est l'ordinaire : question si un traitement tourne,
+        état et page gardés, fils arrêtés, contexte fermé. ``main.py`` voit
+        ``restart_requested`` et reconstruit tout. Rend ``False`` si
+        l'utilisateur a préféré laisser finir un traitement.
+        """
+        self.restart_requested = True
+        if not self.close():
+            self.restart_requested = False
+            return False
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        return True
 
     # -- aide --------------------------------------------------------------- #
 
     def _show_shortcuts(self) -> None:
         rows = [
-            ("Ctrl+R", "Analyser la carte"),
-            ("Ctrl+F", "Recherche globale"),
-            ("Ctrl+G", "Générateur"),
-            ("Ctrl+,", "Réglages"),
-            ("Ctrl+O", "Choisir la carte"),
-            ("Ctrl+I", "Envoyer des fichiers au Deluge (ou glissez-les "
-                       "sur la fenêtre)"),
-            ("Ctrl+Maj+D", "Synchroniser avec le Deluge"),
-            ("Ctrl+D", "Deluge en direct"),
-            ("Ctrl+B", "Replier la barre latérale"),
-            ("Espace", "Écouter / arrêter"),
-            ("Ctrl+1 … Ctrl+9", "Aller à la page correspondante"),
-            ("F1", "Cette fenêtre"),
-            ("Ctrl+Q", "Quitter"),
+            ("Ctrl+R", tr("Analyser la carte")),
+            ("Ctrl+F", tr("Recherche globale")),
+            ("Ctrl+G", tr("Générateur")),
+            ("Ctrl+,", tr("Réglages")),
+            ("Ctrl+O", tr("Choisir la carte")),
+            ("Ctrl+I", tr("Envoyer des fichiers au Deluge (ou glissez-les "
+                          "sur la fenêtre)")),
+            (tr("Ctrl+Maj+D"), tr("Synchroniser avec le Deluge")),
+            ("Ctrl+D", tr("Deluge en direct")),
+            ("Ctrl+B", tr("Replier la barre latérale")),
+            (tr("Espace"), tr("Écouter / arrêter")),
+            ("Ctrl+1 … Ctrl+9", tr("Aller à la page correspondante")),
+            ("F1", tr("Cette fenêtre")),
+            ("Ctrl+Q", tr("Quitter")),
         ]
         body = "".join(
             f"<tr><td style='padding:3px 16px 3px 0;color:#C79A22;"
@@ -1219,19 +1380,19 @@ class MainWindow(QMainWindow):
             f"<td style='padding:3px 0'>{label}</td></tr>"
             for key, label in rows)
         QMessageBox.information(
-            self, "Raccourcis clavier",
+            self, tr("Raccourcis clavier"),
             f"<table style='border-collapse:collapse'>{body}</table>")
 
     def _show_about(self) -> None:
         QMessageBox.about(
-            self, f"À propos de {APP_NAME}",
+            self, tr("À propos de %s") % APP_NAME,
             f"<h3>{APP_NAME} {__version__}</h3>"
-            f"<p>Accompagne l'utilisation d'un Synthstrom Deluge : gestion "
-            f"de la carte SD, génération de presets et de kits, outils de "
-            f"composition.</p>"
-            f"<p style='color:#7A828F'>Identité visuelle reprise du Guide du "
-            f"Deluge OLED.<br>"
-            f"Aucune écriture sur la carte sans confirmation.</p>")
+            "<p>%s</p><p style='color:#7A828F'>%s<br>%s</p>" % (
+                tr("Accompagne l'utilisation d'un Synthstrom Deluge : "
+                   "gestion de la carte SD, génération de presets et de "
+                   "kits, outils de composition."),
+                tr("Identité visuelle reprise du Guide du Deluge OLED."),
+                tr("Aucune écriture sur la carte sans confirmation.")))
 
     # -- persistance et fermeture ------------------------------------------- #
 
@@ -1295,10 +1456,13 @@ class MainWindow(QMainWindow):
         """
         busy = tasks.active_count()
         if busy:
+            texte = (tr("%d traitement(s) en cours.\n\nRedémarrer maintenant "
+                        "les interrompra. Continuer ?")
+                     if self.restart_requested else
+                     tr("%d traitement(s) en cours.\n\nQuitter maintenant les "
+                        "interrompra. Continuer ?"))
             answer = QMessageBox.question(
-                self, "Un traitement est en cours",
-                f"{busy} traitement(s) en cours.\n\n"
-                f"Quitter maintenant les interrompra. Continuer ?",
+                self, tr("Un traitement est en cours"), texte % busy,
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)

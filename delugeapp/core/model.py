@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable
 import xml.etree.ElementTree as ET
 
+from ..i18n import N_, tr
 from . import dxml
 from . import theory as _theory
 from .dxml import DelugeDoc
@@ -1088,9 +1089,9 @@ class Sound:
         """Description courte d'un oscillateur pour l'affichage."""
         if osc.is_sample:
             if osc.ranges:
-                return "multi-échantillon (%d)" % len(osc.ranges)
+                return tr("multi-échantillon (%d)") % len(osc.ranges)
             if osc.file_name:
-                return "échantillon " + osc.file_name.rsplit("/", 1)[-1]
+                return tr("échantillon %s") % osc.file_name.rsplit("/", 1)[-1]
             return osc.type
         label = osc.type
         if osc.transpose:
@@ -1098,16 +1099,18 @@ class Sound:
         return label
 
     def fx_list(self) -> list[str]:
-        """Effets réellement actifs, en français."""
+        """Effets réellement actifs, dans la langue de l'interface."""
         fx: list[str] = []
         if self.mod_fx_type and self.mod_fx_type != "none":
-            fx.append({"flanger": "flanger", "chorus": "chorus",
-                       "phaser": "phaser", "StereoChorus": "chorus stéréo",
-                       "TapeWarble": "warble", "grainFX": "granulaire",
-                       "dimension": "dimension",
-                       }.get(self.mod_fx_type, self.mod_fx_type))
+            fx.append(tr({"flanger": "flanger", "chorus": "chorus",
+                          "phaser": "phaser",
+                          "StereoChorus": N_("chorus stéréo"),
+                          "TapeWarble": "warble",
+                          "grainFX": N_("granulaire"),
+                          "dimension": "dimension",
+                          }.get(self.mod_fx_type, self.mod_fx_type)))
         if self.display("reverbAmount") >= 3:
-            fx.append("réverbération")
+            fx.append(tr("réverbération"))
         if self.display("delayFeedback") >= 3:
             fx.append("delay")
         if self.clipping_amount > 0:
@@ -1115,11 +1118,11 @@ class Sound:
         if self.display("bitCrush") >= 3:
             fx.append("bitcrush")
         if self.display("sampleRateReduction") >= 3:
-            fx.append("décimation")
+            fx.append(tr("décimation"))
         if self.display("waveFold") >= 3:
             fx.append("wavefolder")
         if any(self.eq.get(k, 0) for k in ("bass", "treble")):
-            fx.append("égaliseur")
+            fx.append(tr("égaliseur"))
         if any(c.source in ("compressor", "sidechain") for c in self.patch_cables):
             fx.append("sidechain")
         return fx
@@ -1127,8 +1130,8 @@ class Sound:
     def filter_label(self) -> str:
         """Description du filtre : mode, coupure et résonance affichées."""
         parts = ["LPF %s" % (self.lpf_mode or "24dB")]
-        parts.append("coupure %d" % self.display("lpfFrequency"))
-        parts.append("résonance %d" % self.display("lpfResonance"))
+        parts.append(tr("coupure %d") % self.display("lpfFrequency"))
+        parts.append(tr("résonance %d") % self.display("lpfResonance"))
         if self.display("hpfFrequency") > 0:
             parts.append("HPF %d" % self.display("hpfFrequency"))
         return " · ".join(parts)
@@ -1140,7 +1143,8 @@ class Sound:
         oscs = osc1 + (" + " + osc2 if osc2 else "")
         fx = self.fx_list()
         cat = self.category_guess()
-        text = "%s — %s — %s" % (oscs, self.filter_label(), ", ".join(fx) or "sans effet")
+        text = "%s — %s — %s" % (oscs, self.filter_label(),
+                                 ", ".join(fx) or tr("sans effet"))
         return {
             "oscs": oscs,
             "osc1": osc1,
@@ -1201,62 +1205,70 @@ class Sound:
             return "Keys"
         if res >= 30 and cutoff <= 25:
             return "Bass"
-        return "Autre"
+        # Un identifiant, gardé tel quel dans l'index comme les autres
+        # catégories : il se traduit là où il s'affiche.
+        return N_("Autre")
 
     def tonal_tags(self) -> list[str]:
-        """Étiquettes descriptives en français (timbre, enveloppe, effets)."""
+        """Étiquettes descriptives (timbre, enveloppe, effets), dans la
+        langue de l'interface."""
+        return [tr(t) for t in self._tonal_tags()]
+
+    def _tonal_tags(self) -> list[str]:
+        """Les étiquettes, en français : les clés de leur traduction."""
         a1, d1, s1, r1 = self.env1.display()
         cutoff = self.display("lpfFrequency")
         res = self.display("lpfResonance")
         tags: list[str] = []
         if cutoff >= 42:
-            tags.append("brillant")
+            tags.append(N_("brillant"))
         elif cutoff <= 14:
-            tags.append("sombre")
+            tags.append(N_("sombre"))
         if res >= 28:
-            tags.append("résonant")
+            tags.append(N_("résonant"))
         if a1 >= 18:
-            tags.append("attaque lente")
+            tags.append(N_("attaque lente"))
         elif a1 <= 2 and d1 <= 16:
-            tags.append("percussif")
+            tags.append(N_("percussif"))
         if r1 >= 34:
-            tags.append("long release")
+            tags.append(N_("long release"))
         elif r1 <= 6:
-            tags.append("court")
+            tags.append(N_("court"))
         if s1 >= 45:
-            tags.append("tenu")
+            tags.append(N_("tenu"))
         if self.unison_num >= 3:
-            tags.append("unisson")
+            tags.append(N_("unisson"))
         if self.unison_detune >= 20:
-            tags.append("détuné")
+            tags.append(N_("détuné"))
         if self.mode == "fm":
             tags.append("FM")
         elif self.mode == "ringmod":
-            tags.append("ring mod")
+            tags.append(N_("ring mod"))
         if self.uses_samples():
-            tags.append("échantillon")
+            tags.append(N_("échantillon"))
         if self.arp.is_on:
-            tags.append("arpégé")
+            tags.append(N_("arpégé"))
         if self.clipping_amount > 0:
-            tags.append("saturé")
+            tags.append(N_("saturé"))
         if max(self.display("bitCrush"), self.display("sampleRateReduction")) >= 8:
             tags.append("lo-fi")
         if self.display("reverbAmount") >= 12:
-            tags.append("réverbéré")
+            tags.append(N_("réverbéré"))
         if self.display("delayFeedback") >= 28:
             tags.append("delay")
         if self.display("noiseVolume") >= 12:
-            tags.append("bruité")
+            tags.append(N_("bruité"))
         if self.mod_fx_type not in ("", "none"):
             tags.append(self.mod_fx_type)
-        tags.append("mono" if self.polyphonic in ("mono", "legato") else "polyphonique")
+        tags.append("mono" if self.polyphonic in ("mono", "legato")
+                    else N_("polyphonique"))
         low = self.transpose + self.osc1.transpose
         if low <= -12:
-            tags.append("grave")
+            tags.append(N_("grave"))
         elif low >= 12:
-            tags.append("aigu")
+            tags.append(N_("aigu"))
         if len(self.patch_cables) >= 6:
-            tags.append("très modulé")
+            tags.append(N_("très modulé"))
         return tags
 
 
@@ -1317,7 +1329,7 @@ class SynthPreset:
         """Écrit le preset (écriture atomique, sauvegarde .bak optionnelle)."""
         target = Path(path) if path is not None else self.path
         if target is None:
-            raise ValueError("Aucun chemin de destination pour ce preset.")
+            raise ValueError(tr("Aucun chemin de destination pour ce preset."))
         if self.doc is None:
             self.doc = _new_doc("sound", self.sound.firmware or _NEW_FIRMWARE)
         root = _root_of(self.doc, "sound")
@@ -1516,7 +1528,7 @@ class Kit:
         """Écrit le kit (écriture atomique, sauvegarde .bak optionnelle)."""
         target = Path(path) if path is not None else self.path
         if target is None:
-            raise ValueError("Aucun chemin de destination pour ce kit.")
+            raise ValueError(tr("Aucun chemin de destination pour ce kit."))
         if self.doc is None:
             self.doc = _new_doc("kit")
         root = _root_of(self.doc, "kit")
@@ -2036,15 +2048,16 @@ class Song:
     # -- lecture musicale -------------------------------------------------- #
 
     def scale_name(self) -> str:
-        """Nom français de la gamme : ``Do majeur``, ``La mineur``, ``Ré dorien``."""
-        tonic = NOTE_NAMES_FR[self.root_note % 12]
+        """Nom de la gamme dans la langue de l'interface : ``Do majeur``,
+        ``La mineur``, ``Ré dorien`` — ou ``A minor``."""
+        tonic = _theory.note_to_name(self.root_note, with_octave=False)
         if not self.mode_notes:
             return tonic
         intervals = tuple(sorted({n % 12 for n in self.mode_notes}))
         mode = SCALE_MODES.get(intervals)
         if mode is None:
-            return f"{tonic} (gamme libre, {len(intervals)} notes)"
-        return f"{tonic} {mode}"
+            return tr("%s (gamme libre, %d notes)") % (tonic, len(intervals))
+        return "%s %s" % (tonic, tr(mode))
 
     def stats(self) -> dict:
         """Chiffres de synthèse du morceau."""

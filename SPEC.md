@@ -6,8 +6,10 @@
 **Dépendances autorisées :** `PyQt6`, `numpy`, `matplotlib` (optionnel), `sounddevice` (optionnel),
 `Pillow` (optionnel). **Rien d'autre.** Tout import optionnel doit être protégé par `try/except ImportError`
 avec dégradation gracieuse (pas de crash si absent).
-**Langue de l'interface : FRANÇAIS.** Tous les libellés, menus, messages, infobulles en français.
-Les noms de code (classes, fonctions, variables) en anglais.
+**Langues de l'interface : français et anglais**, au choix dans le menu « Langue » (§5.26).
+Le français est la langue **source** : chaque libellé, menu, message et infobulle s'écrit en
+français dans le code, et c'est ce texte qui sert de clé à sa traduction anglaise
+(`delugeapp/i18n/`). Les noms de code (classes, fonctions, variables) en anglais.
 
 ---
 
@@ -309,6 +311,12 @@ README.md
 delugeapp/
   __init__.py                 __version__ = "1.0.0"
   config.py
+  i18n/
+    __init__.py               # tr, N_, untranslated, plural, tr_stored, formats (§5.26)
+    en/
+      __init__.py             # MODULES : les fichiers du catalogue ; load()
+      ui_pages_health.py      # TEXTS : un fichier par module du code, nommé d'après lui
+      …
   core/
     __init__.py
     fixedpoint.py
@@ -383,6 +391,8 @@ delugeapp/
 tests/
   test_core.py
   test_ui.py
+  test_i18n.py                  # le catalogue suit le code (§5.26)
+  i18n_analyse.py               # lecture du code par son arbre, sans l'importer
   deluge_simule.py              # un Deluge simulé, fidèle aux mesures
 ```
 
@@ -1009,7 +1019,7 @@ def randomize(seed: int | None = None, role: str = "") -> SynthPreset
 def mutate(preset: SynthPreset, amount: float = 0.25, seed=None) -> SynthPreset
 def morph(a: SynthPreset, b: SynthPreset, t: float) -> SynthPreset      # t 0..1
 def variations(preset: SynthPreset, n: int = 8, amount: float = 0.3, seed=None) -> list[SynthPreset]
-def describe(preset: SynthPreset) -> str        # description française du son généré
+def describe(preset: SynthPreset) -> str        # description du son, dans la langue de l'interface
 def suggest_name(opts: GenOptions, seed: int) -> str
     """Nom évocateur à partir d'un lexique FR/EN : 'ACID GROWL 3', 'NEON PAD'…"""
 ```
@@ -1719,7 +1729,7 @@ DEFAULT_CC: dict[str, int]            # noms du firmware -> CC (mesurés)
 FOLLOW_TO_PARAM: dict[str, str]       # noms du firmware -> clés du modèle
 SANS_EQUIVALENT: frozenset[str]
 HALF_RANGE = {"oscAPulseWidth", "oscBPulseWidth"}
-PARAM_LABELS: dict[str, str]          # clé -> libellé français (les 52)
+PARAM_LABELS: dict[str, str]          # clé -> libellé (les 52), traduit par label_of
 def load_map(card=None, path=None) -> dict[str, int]   # clé app -> CC
 def load_map_with_source(card=None, path=None) -> tuple[dict[str, int], str]
                                       # "" : valeurs d'usine du firmware
@@ -1787,7 +1797,7 @@ def latency_text(ms) -> str                    # « 0,3 ms », « 41 ms »
 class DelugeLink:
     connect(out_name="", in_name="", card=None) -> bool   # câbles 1 et 3
     disconnect() / close()
-    state() -> LinkState                 # ports, noms, résumé en français
+    state() -> LinkState                 # ports, noms, résumé dans la langue de l'interface
     service() -> set[str]                # identity, ping, screen, tempo,
                                          # transport, params, notes
     identify() / ping() / hello() / set_screen(on) -> bool   # SysEx
@@ -2011,7 +2021,7 @@ READ_RATE = 155 Kio/s; WRITE_RATE = 45 Kio/s; READ_AHEAD = 2   # mesurés, cf. p
 STOPPED = -2; NOT_CONNECTED = -3          # codes du client, à côté des FRESULT
 def fat_stamp(epoch) -> (date, heure)     # FAT, heure locale, 2 s
 def from_fat(date, heure) -> float
-def result_text(code) -> str              # FRESULT en français
+def result_text(code) -> str              # FRESULT, dans la langue de l'interface
 def cable_time(read_bytes=0, write_bytes=0) -> str   # « environ 7 min »
 @dataclass(frozen=True)
 class CardEntry: name, size, date, time, attr ; is_dir, stamp, mtime, addressable
@@ -2381,7 +2391,7 @@ class XxxPage(QWidget):
     status = pyqtSignal(str)                 # message pour la barre d'état
     def __init__(self, ctx: AppContext, parent=None)
     def refresh(self) -> None                # appelée quand la page devient visible ou après un scan
-    TITLE: str ; ICON: str                   # titre français et nom d'icône
+    TITLE: str ; ICON: str                   # titre (français, marqué N_) et nom d'icône
 ```
 `AppContext` (défini dans `mainwindow.py`, importable sans cycle — le placer dans `delugeapp/ui/context.py`
 si nécessaire… **NON : le placer dans `delugeapp/config.py`** pour éviter tout cycle) :
@@ -2992,6 +3002,82 @@ ligne tant qu'ils sont quarante au plus.
 **Ouvrir un fichier par son chemin** : `Page.focus_on` reconnaît un chemin de la carte ;
 `Page.reveal_item` le sélectionne dans la liste de la page, en retirant d'abord recherche,
 filtres et dossier qui le cacheraient.
+
+### 5.26 Deux langues : français et anglais
+
+**Choisir.** Le menu « Langue », entre « Outils » et « Aide », propose « Français » et
+« English », chacun écrit dans sa propre langue : qui ne lit pas la langue affichée doit
+retrouver la sienne. La langue retenue est cochée. Le choix est enregistré tout de suite
+(`Settings.language`, `"fr"` ou `"en"`, normalisé à la lecture — l'inconnu donne le
+français), puis une question, **posée dans les deux langues**, propose de redémarrer :
+
+- « Oui » : `MainWindow.restart()` ferme la fenêtre comme à l'ordinaire (question si un
+  traitement tourne, état et page gardés, fils arrêtés, contexte fermé) et lève
+  `restart_requested` ; `main._run_windows` reconstruit alors contexte et fenêtre **dans le
+  même processus**, dans la nouvelle langue. L'index ne se vide qu'au premier démarrage,
+  même si `--reset-db` était demandé ;
+- « Non » : la barre d'état dit, dans la langue encore affichée, que la nouvelle langue
+  s'appliquera au prochain démarrage.
+
+`main._choose_language()` lit la langue avant même la ligne de commande : son aide parle la
+langue choisie. Les boutons standard de Qt (« Oui », « Non », « Annuler ») viennent de la
+traduction `qtbase_fr` livrée avec PyQt6, installée **seulement** en français — sinon elle
+resterait d'une fenêtre à l'autre.
+
+**Écrire un texte.** Quatre règles, vérifiées par `tests/test_i18n.py` :
+
+1. un texte visible passe par `tr()` **au moment où il s'affiche**, jamais à l'import d'un
+   module : la fenêtre se reconstruit dans le même processus, et un texte traduit à
+   l'import resterait dans la langue précédente ;
+2. une constante de module ou de classe se marque par `N_()`, qui ne fait rien, et se
+   traduit là où elle s'affiche — `tr(self.TITLE)` ;
+3. un gabarit garde ses marques, et sa traduction porte exactement les mêmes :
+   `tr("%d fichier(s)") % n` ; une f-string devient un gabarit. Le pluriel passe par
+   `plural(n, N_("%d mesure"), N_("%d mesures"))` : le français garde le singulier jusqu'à
+   un (« 0 mesure »), l'anglais seulement pour un (« 0 bars ») ;
+4. ce que l'application **écrit** — noms de clips d'un morceau (« Chords », « Build-up
+   Bass »), dossiers d'un rangement par durée (« Under 1 s »), dossiers de sauvegarde,
+   pistes et repères d'un export MIDI, nom de repli « SANS NOM » / « UNTITLED » — prend
+   la langue de l'interface **au moment de l'écriture** : `tr()` s'applique là, sur une
+   clé française qui ne change pas (`songwriter.part_label("Arpège")` → « Arpege » ou
+   « Arpeggio », ASCII pour l'écran de la machine). Ce qui est déjà sur la carte ne
+   change pas quand on change de langue. Les **identifiants**, eux, ne se traduisent pas
+   (`untranslated()`) : clés comparées dans le code (parties « Accords », rôles de
+   sections), balises XML, dossiers système, catégories « Bass » ou « Autre » gardées
+   telles quelles dans l'index et traduites là où elles s'affichent. Le libellé d'une
+   sauvegarde reste une clé dans son manifeste ; seul le nom de son dossier se traduit.
+
+La traduction anglaise d'un module vit dans `i18n/en/`, dans le fichier nommé d'après lui
+(`ui/pages/health.py` → `en/ui_pages_health.py`), listé dans `en.MODULES`. Une même phrase
+a une seule traduction dans tout le catalogue ; deux sens différents s'écrivent donc
+différemment en français (« Lecture impossible » joue un son ; « Lecture de l'échantillon
+impossible » lit un fichier). `python tests/i18n_analyse.py <fichier>` liste ce qui manque
+à un module et en donne le squelette.
+
+**Les textes gardés.** Ce que l'index et l'historique conservent reste en français, quelle
+que soit la langue : les anomalies réparées à la lecture d'un XML (`dxml`, marquées `N_`),
+le résumé d'un kit (« 16 rangées »). La page Santé écarte les documents multi-racines en
+cherchant « multi-racines » dans la note gardée : cette note ne doit pas changer avec la
+langue. Ces textes se traduisent **à l'affichage** par `tr_stored()` : la clé exacte, ou le
+gabarit dont le texte est issu, rempli avec les mêmes valeurs (« 70 '&' non échappé(s)
+corrigé(s) » → « 70 unescaped '&' fixed »), morceau par morceau entre « ; ». Un gabarit de
+moins de quatre lettres fixes (« %s à %s », « %s : %s ») reconnaîtrait n'importe quelle
+phrase : il est écarté. Le journal (`app.log`) reste en français : il sert au diagnostic.
+
+**Nombres, dates, unités, notes.** `decimal(1.5)` → « 1,5 » / « 1.5 » ; `integer(12345)` →
+« 12 345 » / « 12,345 » ; `clock` → « 14h53 » / « 14:53 » ; `full_date` → « 15/10/2026 » /
+« 15 Oct 2026 » (les mois anglais sont écrits dans le code : `strftime` suit la langue du
+système, pas celle de l'interface) ; `human_size` → « 1,5 Mio » / « 1.5 MiB » ; les notes →
+« Do3 Lam Sib3 » / « C3 Am Bb3 ». Lire un nom de note marche dans les deux langues.
+
+**Mesures (19 octobre 2026).** 2 025 phrases traduites dans 54 fichiers. L'interface
+anglaise, ses neuf pages et tous leurs onglets parcourus, montre 8 606 textes — libellés,
+titres, infobulles, entrées de listes, en-têtes et premières lignes des tableaux — dont
+**aucun** en français ; le même relevé en signale 459 distincts quand l'interface est en
+français. Chaque bouton cliqué en anglais (barre d'état, boîtes, dialogues, sélecteurs de
+fichiers : 2 538 textes) : aucun français ; 543 en français. Les commandes s'expliquent
+aussi en anglais : le registre d'aide désigne un bouton par son libellé français, et
+`sources()` retrouve ce libellé derrière l'anglais affiché.
 
 ## 6. Contraintes de robustesse
 

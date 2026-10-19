@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.fixedpoint import to_display
+from ...i18n import N_, tr
 from ..theme import PAD, category_color
 from ..widgets.common import (
     Card,
@@ -56,6 +57,12 @@ from .base import Page, tool_button
 log = logging.getLogger(__name__)
 
 
+def _categorie(valeur) -> str:
+    """Une catégorie de l'index, dans la langue de l'interface : « Autre »
+    devient « Other », « Bass » reste « Bass »."""
+    return "—" if valeur is None else tr(str(valeur))
+
+
 def _pastille(categorie) -> str:
     """Couleur de la pastille d'une catégorie, rien si elle est vide."""
     texte = str(categorie or "").strip()
@@ -64,25 +71,26 @@ def _pastille(categorie) -> str:
 
 #: Paramètres montrés en encodeurs, dans cet ordre.
 KNOB_PARAMS: tuple[tuple[str, str, bool], ...] = (
-    ("volume", "Volume", False),
-    ("lpfFrequency", "Coupure", False),
-    ("lpfResonance", "Résonance", False),
-    ("oscAVolume", "Osc A", False),
-    ("oscBVolume", "Osc B", False),
-    ("reverbAmount", "Réverb.", False),
-    ("delayFeedback", "Délai", False),
-    ("modFXDepth", "Mod FX", False),
-    ("pan", "Panoramique", True),
+    ("volume", N_("Volume"), False),
+    ("lpfFrequency", N_("Coupure"), False),
+    ("lpfResonance", N_("Résonance"), False),
+    ("oscAVolume", N_("Osc A"), False),
+    ("oscBVolume", N_("Osc B"), False),
+    ("reverbAmount", N_("Réverb."), False),
+    ("delayFeedback", N_("Délai"), False),
+    ("modFXDepth", N_("Mod FX"), False),
+    ("pan", N_("Panoramique"), True),
 )
 
 
 class SynthsPage(Page):
     """Presets de synthé."""
 
-    TITLE = "Presets"
-    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
-                    "Chaque preset s'ouvrira ici avec ses oscillateurs, "
-                    "ses enveloppes et son filtre, expliqués en français.")
+    TITLE = N_("Presets")
+    EMPTY_DETAIL = N_("Indiquez l'emplacement de votre carte dans les "
+                      "réglages. Chaque preset s'ouvrira ici avec ses "
+                      "oscillateurs, ses enveloppes et son filtre, expliqués "
+                      "en français.")
     ICON = "synth"
     #: ``'synth'`` ou ``'kit'`` : la page des kits réutilise cette classe.
     KIND = "synth"
@@ -108,34 +116,35 @@ class SynthsPage(Page):
         outer.setSpacing(8)
 
         header, actions = self.header(
-            "Presets de synthé",
-            "Parcourir, écouter et comprendre les sons de la carte")
+            tr("Presets de synthé"),
+            tr("Parcourir, écouter et comprendre les sons de la carte"))
         outer.addWidget(header)
 
-        listen = tool_button("Écouter", "play", primary=True)
+        listen = tool_button(tr("Écouter"), "play", primary=True)
         listen.clicked.connect(self.guard(self._listen))
         actions.addWidget(listen)
 
-        stop = tool_button("Arrêter", "stop")
+        stop = tool_button(tr("Arrêter"), "stop")
         stop.clicked.connect(self.guard(self._stop))
         actions.addWidget(stop)
 
-        duplicate = tool_button("Dupliquer", "copy",
-                                "Enregistrer une copie à côté de l'original")
+        duplicate = tool_button(tr("Dupliquer"), "copy",
+                                tr("Enregistrer une copie à côté de "
+                                   "l'original"))
         duplicate.clicked.connect(self.guard(self._duplicate))
         actions.addWidget(duplicate)
 
-        vary = tool_button("Varier dans le générateur", "wand")
+        vary = tool_button(tr("Varier dans le générateur"), "wand")
         vary.clicked.connect(self.guard(self._vary))
         actions.addWidget(vary)
 
         row = QHBoxLayout()
         row.setSpacing(6)
-        self._search = SearchBar("Rechercher un preset…")
+        self._search = SearchBar(tr("Rechercher un preset…"))
         self._search.searchChanged.connect(self.guard(lambda _t: self._reload()))
         row.addWidget(self._search, 2)
         self._category = QComboBox()
-        self._category.addItem("Toutes catégories", "")
+        self._category.addItem(tr("Toutes catégories"), "")
         self._category.activated.connect(self.guard(lambda _i: self._reload()))
         row.addWidget(self._category, 1)
         holder = QWidget()
@@ -169,9 +178,9 @@ class SynthsPage(Page):
 
     def _build_detail(self) -> QWidget:
         tabs = QTabWidget()
-        tabs.addTab(self._build_summary_tab(), "Vue d'ensemble")
-        tabs.addTab(self._build_params_tab(), "Paramètres")
-        tabs.addTab(self._build_mod_tab(), "Modulations")
+        tabs.addTab(self._build_summary_tab(), tr("Vue d'ensemble"))
+        tabs.addTab(self._build_params_tab(), tr("Paramètres"))
+        tabs.addTab(self._build_mod_tab(), tr("Modulations"))
         self._tabs = tabs
         return tabs
 
@@ -184,7 +193,7 @@ class SynthsPage(Page):
         column.setContentsMargins(PAD, PAD, PAD, PAD)
         column.setSpacing(8)
 
-        self._name = ElidedLabel("Aucun preset sélectionné")
+        self._name = ElidedLabel(tr("Aucun preset sélectionné"))
         self._name.setProperty("role", "title")
         column.addWidget(self._name)
 
@@ -206,22 +215,23 @@ class SynthsPage(Page):
         # la liste est celle des sons que **ce preset** utilise, plus bas
         # dans le même panneau.
         self._wave.set_empty_text(
-            "Aucun échantillon affiché",
-            "Choisissez une ligne dans « Échantillons utilisés », en bas")
+            tr("Aucun échantillon affiché"),
+            tr("Choisissez une ligne dans « Échantillons utilisés », en bas"))
         column.addWidget(self._wave)
 
         self._spectrum = SpectrumView()
         self._spectrum.setMinimumHeight(90)
         self._spectrum.set_empty_text(
-            "Aucun signal analysé\n\n"
-            "Écoutez le preset pour voir son spectre")
+            tr("Aucun signal analysé\n\n"
+               "Écoutez le preset pour voir son spectre"))
         column.addWidget(self._spectrum)
 
-        samples_label = QLabel("Échantillons utilisés")
+        samples_label = QLabel(tr("Échantillons utilisés"))
         samples_label.setProperty("role", "subtitle")
         column.addWidget(samples_label)
         self._samples = QTableWidget(0, 2)
-        self._samples.setHorizontalHeaderLabels(["Fichier", "Présent"])
+        self._samples.setHorizontalHeaderLabels([tr("Fichier"),
+                                                 tr("Présent")])
         self._samples.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
         self._samples.verticalHeader().setVisible(False)
@@ -243,27 +253,27 @@ class SynthsPage(Page):
         column.setContentsMargins(PAD, PAD, PAD, PAD)
         column.setSpacing(PAD)
 
-        knobs = Card("Principaux réglages")
+        knobs = Card(tr("Principaux réglages"))
         grid = QGridLayout()
         grid.setSpacing(6)
         self._knobs: dict[str, Knob] = {}
         for index, (key, label, bipolar) in enumerate(KNOB_PARAMS):
-            knob = Knob(label, 25, -25 if bipolar else 0, 25 if bipolar else 50,
-                        bipolar)
+            knob = Knob(tr(label), 25, -25 if bipolar else 0,
+                        25 if bipolar else 50, bipolar)
             knob.setEnabled(False)      # lecture seule : l'édition viendra
             grid.addWidget(knob, index // 5, index % 5)
             self._knobs[key] = knob
         knobs.body().addLayout(grid)
         column.addWidget(knobs)
 
-        envelopes = Card("Enveloppes")
-        self._env1 = EnvelopeEditor(title="Enveloppe 1 — amplitude")
-        self._env2 = EnvelopeEditor(title="Enveloppe 2 — modulation")
+        envelopes = Card(tr("Enveloppes"))
+        self._env1 = EnvelopeEditor(title=tr("Enveloppe 1 — amplitude"))
+        self._env2 = EnvelopeEditor(title=tr("Enveloppe 2 — modulation"))
         envelopes.body().addWidget(self._env1)
         envelopes.body().addWidget(self._env2)
         column.addWidget(envelopes)
 
-        filtre = Card("Filtre")
+        filtre = Card(tr("Filtre"))
         self._filter = FilterCurve()
         filtre.body().addWidget(self._filter)
         column.addWidget(filtre)
@@ -278,13 +288,13 @@ class SynthsPage(Page):
         column.setContentsMargins(PAD, PAD, PAD, PAD)
         column.setSpacing(8)
 
-        cables_label = QLabel("Câbles de modulation")
+        cables_label = QLabel(tr("Câbles de modulation"))
         cables_label.setProperty("role", "subtitle")
         column.addWidget(cables_label)
 
         self._cables = QTableWidget(0, 3)
         self._cables.setHorizontalHeaderLabels(
-            ["Source", "Destination", "Profondeur"])
+            [tr("Source"), tr("Destination"), tr("Profondeur")])
         self._cables.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
         self._cables.verticalHeader().setVisible(False)
@@ -292,12 +302,13 @@ class SynthsPage(Page):
             QAbstractItemView.EditTrigger.NoEditTriggers)
         column.addWidget(self._cables, 1)
 
-        knobs_label = QLabel("Encodeurs assignés (modKnobs)")
+        knobs_label = QLabel(tr("Encodeurs assignés (modKnobs)"))
         knobs_label.setProperty("role", "subtitle")
         column.addWidget(knobs_label)
 
         self._modknobs = QTableWidget(0, 2)
-        self._modknobs.setHorizontalHeaderLabels(["Paramètre", "Source"])
+        self._modknobs.setHorizontalHeaderLabels([tr("Paramètre"),
+                                                  tr("Source")])
         self._modknobs.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
         self._modknobs.verticalHeader().setVisible(False)
@@ -327,11 +338,12 @@ class SynthsPage(Page):
         # sous une barre de défilement horizontale. Le firmware n'aide pas à
         # choisir un son — la page Santé signale ce qu'il faut savoir.
         return [
-            ("Nom", get("name"), 200, left),
-            ("Dossier", dossier, 150, left),
-            ("Catégorie", get("category"), 108, left, None, _pastille),
-            ("Moteur", get("mode"), 85, left),
-            ("Taille", get("size"), 80, right, human_size),
+            (tr("Nom"), get("name"), 200, left),
+            (tr("Dossier"), dossier, 150, left),
+            (tr("Catégorie"), get("category"), 108, left, _categorie,
+             _pastille),
+            (tr("Moteur"), get("mode"), 85, left),
+            (tr("Taille"), get("size"), 80, right, human_size),
         ]
 
     # -- chargement --------------------------------------------------------- #
@@ -365,8 +377,9 @@ class SynthsPage(Page):
         else:
             self._model.set_rows(rows)
 
-        label = "preset(s)" if self.KIND == "synth" else "kit(s)"
-        self._count.setText(f"{len(rows)} {label} affiché(s)")
+        self._count.setText(
+            (tr("%d preset(s) affiché(s)") if self.KIND == "synth"
+             else tr("%d kit(s) affiché(s)")) % len(rows))
 
     def _selected_row(self):
         if self._model is None or self._proxy is None:
@@ -403,8 +416,8 @@ class SynthsPage(Page):
         except Exception as exc:  # noqa: BLE001 - 14 % des XML sont abîmés
             log.debug("preset illisible %s : %s", rel, exc)
             self._preset = None
-            self._description.setText(f"Fichier illisible : {exc}")
-            self._info.set_rows([("Erreur", str(exc))])
+            self._description.setText(tr("Fichier illisible : %s") % exc)
+            self._info.set_rows([(tr("Erreur"), str(exc))])
             self._wave.clear()
             self._spectrum.clear()
             self._samples.setRowCount(0)
@@ -427,22 +440,23 @@ class SynthsPage(Page):
             self._description.setText("")
 
         details: list[tuple[str, object]] = [
-            ("Moteur", sound.mode),
-            ("Polyphonie", sound.polyphonic),
-            ("Oscillateur 1", sound.osc_label(sound.osc1)),
-            ("Oscillateur 2", sound.osc_label(sound.osc2)),
-            ("Filtre", sound.filter_label()),
-            ("Effets", ", ".join(sound.fx_list()) or "aucun"),
-            ("Unisson", f"{sound.unison_num} voix, "
-                        f"désaccord {sound.unison_detune}"),
-            ("Arpégiateur", sound.arp.mode if sound.arp.is_on else "éteint"),
-            ("Catégorie devinée", sound.category_guess()),
-            ("Caractère", ", ".join(sound.tonal_tags()) or "—"),
-            ("Firmware", sound.firmware or "—"),
+            (tr("Moteur"), sound.mode),
+            (tr("Polyphonie"), sound.polyphonic),
+            (tr("Oscillateur 1"), sound.osc_label(sound.osc1)),
+            (tr("Oscillateur 2"), sound.osc_label(sound.osc2)),
+            (tr("Filtre"), sound.filter_label()),
+            (tr("Effets"), ", ".join(sound.fx_list()) or tr("aucun")),
+            (tr("Unisson"), tr("%d voix, désaccord %d")
+             % (sound.unison_num, sound.unison_detune)),
+            (tr("Arpégiateur"),
+             sound.arp.mode if sound.arp.is_on else tr("éteint")),
+            (tr("Catégorie devinée"), tr(sound.category_guess())),
+            (tr("Caractère"), ", ".join(sound.tonal_tags()) or "—"),
+            (tr("Firmware"), sound.firmware or "—"),
         ]
         repaired = row["repaired"] if "repaired" in row.keys() else ""
         if repaired:
-            details.append(("Réparations à la lecture", repaired))
+            details.append((tr("Réparations à la lecture"), repaired))
         self._info.set_rows(details)
 
         # Échantillons utilisés, avec leur présence réelle.
@@ -456,7 +470,7 @@ class SynthsPage(Page):
             self._samples.setItem(index, 0, item)
             present = (self.sd is not None
                        and self.sd.resolve_sample(ref) is not None)
-            state = QTableWidgetItem("oui" if present else "ABSENT")
+            state = QTableWidgetItem(tr("oui") if present else tr("ABSENT"))
             state.setForeground(Qt.GlobalColor.green if present
                                 else Qt.GlobalColor.red)
             self._samples.setItem(index, 1, state)
@@ -511,16 +525,16 @@ class SynthsPage(Page):
     def _listen(self) -> None:
         """Rend le preset et le joue, hors du fil de l'interface."""
         if self._preset is None:
-            self.say("Aucun preset sélectionné.")
+            self.say(tr("Aucun preset sélectionné."))
             return
         if self.audition(self._preset.sound):
             return
-        self.say("Rendu du son…")
+        self.say(tr("Rendu du son…"))
         self.run(self._render, self._preset,
                  on_result=self.guard(self._play_rendered),
                  on_error=self.guard(
-                     lambda m: self.say(f"Rendu impossible : {m}")),
-                 title="Rendu du preset")
+                     lambda m: self.say(tr("Rendu impossible : %s") % m)),
+                 title=tr("Rendu du preset"))
 
     def _render(self, preset):
         """Travail de fond : rendu audio du preset."""
@@ -552,15 +566,15 @@ class SynthsPage(Page):
             log.debug("enveloppe du rendu impossible : %s", exc)
 
         if self.player is None:
-            self.say("Aucune sortie audio disponible.")
+            self.say(tr("Aucune sortie audio disponible."))
             return
         try:
             self.player.set_volume(self.ctx.settings.preview_volume)
             self.player.play_array(audio, 44100)
-            self.say("Lecture…")
+            self.say(tr("Lecture…"))
         except Exception as exc:  # noqa: BLE001
             log.debug("lecture impossible : %s", exc)
-            self.say(f"Lecture impossible : {exc}")
+            self.say(tr("Lecture impossible : %s") % exc)
 
     def _stop(self) -> None:
         if self.player is not None:
@@ -574,7 +588,7 @@ class SynthsPage(Page):
     def _vary(self) -> None:
         """Ouvre le preset choisi dans le générateur."""
         if self._preset is None or not self._current:
-            self.say("Choisissez d'abord un preset.")
+            self.say(tr("Choisissez d'abord un preset."))
             return
         self.openInGenerator.emit(self._current)
 
@@ -583,7 +597,7 @@ class SynthsPage(Page):
     def _duplicate(self) -> None:
         """Enregistre une copie du preset à côté de l'original."""
         if self._preset is None or not self._current:
-            self.say("Aucun preset sélectionné.")
+            self.say(tr("Aucun preset sélectionné."))
             return
         card = self.writable_card()
         if card is None:
@@ -592,7 +606,7 @@ class SynthsPage(Page):
         from ...core.sdcard import safe_deluge_name
 
         source = card.abs(self._current)
-        stem = safe_deluge_name(f"{source.stem} copie")
+        stem = safe_deluge_name(tr("%s copie") % source.stem)
         target = source.with_name(f"{stem}{source.suffix}")
         index = 2
         while target.exists():
@@ -601,8 +615,9 @@ class SynthsPage(Page):
 
         if self.ctx.settings.confirm_writes:
             answer = QMessageBox.question(
-                self, "Dupliquer le preset",
-                f"Créer « {target.name} » dans {target.parent.name} ?",
+                self, tr("Dupliquer le preset"),
+                tr("Créer « %s » dans %s ?")
+                % (target.name, target.parent.name),
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes)
@@ -614,11 +629,11 @@ class SynthsPage(Page):
             copy.save(target, backup=False)
         except Exception as exc:  # noqa: BLE001
             log.exception("duplication impossible")
-            self.say(f"Duplication impossible : {exc}")
+            self.say(tr("Duplication impossible : %s") % exc)
             return
         card.invalidate_cache()
         _index_written(self, [target])
-        self.say(f"Copie créée : {target.name}")
+        self.say(tr("Copie créée : %s") % target.name)
         self._refresh()
 
     # -- rafraîchissement --------------------------------------------------- #
@@ -631,10 +646,10 @@ class SynthsPage(Page):
         current = self._category.currentData() or ""
         self._category.blockSignals(True)
         self._category.clear()
-        self._category.addItem("Toutes catégories", "")
+        self._category.addItem(tr("Toutes catégories"), "")
         try:
             for name, count in self.lib.categories(self.KIND):
-                self._category.addItem(f"{name} ({count})", name)
+                self._category.addItem(f"{tr(name)} ({count})", name)
         except Exception as exc:  # noqa: BLE001
             log.debug("catégories indisponibles : %s", exc)
         index = self._category.findData(current)

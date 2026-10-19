@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import QMessageBox
 from ..core import cardsync
 from ..core.delugefiles import NOT_CONNECTED, STOPPED, FileError, cable_time
 from ..core.units import human_size
+from ..i18n import tr, untranslated
 from . import tasks
 
 log = logging.getLogger(__name__)
@@ -87,7 +88,8 @@ class CardWork(QObject):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(WRITE_DELAY_MS)
-        self._timer.timeout.connect(lambda: self.sync("écriture"))
+        self._timer.timeout.connect(
+            lambda: self.sync(untranslated("écriture")))
 
     # -- état ---------------------------------------------------------------- #
 
@@ -130,14 +132,14 @@ class CardWork(QObject):
         if not self.pending:
             return ""
         octets = self.pending_bytes()
-        return ("%d fichier(s) attendent le Deluge (%s, %s par le câble)"
+        return (tr("%d fichier(s) attendent le Deluge (%s, %s par le câble)")
                 % (len(self.pending), human_size(octets),
                    cable_time(write_bytes=octets)))
 
     def summary(self) -> str:
         """Une phrase sur la carte, pour l'utilisateur."""
         if self._busy:
-            return "Synchronisation avec le Deluge…"
+            return tr("Synchronisation avec le Deluge…")
         if self.message:
             return self.message
         if self.pending and self.working_on_copy():
@@ -145,9 +147,9 @@ class CardWork(QObject):
         if self.files() is None:
             return ""
         if not self.has_work_copy():
-            return ("La carte du Deluge s'ouvre par USB : créez la copie de "
-                    "travail pour y travailler.")
-        return "Copie de travail synchronisée avec le Deluge."
+            return tr("La carte du Deluge s'ouvre par USB : créez la copie "
+                      "de travail pour y travailler.")
+        return tr("Copie de travail synchronisée avec le Deluge.")
 
     def exchanges(self, limit: int | None = None) -> list[cardsync.Exchange]:
         """Les échanges gardés, le plus récent d'abord."""
@@ -191,11 +193,12 @@ class CardWork(QObject):
             self.stateChanged.emit()
             return
         if not self.has_work_copy():
-            self._say("Le Deluge ouvre sa carte par USB : Réglages ▸ Carte "
-                      "du Deluge ▸ « Créer la copie de travail ».", 0)
+            self._say(tr("Le Deluge ouvre sa carte par USB : Réglages ▸ "
+                         "Carte du Deluge ▸ « Créer la copie de travail »."),
+                      0)
             return
         if getattr(self.ctx.settings, "auto_sync", True):
-            self.sync("connexion")
+            self.sync(untranslated("connexion"))
 
     def on_card_written(self) -> None:
         """L'application vient d'écrire dans sa copie de travail."""
@@ -211,7 +214,7 @@ class CardWork(QObject):
         if (self.working_on_copy() and self.files() is not None
                 and getattr(self.ctx.settings, "auto_sync", True)
                 and time.monotonic() - self._last_sync > FOCUS_INTERVAL):
-            self.sync("retour")
+            self.sync(untranslated("retour"))
 
     def on_transport(self) -> None:
         """La machine s'arrête : une synchronisation attendait peut-être."""
@@ -235,7 +238,7 @@ class CardWork(QObject):
         generation = self._generation
         tasks.run_task(
             self.window, cardsync.pending_changes, self.work_path(),
-            title="Fichiers en attente du Deluge", quiet=True,
+            title=tr("Fichiers en attente du Deluge"), quiet=True,
             on_result=lambda r, g=generation: self._pending_counted(g, r),
             on_error=lambda m: log.debug("en attente non comptés : %s", m))
 
@@ -256,8 +259,8 @@ class CardWork(QObject):
         if self._busy or self._playing():
             self._pending = raison or "attente"
             if self._playing():
-                self._say("Le Deluge joue : la synchronisation attend "
-                          "l'arrêt.", 6000)
+                self._say(tr("Le Deluge joue : la synchronisation attend "
+                             "l'arrêt."), 6000)
             return False
         self._busy = True
         self.stateChanged.emit()
@@ -265,7 +268,7 @@ class CardWork(QObject):
             self.window, _synchronise, client, self.work_path(),
             self.ctx.settings.card_backup_path(), allow_card_deletes,
             raison, self._playing,
-            title="Synchronisation avec le Deluge",
+            title=tr("Synchronisation avec le Deluge"),
             on_result=self._done, on_error=self._failed)
         return True
 
@@ -283,13 +286,13 @@ class CardWork(QObject):
             # Arrêté entre deux blocs parce que la machine s'est mise à
             # jouer : la suite part à l'arrêt.
             self._pending = raison or "reprise"
-            texte = ("Le Deluge joue : la synchronisation s'est arrêtée et "
-                     "reprendra à l'arrêt (%s)." % (echange.summary()
-                                                   if not echange.empty
-                                                   else "rien d'envoyé"))
+            texte = (tr("Le Deluge joue : la synchronisation s'est arrêtée "
+                        "et reprendra à l'arrêt (%s).")
+                     % (echange.summary() if not echange.empty
+                        else tr("rien d'envoyé")))
         elif effet.lost:
-            texte = ("Le Deluge ne répond plus : la synchronisation reprendra "
-                     "à sa prochaine connexion.")
+            texte = tr("Le Deluge ne répond plus : la synchronisation "
+                       "reprendra à sa prochaine connexion.")
         else:
             texte = self._phrase(effet, plan)
         self._say(texte, 10000)
@@ -307,19 +310,21 @@ class CardWork(QObject):
         envoyes = effet.done.get("push", 0) + effet.done.get("conflict", 0)
         morceaux = []
         if recus:
-            morceaux.append("%d reçu(s)" % recus)
+            morceaux.append(tr("%d reçu(s)") % recus)
         if envoyes:
-            morceaux.append("%d envoyé(s)" % envoyes)
+            morceaux.append(tr("%d envoyé(s)") % envoyes)
         if effet.renamed:
-            morceaux.append("%d changé(s) des deux côtés : les deux versions "
-                            "sont gardées" % len(effet.renamed))
+            morceaux.append(tr("%d changé(s) des deux côtés : les deux "
+                               "versions sont gardées") % len(effet.renamed))
         if plan.needs_consent:
-            morceaux.append("%d suppression(s) à confirmer (Réglages)"
+            morceaux.append(tr("%d suppression(s) à confirmer (Réglages)")
                             % len(plan.needs_consent))
         if effet.errors:
-            morceaux.append("%d erreur(s) — voir le journal" % len(effet.errors))
-        return (("Deluge synchronisé : " + ", ".join(morceaux)) if morceaux
-                else "Copie de travail à jour avec le Deluge.")
+            morceaux.append(tr("%d erreur(s) — voir le journal")
+                            % len(effet.errors))
+        return ((tr("Deluge synchronisé : %s") % ", ".join(morceaux))
+                if morceaux
+                else tr("Copie de travail à jour avec le Deluge."))
 
     def _keep(self, effet: cardsync.SyncResult, raison: str,
               secondes: float) -> cardsync.Exchange:
@@ -335,7 +340,7 @@ class CardWork(QObject):
     def _failed(self, message: str) -> None:
         self._busy = False
         self._pending = None
-        self._say("Synchronisation interrompue : %s" % message, 0)
+        self._say(tr("Synchronisation interrompue : %s") % message, 0)
 
     # -- créer la copie de travail ------------------------------------------------- #
 
@@ -346,9 +351,9 @@ class CardWork(QObject):
         client = self.files()
         if client is None:
             QMessageBox.information(
-                parent or self.window, "Carte du Deluge",
-                "Branchez le Deluge en USB, avec le firmware 1.3 ou plus "
-                "récent : c'est lui qui ouvre sa carte au PC.")
+                parent or self.window, tr("Carte du Deluge"),
+                tr("Branchez le Deluge en USB, avec le firmware 1.3 ou plus "
+                   "récent : c'est lui qui ouvre sa carte au PC."))
             return
         if self._busy:
             return
@@ -358,7 +363,7 @@ class CardWork(QObject):
         sauvegarde = self.ctx.settings.card_backup_path()
         tasks.run_task(
             self.window, _plan_only, client, travail, sauvegarde,
-            title="Lecture de la carte du Deluge",
+            title=tr("Lecture de la carte du Deluge"),
             on_result=lambda r: self._confirm_creation(parent, r),
             on_error=self._failed)
 
@@ -367,50 +372,54 @@ class CardWork(QObject):
         self.stateChanged.emit()
         reprises = plan.of("copy_backup")
         cable = plan.of("pull")
-        lignes = ["La copie de travail sera créée dans :", "",
+        lignes = [tr("La copie de travail sera créée dans :"), "",
                   "    %s" % self.work_path(), ""]
         if reprises:
-            lignes.append("•  %d fichiers repris de votre sauvegarde (%s, "
-                          "copie locale)" % (len(reprises), human_size(
-                              sum(a.size for a in reprises))))
+            lignes.append(tr("•  %d fichiers repris de votre sauvegarde (%s, "
+                             "copie locale)")
+                          % (len(reprises),
+                             human_size(sum(a.size for a in reprises))))
         if cable:
             octets = sum(a.size for a in cable)
-            lignes.append("•  %d fichiers reçus du Deluge par USB (%s, %s)"
+            lignes.append(tr("•  %d fichiers reçus du Deluge par USB (%s, %s)")
                           % (len(cable), human_size(octets),
                              cable_time(read_bytes=octets)))
         musique = plan.backup_music()
         autres = len(plan.backup_only) - len(musique)
         if musique:
-            lignes.append("•  %d fichier(s) de musique dans votre sauvegarde "
-                          "mais pas sur la carte — proposés juste après"
-                          % len(musique))
+            lignes.append(tr("•  %d fichier(s) de musique dans votre "
+                             "sauvegarde mais pas sur la carte — proposés "
+                             "juste après") % len(musique))
         if autres:
-            lignes.append("•  %d autre(s) fichier(s) de la sauvegarde, absents "
-                          "de la carte (ancien firmware, anciens réglages) : "
-                          "laissés dans la sauvegarde" % autres)
-        lignes += ["", "Rien n'est écrit sur la carte, sauf la date des "
-                   "fichiers que le Deluge a enregistrés : elle permet de "
-                   "voir ce qu'il réécrira. Votre sauvegarde n'est que lue.",
-                   "", "Continuer ?"]
+            lignes.append(tr("•  %d autre(s) fichier(s) de la sauvegarde, "
+                             "absents de la carte (ancien firmware, anciens "
+                             "réglages) : laissés dans la sauvegarde")
+                          % autres)
+        lignes += ["", tr("Rien n'est écrit sur la carte, sauf la date des "
+                          "fichiers que le Deluge a enregistrés : elle permet "
+                          "de voir ce qu'il réécrira. Votre sauvegarde n'est "
+                          "que lue."),
+                   "", tr("Continuer ?")]
         if QMessageBox.question(
-                parent or self.window, "Créer la copie de travail",
+                parent or self.window, tr("Créer la copie de travail"),
                 "\n".join(lignes)) != QMessageBox.StandardButton.Yes:
-            self._say("Copie de travail non créée.", 6000)
+            self._say(tr("Copie de travail non créée."), 6000)
             return
         self._repris = []
         musique = plan.backup_music()
         if musique:
             noms = "\n".join("  •  %s" % r for r, _ in musique[:12])
             if len(musique) > 12:
-                noms += "\n  … et %d autres" % (len(musique) - 12)
+                noms += "\n  " + tr("… et %d autres") % (len(musique) - 12)
             if QMessageBox.question(
-                    parent or self.window, "Dans la sauvegarde seulement",
-                    "Ces fichiers sont dans votre sauvegarde, pas sur la carte "
-                    "du Deluge :\n\n%s\n\nSi l'application les a créés "
-                    "là, ils n'y sont jamais arrivés. Les reprendre dans la "
-                    "copie de travail, pour qu'ils partent sur le Deluge ? "
-                    "(S'ils ont été supprimés exprès sur la machine, "
-                    "répondez non : ils restent dans la sauvegarde.)" % noms
+                    parent or self.window, tr("Dans la sauvegarde seulement"),
+                    tr("Ces fichiers sont dans votre sauvegarde, pas sur la "
+                       "carte du Deluge :\n\n%s\n\nSi l'application les a "
+                       "créés là, ils n'y sont jamais arrivés. Les reprendre "
+                       "dans la copie de travail, pour qu'ils partent sur le "
+                       "Deluge ? (S'ils ont été supprimés exprès sur la "
+                       "machine, répondez non : ils restent dans la "
+                       "sauvegarde.)") % noms
             ) == QMessageBox.StandardButton.Yes:
                 self._repris = [r for r, _ in musique]
         client = self.files()
@@ -420,7 +429,7 @@ class CardWork(QObject):
         self.stateChanged.emit()
         tasks.run_task(
             self.window, _apply_creation, plan, client, self.work_path(),
-            title="Copie de travail de la carte", modal=True,
+            title=tr("Copie de travail de la carte"), modal=True,
             on_result=self._created, on_error=self._failed)
 
     def _created(self, resultat) -> None:
@@ -428,17 +437,17 @@ class CardWork(QObject):
         self._last_sync = time.monotonic()
         plan, effet, secondes = resultat
         self.last_plan, self.last_result = plan, effet
-        self._keep(effet, "création", secondes)
+        self._keep(effet, untranslated("création"), secondes)
         if effet.stopped:
-            self._say("Copie de travail interrompue : relancez-la pour la "
-                      "terminer.", 0)
+            self._say(tr("Copie de travail interrompue : relancez-la pour la "
+                         "terminer."), 0)
             return
         if effet.errors:
-            self._say("Copie de travail créée avec %d erreur(s) — voir le "
-                      "journal." % len(effet.errors), 0)
+            self._say(tr("Copie de travail créée avec %d erreur(s) — voir le "
+                         "journal.") % len(effet.errors), 0)
         else:
-            self._say("Copie de travail créée : l'application travaille "
-                      "désormais sur la carte du Deluge.", 10000)
+            self._say(tr("Copie de travail créée : l'application travaille "
+                         "désormais sur la carte du Deluge."), 10000)
         # Ce que la sauvegarde avait seule, et que l'utilisateur reprend :
         # dans la copie de travail, d'où la synchronisation l'enverra.
         repris = getattr(self, "_repris", [])
@@ -465,12 +474,12 @@ class CardWork(QObject):
             return
         noms = "\n".join("  •  %s" % a.rel for a in attente[:12])
         if len(attente) > 12:
-            noms += "\n  … et %d autres" % (len(attente) - 12)
+            noms += "\n  " + tr("… et %d autres") % (len(attente) - 12)
         if QMessageBox.question(
-                parent or self.window, "Supprimer aussi de la carte ?",
-                "Ces fichiers ont été supprimés de la copie de travail :\n\n"
-                "%s\n\nLes supprimer aussi de la carte du Deluge ? Votre "
-                "sauvegarde, elle, les garde." % noms
+                parent or self.window, tr("Supprimer aussi de la carte ?"),
+                tr("Ces fichiers ont été supprimés de la copie de travail :"
+                   "\n\n%s\n\nLes supprimer aussi de la carte du Deluge ? "
+                   "Votre sauvegarde, elle, les garde.") % noms
         ) == QMessageBox.StandardButton.Yes:
             self.sync("suppressions", allow_card_deletes=True)
 
@@ -484,7 +493,7 @@ class CardWork(QObject):
         self._backup_busy = True
         tasks.run_task(
             self.window, cardsync.update_backup, self.work_path(), sauvegarde,
-            False, title="Comparaison avec la sauvegarde", quiet=True,
+            False, title=tr("Comparaison avec la sauvegarde"), quiet=True,
             on_result=self._backup_checked, on_error=self._backup_failed)
 
     def _backup_checked(self, plan) -> None:
@@ -510,18 +519,19 @@ class CardWork(QObject):
         sauvegarde = self.ctx.settings.card_backup_path()
         if sauvegarde is None or not self.has_work_copy():
             QMessageBox.information(
-                parent or self.window, "Sauvegarde de la carte",
-                "Il faut une copie de travail et un dossier de sauvegarde.")
+                parent or self.window, tr("Sauvegarde de la carte"),
+                tr("Il faut une copie de travail et un dossier de "
+                   "sauvegarde."))
             return
         if self._backup_busy:
             # Une comparaison tourne déjà : sa réponse servira.
             self._backup_wanted = parent or self.window
-            self._say("Comparaison avec la sauvegarde en cours…", 4000)
+            self._say(tr("Comparaison avec la sauvegarde en cours…"), 4000)
             return
         self._backup_busy = True
         tasks.run_task(
             self.window, cardsync.update_backup, self.work_path(), sauvegarde,
-            False, title="Comparaison avec la sauvegarde",
+            False, title=tr("Comparaison avec la sauvegarde"),
             on_result=lambda plan: self._ask_backup(parent, sauvegarde, plan),
             on_error=self._backup_failed)
 
@@ -530,22 +540,22 @@ class CardWork(QObject):
         self.backup_plan = plan
         self.stateChanged.emit()
         if not plan.added and not plan.replaced:
-            self._say("La sauvegarde est déjà à jour.", 6000)
+            self._say(tr("La sauvegarde est déjà à jour."), 6000)
             return
         if QMessageBox.question(
-                parent or self.window, "Mettre à jour la sauvegarde",
-                "Dans %s :\n\n•  %d fichiers ajoutés\n•  %d remplacés — "
-                "l'ancienne version est gardée à côté\n•  %d que la carte "
-                "n'a plus : gardés\n\n%s à copier. Rien n'est supprimé. "
-                "Continuer ?" % (sauvegarde, len(plan.added),
-                                 len(plan.replaced), len(plan.kept),
-                                 human_size(plan.bytes))
+                parent or self.window, tr("Mettre à jour la sauvegarde"),
+                tr("Dans %s :\n\n•  %d fichiers ajoutés\n•  %d remplacés — "
+                   "l'ancienne version est gardée à côté\n•  %d que la carte "
+                   "n'a plus : gardés\n\n%s à copier. Rien n'est supprimé. "
+                   "Continuer ?") % (sauvegarde, len(plan.added),
+                                     len(plan.replaced), len(plan.kept),
+                                     human_size(plan.bytes))
         ) != QMessageBox.StandardButton.Yes:
             return
         self._backup_busy = True
         tasks.run_task(
             self.window, cardsync.update_backup, self.work_path(), sauvegarde,
-            True, title="Mise à jour de la sauvegarde", modal=True,
+            True, title=tr("Mise à jour de la sauvegarde"), modal=True,
             on_result=self._backup_updated, on_error=self._backup_failed)
 
     def _backup_updated(self, rapport) -> None:
@@ -553,7 +563,8 @@ class CardWork(QObject):
         log.info("sauvegarde de la carte mise à jour : %s", rapport.summary())
         self.backup_plan = cardsync.BackupUpdate(kept=list(rapport.kept),
                                                  errors=list(rapport.errors))
-        self._say("Sauvegarde mise à jour : %s." % rapport.summary(), 10000)
+        self._say(tr("Sauvegarde mise à jour : %s.") % rapport.summary(),
+                  10000)
 
 
 # --------------------------------------------------------------------------- #
@@ -568,9 +579,11 @@ def _journal(echange: cardsync.Exchange) -> None:
         return
     log.info("Deluge — synchronisation (%s) : %s, en %.1f s",
              echange.reason or "demande", echange.summary(), echange.seconds)
-    listes = (("reçu", echange.received), ("envoyé", echange.sent),
-              ("retiré de la copie", echange.removed),
-              ("supprimé de la carte", echange.deleted))
+    # Le journal reste en français.
+    listes = untranslated((("reçu", echange.received),
+                           ("envoyé", echange.sent),
+                           ("retiré de la copie", echange.removed),
+                           ("supprimé de la carte", echange.deleted)))
     if sum(len(liste) for _verbe, liste in listes) <= LOG_NAMED:
         for verbe, liste in listes:
             for rel in liste:
@@ -589,7 +602,7 @@ def _journal(echange: cardsync.Exchange) -> None:
 def _plan_with(carte: cardsync.UsbCard, travail: Path,
                sauvegarde: Path | None, progress=None) -> cardsync.SyncPlan:
     if progress is not None:
-        progress("Liste des fichiers du Deluge…")
+        progress(tr("Liste des fichiers du Deluge…"))
     arbre = carte.walk()
     Path(travail).mkdir(parents=True, exist_ok=True)
     plan = cardsync.plan_sync(arbre, cardsync.scan_local(travail),
@@ -645,14 +658,14 @@ def _synchronise(client, travail: Path, sauvegarde: Path | None,
         effet = cardsync.SyncResult(stopped=True,
                                     lost=exc.code == NOT_CONNECTED)
         if effet.lost:
-            effet.errors.append("le Deluge a été débranché")
+            effet.errors.append(tr("le Deluge a été débranché"))
         return (cardsync.SyncPlan(), effet, time.monotonic() - debut,
                 cardsync.pending_changes(travail), raison)
     manifeste = cardsync.load_manifest(travail)
 
     def suivre(i, n, rel):
         if progress is not None and rel:
-            progress("Deluge : %d / %d — %s" % (i + 1, n, rel))
+            progress(tr("Deluge : %d / %d — %s") % (i + 1, n, rel))
 
     effet = cardsync.apply_plan(plan, carte, travail, manifeste,
                                 allow_card_deletes=allow_card_deletes,

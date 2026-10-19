@@ -55,6 +55,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from ..i18n import N_, tr
+
 log = logging.getLogger(__name__)
 
 __all__ = [
@@ -96,25 +98,28 @@ SYSEX_BUFFERS = 6
 
 #: Codes d'erreur de ``winmm`` que l'on sait expliquer.
 _ERREURS = {
-    1: "erreur inconnue du système MIDI",
-    2: "port introuvable — l'appareil a peut-être été débranché",
-    4: "port déjà utilisé par une autre application (fermez-la, ou "
-       "choisissez un autre port)",
-    6: "pilote MIDI absent",
-    7: "mémoire insuffisante",
-    11: "paramètre refusé par le pilote",
-    65: "un message est encore en cours d'envoi",
-    67: "le pilote n'a pas répondu",
+    1: N_("erreur inconnue du système MIDI"),
+    2: N_("port introuvable — l'appareil a peut-être été débranché"),
+    4: N_("port déjà utilisé par une autre application (fermez-la, ou "
+          "choisissez un autre port)"),
+    6: N_("pilote MIDI absent"),
+    7: N_("mémoire insuffisante"),
+    11: N_("paramètre refusé par le pilote"),
+    65: N_("un message est encore en cours d'envoi"),
+    67: N_("le pilote n'a pas répondu"),
 }
 
 
 def error_text(code: int) -> str:
-    """Explication française d'un code d'erreur ``MMRESULT``."""
+    """Explication d'un code d'erreur ``MMRESULT``, dans la langue de
+    l'interface."""
     try:
         code = int(code)
     except (TypeError, ValueError):
-        return "erreur MIDI"
-    return _ERREURS.get(code, "erreur MIDI %d" % code)
+        return tr("erreur MIDI")
+    if code in _ERREURS:
+        return tr(_ERREURS[code])
+    return tr("erreur MIDI %d") % code
 
 
 def _clamp7(value) -> int:

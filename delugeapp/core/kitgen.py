@@ -40,6 +40,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..i18n import N_, untranslated
 from .db import Library
 from .fixedpoint import from_display
 from .genres import genre as get_genre
@@ -121,7 +122,7 @@ _LONG_ROLES_SECONDS = {"Crash": 8.0, "Ride": 8.0, "China": 8.0,
 #: Machines et banques qu'un genre appelle, cherchées dans le nom de la
 #: famille. Préférence de style, pas une règle : une famille sans affinité
 #: reste tirable, simplement moins souvent.
-GENRE_AFFINITY: dict[str, tuple[str, ...]] = {
+GENRE_AFFINITY: dict[str, tuple[str, ...]] = untranslated({
     "acid": ("909", "808", "r-50"),
     "techno": ("909", "distorted", "ddd1", "deep sky", "r-50"),
     "detroit": ("909", "808", "r100", "drumtraks"),
@@ -144,7 +145,7 @@ GENRE_AFFINITY: dict[str, tuple[str, ...]] = {
     "downtempo": ("hr16", "linndrum", "cr78", "mic kit"),
     "funk": ("linndrum", "drumtraks", "cr78", "hr16"),
     "boards_of_canada": ("cr78", "kr55", "rhythmace", "hammond", "mic kit"),
-}
+})
 
 #: Poids d'un rôle dans le choix de la famille principale : mieux vaut une
 #: banque qui a la grosse caisse et la caisse claire qu'une qui a trois
@@ -218,7 +219,7 @@ def family_of(rel: str) -> str:
     if len(parts) >= 4 and parts[0] == "samples" and parts[1] == "drums":
         stem = path.stem
         if _NUMBERED_RE.match(stem.lower()):
-            return "Synthstrom n°"
+            return N_("Synthstrom n°")
         machine = _machine_prefix(stem)
         if machine:
             return machine

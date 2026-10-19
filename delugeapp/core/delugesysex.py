@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..i18n import untranslated
+
 __all__ = [
     "DELUGE_ID", "OLED_WIDTH", "OLED_HEIGHT", "OLED_BYTES",
     "DISPLAY_FULL", "DISPLAY_FULL_RLE", "DISPLAY_STREAM",
@@ -97,7 +99,9 @@ def display_request(mode: int = DISPLAY_STREAM_FORCE) -> bytes:
     mode = int(mode)
     if mode not in (DISPLAY_FULL, DISPLAY_FULL_RLE, DISPLAY_STREAM,
                     DISPLAY_STREAM_FORCE):
-        raise ValueError("mode d'écran inconnu ou interdit : %r" % mode)
+        # Une faute de programmation, pas un message pour l'utilisateur.
+        raise ValueError(untranslated("mode d'écran inconnu ou interdit : %r")
+                         % mode)
     return _HEADER + bytes((CMD_HID, 0x00, mode, 0xF7))
 
 

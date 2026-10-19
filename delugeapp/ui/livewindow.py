@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 from ..core import midifollow
 from ..core.delugelink import latency_text
 from ..core import theory as theory_mod
+from ..i18n import decimal, plural, N_, tr
 from .theme import (FONT_MONO, GREY, OLED_HI, PAD, PAD_AMBER, PAD_CYAN,
                     PAD_GREEN, PANEL_LO)
 from .widgets.common import Card
@@ -62,77 +63,82 @@ def checklist(state, channel: int,
     """
     lignes: list[tuple[bool, str]] = []
     if state.connected:
-        lignes.append((True, "USB : port « %s » ouvert." % state.out_name))
+        lignes.append((True, tr("USB : port « %s » ouvert.")
+                       % state.out_name))
     else:
         detecte = any("deluge" in nom.casefold()
                       for nom in getattr(state, "ports_out", []) or [])
         if detecte:
-            phrase = "USB : Deluge détecté — « Connecter » ouvre ses ports."
+            phrase = tr("USB : Deluge détecté — « Connecter » ouvre ses "
+                        "ports.")
         else:
-            phrase = "USB : branchez le Deluge, puis « Connecter »."
+            phrase = tr("USB : branchez le Deluge, puis « Connecter ».")
         lignes.append((False, phrase + (" %s." % state.error
                                         if state.error else "")))
         return lignes
     if state.firmware:
-        lignes.append((True, "Firmware %s%s." % (
-            state.firmware,
-            " (communautaire)" if state.firmware.startswith("c") else "")))
+        lignes.append((True, (tr("Firmware %s (communautaire).")
+                              if state.firmware.startswith("c")
+                              else tr("Firmware %s.")) % state.firmware))
     else:
-        lignes.append((False, "Firmware : la machine n'a pas répondu en "
-                       "SysEx. Le firmware officiel ne le fait pas ; le "
-                       "communautaire, si."))
+        lignes.append((False, tr("Firmware : la machine n'a pas répondu en "
+                                 "SysEx. Le firmware officiel ne le fait "
+                                 "pas ; le communautaire, si.")))
     if state.latency_ms is not None:
-        lignes.append((True, "Liaison vérifiée : aller-retour %s."
+        lignes.append((True, tr("Liaison vérifiée : aller-retour %s.")
                        % latency_text(state.latency_ms)))
     if getattr(state, "files", None):
-        lignes.append((True, "Carte ouverte par USB : la copie de travail "
-                       "se tient à son image."))
+        lignes.append((True, tr("Carte ouverte par USB : la copie de travail "
+                                "se tient à son image.")))
     if follow is not None:
         # Le firmware 1.3 écrit ses réglages sur la carte : on les lit au
         # lieu de les supposer.
         a = follow.channel_a
         if a is None:
-            lignes.append((False, "Sur le Deluge, MIDI Follow est éteint : "
-                           "MIDI ▸ Follow ▸ Channel A = %d." % channel))
+            lignes.append((False, tr("Sur le Deluge, MIDI Follow est "
+                                     "éteint : MIDI ▸ Follow ▸ Channel A = "
+                                     "%d.") % channel))
         elif a != channel:
-            lignes.append((False, "Le Deluge suit le canal %d, l'application "
-                           "joue sur le canal %d : accordez-les (Réglages, "
-                           "ou MIDI ▸ Follow ▸ Channel A)." % (a, channel)))
+            lignes.append((False, tr("Le Deluge suit le canal %d, "
+                                     "l'application joue sur le canal %d : "
+                                     "accordez-les (Réglages, ou MIDI ▸ "
+                                     "Follow ▸ Channel A).") % (a, channel)))
         else:
-            lignes.append((True, "MIDI Follow réglé sur la machine : "
-                           "Channel A = %d (lu sur sa carte)." % a))
+            lignes.append((True, tr("MIDI Follow réglé sur la machine : "
+                                    "Channel A = %d (lu sur sa carte).") % a))
         if a is not None and follow.feedback != "a":
-            lignes.append((False, "Retour MIDI Follow éteint : MIDI ▸ Follow "
-                           "▸ Feedback = Channel A, pour que le son "
-                           "sélectionné revienne ici."))
+            lignes.append((False, tr("Retour MIDI Follow éteint : MIDI ▸ "
+                                     "Follow ▸ Feedback = Channel A, pour que "
+                                     "le son sélectionné revienne ici.")))
     if state.feedback:
-        lignes.append((True, "MIDI Follow : %s du son sélectionné." % (
-            "1 réglage reçu" if state.feedback == 1
-            else "%d réglages reçus" % state.feedback)))
+        lignes.append((True, tr("MIDI Follow : %s du son sélectionné.")
+                       % (plural(state.feedback, N_("%d réglage reçu"),
+                                 N_("%d réglages reçus")) % state.feedback)))
     elif follow is None:
-        lignes.append((False, "MIDI Follow, sur le Deluge : MIDI ▸ Follow ▸ "
-                       "Channel A = %d, puis Feedback = Channel A. Changez "
-                       "ensuite d'instrument : ses réglages arrivent ici."
-                       % channel))
+        lignes.append((False, tr("MIDI Follow, sur le Deluge : MIDI ▸ Follow "
+                                 "▸ Channel A = %d, puis Feedback = Channel "
+                                 "A. Changez ensuite d'instrument : ses "
+                                 "réglages arrivent ici.") % channel))
     elif follow.channel_a == channel and follow.feedback == "a":
-        lignes.append((False, "Changez d'instrument sur le Deluge : ses "
-                       "réglages arrivent ici."))
+        lignes.append((False, tr("Changez d'instrument sur le Deluge : ses "
+                                 "réglages arrivent ici.")))
     if state.clock_alive:
-        lignes.append((True, "Horloge reçue : %s BPM."
+        lignes.append((True, tr("Horloge reçue : %s BPM.")
                        % _bpm(state.tempo)))
     elif state.tempo is not None:
-        lignes.append((True, "Horloge : dernier tempo %s BPM (machine "
-                       "arrêtée)." % _bpm(state.tempo)))
+        lignes.append((True, tr("Horloge : dernier tempo %s BPM (machine "
+                                "arrêtée).") % _bpm(state.tempo)))
     else:
-        lignes.append((False, "Horloge : lancez la lecture sur le Deluge. "
-                       "Elle part par défaut (MIDI ▸ Clock ▸ Out)."))
+        lignes.append((False, tr("Horloge : lancez la lecture sur le Deluge. "
+                                 "Elle part par défaut (MIDI ▸ Clock ▸ "
+                                 "Out).")))
     return lignes
 
 
 def _bpm(tempo) -> str:
     if tempo is None:
         return "—"
-    return ("%.1f" % float(tempo)).replace(".", ",")
+    return decimal(float(tempo), 1)
 
 
 class DelugeLiveWindow(QWidget):
@@ -149,7 +155,7 @@ class DelugeLiveWindow(QWidget):
         self._frames = -1
         self._dernier_etat = None
         self.setObjectName("LiveWindow")
-        self.setWindowTitle("Deluge en direct — Deluge Companion")
+        self.setWindowTitle(tr("Deluge en direct — Deluge Companion"))
         self.resize(980, 660)
         self.setStyleSheet("QWidget#LiveWindow { background: %s; }"
                            % PANEL_LO)
@@ -166,7 +172,7 @@ class DelugeLiveWindow(QWidget):
         colonne.setSpacing(PAD)
 
         entete = QHBoxLayout()
-        titre = QLabel("DELUGE EN DIRECT")
+        titre = QLabel(tr("DELUGE EN DIRECT"))
         titre.setProperty("role", "title")
         entete.addWidget(titre)
         entete.addStretch(1)
@@ -177,40 +183,40 @@ class DelugeLiveWindow(QWidget):
 
         haut = QHBoxLayout()
         haut.setSpacing(PAD)
-        ecran = Card("Écran de la machine", color=PAD_CYAN)
+        ecran = Card(tr("Écran de la machine"), color=PAD_CYAN)
         self.screen_view = DelugeScreenView()
         ecran.body().addWidget(self.screen_view, 1)
         boutons = QHBoxLayout()
-        self.mirror_button = QPushButton("Recopier l'écran")
+        self.mirror_button = QPushButton(tr("Recopier l'écran"))
         self.mirror_button.setCheckable(True)
         self.mirror_button.setToolTip(
-            "La machine envoie ce qui change sur son écran, au moment où "
-            "cela change ; l'abonnement est renouvelé chaque seconde. Rien "
-            "n'est modifié sur le Deluge")
+            tr("La machine envoie ce qui change sur son écran, au moment où "
+               "cela change ; l'abonnement est renouvelé chaque seconde. Rien "
+               "n'est modifié sur le Deluge"))
         self.mirror_button.toggled.connect(self._toggle_mirror)
         boutons.addWidget(self.mirror_button)
-        self.hello_button = QPushButton("Faire signe")
+        self.hello_button = QPushButton(tr("Faire signe"))
         self.hello_button.setToolTip(
-            "Le Deluge affiche « HELLO SYSEX » un instant : de quoi vérifier, "
-            "sur la machine, que c'est bien elle qui est connectée. Rien "
-            "d'autre ne change")
+            tr("Le Deluge affiche « HELLO SYSEX » un instant : de quoi "
+               "vérifier, sur la machine, que c'est bien elle qui est "
+               "connectée. Rien d'autre ne change"))
         self.hello_button.clicked.connect(self._hello)
         boutons.addWidget(self.hello_button)
-        self.check_button = QPushButton("Vérifier")
+        self.check_button = QPushButton(tr("Vérifier"))
         self.check_button.setToolTip(
-            "Redemande sa version à la machine et mesure l'aller-retour")
+            tr("Redemande sa version à la machine et mesure l'aller-retour"))
         self.check_button.clicked.connect(self._check)
         boutons.addWidget(self.check_button)
-        self.panic_button = QPushButton("Tout éteindre")
+        self.panic_button = QPushButton(tr("Tout éteindre"))
         self.panic_button.setToolTip(
-            "Relâche toutes les notes, sur tous les canaux")
+            tr("Relâche toutes les notes, sur tous les canaux"))
         self.panic_button.clicked.connect(self._panic)
         boutons.addWidget(self.panic_button)
         boutons.addStretch(1)
         ecran.body().addLayout(boutons)
         haut.addWidget(ecran, 3)
 
-        jeu = Card("Tempo et notes", color=PAD_GREEN)
+        jeu = Card(tr("Tempo et notes"), color=PAD_GREEN)
         self.tempo_label = QLabel("—")
         # La taille passe par la feuille de style du label : celle de
         # l'application (« QWidget { font-size: 10pt } ») l'emporte sur un
@@ -219,9 +225,9 @@ class DelugeLiveWindow(QWidget):
             "color: %s; font-family: '%s'; font-size: 30pt; "
             "font-weight: 800;" % (OLED_HI, FONT_MONO))
         jeu.body().addWidget(self.tempo_label)
-        self.transport_label = QLabel("Horloge muette")
+        self.transport_label = QLabel(tr("Horloge muette"))
         jeu.body().addWidget(self.transport_label)
-        self.notes_label = QLabel("Aucune note tenue")
+        self.notes_label = QLabel(tr("Aucune note tenue"))
         self.notes_label.setWordWrap(True)
         jeu.body().addWidget(self.notes_label)
         self.chord_label = QLabel("")
@@ -235,9 +241,10 @@ class DelugeLiveWindow(QWidget):
 
         bas = QHBoxLayout()
         bas.setSpacing(PAD)
-        son = Card("Son sélectionné sur la machine", color=PAD_AMBER)
+        son = Card(tr("Son sélectionné sur la machine"), color=PAD_AMBER)
         self.params_table = QTableWidget(0, 2)
-        self.params_table.setHorizontalHeaderLabels(["Réglage", "Valeur"])
+        self.params_table.setHorizontalHeaderLabels([tr("Réglage"),
+                                                     tr("Valeur")])
         self.params_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
         self.params_table.verticalHeader().setVisible(False)
@@ -245,28 +252,28 @@ class DelugeLiveWindow(QWidget):
             QAbstractItemView.EditTrigger.NoEditTriggers)
         son.body().addWidget(self.params_table, 1)
         self.params_hint = QLabel(
-            "Rien de reçu : activez le retour MIDI Follow sur la machine, "
-            "puis changez d'instrument.")
+            tr("Rien de reçu : activez le retour MIDI Follow sur la machine, "
+               "puis changez d'instrument."))
         self.params_hint.setProperty("role", "subtitle")
         self.params_hint.setWordWrap(True)
         son.body().addWidget(self.params_hint)
         bas.addWidget(son, 3)
 
-        reglages = Card("Réglages à faire sur le Deluge", color=GREY)
+        reglages = Card(tr("Réglages à faire sur le Deluge"), color=GREY)
         self.checklist_label = QLabel("")
         self.checklist_label.setWordWrap(True)
         self.checklist_label.setTextFormat(Qt.TextFormat.RichText)
         reglages.body().addWidget(self.checklist_label)
         ligne = QHBoxLayout()
-        self.connect_button = QPushButton("Connecter")
+        self.connect_button = QPushButton(tr("Connecter"))
         self.connect_button.setToolTip(
-            "Ouvre les ports du Deluge : notes et contrôleurs par le "
-            "premier, SysEx par le troisième")
+            tr("Ouvre les ports du Deluge : notes et contrôleurs par le "
+               "premier, SysEx par le troisième"))
         self.connect_button.clicked.connect(self._connect)
         ligne.addWidget(self.connect_button)
-        self.settings_button = QPushButton("Réglages MIDI…")
+        self.settings_button = QPushButton(tr("Réglages MIDI…"))
         self.settings_button.setToolTip(
-            "Ports, canal, écoute sur la machine : la page Réglages")
+            tr("Ports, canal, écoute sur la machine : la page Réglages"))
         self.settings_button.clicked.connect(self.settingsRequested.emit)
         ligne.addWidget(self.settings_button)
         ligne.addStretch(1)
@@ -317,7 +324,7 @@ class DelugeLiveWindow(QWidget):
             return
         lien.set_screen(bool(on))
         if not on:
-            self.screen_view.clear("Recopie arrêtée.")
+            self.screen_view.clear(tr("Recopie arrêtée."))
             self._frames = -1
 
     def _hello(self) -> None:
@@ -365,14 +372,14 @@ class DelugeLiveWindow(QWidget):
         connecte = bool(etat is not None and etat.connected)
         canal = int(getattr(self.ctx.settings, "midi_channel", 1) or 1)
 
-        self.connect_button.setText("Déconnecter" if connecte
-                                    else "Connecter")
+        self.connect_button.setText(tr("Déconnecter") if connecte
+                                    else tr("Connecter"))
         for bouton in (self.mirror_button, self.hello_button,
                        self.check_button, self.panic_button):
             bouton.setEnabled(connecte)
 
         if etat is None:
-            self._etat.setText("Aucun lien MIDI.")
+            self._etat.setText(tr("Aucun lien MIDI."))
         else:
             self._etat.setText(etat.summary())
         self.checklist_label.setText(self._checklist_html(etat, canal))
@@ -385,11 +392,11 @@ class DelugeLiveWindow(QWidget):
                 self.mirror_button.setChecked(False)
                 self.mirror_button.blockSignals(False)
             if not self.screen_view.is_empty() or self._frames != -2:
-                self.screen_view.clear("Le Deluge n'est pas connecté.")
+                self.screen_view.clear(tr("Le Deluge n'est pas connecté."))
                 self._frames = -2
             self.tempo_label.setText("—")
-            self.transport_label.setText("Horloge muette")
-            self.notes_label.setText("Aucune note tenue")
+            self.transport_label.setText(tr("Horloge muette"))
+            self.notes_label.setText(tr("Aucune note tenue"))
             self.chord_label.setText("")
             self._fill_params({})
             return
@@ -408,18 +415,19 @@ class DelugeLiveWindow(QWidget):
             if lien.screen.frames:
                 self.screen_view.set_pixels(bytes(lien.screen.pixels))
             else:
-                self.screen_view.clear("En attente de l'image… Un Deluge "
-                                       "au firmware officiel ne l'envoie pas.")
+                self.screen_view.clear(tr("En attente de l'image… Un Deluge "
+                                          "au firmware officiel ne l'envoie "
+                                          "pas."))
         self.tempo_label.setText("%s BPM" % _bpm(etat.tempo)
                                  if etat.tempo is not None else "— BPM")
         if etat.running:
-            self.transport_label.setText("▶  En lecture")
+            self.transport_label.setText(tr("▶  En lecture"))
             self.transport_label.setStyleSheet("color: %s;" % PAD_GREEN)
         elif etat.tempo is not None:
-            self.transport_label.setText("■  À l'arrêt")
+            self.transport_label.setText(tr("■  À l'arrêt"))
             self.transport_label.setStyleSheet("color: %s;" % GREY)
         else:
-            self.transport_label.setText("Horloge muette")
+            self.transport_label.setText(tr("Horloge muette"))
             self.transport_label.setStyleSheet("color: %s;" % GREY)
 
         tenues = sorted(lien.held)
@@ -427,20 +435,20 @@ class DelugeLiveWindow(QWidget):
             self.notes_label.setText("  ".join(
                 theory_mod.note_to_name(n) for n in tenues))
         else:
-            self.notes_label.setText("Aucune note tenue")
+            self.notes_label.setText(tr("Aucune note tenue"))
         self.chord_label.setText(theory_mod.name_chord(tenues))
         self._fill_params(lien.machine_values())
         follow = self._follow()
         if (follow is not None and follow.channel_a is not None
                 and follow.feedback == "a"):
-            self.params_hint.setText("Le retour MIDI Follow est actif sur la "
-                                     "machine : changez d'instrument ou "
-                                     "tournez un bouton, ses réglages "
-                                     "arrivent ici.")
+            self.params_hint.setText(tr("Le retour MIDI Follow est actif sur "
+                                        "la machine : changez d'instrument "
+                                        "ou tournez un bouton, ses réglages "
+                                        "arrivent ici."))
         else:
-            self.params_hint.setText("Rien de reçu : activez le retour MIDI "
-                                     "Follow sur la machine, puis changez "
-                                     "d'instrument.")
+            self.params_hint.setText(tr("Rien de reçu : activez le retour "
+                                        "MIDI Follow sur la machine, puis "
+                                        "changez d'instrument."))
 
     def _follow(self):
         """Les réglages MIDI Follow écrits par la machine sur sa carte (1.3),

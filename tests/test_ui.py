@@ -15,6 +15,7 @@ from __future__ import annotations
 import faulthandler
 import hashlib
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -1765,7 +1766,8 @@ class TestToolboxPage(PageCase):
             page._delays.item(i, 1).text()
             for i in range(page._delays.rowCount())
             if page._delays.item(i, 0).text() == "1/4")
-        self.assertEqual(quarter, "500.00")
+        # La virgule du français, comme partout ailleurs dans l'interface.
+        self.assertEqual(quarter, "500,00")
         self.assertIn("2000 ms", page._bar_length.text())
         self.assertTrue(page._memory_result.text())
 
@@ -1932,7 +1934,8 @@ class TestMainWindowAssemblage(MainWindowCase):
         titres = [m.title() for m in win.menuBar().findChildren(QMenu)
                   if m.title()]
         self.assertEqual(titres,
-                         ["&Fichier", "&Édition", "&Outils", "&Aide"])
+                         ["&Fichier", "&Édition", "&Outils", "&Langue",
+                          "&Aide"])
 
     def test_les_pages_sont_creees_au_premier_affichage(self):
         """Neuf pages construites au démarrage, ce serait neuf fois trop."""
@@ -4408,6 +4411,10 @@ class TestMenusEtRaccourcis(MainWindowCase):
                     continue
                 if "Quitter" in libelle:        # fermerait la fenêtre
                     continue
+                # Changer de langue ferme la fenêtre pour la rouvrir : son
+                # test est dans test_i18n.
+                if action in win._language_actions.values():
+                    continue
                 with self.subTest(menu=libelle):
                     with self.assertNoLogs("delugeapp.ui.mainwindow",
                                            level="ERROR"):
@@ -5302,12 +5309,38 @@ class TestLaFacadeFenetre(MainWindowCase):
         self.assertIn("Aucune carte", win._card_button.text())
 
     def test_la_barre_du_haut_se_resserre(self):
-        """À 980 px, la barre complète demandait 1 100 px."""
+        """À 980 px, la barre complète demandait 1 100 px.
+
+        Les menus passent avant l'écran et la recherche : avec le menu
+        Langue, « Aide » sortait de la barre en français, à 980 px comme à
+        1 360 px, sans que rien ne le montre.
+
+        La plateforme des tests n'a aucune police : ses menus mesurent le
+        double de la réalité. Le test vérifie donc la règle — les menus
+        tiennent, ou l'écran et la recherche ont cédé tout ce qu'ils
+        pouvaient. La mesure avec de vraies polices (304 px de menus en
+        français, 280 en anglais) a été faite sur la vraie plateforme.
+        """
         win = self.window()
+        for largeur in (980, 1180, 1360):
+            win.resize(largeur, 800)
+            _APP.processEvents()
+            barre = win.menuBar()
+            if barre.width() < barre.sizeHint().width():
+                self.assertEqual(
+                    (win._card_button.sizeHint().width(),
+                     win._search.width()),
+                    (self.mw.HEADER_SCREEN_MIN, self.mw.HEADER_SEARCH_MIN),
+                    "menus coupés à %d px sans que l'écran et la recherche "
+                    "aient tout cédé" % largeur)
         win._fit_header(980)
         self.assertTrue(win._wordmark.is_compact())
-        self.assertEqual(win._card_button.sizeHint().width(), 196)
-        win._fit_header(1440)
+        self.assertLessEqual(win._card_button.sizeHint().width(), 196)
+        self.assertGreaterEqual(win._card_button.sizeHint().width(),
+                                self.mw.HEADER_SCREEN_MIN)
+        # Assez large pour tout, même avec les menus démesurés de la
+        # plateforme des tests : l'écran retrouve sa pleine largeur.
+        win._fit_header(2400)
         self.assertFalse(win._wordmark.is_compact())
         self.assertEqual(win._card_button.sizeHint().width(), 330)
 
@@ -6604,3 +6637,485 @@ class TestLeDelugeEtLePC(CarteUsbCase):
         self.assertTrue(self._attendre(
             lambda: (self.sauvegarde / "SONGS/NEUF.XML").is_file()))
         self.empreinte_sauvegarde = self._empreinte(self.sauvegarde)
+
+
+# --------------------------------------------------------------------------- #
+# L'interface en anglais (19 octobre 2026)
+# --------------------------------------------------------------------------- #
+
+#: Une lettre accentuée : l'anglais de l'interface n'en a aucune.
+_ACCENTS = re.compile(r"[éèêëàâçùûôîïœÉÈÊÀÂÇÔÎ]")
+#: Des mots qui ne sont qu'en français, et qu'un texte oublié contient
+#: presque toujours.
+_MOTS_FRANCAIS = re.compile(
+    r"\b(le|la|les|des|du|une|aucun|aucune|avec|pour|dans|sur|est|sont|pas|"
+    r"vous|votre|vos|carte|morceaux?|fichiers?|dossiers?|réglages|santé|"
+    r"rien|encore|ici|cette|ces|mais|ou bien)\b", re.IGNORECASE)
+#: Ce qui reste en français par choix : le nom de la langue dans son menu.
+_FRANCAIS_PERMIS = {"Français"}
+
+
+def _textes_visibles(fenetre) -> list[tuple[str, str]]:
+    """``(origine, texte)`` de ce que la fenêtre — ou une page, un
+    dialogue — montre ou explique : textes,
+    titres, info-bulles, entrées de listes, en-têtes et premières lignes des
+    tableaux, menus."""
+    from PyQt6.QtCore import Qt as _Qt
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtWidgets import (QAbstractButton, QAbstractItemView,
+                                 QComboBox, QGroupBox, QLineEdit, QMenu,
+                                 QPlainTextEdit, QTabWidget, QTextEdit)
+
+    textes: list[tuple[str, str]] = []
+
+    def noter(origine: str, texte) -> None:
+        if isinstance(texte, str) and texte.strip():
+            textes.append((origine, texte))
+
+    noter("titre de fenêtre", fenetre.windowTitle())
+    for w in fenetre.findChildren(QWidget):
+        nom = type(w).__name__
+        noter(nom + " (info-bulle)", w.toolTip())
+        noter(nom + " (barre d'état)", w.statusTip())
+        if isinstance(w, QLabel):
+            noter(nom, w.text())
+        elif isinstance(w, QAbstractButton):
+            noter(nom, w.text())
+        elif isinstance(w, QGroupBox):
+            noter(nom, w.title())
+        elif isinstance(w, QLineEdit):
+            noter(nom + " (indication)", w.placeholderText())
+        elif isinstance(w, QComboBox):
+            for i in range(w.count()):
+                noter(nom, w.itemText(i))
+        elif isinstance(w, QTabWidget):
+            for i in range(w.count()):
+                noter("onglet", w.tabText(i))
+                noter("onglet (info-bulle)", w.tabToolTip(i))
+        elif isinstance(w, QMenu):
+            noter("menu", w.title())
+        elif isinstance(w, (QTextEdit, QPlainTextEdit)):
+            noter(nom, w.toPlainText())
+            noter(nom + " (indication)", w.placeholderText())
+        if isinstance(w, QAbstractItemView) and w.model() is not None:
+            modele = w.model()
+            try:
+                colonnes = modele.columnCount()
+            except TypeError:           # un modèle de liste : une colonne
+                colonnes = 1
+            for c in range(colonnes):
+                noter(nom + " (en-tête)", modele.headerData(
+                    c, _Qt.Orientation.Horizontal,
+                    _Qt.ItemDataRole.DisplayRole))
+            for r in range(min(modele.rowCount(), 40)):
+                for c in range(colonnes):
+                    noter(nom + " (cellule)", modele.data(modele.index(r, c)))
+    for action in fenetre.findChildren(QAction):
+        noter("action", action.text())
+        noter("action (info-bulle)", action.toolTip())
+        noter("action (barre d'état)", action.statusTip())
+    if hasattr(fenetre, "statusBar"):
+        noter("barre d'état", fenetre.statusBar().currentMessage())
+    return textes
+
+
+def _a_l_air_francais(texte: str) -> bool:
+    propre = texte.replace("&", "").strip()
+    if propre in _FRANCAIS_PERMIS:
+        return False
+    return bool(_ACCENTS.search(propre) or _MOTS_FRANCAIS.search(propre))
+
+
+class TestInterfaceEnAnglais(MainWindowCase):
+    """L'interface entière en anglais, sans un mot de français oublié.
+
+    Le test que l'analyse du code ne remplace pas : un texte composé à
+    l'exécution, une constante traduite au mauvais endroit, une aide
+    retrouvée par son libellé français — seul l'écran les montre.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from delugeapp import i18n
+
+        i18n.set_language("en")
+        self.addCleanup(i18n.set_language, "fr")
+
+    def _toutes_les_pages(self, win):
+        from PyQt6.QtWidgets import QTabWidget
+
+        for cle in list(win._classes):
+            win.go_to(cle)
+            for _ in range(4):
+                _APP.processEvents()
+            page = win._pages[cle]
+            for onglets in page.findChildren(QTabWidget):
+                for index in range(onglets.count()):
+                    onglets.setCurrentIndex(index)
+                    _APP.processEvents()
+            yield cle, page
+
+    def test_aucun_texte_francais_a_l_ecran(self):
+        win = self.window()
+        trouves: dict[str, set[str]] = {}
+        pages = lus = 0
+        for cle, _page in self._toutes_les_pages(win):
+            pages += 1
+            for origine, texte in _textes_visibles(win):
+                lus += 1
+                # Le dossier de la carte d'essai s'appelle « carte » : une
+                # donnée, pas un texte de l'interface.
+                if _a_l_air_francais(texte.replace(str(self.root), "")):
+                    trouves.setdefault(texte[:120], set()).add(
+                        "%s, %s" % (cle, origine))
+        self.assertEqual(pages, 9, "les neuf pages n'ont pas été visitées")
+        # Mesuré le 19 octobre 2026 : 8 606 textes lus, dont 459 distincts
+        # signalés quand l'interface est en français. Un relevé qui ne lit
+        # plus rien passerait sans rien prouver.
+        self.assertGreater(lus, 4000, "le relevé n'a presque rien lu")
+        self.assertEqual(
+            trouves, {},
+            "%d texte(s) en français dans l'interface anglaise :\n%s"
+            % (len(trouves), "\n".join(
+                "  %r  ← %s" % (t, " ; ".join(sorted(o)[:2]))
+                for t, o in sorted(trouves.items()))))
+
+    def test_chaque_commande_s_explique_aussi_en_anglais(self):
+        """Le registre d'aide désigne les commandes par leur libellé
+        français : en anglais, il doit les retrouver quand même."""
+        from delugeapp.ui import aide
+
+        win = self.window()
+        muettes = {}
+        for cle, page in self._toutes_les_pages(win):
+            restantes = aide.manquantes(page, cle)
+            if restantes:
+                muettes[cle] = restantes
+        self.assertEqual(
+            muettes, {},
+            "commandes sans explication en anglais : %s"
+            % "; ".join("%s : %s" % (k, ", ".join(v))
+                        for k, v in muettes.items()))
+
+    def test_ce_qu_ouvrent_les_menus_est_en_anglais(self):
+        """Fenêtre « en direct », raccourcis, à propos, boîtes : ce qu'ouvre
+        chaque entrée de menu parle anglais."""
+        import contextlib
+        from unittest import mock
+
+        from PyQt6.QtWidgets import (QApplication, QDialog, QFileDialog,
+                                     QMenu, QMessageBox)
+
+        from delugeapp.ui import tasks
+
+        vus: list[tuple[str, str]] = []
+
+        def boite(nom, reponse):
+            def repondre(*args, **kwargs):
+                vus.extend((nom, v) for v in list(args) + list(kwargs.values())
+                           if isinstance(v, str))
+                return reponse
+            return staticmethod(repondre)
+
+        def dialogue(fenetre):
+            vus.extend(_textes_visibles(fenetre))
+            return QDialog.DialogCode.Rejected
+
+        non = QMessageBox.StandardButton.No
+        # Défaits avant le ``tearDown`` : défaits après, ils rendraient
+        # aux tests suivants les dialogues de la classe de base, qui
+        # répondent « oui ».
+        with contextlib.ExitStack() as portes:
+            for classe, nom, reponse in (
+                    (QMessageBox, "question", non),
+                    (QMessageBox, "information", None),
+                    (QMessageBox, "warning", None),
+                    (QMessageBox, "critical", None),
+                    (QMessageBox, "about", None),
+                    (QFileDialog, "getExistingDirectory", ""),
+                    (QFileDialog, "getOpenFileName", ("", "")),
+                    (QFileDialog, "getOpenFileNames", ([], "")),
+                    (QFileDialog, "getSaveFileName", ("", ""))):
+                portes.enter_context(mock.patch.object(
+                    classe, nom,
+                    boite("%s.%s" % (classe.__name__, nom), reponse)))
+            portes.enter_context(mock.patch.object(QDialog, "exec", dialogue))
+
+            win = self.window()
+            avant = set(QApplication.topLevelWidgets())
+            essayees = 0
+            for menu in win.menuBar().findChildren(QMenu):
+                for action in menu.actions():
+                    if (action.isSeparator() or not action.isEnabled()
+                            or action.text() == "Quit"
+                            or action in win._language_actions.values()):
+                        continue
+                    action.trigger()
+                    _APP.processEvents()
+                    vus.append(("barre d'état",
+                                win.statusBar().currentMessage()))
+                    essayees += 1
+            tasks.stop_all(3000)
+            _APP.processEvents()
+            ouvertes = [w for w in QApplication.topLevelWidgets()
+                        if w not in avant and w.isVisible()]
+            for fenetre in ouvertes:
+                vus.extend(_textes_visibles(fenetre))
+                fenetre.close()
+
+        trouves = sorted({t[:120] for _o, t in vus
+                          if _a_l_air_francais(t.replace(str(self.root), ""))})
+        self.assertGreaterEqual(essayees, 10)
+        self.assertTrue(ouvertes, "aucune fenêtre ouverte par les menus")
+        self.assertEqual(trouves, [], "\n".join(trouves))
+
+    def test_les_menus_parlent_anglais(self):
+        win = self.window()
+        titres = [a.text().replace("&", "") for a in win.menuBar().actions()]
+        self.assertEqual(titres, ["File", "Edit", "Tools", "Language", "Help"])
+
+
+class TestMenuLangue(MainWindowCase):
+    """Le menu Langue : le choix est gardé, la fenêtre se rouvre."""
+
+    def setUp(self):
+        super().setUp()
+        from delugeapp import i18n
+
+        self.i18n = i18n
+        self.addCleanup(i18n.set_language, "fr")
+
+    def _action(self, win, code: str):
+        from PyQt6.QtWidgets import QMenu
+
+        menus = {m.title().replace("&", ""): m
+                 for m in win.menuBar().findChildren(QMenu)}
+        self.assertIn("Langue", menus)
+        libelle = dict(self.i18n.LANGUAGES)[code]
+        actions = [a for a in menus["Langue"].actions()
+                   if a.text().replace("&", "") == libelle]
+        self.assertEqual(len(actions), 1, libelle)
+        return actions[0]
+
+    def test_le_menu_coche_la_langue_affichee(self):
+        win = self.window()
+        self.assertTrue(self._action(win, "fr").isChecked())
+        self.assertFalse(self._action(win, "en").isChecked())
+
+    def test_choisir_l_anglais_redemarre_la_fenetre(self):
+        from delugeapp.config import load_settings
+
+        win = self.window()
+        self.answer = self.mw.QMessageBox.StandardButton.Yes
+        self._action(win, "en").trigger()
+        _APP.processEvents()
+        self.assertTrue(win.restart_requested)
+        self.assertFalse(win.isVisible(), "la fenêtre devait se fermer")
+        self.assertEqual(self.ctx.settings.language, "en")
+        # Gardé sur le disque : c'est là que le redémarrage le relira.
+        self.assertEqual(load_settings().language, "en")
+        # La fenêtre elle-même ne change pas de langue : c'est la suivante.
+        self.assertEqual(self.i18n.language(), "fr")
+
+    def test_plus_tard_garde_le_choix_pour_le_prochain_demarrage(self):
+        from delugeapp.config import load_settings
+
+        win = self.window()
+        self.answer = self.mw.QMessageBox.StandardButton.No
+        self._action(win, "en").trigger()
+        _APP.processEvents()
+        self.assertFalse(win.restart_requested)
+        self.assertTrue(win.isVisible())
+        self.assertEqual(load_settings().language, "en")
+        self.assertTrue(self._action(win, "en").isChecked())
+        message = win.statusBar().currentMessage()
+        self.assertIn("prochain démarrage", message)
+
+    def test_la_langue_affichee_ne_redemande_rien(self):
+        win = self.window()
+        self._action(win, "fr").trigger()
+        _APP.processEvents()
+        self.assertFalse(win.restart_requested)
+        self.assertTrue(win.isVisible())
+
+
+class TestRedemarrageDansLeMemeProcessus(WidgetCase):
+    """``main._run_windows`` rebâtit contexte et fenêtre tant que la fenêtre
+    demande un redémarrage, et la seconde parle la langue choisie."""
+
+    def test_la_fenetre_se_rouvre_dans_la_nouvelle_langue(self):
+        import argparse
+        from unittest import mock
+
+        import main as lanceur
+        from delugeapp import i18n
+        from delugeapp.ui import mainwindow, theme as theme_mod
+
+        self.addCleanup(i18n.set_language, "fr")
+        langues = iter(["fr", "en"])
+        contextes, fenetres, traductions = [], [], []
+
+        class Contexte:
+            def __init__(self):
+                self.settings = mock.Mock(theme_accent="", language="")
+                self.ferme = False
+
+            def close(self):
+                self.ferme = True
+
+        def batir(args):
+            ctx = Contexte()
+            ctx.settings.language = i18n.set_language(next(langues))
+            contextes.append(ctx)
+            return ctx
+
+        class Fenetre:
+            def __init__(self, ctx):
+                self.langue = i18n.language()
+                # La première demande un redémarrage, la seconde non.
+                self.restart_requested = not fenetres
+                fenetres.append(self)
+
+            def show(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        app = mock.Mock()
+        app.exec.return_value = 0
+        args = argparse.Namespace(reset_db=True)
+        def traduire(_app, code):
+            traductions.append(code)
+
+        with mock.patch.object(lanceur, "_build_context", batir), \
+                mock.patch.object(lanceur, "_translate_qt", traduire), \
+                mock.patch.object(mainwindow, "MainWindow", Fenetre), \
+                mock.patch.object(theme_mod, "apply_theme",
+                                  lambda *a, **k: None):
+            code = lanceur._run_windows(app, args)
+
+        self.assertEqual(code, 0)
+        self.assertEqual([f.langue for f in fenetres], ["fr", "en"])
+        self.assertEqual(traductions, ["fr", "en"])
+        self.assertTrue(all(c.ferme for c in contextes))
+        # L'index ne se vide qu'au premier démarrage.
+        self.assertFalse(args.reset_db)
+
+    def test_les_boutons_de_qt_suivent_la_langue(self):
+        """« Oui / Non » en français ; en anglais, le traducteur français
+        est retiré, sinon il resterait d'une fenêtre à l'autre."""
+        from PyQt6.QtCore import QCoreApplication
+
+        import main as lanceur
+
+        # Rendre l'application de test telle qu'on l'a trouvée.
+        self.addCleanup(lanceur._translate_qt, _APP,
+                        "en" if lanceur._qt_translator is None else "fr")
+        if lanceur._translate_qt(_APP, "fr") is None:
+            self.skipTest("traduction française de Qt absente")
+        self.assertEqual(QCoreApplication.translate("QPlatformTheme", "&Yes"),
+                         "&Oui")
+        self.assertIsNone(lanceur._translate_qt(_APP, "en"))
+        self.assertIsNone(lanceur._qt_translator)
+        self.assertEqual(QCoreApplication.translate("QPlatformTheme", "&Yes"),
+                         "&Yes")
+
+
+class TestClicsEnAnglais(InteractionCase):
+    """Chaque bouton cliqué dans l'interface anglaise : ce qui s'affiche
+    ensuite — barre d'état, boîtes, dialogues, sélecteurs de fichiers — est
+    en anglais aussi.
+
+    Le relevé de l'état initial ne voit pas les textes composés en réponse
+    à un geste : « 3 fichier(s) corrigés », le titre d'un plan, le filtre
+    d'un sélecteur de fichiers.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+
+        from PyQt6.QtWidgets import (QDialog, QFileDialog, QInputDialog,
+                                     QMessageBox)
+
+        from delugeapp import i18n
+
+        i18n.set_language("en")
+        self.addCleanup(i18n.set_language, "fr")
+        self.vus: list[tuple[str, str]] = []
+
+        def boite(nom, reponse):
+            def repondre(*args, **kwargs):
+                for valeur in list(args) + list(kwargs.values()):
+                    if isinstance(valeur, str):
+                        self.vus.append((nom, valeur))
+                return reponse
+            return staticmethod(repondre)
+
+        def dialogue(fenetre):
+            self.vus.extend(("dialogue %s, %s" % (type(fenetre).__name__, o),
+                             t) for o, t in _textes_visibles(fenetre))
+            return QDialog.DialogCode.Rejected
+
+        non = QMessageBox.StandardButton.No
+        portes = [
+            (QMessageBox, "question", non), (QMessageBox, "information", None),
+            (QMessageBox, "warning", None), (QMessageBox, "critical", None),
+            (QMessageBox, "about", None),
+            (QFileDialog, "getSaveFileName", ("", "")),
+            (QFileDialog, "getOpenFileName", ("", "")),
+            (QFileDialog, "getOpenFileNames", ([], "")),
+            (QFileDialog, "getExistingDirectory", ""),
+            (QInputDialog, "getText", ("", False)),
+            (QInputDialog, "getMultiLineText", ("", False)),
+            (QInputDialog, "getInt", (0, False)),
+            (QInputDialog, "getDouble", (0.0, False)),
+            (QInputDialog, "getItem", ("", False)),
+        ]
+        for classe, nom, reponse in portes:
+            porte = mock.patch.object(
+                classe, nom, boite("%s.%s" % (classe.__name__, nom), reponse))
+            porte.start()
+            self.addCleanup(porte.stop)
+        porte = mock.patch.object(QDialog, "exec", dialogue)
+        porte.start()
+        self.addCleanup(porte.stop)
+
+    def test_ce_qu_affiche_un_clic_est_en_anglais(self):
+        from PyQt6.QtWidgets import QAbstractButton
+
+        from delugeapp.ui import tasks
+
+        boutons = 0
+        for cls in self._pages():
+            page = self.open(cls)
+            page.status.connect(
+                lambda m, n=cls.__name__: self.vus.append(
+                    ("%s, barre d'état" % n, m)))
+            TestClicsReels._choisir_une_ligne(page)
+            tous = page.findChildren(QAbstractButton)
+            for bouton in ([b for b in tous if b.isEnabled()]
+                           + [b for b in tous if not b.isEnabled()]):
+                bouton.setEnabled(True)
+                bouton.click()
+                _APP.processEvents()
+                boutons += 1
+            tasks.stop_all(2000)
+            _APP.processEvents()
+            self.vus.extend(("%s, après les clics, %s" % (cls.__name__, o), t)
+                            for o, t in _textes_visibles(page))
+
+        trouves: dict[str, set[str]] = {}
+        for origine, texte in self.vus:
+            if _a_l_air_francais(texte.replace(str(self.root), "")):
+                trouves.setdefault(texte[:120], set()).add(origine)
+        self.assertGreater(boutons, 40, "trop peu de boutons cliqués")
+        self.assertGreater(len(self.vus), 2000,
+                           "le relevé n'a presque rien lu")
+        self.assertEqual(
+            trouves, {},
+            "%d texte(s) en français après un clic :\n%s"
+            % (len(trouves), "\n".join(
+                "  %r  ← %s" % (t, " ; ".join(sorted(o)[:2]))
+                for t, o in sorted(trouves.items()))))

@@ -1,0 +1,51 @@
+# -*- coding: utf-8 -*-
+"""Anglais de ``delugeapp/core/organize.py`` : les plans de rangement de la
+carte."""
+
+TEXTS = {
+    "Aucune modification à faire.": "No change to make.",
+    "%d déplacement": "%d move",
+    "%d déplacements": "%d moves",
+    "%d renommage": "%d rename",
+    "%d renommages": "%d renames",
+    "%d suppression": "%d deletion",
+    "%d suppressions": "%d deletions",
+    "%d création de dossier": "%d folder creation",
+    "%d créations de dossier": "%d folder creations",
+    "%d référence à réécrire": "%d reference to rewrite",
+    "%d références à réécrire": "%d references to rewrite",
+    "%s : ": "%s: ",
+    "Création de %s impossible : %s": "Could not create %s: %s",
+    "%s : fichier introuvable": "%s: file not found",
+    "%s existe déjà : %s n'a pas été déplacé":
+        "%s already exists: %s was not moved",
+    "Déplacement de %s impossible : %s": "Could not move %s: %s",
+    "%s conservé : il ne correspond plus à %s octet pour octet":
+        "%s kept: it no longer matches %s byte for byte",
+    "Réécriture des références…": "Rewriting references…",
+    "Réécriture des références : %s": "Rewriting references: %s",
+    "%s conservé : ses références n'ont pas pu être toutes redirigées":
+        "%s kept: not all of its references could be redirected",
+    "Suppression de %s impossible : %s": "Could not delete %s: %s",
+    "Classement automatique des percussions": "Automatic drum sorting",
+    "reconnu comme « %s »": "recognised as “%s”",
+    "Suppression des doublons": "Deleting duplicates",
+    "identique à %s": "identical to %s",
+    " ; %d référence(s) redirigée(s)": "; %d reference(s) redirected",
+    "Renommage": "Renaming",
+    "motif « %s »": "pattern “%s”",
+    "Mise à plat de %s": "Flattening %s",
+    "remonté de %s": "moved up from %s",
+    "Regroupement par %s": "Grouping by %s",
+    "Nettoyage des fichiers parasites": "Cleaning up junk files",
+    "fichier parasite (%s octets)": "junk file (%s bytes)",
+    "Archivage des échantillons inutilisés": "Archiving unused samples",
+    "inutilisé (%s)": "unused (%s)",
+    "Correction des noms de fichiers": "Fixing file names",
+    "Création de l'arborescence des percussions": "Creating the drum folders",
+    "dossier de percussion standard": "standard drum folder",
+    "Moins de 1 s": "Under 1 s",
+    "1 a 5 s": "1 to 5 s",
+    "5 a 30 s": "5 to 30 s",
+    "Plus de 30 s": "Over 30 s",
+}

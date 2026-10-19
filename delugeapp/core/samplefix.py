@@ -42,6 +42,7 @@ from pathlib import Path
 import numpy as np
 
 from . import analysis, health, units, wav
+from ..i18n import N_, tr
 from .db import Library
 from .model import Kit, SynthPreset
 from .sdcard import SDCard, norm_rel
@@ -132,27 +133,28 @@ class Edit:
         parts: list[str] = []
         if self.actions.get("mono"):
             ch = self.before.get("channels", 0)
-            parts.append("%s → mono" % ("stéréo" if ch == 2 else "%d canaux" % ch
-                                        if ch else "multicanal"))
+            avant = (tr("stéréo") if ch == 2 else tr("%d canaux") % ch
+                     if ch else tr("multicanal"))
+            parts.append(tr("%s → mono") % avant)
         if self.actions.get("dc"):
-            parts.append("retrait du continu (%+.3f)"
+            parts.append(tr("retrait du continu (%+.3f)")
                          % float(self.before.get("dc_offset", 0.0)))
         rate = self.actions.get("rate")
         if rate:
             parts.append("%d → %d Hz" % (self.before.get("sr", 0), int(rate)))
         if self.actions.get("normalize") is not None:
-            parts.append("niveau ramené à %.1f dBFS"
+            parts.append(tr("niveau ramené à %.1f dBFS")
                          % float(self.actions["normalize"]))
         if self.actions.get("trim") is not None:
-            parts.append("silence coupé sous %.0f dB"
+            parts.append(tr("silence coupé sous %.0f dB")
                          % float(self.actions["trim"]))
         if self.actions.get("fade"):
-            parts.append("fondus de %.0f ms" % float(self.actions["fade"]))
+            parts.append(tr("fondus de %.0f ms") % float(self.actions["fade"]))
         depth = self.actions.get("depth")
         if depth:
-            parts.append("%s → %s bits" % (self.before.get("bit_depth", "?"),
+            parts.append(tr("%s → %s bits") % (self.before.get("bit_depth", "?"),
                                            depth))
-        return ", ".join(parts) or "aucun changement"
+        return ", ".join(parts) or tr("aucun changement")
 
     @property
     def name(self) -> str:
@@ -181,17 +183,18 @@ class FixResult:
     def summary(self) -> str:
         """Résumé en une ligne."""
         if not self.applied:
-            return "Simulation : %d fichier(s) seraient corrigés." % len(self.done)
-        bits = ["%d fichier(s) corrigés" % len(self.done)]
+            return tr("Simulation : %d fichier(s) seraient "
+                      "corrigés.") % len(self.done)
+        bits = [tr("%d fichier(s) corrigés") % len(self.done)]
         if self.failed:
-            bits.append("%d en échec" % len(self.failed))
+            bits.append(tr("%d en échec") % len(self.failed))
         if self.retargeted:
-            bits.append("%d preset(s) recalés (%d bornes)"
+            bits.append(tr("%d preset(s) recalés (%d bornes)")
                         % (len(self.retargeted), self.zones_moved))
         saved = self.bytes_saved
         if saved:
             bits.append("%s %s" % (
-                "libérés" if saved > 0 else "ajoutés",
+                tr("libérés") if saved > 0 else tr("ajoutés"),
                 units.human_size(abs(saved))))
         return ", ".join(bits) + "."
 
@@ -200,7 +203,7 @@ class FixResult:
 class FixPlan:
     """Ensemble de corrections, simulé avant d'être appliqué."""
 
-    title: str = "Correction d'échantillons"
+    title: str = N_("Correction d'échantillons")
     edits: list[Edit] = field(default_factory=list)
     skipped: list[Edit] = field(default_factory=list)
 
@@ -226,26 +229,29 @@ class FixPlan:
     def summary(self) -> str:
         """Résumé en une ligne, pour l'en-tête d'une boîte de confirmation."""
         if not self.edits:
-            return "Rien à corriger."
-        libelles = {"mono": "passage en mono", "dc": "retrait du continu",
-                    "rate": "rééchantillonnage", "normalize": "normalisation",
-                    "trim": "coupe du silence", "fade": "fondus",
-                    "depth": "profondeur"}
+            return tr("Rien à corriger.")
+        libelles = {"mono": tr("passage en mono"),
+                    "dc": tr("retrait du continu"),
+                    "rate": tr("rééchantillonnage"),
+                    "normalize": tr("normalisation"),
+                    "trim": tr("coupe du silence"), "fade": tr("fondus"),
+                    "depth": tr("profondeur")}
         parts = ["%s : %d" % (libelles.get(k, k), n)
                  for k, n in sorted(self.counts().items())]
-        texte = "%d fichier(s) — %s" % (len(self.edits), ", ".join(parts))
+        texte = tr("%d fichier(s) — %s") % (len(self.edits), ", ".join(parts))
         if self.skipped:
-            texte += " ; %d écarté(s)" % len(self.skipped)
+            texte += tr(" ; %d écarté(s)") % len(self.skipped)
         return texte + "."
 
     def to_text(self) -> str:
         """Détail ligne par ligne, tel qu'il est montré avant confirmation."""
-        lignes = [self.title, "=" * len(self.title), "", self.summary(), ""]
+        titre = tr(self.title)
+        lignes = [titre, "=" * len(titre), "", self.summary(), ""]
         for edit in self.edits:
             lignes.append("  %s" % edit.rel)
             lignes.append("      %s" % edit.label)
         if self.skipped:
-            lignes += ["", "Écartés :"]
+            lignes += ["", tr("Écartés :")]
             for edit in self.skipped:
                 lignes.append("  %s" % edit.rel)
                 lignes.append("      %s" % edit.skipped)
@@ -308,7 +314,7 @@ class FixPlan:
 
             path = sd.resolve_sample(edit.rel)
             if path is None or not path.is_file():
-                edit.error = "fichier introuvable"
+                edit.error = tr("fichier introuvable")
                 result.failed.append((edit.rel, edit.error))
                 continue
 
@@ -514,12 +520,12 @@ def _convert_in_place(path: Path, edit: Edit, backup_dir: Path | None,
         )
         if not info.ok:
             _unlink(tmp)
-            return False, info.error or "conversion impossible", info
+            return False, info.error or tr("conversion impossible"), info
 
         if backup_dir is not None:
             if not _backup(path, backup_dir, rel):
                 _unlink(tmp)
-                return False, "sauvegarde de l'original impossible", info
+                return False, tr("sauvegarde de l'original impossible"), info
 
         os.replace(tmp, path)
         return True, "", wav.probe(path)
@@ -666,8 +672,8 @@ def _guard_length(plan: FixPlan, edit: Edit, locked: dict) -> None:
         songs = locked.get(norm_rel(edit.rel))
         if songs:
             edit.skipped = (
-                "cité par %d morceau(x) — %s ; un morceau borne ses "
-                "échantillons en trames et n'est jamais réécrit"
+                tr("cité par %d morceau(x) — %s ; un morceau borne ses "
+                   "échantillons en trames et n'est jamais réécrit")
                 % (len(songs), ", ".join(sorted(songs)[:2])))
             plan.skipped.append(edit)
             return
@@ -683,7 +689,7 @@ def plan_mono(sd: SDCard, lib: Library,
     de trames, elle est donc sûre même pour les fichiers cités par un
     morceau.
     """
-    plan = FixPlan(title="Percussions stéréo → mono")
+    plan = FixPlan(title=tr("Percussions stéréo → mono"))
     for row in _rows(lib, rels):
         rel = row["rel"]
         info = _before(row)
@@ -711,7 +717,7 @@ def plan_standard_rate(sd: SDCard, lib: Library,
     sont écartés.
     """
     target = int(rate) if int(rate) > 0 else DEFAULT_RATE
-    plan = FixPlan(title="Rééchantillonnage à %d Hz" % target)
+    plan = FixPlan(title=tr("Rééchantillonnage à %d Hz") % target)
     locked = song_locked_samples(sd)
     for row in _rows(lib, rels):
         info = _before(row)
@@ -737,7 +743,7 @@ def plan_remove_dc(sd: SDCard, lib: Library,
     Dans ce cas, le retrait est donc accompagné d'une baisse de niveau — ce
     qui met à l'échelle au lieu de raboter.
     """
-    plan = FixPlan(title="Retrait de la composante continue")
+    plan = FixPlan(title=tr("Retrait de la composante continue"))
     for row in _rows(lib, rels):
         info = _before(row)
         if rels is None and abs(info["dc_offset"]) < DC_THRESHOLD:
@@ -759,7 +765,7 @@ def plan_headroom(sd: SDCard, lib: Library, rels: list[str] | None = None,
     l'enregistrement ne reviennent pas. Baisser le niveau évite seulement que
     le fichier sature de nouveau en sortie, et rend de la place au mixage.
     """
-    plan = FixPlan(title="Marge rendue aux échantillons écrêtés")
+    plan = FixPlan(title=tr("Marge rendue aux échantillons écrêtés"))
     for row in _rows(lib, rels):
         info = _before(row)
         if rels is None and info["clipped"] < CLIP_THRESHOLD:
@@ -792,7 +798,7 @@ def plan_custom(sd: SDCard, lib: Library, rels: list[str],
     if depth:
         actions["depth"] = int(depth)
 
-    plan = FixPlan(title="Traitement de %d échantillon(s)" % len(rels or []))
+    plan = FixPlan(title=tr("Traitement de %d échantillon(s)") % len(rels or []))
     if not actions or not rels:
         return plan
 
@@ -813,7 +819,7 @@ def plan_custom(sd: SDCard, lib: Library, rels: list[str],
                     cited[norm_rel(rel)] = users
         except Exception:                           # noqa: BLE001
             log.exception("dépendances indisponibles : rognage refusé")
-            cited = {norm_rel(r): ["(dépendances inconnues)"] for r in rels}
+            cited = {norm_rel(r): [tr("(dépendances inconnues)")] for r in rels}
     known = {norm_rel(r["rel"]): r for r in _rows(lib, list(rels))}
     for rel in rels:
         row = known.get(norm_rel(rel))
@@ -823,8 +829,8 @@ def plan_custom(sd: SDCard, lib: Library, rels: list[str],
         users = cited.get(norm_rel(rel))
         if users:
             edit.skipped = (
-                "cité par %d preset(s) ou kit(s) — %s ; le rognage décale le "
-                "début du son et leurs bornes ne peuvent pas être recalées"
+                tr("cité par %d preset(s) ou kit(s) — %s ; le rognage décale le "
+                   "début du son et leurs bornes ne peuvent pas être recalées")
                 % (len(users), ", ".join(sorted(users)[:2])))
             plan.skipped.append(edit)
             continue
@@ -832,7 +838,7 @@ def plan_custom(sd: SDCard, lib: Library, rels: list[str],
             # Déjà mono : inutile de réécrire le fichier pour rien.
             reste = {k: v for k, v in actions.items() if k != "mono"}
             if not reste:
-                edit.skipped = "déjà en mono"
+                edit.skipped = tr("déjà en mono")
                 plan.skipped.append(edit)
                 continue
             edit.actions = reste
@@ -844,7 +850,7 @@ def plan_from_health(sd: SDCard, lib: Library,
                      codes: list[str]) -> FixPlan:
     """Rassemble en un plan les corrections des codes de santé demandés."""
     wanted = [c for c in (codes or []) if c in HEALTH_CODES]
-    plan = FixPlan(title="Correction des défauts audio")
+    plan = FixPlan(title=tr("Correction des défauts audio"))
     builders = {
         "STEREO_DRUM": plan_mono,
         "ODD_SAMPLE_RATE": plan_standard_rate,
@@ -881,7 +887,7 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
     """
     base = sd.abs(backup_rel)
     if not base.is_dir():
-        return 0, ["sauvegarde introuvable : %s" % backup_rel]
+        return 0, [tr("sauvegarde introuvable : %s") % backup_rel]
 
     count = 0
     errors: list[str] = []
@@ -909,7 +915,7 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
             if lib is not None:
                 _reindex(sd, lib, sd.rel(dest), dest)
         except OSError as exc:
-            errors.append("%s : %s" % (inner, exc))
+            errors.append(tr("%s : %s") % (inner, exc))
     if apply and ratios:
         # Sans cela, les bornes restaient à l'échelle du fichier converti.
         retarget_zones(sd, ratios, apply=True)

@@ -18,6 +18,7 @@ from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from ...core.delugesysex import OLED_HEIGHT, OLED_WIDTH
+from ...i18n import tr
 from ..theme import FONT_UI, OLED_BG, OLED_DIM, OLED_EDGE, OLED_HI
 
 log = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class DelugeScreenView(QWidget):
                              QImage.Format.Format_RGB32)
         self._image.fill(QColor(OLED_BG))
         self._vide = True
-        self._texte = "L'écran du Deluge n'est pas recopié."
+        self._texte = tr("L'écran du Deluge n'est pas recopié.")
         self._allume = QColor(OLED_HI)
         self._eteint = QColor(OLED_BG)
 

@@ -22,28 +22,35 @@ import logging
 from dataclasses import dataclass, field
 
 from . import accomp, rhythm, theory
+from ..i18n import N_, untranslated
 from .accomp import STEPS_PER_BAR, NoteEvent
 
 log = logging.getLogger(__name__)
 
 #: Modèles de structure : ``(section, mesures)``.
-_CLUB = (("Intro", 16), ("Montée", 16), ("Thème", 32), ("Cassure", 16),
-         ("Thème 2", 32), ("Final", 16))
-_HOUSE = (("Intro", 16), ("Couplet", 16), ("Montée", 8), ("Refrain", 32),
-          ("Cassure", 16), ("Refrain 2", 32), ("Final", 16))
-_TRANCE = (("Intro", 16), ("Montée", 32), ("Cassure", 16),
-           ("Explosion", 32), ("Thème", 32), ("Final", 16))
-_BASS = (("Intro", 16), ("Montée", 16), ("Chute", 32), ("Cassure", 16),
-         ("Chute 2", 32), ("Final", 8))
-_AMBIENT = (("Apparition", 32), ("Développement", 64),
-            ("Point culminant", 32), ("Dissipation", 48))
-_BOUCLE = (("Intro", 8), ("Boucle A", 16), ("Boucle B", 16),
-           ("Pont", 8), ("Boucle A", 16), ("Sortie", 8))
-_CHANSON = (("Intro", 8), ("Couplet", 16), ("Refrain", 16), ("Couplet 2", 16),
-            ("Refrain 2", 16), ("Pont", 8), ("Refrain final", 16),
-            ("Sortie", 8))
-_SEQUENCE = (("Apparition", 16), ("Séquence", 32), ("Variation", 32),
-             ("Solo", 16), ("Séquence", 32), ("Dissipation", 16))
+#:
+#: Les noms restent en français dans le code : ce sont les clés des rôles
+#: (:func:`section_kind`). Ils se traduisent à l'affichage, et quand ils
+#: partent sur la carte en noms de clips (``songwriter``).
+_CLUB = ((N_("Intro"), 16), (N_("Montée"), 16), (N_("Thème"), 32),
+         (N_("Cassure"), 16), (N_("Thème 2"), 32), (N_("Final"), 16))
+_HOUSE = ((N_("Intro"), 16), (N_("Couplet"), 16), (N_("Montée"), 8),
+          (N_("Refrain"), 32), (N_("Cassure"), 16), (N_("Refrain 2"), 32),
+          (N_("Final"), 16))
+_TRANCE = ((N_("Intro"), 16), (N_("Montée"), 32), (N_("Cassure"), 16),
+           (N_("Explosion"), 32), (N_("Thème"), 32), (N_("Final"), 16))
+_BASS = ((N_("Intro"), 16), (N_("Montée"), 16), (N_("Chute"), 32),
+         (N_("Cassure"), 16), (N_("Chute 2"), 32), (N_("Final"), 8))
+_AMBIENT = ((N_("Apparition"), 32), (N_("Développement"), 64),
+            (N_("Point culminant"), 32), (N_("Dissipation"), 48))
+_BOUCLE = ((N_("Intro"), 8), (N_("Boucle A"), 16), (N_("Boucle B"), 16),
+           (N_("Pont"), 8), (N_("Boucle A"), 16), (N_("Sortie"), 8))
+_CHANSON = ((N_("Intro"), 8), (N_("Couplet"), 16), (N_("Refrain"), 16),
+            (N_("Couplet 2"), 16), (N_("Refrain 2"), 16), (N_("Pont"), 8),
+            (N_("Refrain final"), 16), (N_("Sortie"), 8))
+_SEQUENCE = ((N_("Apparition"), 16), (N_("Séquence"), 32),
+             (N_("Variation"), 32), (N_("Solo"), 16), (N_("Séquence"), 32),
+             (N_("Dissipation"), 16))
 
 #: Modèle de structure de chaque genre.
 ARRANGEMENTS: dict[str, tuple[tuple[str, int], ...]] = {
@@ -59,14 +66,15 @@ ARRANGEMENTS: dict[str, tuple[tuple[str, int], ...]] = {
 
 #: Rôle d'une section, deviné d'après son nom.
 SECTION_KINDS: dict[str, str] = {
-    "intro": "on installe : batterie légère et accords",
-    "montée": "la tension monte : basse et arpège entrent",
-    "pic": "tout joue, mélodie comprise, batterie variée",
-    "cassure": "la grosse caisse et la basse se taisent",
-    "fin": "on referme, comme on a ouvert",
+    "intro": N_("on installe : batterie légère et accords"),
+    "montée": N_("la tension monte : basse et arpège entrent"),
+    "pic": N_("tout joue, mélodie comprise, batterie variée"),
+    "cassure": N_("la grosse caisse et la basse se taisent"),
+    "fin": N_("on referme, comme on a ouvert"),
 }
 
-_KIND_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+#: Mots qui désignent chaque rôle dans les noms (français) des sections.
+_KIND_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = untranslated((
     ("cassure", ("cassure", "pont")),
     ("intro", ("intro", "apparition")),
     # Le sommet avant la fin : « Refrain final » est un refrain.
@@ -75,15 +83,16 @@ _KIND_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("fin", ("final", "sortie", "dissipation")),
     ("montée", ("montée", "couplet", "développement", "séquence",
                 "variation", "boucle a")),
-)
+))
 
 #: Parties jouées selon le rôle de la section.
 SECTION_PARTS: dict[str, tuple[str, ...]] = {
-    "intro": ("Batterie légère", "Accords"),
-    "montée": ("Batterie", "Basse", "Accords", "Arpège"),
-    "pic": ("Batterie", "Basse", "Accords", "Arpège", "Mélodie"),
-    "cassure": ("Accords", "Arpège", "Mélodie"),
-    "fin": ("Batterie légère", "Accords"),
+    "intro": (N_("Batterie légère"), N_("Accords")),
+    "montée": (N_("Batterie"), N_("Basse"), N_("Accords"), N_("Arpège")),
+    "pic": (N_("Batterie"), N_("Basse"), N_("Accords"), N_("Arpège"),
+            N_("Mélodie")),
+    "cassure": (N_("Accords"), N_("Arpège"), N_("Mélodie")),
+    "fin": (N_("Batterie légère"), N_("Accords")),
 }
 
 #: Pistes d'une batterie « légère » : ni caisse claire, ni clap, ni crash.
@@ -91,7 +100,7 @@ LIGHT_DRUMS = ("Kick", "HatC", "HatO", "Shaker", "Ride", "Rim")
 
 #: Ambiance de progression qui convient à chaque genre, quand aucune
 #: progression n'a été proposée.
-GENRE_AMBIANCE: dict[str, str] = {
+GENRE_AMBIANCE: dict[str, str] = untranslated({
     "house": "house", "deep_house": "deep", "funk": "house",
     "techno": "techno", "minimal": "techno", "acid": "techno",
     "detroit": "deep", "industrial": "tendu", "hardcore": "tendu",
@@ -100,7 +109,7 @@ GENRE_AMBIANCE: dict[str, str] = {
     "ambient": "ambient", "boards_of_canada": "mélancolique",
     "lofi": "jazz", "downtempo": "deep", "idm": "mélancolique",
     "synthwave": "épique", "berlin_school": "mélancolique",
-}
+})
 
 
 def section_kind(name: str) -> str:
@@ -205,7 +214,8 @@ def sketch(progression: list[dict], genre: str = "techno",
     beat = pattern if pattern is not None else rhythm.genre_beat(
         genre, bars=1, seed=seed if seed is not None else 1)
     lifted = rhythm.variation(beat, genre, seed=seed, amount=0.5)
-    drums = rhythm.Pattern(name="Esquisse", steps=total * STEPS_PER_BAR)
+    drums = rhythm.Pattern(name=N_("Esquisse"),
+                           steps=total * STEPS_PER_BAR)
 
     parts: dict[str, list[NoteEvent]] = {name: [] for name in full}
     for section in sections:

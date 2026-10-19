@@ -19,6 +19,7 @@ from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
+from ...core.theory import note_to_name
 from ..theme import GOLD, GREY, INK, PAD_WHITE, PANEL_HI, PANEL_LO, mix
 
 log = logging.getLogger(__name__)
@@ -238,7 +239,7 @@ class PianoKeys(QWidget):
                 painter.drawText(
                     QRectF(rect.left(), rect.bottom() - 14, rect.width(), 13),
                     Qt.AlignmentFlag.AlignCenter,
-                    f"Do{note // 12 - 2}")
+                    note_to_name(note))
 
     def _draw_black(self, painter: QPainter) -> None:
         for note in range(self._lo, self._hi + 1):

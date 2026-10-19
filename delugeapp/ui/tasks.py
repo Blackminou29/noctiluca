@@ -24,6 +24,8 @@ from typing import Any, Callable
 from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QProgressDialog
 
+from ..i18n import tr
+
 log = logging.getLogger(__name__)
 
 #: Fils de travail en cours, pour pouvoir les arrêter à la fermeture.
@@ -83,7 +85,8 @@ class Worker(QObject):
     progress = pyqtSignal(object)
     #: Valeur de retour de la fonction.
     finished = pyqtSignal(object)
-    #: Message d'erreur en français, si la fonction a levé.
+    #: Message d'erreur, dans la langue de l'interface, si la fonction a
+    #: levé.
     failed = pyqtSignal(str)
 
     def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
@@ -183,7 +186,7 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
              on_result: Callable[[Any], None] | None = None,
              on_progress: Callable[[Any], None] | None = None,
              on_error: Callable[[str], None] | None = None,
-             title: str = "Traitement…", modal: bool = False,
+             title: str | None = None, modal: bool = False,
              quiet: bool = False, **kwargs: Any) -> Worker:
     """Lance ``fn`` dans un fil secondaire et retourne son :class:`Worker`.
 
@@ -203,6 +206,8 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
 
     Le fil est nettoyé automatiquement à la fin, dans tous les cas.
     """
+    if title is None:
+        title = tr("Traitement…")
     worker = Worker(fn, *args, **kwargs)
     thread = QThread(parent)
     worker.moveToThread(thread)
@@ -214,7 +219,7 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
     status = None if (modal or quiet) else _status_bar(parent)
     dialog: QProgressDialog | None = None
     if modal:
-        dialog = QProgressDialog(title, "Annuler", 0, 0,
+        dialog = QProgressDialog(title, tr("Annuler"), 0, 0,
                                  parent if hasattr(parent, "window") else None)
         dialog.setWindowTitle(title)
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -275,7 +280,7 @@ def run_task(parent: Any, fn: Callable[..., Any], *args: Any,
             log.error("tâche « %s » en échec : %s", title, message)
             if status is not None:
                 try:
-                    status.showMessage(f"Échec : {message}", 8000)
+                    status.showMessage(tr("Échec : %s") % message, 8000)
                 except RuntimeError:
                     pass
 

@@ -29,6 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..i18n import tr
+
 log = logging.getLogger(__name__)
 
 __all__ = ["AudioInfo", "probe", "read", "write", "peaks", "convert",
@@ -229,10 +231,10 @@ def _parse_riff(rd: _Reader) -> _Header:
     """Analyse un conteneur RIFF/RIFX/RF64 de forme WAVE."""
     head = rd.at(0, 12)
     if len(head) < 12:
-        raise _AudioError("fichier trop court")
+        raise _AudioError(tr("fichier trop court"))
     magic, form = head[0:4], head[8:12]
     if form != b"WAVE":
-        raise _AudioError("conteneur RIFF sans forme WAVE")
+        raise _AudioError(tr("conteneur RIFF sans forme WAVE"))
     big = magic == b"RIFX"
     u32 = ">I" if big else "<I"
     u16 = ">H" if big else "<H"
@@ -265,7 +267,7 @@ def _parse_riff(rd: _Reader) -> _Header:
         if cid == b"fmt ":
             d = rd.at(body, min(take, 64))
             if len(d) < 16:
-                raise _AudioError("chunk fmt incomplet")
+                raise _AudioError(tr("chunk fmt incomplet"))
             af, nch, sr, _brate, balign, bps = struct.unpack(
                 end + "HHIIHH", d[:16])
             if af == WAVE_FORMAT_EXTENSIBLE:
@@ -278,7 +280,7 @@ def _parse_riff(rd: _Reader) -> _Header:
                 h.encoding = "pcm-u" if bits == 8 else "pcm-s"
                 h.fmt = "pcm"
                 if bits <= 0:
-                    raise _AudioError("nombre de bits invalide")
+                    raise _AudioError(tr("nombre de bits invalide"))
             elif af == WAVE_FORMAT_FLOAT:
                 h.encoding = "float"
                 h.fmt = "float"
@@ -293,7 +295,7 @@ def _parse_riff(rd: _Reader) -> _Header:
                 h.fmt = "pcm"
                 bits = 8
             else:
-                raise _AudioError("format WAV non géré (code 0x%04X)" % af)
+                raise _AudioError(tr("format WAV non géré (code 0x%04X)") % af)
             h.bits = bits
             h.sample_bytes = max(1, (bits + 7) // 8)
             h.channels = int(nch)
@@ -340,11 +342,11 @@ def _parse_riff(rd: _Reader) -> _Header:
         pos = body + csz + (csz & 1)
 
     if not got_fmt:
-        raise _AudioError("chunk fmt absent")
+        raise _AudioError(tr("chunk fmt absent"))
     if data_off < 0:
-        raise _AudioError("chunk data absent")
+        raise _AudioError(tr("chunk data absent"))
     if h.sample_rate <= 0:
-        raise _AudioError("taux d'échantillonnage invalide")
+        raise _AudioError(tr("taux d'échantillonnage invalide"))
 
     if ds64_data is not None and 0 < ds64_data <= size - data_off:
         data_size = ds64_data
@@ -392,10 +394,10 @@ def _parse_aiff(rd: _Reader) -> _Header:
     """Analyse un conteneur FORM/AIFF ou FORM/AIFC."""
     head = rd.at(0, 12)
     if len(head) < 12:
-        raise _AudioError("fichier trop court")
+        raise _AudioError(tr("fichier trop court"))
     kind = head[8:12]
     if kind not in (b"AIFF", b"AIFC"):
-        raise _AudioError("conteneur FORM inconnu")
+        raise _AudioError(tr("conteneur FORM inconnu"))
     h = _Header(container="aiff", big_endian=True, fmt="aiff")
 
     pos = 12
@@ -425,7 +427,7 @@ def _parse_aiff(rd: _Reader) -> _Header:
         if cid == b"COMM":
             d = rd.at(body, min(take, 40))
             if len(d) < 18:
-                raise _AudioError("chunk COMM incomplet")
+                raise _AudioError(tr("chunk COMM incomplet"))
             nch, nfr, ssize = struct.unpack(">hIh", d[:8])
             rate = _ext80_to_float(d[8:18])
             h.channels = int(nch) if nch > 0 else 1
@@ -436,7 +438,7 @@ def _parse_aiff(rd: _Reader) -> _Header:
             if kind == b"AIFC" and len(d) >= 22:
                 comp = d[18:22]
                 if comp not in _AIFC_ENCODINGS:
-                    raise _AudioError("compression AIFC non gérée (%s)"
+                    raise _AudioError(tr("compression AIFC non gérée (%s)")
                                       % comp.decode("latin-1", "replace"))
                 enc, be = _AIFC_ENCODINGS[comp]
                 if comp in (b"fl32", b"FL32"):
@@ -493,11 +495,11 @@ def _parse_aiff(rd: _Reader) -> _Header:
         pos = body + csz + (csz & 1)
 
     if not got_comm:
-        raise _AudioError("chunk COMM absent")
+        raise _AudioError(tr("chunk COMM absent"))
     if ssnd_off < 0:
-        raise _AudioError("chunk SSND absent")
+        raise _AudioError(tr("chunk SSND absent"))
     if h.sample_rate <= 0:
-        raise _AudioError("taux d'échantillonnage invalide")
+        raise _AudioError(tr("taux d'échantillonnage invalide"))
 
     if loop_ids and markers:
         a = markers.get(loop_ids[0])
@@ -519,7 +521,7 @@ def _parse_aiff(rd: _Reader) -> _Header:
 def _read_header(f, size: int) -> _Header:
     """Analyse l'en-tête d'un fichier déjà ouvert en binaire."""
     if size < 12:
-        raise _AudioError("fichier vide ou trop court")
+        raise _AudioError(tr("fichier vide ou trop court"))
     rd = _Reader(f, size)
     magic = rd.at(0, 4)
     if magic in (b"RIFF", b"RIFX", b"RF64", b"BW64"):
@@ -531,11 +533,11 @@ def _read_header(f, size: int) -> _Header:
             shown = magic.decode("ascii")
         else:
             shown = magic.hex(" ").upper()
-        raise _AudioError("format de fichier inconnu (%s)" % shown)
+        raise _AudioError(tr("format de fichier inconnu (%s)") % shown)
     if h.channels <= 0 or h.sample_bytes <= 0:
-        raise _AudioError("en-tête incohérent")
+        raise _AudioError(tr("en-tête incohérent"))
     if h.channels > 64:
-        raise _AudioError("nombre de canaux aberrant (%d)" % h.channels)
+        raise _AudioError(tr("nombre de canaux aberrant (%d)") % h.channels)
     if h.loop_start is not None and h.loop_end is not None:
         if not (0 <= h.loop_start < h.loop_end <= max(1, h.frames)):
             h.loop_start = None
@@ -594,7 +596,7 @@ def _decode(raw: bytes, h: _Header) -> np.ndarray:
         code = ">i8" if be else "<i8"
         a = np.frombuffer(raw, dtype=np.dtype(code)).astype(np.float64)
         return (a / 9223372036854775808.0).astype(np.float32)
-    raise _AudioError("largeur d'échantillon non gérée (%d octets)" % sb)
+    raise _AudioError(tr("largeur d'échantillon non gérée (%d octets)") % sb)
 
 
 def _info_from_header(p: Path, h: _Header) -> AudioInfo:
@@ -634,7 +636,7 @@ def probe(path: Path) -> AudioInfo:
         return AudioInfo(path=p, ok=False, error="%s: %s" % (type(exc).__name__, exc))
     except Exception as exc:                            # garde-fou absolu
         log.debug("probe(%s) : erreur inattendue", p, exc_info=True)
-        return AudioInfo(path=p, ok=False, error="erreur inattendue: %s" % exc)
+        return AudioInfo(path=p, ok=False, error=tr("erreur inattendue: %s") % exc)
 
 
 # ---------------------------------------------------------------------------
@@ -667,26 +669,27 @@ def deluge_problem(path: Path) -> tuple[str, bool]:
     """
     p = Path(path)
     if p.name.startswith("."):
-        return "nom commençant par un point : le Deluge ne le montre pas", False
+        return tr("nom commençant par un point : le Deluge ne le montre "
+                  "pas"), False
     ext = p.suffix.lower()
     if ext not in DELUGE_EXT + (".aifc",):
-        return ("extension %s : le Deluge ne lit que le WAV et l'AIFF"
-                % (ext or "absente")), False
+        return (tr("extension %s : le Deluge ne lit que le WAV et l'AIFF")
+                % (ext or tr("absente"))), False
     try:
         size = os.path.getsize(p)
         with open(p, "rb") as f:
             raisons, reparable = _deluge_header(f, size)
     except (OSError, ValueError, struct.error) as exc:
-        return "illisible : %s" % exc, False
+        return tr("illisible : %s") % exc, False
     if ext == ".aifc" and reparable:
-        raisons.insert(0, "extension .aifc")
+        raisons.insert(0, tr("extension .aifc"))
     if not raisons:
         return "", False
     if not reparable:
         return raisons[0], False
     info = probe(p)
     if not info.ok:
-        return "%s, et illisible ici : %s" % (raisons[0], info.error), False
+        return tr("%s, et illisible ici : %s") % (raisons[0], info.error), False
     return " ; ".join(raisons), True
 
 
@@ -698,7 +701,7 @@ def _deluge_header(f, size: int) -> tuple[list[str], bool]:
     """
     tete = f.read(12)
     if len(tete) < 12:
-        return ["fichier vide ou tronqué"], False
+        return [tr("fichier vide ou tronqué")], False
     magic, forme = tete[0:4], tete[8:12]
     raisons: list[str] = []
     if magic == b"RIFF" and forme == b"WAVE":
@@ -727,31 +730,31 @@ def _deluge_header(f, size: int) -> tuple[list[str], bool]:
             vu_format = True
             d = f.read(min(n, 40))
             if len(d) < 16:
-                return ["en-tête « fmt » incomplet"], False
+                return [tr("en-tête « fmt » incomplet")], False
             e = ">" if big else "<"
             tag, canaux, frequence, _debit, _bloc, bits = struct.unpack(
                 e + "HHIIHH", d[:16])
             if tag == WAVE_FORMAT_EXTENSIBLE:
-                raisons.append("en-tête étendu (WAVE_FORMAT_EXTENSIBLE)")
+                raisons.append(tr("en-tête étendu (WAVE_FORMAT_EXTENSIBLE)"))
                 tag = (struct.unpack(e + "H", d[24:26])[0] if len(d) >= 26
                        else WAVE_FORMAT_PCM)
             if tag == WAVE_FORMAT_PCM:
                 if bits not in (8, 16, 24, 32):
-                    raisons.append("PCM %d bits" % bits)
+                    raisons.append(tr("PCM %d bits") % bits)
             elif tag == WAVE_FORMAT_FLOAT:
                 if bits != 32:
-                    raisons.append("flottant %d bits" % bits)
+                    raisons.append(tr("flottant %d bits") % bits)
             elif tag in (WAVE_FORMAT_ALAW, WAVE_FORMAT_ULAW):
                 raisons.append("codage %s" % ("A-law" if tag == WAVE_FORMAT_ALAW
                                               else "µ-law"))
             else:
-                return ["format compressé (code 0x%04X) que ni le Deluge ni "
-                        "l'application ne savent lire" % tag], False
+                return [tr("format compressé (code 0x%04X) que ni le Deluge ni "
+                           "l'application ne savent lire") % tag], False
             if canaux not in (1, 2):
-                return ["%d canaux : le Deluge ne lit que le mono et la stéréo"
-                        % canaux], False
+                return [tr("%d canaux : le Deluge ne lit que le mono et la "
+                           "stéréo") % canaux], False
             if not DELUGE_MIN_RATE <= frequence <= DELUGE_MAX_RATE:
-                raisons.append("%d Hz, hors des 5 000 à 96 000 Hz qu'il lit"
+                raisons.append(tr("%d Hz, hors des 5 000 à 96 000 Hz qu'il lit")
                                % frequence)
         elif not aiff and cid == b"data":
             vu_donnees = True
@@ -759,29 +762,29 @@ def _deluge_header(f, size: int) -> tuple[list[str], bool]:
             vu_format = True
             d = f.read(min(n, 40))
             if len(d) < 18:
-                return ["en-tête « COMM » incomplet"], False
+                return [tr("en-tête « COMM » incomplet")], False
             canaux, _trames, bits = struct.unpack(">hIh", d[:8])
             frequence = int(round(_ext80_to_float(d[8:18])))
             if forme == b"AIFF" and n != 18:
-                raisons.append("en-tête « COMM » de %d octets" % n)
+                raisons.append(tr("en-tête « COMM » de %d octets") % n)
             if forme == b"AIFC" and len(d) >= 22 \
                     and d[18:22] not in _AIFC_ENCODINGS:
-                return ["compression AIFC « %s » que ni le Deluge ni "
-                        "l'application ne savent lire"
+                return [tr("compression AIFC « %s » que ni le Deluge ni "
+                           "l'application ne savent lire")
                         % d[18:22].decode("latin-1", "replace")], False
             if canaux not in (1, 2):
-                return ["%d canaux : le Deluge ne lit que le mono et la stéréo"
-                        % canaux], False
+                return [tr("%d canaux : le Deluge ne lit que le mono et la "
+                           "stéréo") % canaux], False
             if forme == b"AIFF" and bits not in (8, 16, 24, 32):
                 raisons.append("%d bits" % bits)
             if not DELUGE_MIN_RATE <= frequence <= DELUGE_MAX_RATE:
-                raisons.append("%d Hz, hors des 5 000 à 96 000 Hz qu'il lit"
+                raisons.append(tr("%d Hz, hors des 5 000 à 96 000 Hz qu'il lit")
                                % frequence)
         elif aiff and cid == b"SSND":
             vu_donnees = True
         pos += 8 + n + (n & 1)
     if not (vu_format and vu_donnees):
-        return ["fichier abîmé : en-tête ou données absents"], False
+        return [tr("fichier abîmé : en-tête ou données absents")], False
     return raisons, True
 
 
@@ -925,7 +928,7 @@ def _resolve_out_format(bit_depth) -> tuple[str, int]:
         try:
             bit_depth = int(s)
         except ValueError:
-            raise ValueError("profondeur de bits inconnue : %r" % bit_depth)
+            raise ValueError(tr("profondeur de bits inconnue : %r") % bit_depth)
     b = int(bit_depth)
     if b == -32:
         return ("float", 32)
@@ -933,7 +936,7 @@ def _resolve_out_format(bit_depth) -> tuple[str, int]:
         return ("float", 64)
     if b in (8, 16, 24, 32):
         return ("pcm", b)
-    raise ValueError("profondeur de bits non gérée : %r" % bit_depth)
+    raise ValueError(tr("profondeur de bits non gérée : %r") % bit_depth)
 
 
 def _as_2d(data: np.ndarray) -> np.ndarray:
@@ -951,7 +954,7 @@ def _as_2d(data: np.ndarray) -> np.ndarray:
     if a.ndim == 1:
         a = a.reshape(-1, 1)
     elif a.ndim != 2:
-        raise ValueError("forme de tableau non gérée : %r" % (a.shape,))
+        raise ValueError(tr("forme de tableau non gérée : %r") % (a.shape,))
     return np.nan_to_num(a, nan=0.0, posinf=1.0, neginf=-1.0)
 
 
@@ -990,7 +993,7 @@ def _encode(block: np.ndarray, kind: str, bits: int, big: bool,
     if bits == 32:
         v = np.clip(np.round(x * 2147483648.0), -2147483648.0, 2147483647.0)
         return v.astype(np.dtype(">i4" if big else "<i4")).tobytes()
-    raise ValueError("profondeur de bits non gérée : %d" % bits)
+    raise ValueError(tr("profondeur de bits non gérée : %d") % bits)
 
 
 def _write_wav(fp, data: np.ndarray, sample_rate: int, kind: str, bits: int,
@@ -1084,9 +1087,9 @@ def write(path: Path, data: np.ndarray, sample_rate: int, bit_depth: int = 16,
     arr = _as_2d(data)
     sr = int(sample_rate)
     if sr <= 0:
-        raise ValueError("taux d'échantillonnage invalide : %r" % sample_rate)
+        raise ValueError(tr("taux d'échantillonnage invalide : %r") % sample_rate)
     if arr.shape[1] <= 0:
-        raise ValueError("aucun canal à écrire")
+        raise ValueError(tr("aucun canal à écrire"))
     if p.parent and not p.parent.exists():
         p.parent.mkdir(parents=True, exist_ok=True)
     aiff = p.suffix.lower() in _EXT_AIFF
@@ -1319,10 +1322,10 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
         info = probe(src_p)
         if not info.ok:
             return AudioInfo(path=dst_p, ok=False,
-                             error="source illisible : %s" % info.error)
+                             error=tr("source illisible : %s") % info.error)
         a, sr = _read_raw(src_p, None, mono=False, clip=False)
         if sr <= 0:
-            return AudioInfo(path=dst_p, ok=False, error="source illisible")
+            return AudioInfo(path=dst_p, ok=False, error=tr("source illisible"))
 
         offset = 0
         if trim_silence_db is not None:
@@ -1372,11 +1375,12 @@ def convert(src: Path, dst: Path, sample_rate: int | None = None,
         out = probe(dst_p)
         if not out.ok:
             return AudioInfo(path=dst_p, ok=False,
-                             error="écriture invalide : %s" % out.error)
+                             error=tr("écriture invalide : %s") % out.error)
         return out
     except (_AudioError, OSError, ValueError, struct.error, MemoryError) as exc:
         return AudioInfo(path=dst_p, ok=False,
                          error="%s: %s" % (type(exc).__name__, exc))
     except Exception as exc:                            # garde-fou absolu
         log.debug("convert(%s -> %s) : erreur inattendue", src_p, dst_p, exc_info=True)
-        return AudioInfo(path=dst_p, ok=False, error="erreur inattendue: %s" % exc)
+        return AudioInfo(path=dst_p, ok=False, error=tr("erreur inattendue: "
+                                                        "%s") % exc)

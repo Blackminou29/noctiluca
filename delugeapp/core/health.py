@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import organize
+from ..i18n import N_, decimal, tr, tr_stored, untranslated
 from .db import Library
 from .organize import Plan
 from .sdcard import (
@@ -76,7 +77,7 @@ STANDARD_EMPTY_OK = frozenset({
 
 #: Réparations XML qui ne dénotent aucune corruption : le firmware 2.x écrit
 #: normalement plusieurs racines dans un même fichier (cf. SPEC §1.3).
-BENIGN_REPAIRS = ("multi-racines",)
+BENIGN_REPAIRS = untranslated(("multi-racines",))
 
 
 #: **Tous les codes d'anomalie que ce module peut émettre.**
@@ -139,35 +140,39 @@ class HealthReport:
         return [i for i in self.issues if i.auto_fixable]
 
     def verdict(self) -> str:
-        """Appréciation d'ensemble, en français."""
+        """Appréciation d'ensemble, dans la langue de l'interface."""
         if self.score >= 95:
-            return "Carte en très bon état."
+            return tr("Carte en très bon état.")
         if self.score >= 80:
-            return "Carte en bon état, quelques points à surveiller."
+            return tr("Carte en bon état, quelques points à surveiller.")
         if self.score >= 50:
-            return "Carte à nettoyer."
-        return "Carte à remettre en ordre sérieusement."
+            return tr("Carte à nettoyer.")
+        return tr("Carte à remettre en ordre sérieusement.")
 
     def to_text(self) -> str:
         """Rapport en texte brut."""
-        lines = [f"Santé de la carte : {self.score}/100 — {self.verdict()}",
-                 f"{len(self.errors)} erreur(s), {len(self.warnings)} "
-                 f"avertissement(s), {len(self.by_severity('info'))} remarque(s)",
+        lines = [tr("Santé de la carte : %d/100 — %s")
+                 % (self.score, self.verdict()),
+                 tr("%d erreur(s), %d avertissement(s), %d remarque(s)")
+                 % (len(self.errors), len(self.warnings),
+                    len(self.by_severity("info"))),
                  ""]
-        labels = {"error": "ERREUR", "warn": "ATTENTION", "info": "REMARQUE"}
+        labels = {"error": tr("ERREUR"), "warn": tr("ATTENTION"),
+                  "info": tr("REMARQUE")}
         for sev in reversed(SEVERITY):
             for issue in self.by_severity(sev):
                 lines.append(f"[{labels[sev]}] {issue.title} ({issue.count})")
                 lines.append(f"    {issue.detail}")
                 if issue.fix:
-                    lines.append(f"    À faire : {issue.fix}")
+                    lines.append("    " + tr("À faire : %s") % issue.fix)
                 for item in issue.items[:10]:
                     lines.append(f"      - {item}")
                 if issue.count > 10:
-                    lines.append(f"      … et {issue.count - 10} autre(s)")
+                    lines.append("      " + tr("… et %d autre(s)")
+                                 % (issue.count - 10))
                 lines.append("")
         if not self.issues:
-            lines.append("Aucune anomalie détectée.")
+            lines.append(tr("Aucune anomalie détectée."))
         return "\n".join(lines)
 
     def to_html(self) -> str:
@@ -175,16 +180,17 @@ class HealthReport:
         # Les couleurs sont écrites en clair : le noyau ne doit pas importer
         # l'interface (SPEC §0.7). Elles reprennent la palette de `ui.theme`.
         colors = {"error": "#F2453D", "warn": "#FFC400", "info": "#28C4E0"}
-        labels = {"error": "Erreur", "warn": "Attention", "info": "Remarque"}
+        labels = {"error": tr("Erreur"), "warn": tr("Attention"),
+                  "info": tr("Remarque")}
         out = [
             "<html><body style=\"font-family:Segoe UI,sans-serif;"
             "color:#F2F4F8;background:#1C1F26;\">",
-            f"<h2 style=\"color:#C79A22;margin-bottom:2px;\">Santé de la carte :"
-            f" {self.score}/100</h2>",
+            "<h2 style=\"color:#C79A22;margin-bottom:2px;\">%s</h2>"
+            % _esc(tr("Santé de la carte : %d/100") % self.score),
             f"<p style=\"color:#7A828F;margin-top:0;\">{_esc(self.verdict())}</p>",
         ]
         if not self.issues:
-            out.append("<p>Aucune anomalie détectée.</p>")
+            out.append("<p>%s</p>" % _esc(tr("Aucune anomalie détectée.")))
         for sev in reversed(SEVERITY):
             for issue in self.by_severity(sev):
                 color = colors.get(sev, "#7A828F")
@@ -195,15 +201,16 @@ class HealthReport:
                     f"({issue.count})</span></h3>")
                 out.append(f"<p style=\"margin:2px 0;\">{_esc(issue.detail)}</p>")
                 if issue.fix:
-                    out.append(f"<p style=\"color:#C79A22;margin:2px 0;\">"
-                               f"À faire : {_esc(issue.fix)}</p>")
+                    out.append("<p style=\"color:#C79A22;margin:2px 0;\">"
+                               "%s</p>" % _esc(tr("À faire : %s") % issue.fix))
                 if issue.items:
                     out.append("<ul style=\"color:#C3C9D2;\">")
                     for item in issue.items[:10]:
                         out.append(f"<li>{_esc(item)}</li>")
                     if issue.count > 10:
-                        out.append(f"<li style=\"color:#7A828F;\">… et "
-                                   f"{issue.count - 10} autre(s)</li>")
+                        out.append("<li style=\"color:#7A828F;\">%s</li>"
+                                   % _esc(tr("… et %d autre(s)")
+                                          % (issue.count - 10)))
                     out.append("</ul>")
         out.append("</body></html>")
         return "\n".join(out)
@@ -250,7 +257,7 @@ def check_card(sd: SDCard, lib: Library,
     def _step(label: str, fn: Callable[[], Issue | None]) -> None:
         if progress is not None:
             try:
-                progress(label)
+                progress(tr(label))
             except Exception:  # noqa: BLE001
                 pass
         try:
@@ -261,27 +268,28 @@ def check_card(sd: SDCard, lib: Library,
         if issue is not None and issue.items:
             issues.append(issue)
 
-    _step("Structure de la carte", lambda: _check_std_dirs(sd))
-    _step("Firmware", lambda: _check_firmware(sd))
-    _step("Espace libre", lambda: _check_space(sd))
-    _step("Références d'échantillons", lambda: _check_missing(lib))
-    _step("Échantillons inutilisés", lambda: _check_orphans(lib))
-    _step("Doublons", lambda: _check_duplicates(lib))
-    _step("Fichiers illisibles", lambda: _check_unreadable(lib))
-    _step("XML réparés", lambda: _check_repaired(lib))
-    _step("Noms de fichiers", lambda: _check_names(lib))
-    _step("Longueur des chemins", lambda: _check_long_paths(lib))
-    _step("Profondeur des dossiers", lambda: _check_deep_folders(lib))
-    _step("Fréquences d'échantillonnage", lambda: _check_sample_rates(lib))
-    _step("Gros échantillons", lambda: _check_big_samples(lib))
-    _step("Percussions en stéréo", lambda: _check_stereo_drums(lib))
-    _step("Échantillons écrêtés", lambda: _check_clipped(lib))
-    _step("Offset continu", lambda: _check_dc_offset(lib))
-    _step("Échantillons muets", lambda: _check_silent(lib))
-    _step("Fichiers parasites", lambda: _check_mac_junk(sd))
-    _step("Fichiers non audio", lambda: _check_non_audio(sd))
-    _step("Dossiers vides", lambda: _check_empty_folders(sd))
-    _step("Sauvegardes", lambda: _check_backup(backup_dir))
+    _step(N_("Structure de la carte"), lambda: _check_std_dirs(sd))
+    _step(N_("Firmware"), lambda: _check_firmware(sd))
+    _step(N_("Espace libre"), lambda: _check_space(sd))
+    _step(N_("Références d'échantillons"), lambda: _check_missing(lib))
+    _step(N_("Échantillons inutilisés"), lambda: _check_orphans(lib))
+    _step(N_("Doublons"), lambda: _check_duplicates(lib))
+    _step(N_("Fichiers illisibles"), lambda: _check_unreadable(lib))
+    _step(N_("XML réparés"), lambda: _check_repaired(lib))
+    _step(N_("Noms de fichiers"), lambda: _check_names(lib))
+    _step(N_("Longueur des chemins"), lambda: _check_long_paths(lib))
+    _step(N_("Profondeur des dossiers"), lambda: _check_deep_folders(lib))
+    _step(N_("Fréquences d'échantillonnage"),
+          lambda: _check_sample_rates(lib))
+    _step(N_("Gros échantillons"), lambda: _check_big_samples(lib))
+    _step(N_("Percussions en stéréo"), lambda: _check_stereo_drums(lib))
+    _step(N_("Échantillons écrêtés"), lambda: _check_clipped(lib))
+    _step(N_("Offset continu"), lambda: _check_dc_offset(lib))
+    _step(N_("Échantillons muets"), lambda: _check_silent(lib))
+    _step(N_("Fichiers parasites"), lambda: _check_mac_junk(sd))
+    _step(N_("Fichiers non audio"), lambda: _check_non_audio(sd))
+    _step(N_("Dossiers vides"), lambda: _check_empty_folders(sd))
+    _step(N_("Sauvegardes"), lambda: _check_backup(backup_dir))
 
     stats = {}
     try:
@@ -306,11 +314,11 @@ def _check_std_dirs(sd: SDCard) -> Issue | None:
         return None
     return Issue(
         "MISSING_STD_DIR", "error",
-        "Dossiers standards absents",
-        "Le Deluge attend ces dossiers à la racine de la carte ; sans eux, il "
-        "ne trouvera ni les morceaux ni les presets.",
+        tr("Dossiers standards absents"),
+        tr("Le Deluge attend ces dossiers à la racine de la carte ; sans eux, "
+           "il ne trouvera ni les morceaux ni les presets."),
         items=list(missing),
-        fix="Créer les dossiers manquants à la racine.",
+        fix=tr("Créer les dossiers manquants à la racine."),
         auto_fixable=True,
     )
 
@@ -320,19 +328,19 @@ def _check_firmware(sd: SDCard) -> Issue | None:
     if len(files) > 1:
         return Issue(
             "MULTI_FIRMWARE", "error",
-            "Plusieurs fichiers de firmware à la racine",
-            "Le Deluge n'accepte qu'un seul fichier « deluge*.bin ». Avec "
-            "plusieurs, la mise à jour est refusée.",
+            tr("Plusieurs fichiers de firmware à la racine"),
+            tr("Le Deluge n'accepte qu'un seul fichier « deluge*.bin ». Avec "
+               "plusieurs, la mise à jour est refusée."),
             items=[p.name for p in files],
-            fix="Ne garder que la version voulue.",
+            fix=tr("Ne garder que la version voulue."),
         )
     if not files:
         return Issue(
             "NO_FIRMWARE", "info",
-            "Aucun fichier de firmware",
-            "Ce n'est pas un défaut : le firmware n'a besoin d'être présent "
-            "que pour une mise à jour.",
-            items=["aucun fichier deluge*.bin à la racine"],
+            tr("Aucun fichier de firmware"),
+            tr("Ce n'est pas un défaut : le firmware n'a besoin d'être présent "
+               "que pour une mise à jour."),
+            items=[tr("aucun fichier deluge*.bin à la racine")],
         )
     return None
 
@@ -345,11 +353,12 @@ def _check_space(sd: SDCard) -> Issue | None:
         return None
     return Issue(
         "LOW_SPACE", "warn",
-        "Espace libre faible",
-        f"Il reste {free / 2 ** 20:.0f} Mio sur {total / 2 ** 30:.1f} Gio. "
-        f"Le Deluge a besoin de place pour enregistrer et rééchantillonner.",
-        items=[f"{free / 2 ** 20:.0f} Mio libres"],
-        fix="Archiver les échantillons inutilisés ou libérer de la place.",
+        tr("Espace libre faible"),
+        tr("Il reste %.0f Mio sur %s Gio. Le Deluge a besoin de place pour "
+           "enregistrer et rééchantillonner.")
+        % (free / 2 ** 20, decimal(total / 2 ** 30, 1)),
+        items=[tr("%.0f Mio libres") % (free / 2 ** 20)],
+        fix=tr("Archiver les échantillons inutilisés ou libérer de la place."),
     )
 
 
@@ -363,13 +372,13 @@ def _check_missing(lib: Library) -> Issue | None:
     sources = sorted({r["src_rel"] for r in rows})
     return Issue(
         "MISSING_SAMPLE", "error",
-        "Échantillons référencés mais absents",
-        f"{len(sources)} preset(s), kit(s) ou morceau(x) réclament "
-        f"{len(samples)} échantillon(s) introuvable(s) sur la carte. Le Deluge "
-        f"restera muet sur ces sons.",
+        tr("Échantillons référencés mais absents"),
+        tr("%d preset(s), kit(s) ou morceau(x) réclament %d échantillon(s) "
+           "introuvable(s) sur la carte. Le Deluge restera muet sur ces sons.")
+        % (len(sources), len(samples)),
         items=samples[:MAX_ITEMS],
-        fix="Chercher un remplaçant pour chacun, ou recopier les fichiers "
-            "manquants sur la carte.",
+        fix=tr("Chercher un remplaçant pour chacun, ou recopier les fichiers "
+               "manquants sur la carte."),
         auto_fixable=True,
     )
 
@@ -381,12 +390,14 @@ def _check_orphans(lib: Library) -> Issue | None:
     total = sum(r["size"] or 0 for r in rows)
     return Issue(
         "ORPHAN_SAMPLE", "info",
-        "Échantillons jamais utilisés",
-        f"{len(rows)} échantillon(s) ({total / 2 ** 20:.0f} Mio) ne sont cités "
-        f"par aucun preset, kit ni morceau de cette carte. Ce n'est pas un "
-        f"défaut : votre bibliothèque peut contenir des sons en réserve.",
+        tr("Échantillons jamais utilisés"),
+        tr("%d échantillon(s) (%.0f Mio) ne sont cités par aucun preset, kit "
+           "ni morceau de cette carte. Ce n'est pas un défaut : votre "
+           "bibliothèque peut contenir des sons en réserve.")
+        % (len(rows), total / 2 ** 20),
         items=[r["rel"] for r in rows[:MAX_ITEMS]],
-        fix="Les archiver dans un dossier à part s'il faut libérer de la place.",
+        fix=tr("Les archiver dans un dossier à part s'il faut libérer de la "
+               "place."),
         auto_fixable=True,
     )
 
@@ -399,12 +410,13 @@ def _check_duplicates(lib: Library) -> Issue | None:
     items = [" = ".join(r["rel"] for r in g) for g in groups[:MAX_ITEMS]]
     return Issue(
         "DUPLICATE_SAMPLE", "warn",
-        "Échantillons en double",
-        f"{len(groups)} groupe(s) de fichiers rigoureusement identiques, "
-        f"{wasted / 2 ** 20:.0f} Mio en trop. La comparaison a été faite octet "
-        f"par octet, ce ne sont pas de simples homonymes.",
+        tr("Échantillons en double"),
+        tr("%d groupe(s) de fichiers rigoureusement identiques, %.0f Mio en "
+           "trop. La comparaison a été faite octet par octet, ce ne sont pas "
+           "de simples homonymes.") % (len(groups), wasted / 2 ** 20),
         items=items,
-        fix="Ne garder qu'un exemplaire ; les références seront redirigées.",
+        fix=tr("Ne garder qu'un exemplaire ; les références seront "
+               "redirigées."),
         auto_fixable=True,
     )
 
@@ -417,7 +429,7 @@ def _check_unreadable(lib: Library) -> Issue | None:
         for table in ("presets", "songs"):
             rows = lib.con.execute(
                 f"SELECT rel, error FROM {table} WHERE ok = 0").fetchall()
-            items += [f"{r['rel']} — {r['error']}" for r in rows]
+            items += [f"{r['rel']} — {tr_stored(r['error'])}" for r in rows]
     except Exception as exc:  # noqa: BLE001
         log.debug("lecture des fichiers illisibles impossible : %s", exc)
         return None
@@ -425,11 +437,12 @@ def _check_unreadable(lib: Library) -> Issue | None:
         return None
     return Issue(
         "UNREADABLE_XML", "error",
-        "Fichiers XML illisibles",
-        "Ces fichiers n'ont pu être interprétés, même par le lecteur "
-        "tolérant. Le Deluge les refusera aussi.",
+        tr("Fichiers XML illisibles"),
+        tr("Ces fichiers n'ont pu être interprétés, même par le lecteur "
+           "tolérant. Le Deluge les refusera aussi."),
         items=sorted(items)[:MAX_ITEMS],
-        fix="Restaurer ces fichiers depuis une sauvegarde, ou les supprimer.",
+        fix=tr("Restaurer ces fichiers depuis une sauvegarde, ou les "
+               "supprimer."),
     )
 
 
@@ -450,7 +463,7 @@ def _check_repaired(lib: Library) -> Issue | None:
                 note = row["repaired"]
                 if any(benign in note for benign in BENIGN_REPAIRS):
                     continue
-                items.append(f"{row['rel']} — {note}")
+                items.append(f"{row['rel']} — {tr_stored(note)}")
     except Exception as exc:  # noqa: BLE001
         log.debug("lecture des réparations impossible : %s", exc)
         return None
@@ -458,13 +471,13 @@ def _check_repaired(lib: Library) -> Issue | None:
         return None
     return Issue(
         "REPAIRED_XML", "warn",
-        "Fichiers XML réparés à la lecture",
-        "Ces fichiers comportent des anomalies de syntaxe (caractères "
-        "illégaux, « & » non échappé, balises mal fermées) que le lecteur a "
-        "contournées. Le Deluge, lui, peut les refuser.",
+        tr("Fichiers XML réparés à la lecture"),
+        tr("Ces fichiers comportent des anomalies de syntaxe (caractères "
+           "illégaux, « & » non échappé, balises mal fermées) que le lecteur "
+           "a contournées. Le Deluge, lui, peut les refuser."),
         items=sorted(items)[:MAX_ITEMS],
-        fix="Réenregistrer ces presets depuis l'application pour obtenir un "
-            "XML propre.",
+        fix=tr("Réenregistrer ces presets depuis l'application pour obtenir "
+               "un XML propre."),
     )
 
 
@@ -494,12 +507,12 @@ def _check_names(lib: Library) -> Issue | None:
         return None
     return Issue(
         "BAD_NAME", "warn",
-        "Noms de fichiers problématiques",
-        "Caractères interdits par FAT32, nom terminé par un point ou une "
-        "espace, accents : autant de noms que le Deluge peut afficher de "
-        "travers ou refuser.",
+        tr("Noms de fichiers problématiques"),
+        tr("Caractères interdits par FAT32, nom terminé par un point ou une "
+           "espace, accents : autant de noms que le Deluge peut afficher de "
+           "travers ou refuser."),
         items=sorted(items)[:MAX_ITEMS],
-        fix="Renommer ces fichiers en ASCII sans caractère spécial.",
+        fix=tr("Renommer ces fichiers en ASCII sans caractère spécial."),
         auto_fixable=True,
     )
 
@@ -511,11 +524,11 @@ def _check_long_paths(lib: Library) -> Issue | None:
         return None
     return Issue(
         "LONG_PATH", "warn",
-        "Chemins trop longs",
-        f"Ces chemins dépassent {LONG_PATH_CHARS} caractères. FAT32 s'arrête "
-        f"à 255, et le Deluge peut tronquer avant.",
+        tr("Chemins trop longs"),
+        tr("Ces chemins dépassent %d caractères. FAT32 s'arrête à 255, et le "
+           "Deluge peut tronquer avant.") % LONG_PATH_CHARS,
         items=sorted(items)[:MAX_ITEMS],
-        fix="Raccourcir les noms de dossiers intermédiaires.",
+        fix=tr("Raccourcir les noms de dossiers intermédiaires."),
     )
 
 
@@ -526,11 +539,11 @@ def _check_deep_folders(lib: Library) -> Issue | None:
         return None
     return Issue(
         "DEEP_FOLDER", "info",
-        "Arborescence très profonde",
-        f"Plus de {DEEP_FOLDER_LEVELS} niveaux de dossiers : la navigation "
-        f"sur l'écran de la machine devient fastidieuse.",
+        tr("Arborescence très profonde"),
+        tr("Plus de %d niveaux de dossiers : la navigation sur l'écran de la "
+           "machine devient fastidieuse.") % DEEP_FOLDER_LEVELS,
         items=sorted(items)[:MAX_ITEMS],
-        fix="Mettre à plat les dossiers les plus enfouis.",
+        fix=tr("Mettre à plat les dossiers les plus enfouis."),
     )
 
 
@@ -544,12 +557,12 @@ def _check_sample_rates(lib: Library) -> Issue | None:
     rates = sorted({r["sr"] for r in rows})
     return Issue(
         "ODD_SAMPLE_RATE", "info",
-        "Fréquences d'échantillonnage inhabituelles",
-        f"Le Deluge tourne à 44,1 kHz. Ces fichiers "
-        f"({', '.join(f'{r} Hz' for r in rates)}) seront convertis à la "
-        f"lecture, ce qui consomme du calcul sans rien apporter.",
+        tr("Fréquences d'échantillonnage inhabituelles"),
+        tr("Le Deluge tourne à 44,1 kHz. Ces fichiers (%s) seront convertis "
+           "à la lecture, ce qui consomme du calcul sans rien apporter.")
+        % ", ".join(f"{r} Hz" for r in rates),
         items=[f"{r['rel']} ({r['sr']} Hz)" for r in rows[:MAX_ITEMS]],
-        fix="Convertir ces échantillons en 44,1 kHz.",
+        fix=tr("Convertir ces échantillons en 44,1 kHz."),
     )
 
 
@@ -560,12 +573,12 @@ def _check_big_samples(lib: Library) -> Issue | None:
         return None
     return Issue(
         "BIG_SAMPLE", "info",
-        "Échantillons très volumineux",
-        f"Au-delà de {BIG_SAMPLE_BYTES / 2 ** 20:.0f} Mio, le chargement "
-        f"depuis la carte se fait sentir au déclenchement.",
-        items=[f"{r['rel']} ({(r['size'] or 0) / 2 ** 20:.0f} Mio)"
+        tr("Échantillons très volumineux"),
+        tr("Au-delà de %.0f Mio, le chargement depuis la carte se fait sentir "
+           "au déclenchement.") % (BIG_SAMPLE_BYTES / 2 ** 20),
+        items=[tr("%s (%.0f Mio)") % (r["rel"], (r["size"] or 0) / 2 ** 20)
                for r in sorted(rows, key=lambda r: -(r["size"] or 0))[:MAX_ITEMS]],
-        fix="Raccourcir ou rééchantillonner ces fichiers.",
+        fix=tr("Raccourcir ou rééchantillonner ces fichiers."),
     )
 
 
@@ -578,12 +591,12 @@ def _check_stereo_drums(lib: Library) -> Issue | None:
     wasted = sum((r["size"] or 0) // 2 for r in rows)
     return Issue(
         "STEREO_DRUM", "info",
-        "Percussions en stéréo",
-        f"{len(rows)} percussion(s) sont stéréo. Dans un kit, une percussion "
-        f"mono suffit presque toujours : passer en mono libérerait environ "
-        f"{wasted / 2 ** 20:.0f} Mio et un peu de calcul.",
+        tr("Percussions en stéréo"),
+        tr("%d percussion(s) sont stéréo. Dans un kit, une percussion mono "
+           "suffit presque toujours : passer en mono libérerait environ %.0f "
+           "Mio et un peu de calcul.") % (len(rows), wasted / 2 ** 20),
         items=[r["rel"] for r in rows[:MAX_ITEMS]],
-        fix="Convertir ces échantillons en mono.",
+        fix=tr("Convertir ces échantillons en mono."),
     )
 
 
@@ -607,13 +620,15 @@ def _check_clipped(lib: Library) -> Issue | None:
         return None
     return Issue(
         "CLIPPED_SAMPLE", "warn",
-        "Échantillons écrêtés",
-        "Ces fichiers saturent : une partie de la forme d'onde est coupée "
-        "net. La distorsion est déjà dans le fichier, et elle ressortira "
-        "amplifiée dans le mixage.",
-        items=[f"{r['rel']} ({(r['clipped'] or 0) * 100:.1f} % d'échantillons "
-               f"à fond)" for r in rows[:MAX_ITEMS]],
-        fix="Réduire le niveau à la source, ou remplacer ces échantillons.",
+        tr("Échantillons écrêtés"),
+        tr("Ces fichiers saturent : une partie de la forme d'onde est coupée "
+           "net. La distorsion est déjà dans le fichier, et elle ressortira "
+           "amplifiée dans le mixage."),
+        items=[tr("%s (%s %% d'échantillons à fond)")
+               % (r["rel"], decimal((r["clipped"] or 0) * 100, 1))
+               for r in rows[:MAX_ITEMS]],
+        fix=tr("Réduire le niveau à la source, ou remplacer ces "
+               "échantillons."),
     )
 
 
@@ -626,13 +641,13 @@ def _check_dc_offset(lib: Library) -> Issue | None:
         return None
     return Issue(
         "DC_OFFSET", "warn",
-        "Échantillons avec une composante continue",
-        "La forme d'onde n'est pas centrée sur zéro : cela gaspille de la "
-        "dynamique, peut faire claquer le début du son et perturbe les "
-        "mesures de niveau.",
-        items=[f"{r['rel']} (offset {r['dc_offset']:+.3f})"
+        tr("Échantillons avec une composante continue"),
+        tr("La forme d'onde n'est pas centrée sur zéro : cela gaspille de la "
+           "dynamique, peut faire claquer le début du son et perturbe les "
+           "mesures de niveau."),
+        items=[tr("%s (offset %+.3f)") % (r["rel"], r["dc_offset"])
                for r in rows[:MAX_ITEMS]],
-        fix="Appliquer un filtre coupe-continu lors de la conversion.",
+        fix=tr("Appliquer un filtre coupe-continu lors de la conversion."),
     )
 
 
@@ -645,11 +660,11 @@ def _check_silent(lib: Library) -> Issue | None:
         return None
     return Issue(
         "SILENT_SAMPLE", "warn",
-        "Échantillons muets",
-        "Ces fichiers ne contiennent aucun signal audible : ils occupent de "
-        "la place sans rien jouer.",
+        tr("Échantillons muets"),
+        tr("Ces fichiers ne contiennent aucun signal audible : ils occupent "
+           "de la place sans rien jouer."),
         items=[r["rel"] for r in rows[:MAX_ITEMS]],
-        fix="Vérifier puis supprimer ces fichiers.",
+        fix=tr("Vérifier puis supprimer ces fichiers."),
     )
 
 
@@ -664,13 +679,13 @@ def _check_mac_junk(sd: SDCard) -> Issue | None:
     total = plan.size
     return Issue(
         "MAC_JUNK", "warn",
-        "Fichiers parasites",
-        f"{len(plan.ops)} fichiers créés par macOS ou Windows "
-        f"(« ._* », « .DS_Store », « Thumbs.db ») occupent "
-        f"{total / 2 ** 20:.1f} Mio. Le Deluge peut les afficher comme des "
-        f"presets fantômes dans ses listes.",
+        tr("Fichiers parasites"),
+        tr("%d fichiers créés par macOS ou Windows (« ._* », « .DS_Store », "
+           "« Thumbs.db ») occupent %s Mio. Le Deluge peut les afficher comme "
+           "des presets fantômes dans ses listes.")
+        % (len(plan.ops), decimal(total / 2 ** 20, 1)),
         items=[sd.rel(op.src) for op in plan.ops[:MAX_ITEMS]],
-        fix="Les supprimer : ils ne servent à rien sur la carte.",
+        fix=tr("Les supprimer : ils ne servent à rien sur la carte."),
         auto_fixable=True,
     )
 
@@ -696,12 +711,12 @@ def _check_non_audio(sd: SDCard) -> Issue | None:
         return None
     return Issue(
         "NON_AUDIO_IN_SAMPLES", "info",
-        "Fichiers non audio dans SAMPLES",
-        "Ces fichiers ne sont ni des WAV ni des AIFF : fichiers "
-        "d'accompagnement d'un logiciel de montage, notes, images… Le Deluge "
-        "les ignore, mais ils encombrent la navigation.",
+        tr("Fichiers non audio dans SAMPLES"),
+        tr("Ces fichiers ne sont ni des WAV ni des AIFF : fichiers "
+           "d'accompagnement d'un logiciel de montage, notes, images… Le "
+           "Deluge les ignore, mais ils encombrent la navigation."),
         items=sorted(items)[:MAX_ITEMS],
-        fix="Les déplacer hors du dossier SAMPLES.",
+        fix=tr("Les déplacer hors du dossier SAMPLES."),
     )
 
 
@@ -730,11 +745,11 @@ def _check_empty_folders(sd: SDCard) -> Issue | None:
         return None
     return Issue(
         "EMPTY_FOLDER", "info",
-        "Dossiers vides",
-        "Ces dossiers ne contiennent rien et allongent inutilement les "
-        "listes de la machine.",
+        tr("Dossiers vides"),
+        tr("Ces dossiers ne contiennent rien et allongent inutilement les "
+           "listes de la machine."),
         items=sorted(items)[:MAX_ITEMS],
-        fix="Les supprimer.",
+        fix=tr("Les supprimer."),
     )
 
 
@@ -755,12 +770,12 @@ def _check_backup(backup_dir: Path | None) -> Issue | None:
     if not backups:
         return Issue(
             "NO_BACKUP", "warn",
-            "Aucune sauvegarde",
-            "Les morceaux et presets d'une carte représentent des mois de "
-            "travail dans des fichiers de quelques kilooctets. Une sauvegarde "
-            "sans les échantillons prend moins d'une seconde.",
+            tr("Aucune sauvegarde"),
+            tr("Les morceaux et presets d'une carte représentent des mois de "
+               "travail dans des fichiers de quelques kilooctets. Une "
+               "sauvegarde sans les échantillons prend moins d'une seconde."),
             items=[str(backup_dir)],
-            fix="Créer une sauvegarde depuis la page Sauvegardes.",
+            fix=tr("Créer une sauvegarde depuis la page Sauvegardes."),
         )
 
     age = (datetime.now() - backups[0].when).days
@@ -768,10 +783,10 @@ def _check_backup(backup_dir: Path | None) -> Issue | None:
         return None
     return Issue(
         "NO_BACKUP", "info",
-        "Sauvegarde ancienne",
-        f"La dernière sauvegarde date de {age} jours.",
+        tr("Sauvegarde ancienne"),
+        tr("La dernière sauvegarde date de %d jours.") % age,
         items=[backups[0].summary()],
-        fix="Créer une nouvelle sauvegarde.",
+        fix=tr("Créer une nouvelle sauvegarde."),
     )
 
 
@@ -795,7 +810,7 @@ def autofix(sd: SDCard, lib: Library, codes: list[str],
     Les codes inconnus ou non réparables sont ignorés avec une trace.
     """
     wanted = set(codes or [])
-    plan = Plan(title="Réparation automatique")
+    plan = Plan(title=tr("Réparation automatique"))
 
     for code in wanted - set(AUTOFIX_CODES):
         log.info("anomalie %s non réparable automatiquement", code)
@@ -837,13 +852,13 @@ def autofix(sd: SDCard, lib: Library, codes: list[str],
                 plan.ops += organize.plan_dedupe(sd, lib).ops
             elif code == "MISSING_STD_DIR":
                 plan.ops += [organize.Op("mkdir", sd.abs(d), None,
-                                         "dossier standard du Deluge")
+                                         tr("dossier standard du Deluge"))
                              for d in sd.missing_dirs()]
             elif code == "EMPTY_FOLDER":
                 issue = _check_empty_folders(sd)
                 if issue is not None:
                     plan.ops += [organize.Op("delete", sd.abs(rel), None,
-                                             "dossier vide")
+                                             tr("dossier vide"))
                                  for rel in issue.items]
         except Exception:  # noqa: BLE001
             log.exception("construction du correctif %s en échec", code)
@@ -862,7 +877,7 @@ def _plan_relink_missing(sd: SDCard, lib: Library) -> Plan:
     """
     from . import deps
 
-    plan = Plan(title="Réaffectation des références cassées")
+    plan = Plan(title=tr("Réaffectation des références cassées"))
     try:
         candidates = deps.find_replacements_bulk(sd, lib)
     except Exception:  # noqa: BLE001
@@ -877,5 +892,5 @@ def _plan_relink_missing(sd: SDCard, lib: Library) -> Plan:
             continue
         plan.ops.append(organize.Op(
             "relink", sd.abs(missing), sd.abs(best),
-            f"référence cassée redirigée vers {best}"))
+            tr("référence cassée redirigée vers %s") % best))
     return plan

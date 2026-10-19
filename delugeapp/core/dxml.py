@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
+from ..i18n import N_, tr, untranslated
+
 log = logging.getLogger(__name__)
 
 __all__ = [
@@ -162,23 +164,23 @@ def repair_text(raw: bytes) -> tuple[str, list[str]]:
         data = bytes(raw)
         if data.startswith(b"\xef\xbb\xbf"):
             data = data[3:]
-            fixes.append("BOM UTF-8 retiré")
+            fixes.append(N_("BOM UTF-8 retiré"))
             text = _decode_utf8(data, fixes)
         elif data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
             enc = "utf-16-le" if data.startswith(b"\xff\xfe") else "utf-16-be"
             text = data[2:].decode(enc, errors="replace")
-            fixes.append("fichier UTF-16 converti en UTF-8")
+            fixes.append(N_("fichier UTF-16 converti en UTF-8"))
         else:
             text = _decode_utf8(data, fixes)
 
     if _INVALID_XML_RE.search(text):
         text = _INVALID_XML_RE.sub("", text)
-        fixes.append("caractères interdits par XML 1.0 supprimés")
+        fixes.append(N_("caractères interdits par XML 1.0 supprimés"))
 
     if "&" in text:
         text, n = _BARE_AMP_RE.subn("&amp;", text)
         if n:
-            fixes.append("%d '&' non échappé(s) corrigé(s)" % n)
+            fixes.append(N_("%d '&' non échappé(s) corrigé(s)") % n)
 
     return text, fixes
 
@@ -188,7 +190,7 @@ def _decode_utf8(data: bytes, fixes: list[str]) -> str:
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
-        fixes.append("octets non UTF-8 remplacés")
+        fixes.append(N_("octets non UTF-8 remplacés"))
         return data.decode("utf-8", errors="replace")
 
 
@@ -289,13 +291,14 @@ def _parse_document(text: str) -> tuple[ET.Element, dict[str, str], list[ET.Elem
     if children is not None:
         root, preamble, extras = _split_roots(children)
         if root is not None:
-            fixes.append("document multi-racines enveloppé dans <%s>" % WRAPPER_TAG)
+            fixes.append(N_("document multi-racines enveloppé dans <%s>")
+                         % WRAPPER_TAG)
             return root, preamble, extras, fixes
 
     # 3. Attributs dupliqués dans une même balise.
     fixed_text, removed = _dedupe_attributes(text)
     if removed:
-        fixes.append("%d attribut(s) dupliqué(s) supprimé(s)" % removed)
+        fixes.append(N_("%d attribut(s) dupliqué(s) supprimé(s)") % removed)
         try:
             return ET.fromstring(fixed_text), {}, [], fixes
         except ET.ParseError:
@@ -304,21 +307,23 @@ def _parse_document(text: str) -> tuple[ET.Element, dict[str, str], list[ET.Elem
         if children is not None:
             root, preamble, extras = _split_roots(children)
             if root is not None:
-                fixes.append("document multi-racines enveloppé dans <%s>" % WRAPPER_TAG)
+                fixes.append(N_("document multi-racines enveloppé dans <%s>")
+                             % WRAPPER_TAG)
                 return root, preamble, extras, fixes
         text = fixed_text
 
     # 4. Dernier recours : analyseur tolérant (balises mal fermées, texte parasite).
     elements, tolerant_fixes = _tolerant_parse(text)
     if not elements:
-        raise DelugeXMLError("XML illisible : %s" % first)
-    fixes.append("structure XML reconstruite par l'analyseur tolérant")
+        raise DelugeXMLError(tr("XML illisible : %s") % first)
+    fixes.append(N_("structure XML reconstruite par l'analyseur tolérant"))
     fixes.extend(tolerant_fixes)
     if len(elements) == 1:
         return elements[0], {}, [], fixes
     root, preamble, extras = _split_roots(elements)
     if root is None:  # pragma: no cover - impossible, elements n'est pas vide
-        raise DelugeXMLError("XML illisible : aucune racine exploitable")
+        raise DelugeXMLError(tr("XML illisible : aucune racine "
+                                "exploitable"))
     return root, preamble, extras, fixes
 
 
@@ -456,13 +461,17 @@ def _tolerant_parse(text: str) -> tuple[list[ET.Element], list[str]]:
 
     _flush_text()
     if stack:
-        fixes.append("%d balise(s) non fermée(s) refermée(s)" % len(stack))
+        fixes.append(N_("%d balise(s) non fermée(s) refermée(s)")
+                     % len(stack))
     if mismatched:
-        fixes.append("%d balise(s) fermée(s) dans le désordre" % mismatched)
+        fixes.append(N_("%d balise(s) fermée(s) dans le désordre")
+                     % mismatched)
     if orphan:
-        fixes.append("%d balise(s) fermante(s) orpheline(s) ignorée(s)" % orphan)
+        fixes.append(N_("%d balise(s) fermante(s) orpheline(s) ignorée(s)")
+                     % orphan)
     if dup_total:
-        fixes.append("%d attribut(s) dupliqué(s) supprimé(s)" % dup_total)
+        fixes.append(N_("%d attribut(s) dupliqué(s) supprimé(s)")
+                     % dup_total)
     return roots, fixes
 
 
@@ -497,12 +506,12 @@ def loads(data: bytes, path: Path | None = None) -> DelugeDoc:
     """Analyse des octets (ou une chaîne) de fichier Deluge et retourne un :class:`DelugeDoc`."""
     text, fixes = repair_text(data)
     if not text.strip():
-        raise DelugeXMLError("fichier vide")
+        raise DelugeXMLError(tr("fichier vide"))
     root, preamble, extras, more = _parse_document(text)
     fixes = fixes + more
     if extras:
         fixes.append(
-            "%d élément(s) de premier niveau ignoré(s) : %s"
+            N_("%d élément(s) de premier niveau ignoré(s) : %s")
             % (len(extras), ", ".join(sorted({e.tag for e in extras})))
         )
     dialect = detect_dialect(root)
@@ -523,11 +532,12 @@ def load(path: Path) -> DelugeDoc:
     try:
         raw = p.read_bytes()
     except OSError as exc:
-        raise DelugeXMLError("lecture impossible de %s : %s" % (p, exc)) from exc
+        raise DelugeXMLError(tr("lecture impossible de %s : %s")
+                             % (p, exc)) from exc
     try:
         doc = loads(raw, p)
     except DelugeXMLError as exc:
-        raise DelugeXMLError("%s : %s" % (p.name, exc)) from exc
+        raise DelugeXMLError(tr("%s : %s") % (p.name, exc)) from exc
     if doc.repaired:
         log.debug("XML réparé %s : %s", p.name, "; ".join(doc.repaired))
     return doc
@@ -604,9 +614,10 @@ def _write_element(out: list[str], el: ET.Element, depth: int, dialect: str) -> 
 def dump(doc: DelugeDoc) -> str:
     """Sérialise un document au format Deluge (§4.3.1 de la spécification)."""
     if doc is None or doc.root is None:
-        raise DelugeXMLError("document vide : rien à sérialiser")
+        raise DelugeXMLError(tr("document vide : rien à sérialiser"))
     dialect = doc.dialect if doc.dialect in ("attr", "elem") else "attr"
-    out: list[str] = ['<?xml version="1.0" encoding="UTF-8"?>\n']
+    out: list[str] = [untranslated('<?xml version="1.0" '
+                                   'encoding="UTF-8"?>\n')]
     for name, value in (doc.preamble or {}).items():
         out.append("<%s>%s</%s>\n" % (name, _escape_text(value), name))
     _write_element(out, doc.root, 0, dialect)
@@ -637,20 +648,23 @@ def save(doc: DelugeDoc, path: Path | None = None, backup: bool = True) -> Path:
     """
     target = Path(path) if path is not None else doc.path
     if target is None:
-        raise DelugeXMLError("aucun chemin de destination pour l'enregistrement")
+        raise DelugeXMLError(tr("aucun chemin de destination pour "
+                                "l'enregistrement"))
     target = Path(target)
     data = dump(doc).encode("utf-8")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise DelugeXMLError("dossier inaccessible %s : %s" % (target.parent, exc)) from exc
+        raise DelugeXMLError(tr("dossier inaccessible %s : %s")
+                             % (target.parent, exc)) from exc
 
     if backup and target.exists() and _make_backup(target) is None:
         # Sans copie de sécurité, on n'écrase pas l'original : c'est la règle
         # de non-destruction (SPEC §0), et un disque plein ou une carte
         # verrouillée ne doit pas la lever en silence.
         raise DelugeXMLError(
-            "sauvegarde .bak impossible : %s laissé intact" % target.name)
+            tr("sauvegarde .bak impossible : %s laissé intact")
+            % target.name)
 
     tmp_path: Path | None = None
     try:
@@ -665,7 +679,8 @@ def save(doc: DelugeDoc, path: Path | None = None, backup: bool = True) -> Path:
         os.replace(str(tmp_path), str(target))
         tmp_path = None
     except OSError as exc:
-        raise DelugeXMLError("écriture impossible de %s : %s" % (target, exc)) from exc
+        raise DelugeXMLError(tr("écriture impossible de %s : %s")
+                             % (target, exc)) from exc
     finally:
         if tmp_path is not None and tmp_path.exists():
             try:

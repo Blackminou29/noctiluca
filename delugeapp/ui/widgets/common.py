@@ -53,6 +53,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core import units as _units
+from ...i18n import tr
 from .. import art, icons
 from ..theme import (
     BORDER_SOFT,
@@ -427,7 +428,7 @@ class TagChip(QWidget):
             close = QToolButton(self)
             close.setIcon(icons.icon("minus", color, 12))
             close.setCursor(Qt.CursorShape.PointingHandCursor)
-            close.setToolTip(f"Retirer l'étiquette « {name} »")
+            close.setToolTip(tr("Retirer l'étiquette « %s »") % name)
             close.clicked.connect(lambda: self.removed.emit(self._name))
             close.setStyleSheet(
                 f"QToolButton {{ background-color: {with_alpha(color, 0.16)};"
@@ -491,10 +492,11 @@ class SearchBar(QLineEdit):
 
     searchChanged = pyqtSignal(str)
 
-    def __init__(self, placeholder: str = "Rechercher…",
+    def __init__(self, placeholder: str | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setPlaceholderText(placeholder)
+        self.setPlaceholderText(tr("Rechercher…") if placeholder is None
+                                else placeholder)
         self.setClearButtonEnabled(True)
         # Des fichiers glissés sur la fenêtre partent vers le Deluge : le
         # champ ne doit pas les avaler en y écrivant leur adresse.
@@ -531,7 +533,7 @@ class SearchBar(QLineEdit):
         try:
             for bouton in self.findChildren(QToolButton):
                 if not bouton.toolTip():
-                    bouton.setToolTip("Effacer la recherche")
+                    bouton.setToolTip(tr("Effacer la recherche"))
         except Exception as exc:                   # noqa: BLE001
             log.debug("croix d'effacement sans infobulle : %s", exc)
 
@@ -1068,11 +1070,13 @@ class EmptyState(QWidget):
     #: Second geste, facultatif : souvent le plus rapide des deux.
     action2Clicked = pyqtSignal()
 
-    def __init__(self, message: str = "Rien à afficher.",
+    def __init__(self, message: str | None = None,
                  icon_name: str = "info", action: str = "",
                  parent: QWidget | None = None, detail: str = "",
                  color: str = GOLD, action2: str = "") -> None:
         super().__init__(parent)
+        if message is None:
+            message = tr("Rien à afficher.")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(PAD * 2, PAD * 3, PAD * 2, PAD * 3)
         layout.setSpacing(12)
@@ -1517,9 +1521,10 @@ class PlanDialog(QDialog):
     c'est la dernière barrière avant que des fichiers bougent.
     """
 
-    def __init__(self, plan, parent=None, title: str = "Plan d'opérations") -> None:
+    def __init__(self, plan, parent=None, title: str | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(title)
+        self.setWindowTitle(tr("Plan d'opérations") if title is None
+                            else title)
         self.resize(820, 540)
 
         layout = QVBoxLayout(self)
@@ -1534,19 +1539,19 @@ class PlanDialog(QDialog):
         counts = plan.counts()
         if counts.get("delete"):
             self._warn(layout,
-                       f"⚠ {counts['delete']} suppression(s) : cette "
-                       f"opération est irréversible.")
+                       tr("⚠ %d suppression(s) : cette opération est "
+                          "irréversible.") % counts["delete"])
         # Un plan de correction audio qui change la longueur des fichiers
         # déplace aussi les bornes des presets : il faut le dire.
         if getattr(plan, "changes_length", False):
             self._warn(layout,
-                       "⚠ Des longueurs de fichiers vont changer. Les bornes "
-                       "des presets et des kits qui les citent sont remises à "
-                       "l'échelle automatiquement ; les fichiers utilisés par "
-                       "un morceau sont écartés.")
+                       tr("⚠ Des longueurs de fichiers vont changer. Les "
+                          "bornes des presets et des kits qui les citent sont "
+                          "remises à l'échelle automatiquement ; les fichiers "
+                          "utilisés par un morceau sont écartés."))
         skipped = getattr(plan, "skipped", None)
         if skipped:
-            note = QLabel("%d fichier(s) écarté(s) — voir le détail."
+            note = QLabel(tr("%d fichier(s) écarté(s) — voir le détail.")
                           % len(skipped))
             note.setStyleSheet(f"color: {GOLD};")
             note.setWordWrap(True)
@@ -1562,10 +1567,10 @@ class PlanDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel)
         ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok.setText("Appliquer")
+        ok.setText(tr("Appliquer"))
         ok.setObjectName("Primary")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
-            "Annuler")
+            tr("Annuler"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

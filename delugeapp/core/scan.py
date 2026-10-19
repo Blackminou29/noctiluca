@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from ..i18n import N_, decimal, tr
 from . import wav
 from .db import Library
 from .model import Kit, Song, SynthPreset
@@ -66,20 +67,20 @@ class ScanResult:
 
     def summary(self) -> str:
         """Phrase de bilan, affichable dans la barre d'état."""
-        parts = [
-            f"{self.samples} échantillons",
-            f"{self.presets} presets",
-            f"{self.kits} kits",
-            f"{self.songs} morceaux",
-        ]
-        text = "Analyse terminée : " + ", ".join(parts)
-        if self.skipped:
-            text += f" ({self.skipped} inchangés)"
-        text += f" en {self.seconds:.1f} s"
-        if self.errors:
-            text += f" — {len(self.errors)} erreur(s)"
+        parts = ", ".join([
+            tr("%d échantillons") % self.samples,
+            tr("%d presets") % self.presets,
+            tr("%d kits") % self.kits,
+            tr("%d morceaux") % self.songs,
+        ])
         if self.stopped:
-            text = "Analyse interrompue : " + ", ".join(parts)
+            return tr("Analyse interrompue : %s") % parts
+        text = tr("Analyse terminée : %s") % parts
+        if self.skipped:
+            text += tr(" (%d inchangés)") % self.skipped
+        text += tr(" en %s s") % decimal(self.seconds)
+        if self.errors:
+            text += tr(" — %d erreur(s)") % len(self.errors)
         return text
 
 
@@ -137,11 +138,11 @@ def confirm_duplicates(sd: SDCard, lib: Library,
     files = [row["rel"] for group in candidates for row in group]
     total = len(files)
     if not total:
-        _emit(progress, "dupes", 0, 0, "Aucun doublon soupçonné")
+        _emit(progress, "dupes", 0, 0, tr("Aucun doublon soupçonné"))
         return []
 
     _emit(progress, "dupes", 0, total,
-          f"Vérification de {total} fichiers soupçonnés en double…")
+          tr("Vérification de %d fichiers soupçonnés en double…") % total)
     digests: dict[str, str] = {}
     lib.begin()
     for i, rel in enumerate(files, 1):
@@ -156,9 +157,10 @@ def confirm_duplicates(sd: SDCard, lib: Library,
             digests[rel] = digest
             lib.set_full_hash(rel, digest)
         if i % 10 == 0:
-            _emit(progress, "dupes", i, total, f"Vérification — {Path(rel).name}")
+            _emit(progress, "dupes", i, total,
+                  tr("Vérification — %s") % Path(rel).name)
     lib.commit()
-    _emit(progress, "dupes", total, total, "Doublons vérifiés")
+    _emit(progress, "dupes", total, total, tr("Doublons vérifiés"))
 
     confirmed: dict[str, list[str]] = {}
     for rel, digest in digests.items():
@@ -213,14 +215,15 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
         try:
             st = path.stat()
         except OSError as exc:
-            result.errors.append(f"{rel} : {exc}")
+            result.errors.append(tr("%s : %s") % (rel, exc))
             continue
 
         if not full and _unchanged(known, rel, st):
             result.skipped += 1
             result.samples += 1
             if i % 200 == 0:
-                _emit(progress, "samples", i, total, f"Échantillons — {path.name}")
+                _emit(progress, "samples", i, total,
+                      tr("Échantillons — %s") % path.name)
             continue
 
         row: dict = {
@@ -246,7 +249,7 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
             })
         else:
             row.update({"ok": 0, "error": info.error})
-            result.errors.append(f"{rel} : {info.error}")
+            result.errors.append(tr("%s : %s") % (rel, info.error))
 
         # Le fichier a changé (ou n'était pas indexé) : ses empreintes
         # anciennes ne valent plus rien. Gardée, l'empreinte complète le
@@ -264,9 +267,10 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
         if i % 50 == 0:
             lib.commit()
             lib.begin()
-            _emit(progress, "samples", i, total, f"Échantillons — {path.name}")
+            _emit(progress, "samples", i, total,
+                  tr("Échantillons — %s") % path.name)
     lib.commit()
-    _emit(progress, "samples", total, total, "Échantillons analysés")
+    _emit(progress, "samples", total, total, tr("Échantillons analysés"))
     return True
 
 
@@ -281,7 +285,7 @@ def _analyze_sample(path: Path, result: ScanResult, rel: str) -> dict:
     try:
         data, sr = wav.read(path, max_frames=sr_limit(), mono=True)
     except Exception as exc:  # noqa: BLE001 - un échantillon abîmé ne bloque rien
-        result.errors.append(f"{rel} : analyse impossible ({exc})")
+        result.errors.append(tr("%s : analyse impossible (%s)") % (rel, exc))
         return out
     if data.size == 0:
         return out
@@ -394,7 +398,7 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
         try:
             st = path.stat()
         except OSError as exc:
-            result.errors.append(f"{rel} : {exc}")
+            result.errors.append(tr("%s : %s") % (rel, exc))
             continue
 
         if not full and _unchanged(known, rel, st):
@@ -437,7 +441,9 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
                     "category": "Kit",
                     "filter": kit.lpf_mode,
                     "fx": kit.mod_fx_type,
-                    "summary": f"{len(kit.rows)} rangées",
+                    # Gardé en français dans l'index, traduit à
+                    # l'affichage par ``tr_stored``.
+                    "summary": N_("%d rangées") % len(kit.rows),
                 })
                 refs = kit.sample_paths()
                 if kit.doc is not None:
@@ -446,7 +452,7 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
             samples = [(ref, sd.resolve_sample(ref) is None) for ref in refs]
         except Exception as exc:  # noqa: BLE001 - 14 % des XML sont abîmés
             row.update({"ok": 0, "error": f"{type(exc).__name__}: {exc}"})
-            result.errors.append(f"{rel} : {exc}")
+            result.errors.append(tr("%s : %s") % (rel, exc))
 
         lib.upsert_preset(row)
         lib.replace_links(kind, rel, samples)
@@ -460,7 +466,7 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
             lib.begin()
             _emit(progress, kind, i, total, f"{label} — {path.name}")
     lib.commit()
-    _emit(progress, kind, total, total, f"{label} analysés")
+    _emit(progress, kind, total, total, tr("%s analysés") % label)
     return True
 
 
@@ -560,7 +566,7 @@ def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
         try:
             st = path.stat()
         except OSError as exc:
-            result.errors.append(f"{rel} : {exc}")
+            result.errors.append(tr("%s : %s") % (rel, exc))
             continue
 
         if not full and _unchanged(known, rel, st):
@@ -592,7 +598,7 @@ def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
                 row["repaired"] = " ; ".join(song.doc.repaired)
         except Exception as exc:  # noqa: BLE001
             row.update({"ok": 0, "error": f"{type(exc).__name__}: {exc}"})
-            result.errors.append(f"{rel} : {exc}")
+            result.errors.append(tr("%s : %s") % (rel, exc))
 
         lib.upsert_song(row)
         lib.replace_links("song", rel, samples)
@@ -601,11 +607,12 @@ def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
         if i % 20 == 0:
             lib.commit()
             lib.begin()
-            _emit(progress, "songs", i, total, f"Morceaux — {path.name}")
+            _emit(progress, "songs", i, total,
+                  tr("Morceaux — %s") % path.name)
     lib.commit()
     if mark_reader:
         lib.set_meta("song_reader", SONG_READER)
-    _emit(progress, "songs", total, total, "Morceaux analysés")
+    _emit(progress, "songs", total, total, tr("Morceaux analysés"))
     return True
 
 
@@ -645,8 +652,8 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
 
     if not sd.is_valid():
         result.errors.append(
-            "La carte ne contient pas l'arborescence attendue "
-            f"({', '.join(sd.missing_dirs())} absent(s))."
+            tr("La carte ne contient pas l'arborescence attendue "
+               "(%s absent(s)).") % ", ".join(sd.missing_dirs())
         )
         result.seconds = time.monotonic() - started
         return result
@@ -655,7 +662,7 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
         full = True
 
     try:
-        _emit(progress, "listing", 0, 0, "Inventaire de la carte…")
+        _emit(progress, "listing", 0, 0, tr("Inventaire de la carte…"))
         sd.invalidate_cache()
         samples = sd.samples()
         synths = sd.synths()
@@ -697,7 +704,7 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
                              gone, kind)
             lib.refresh_missing_links()
 
-        _emit(progress, "usage", 0, 0, "Calcul des dépendances…")
+        _emit(progress, "usage", 0, 0, tr("Calcul des dépendances…"))
         lib.recompute_usage()
 
         # Les doublons ne sont affirmés qu'après comparaison complète des
@@ -709,7 +716,8 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
                                    should_stop=should_stop)
             except Exception as exc:  # noqa: BLE001
                 log.exception("vérification des doublons en échec")
-                result.errors.append(f"Vérification des doublons : {exc}")
+                result.errors.append(tr("Vérification des doublons : %s")
+                                     % exc)
         if not result.stopped:
             lib.set_meta("last_scan", datetime.now().isoformat(timespec="seconds"))
             lib.set_meta("last_scan_root", str(sd.root))
@@ -720,7 +728,8 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
                 lib.clear_rescan_flag()
     except Exception as exc:  # noqa: BLE001 - rempart ultime, SPEC §4.9
         log.exception("échec inattendu de l'analyse")
-        result.errors.append(f"Échec inattendu : {type(exc).__name__}: {exc}")
+        result.errors.append(tr("Échec inattendu : %s: %s")
+                             % (type(exc).__name__, exc))
 
     result.seconds = time.monotonic() - started
     log.info(result.summary())

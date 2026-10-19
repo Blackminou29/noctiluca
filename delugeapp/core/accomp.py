@@ -25,6 +25,8 @@ import logging
 import random
 from dataclasses import dataclass
 
+from ..i18n import N_
+
 log = logging.getLogger(__name__)
 
 #: Pas de double-croche par mesure 4/4.
@@ -47,26 +49,30 @@ class NoteEvent:
 
 #: Rythmes d'accords : ``(début, durée)`` en pas, pour une mesure.
 CHORD_STYLES: dict[str, tuple[tuple[float, float], ...]] = {
-    "tenu": ((0.0, 15.5),),
-    "blanches": ((0.0, 7.5), (8.0, 7.5)),
-    "contretemps": ((2.0, 1.5), (6.0, 1.5), (10.0, 1.5), (14.0, 1.5)),
+    N_("tenu"): ((0.0, 15.5),),
+    N_("blanches"): ((0.0, 7.5), (8.0, 7.5)),
+    N_("contretemps"): ((2.0, 1.5), (6.0, 1.5), (10.0, 1.5), (14.0, 1.5)),
     # Les stabs de house : syncopés, courts, le dernier un peu tenu.
-    "stabs": ((0.0, 1.0), (3.0, 1.0), (6.0, 1.0), (10.0, 1.0), (12.0, 2.0)),
+    N_("stabs"): ((0.0, 1.0), (3.0, 1.0), (6.0, 1.0), (10.0, 1.0),
+                  (12.0, 2.0)),
     # Le « charleston » du piano de jazz : sur le 1 et le 2&.
-    "charleston": ((0.0, 2.0), (6.0, 2.0)),
+    N_("charleston"): ((0.0, 2.0), (6.0, 2.0)),
 }
 
 #: Styles de basse disponibles, avec leur libellé.
 BASS_STYLES: dict[str, str] = {
-    "fondamentale": "la fondamentale, tenue toute la mesure",
-    "pulsée": "la fondamentale en croches",
-    "contretemps": "sur les contretemps, entre les grosses caisses",
-    "roulante": "trois doubles-croches entre chaque temps (psytrance)",
-    "octaves": "fondamentale et octave en alternance (disco, synthwave)",
-    "syncopée": "fondamentale, quinte et octave syncopées (funk)",
-    "marche": "une note par temps, qui marche vers l'accord suivant",
-    "acide": "doubles-croches de 303 : silences, accents, octaves et "
-             "glissés (acid)",
+    N_("fondamentale"): N_("la fondamentale, tenue toute la mesure"),
+    N_("pulsée"): N_("la fondamentale en croches"),
+    N_("contretemps"): N_("sur les contretemps, entre les grosses caisses"),
+    N_("roulante"): N_("trois doubles-croches entre chaque temps "
+                       "(psytrance)"),
+    N_("octaves"): N_("fondamentale et octave en alternance "
+                      "(disco, synthwave)"),
+    N_("syncopée"): N_("fondamentale, quinte et octave syncopées (funk)"),
+    N_("marche"): N_("une note par temps, qui marche vers l'accord "
+                     "suivant"),
+    N_("acide"): N_("doubles-croches de 303 : silences, accents, octaves "
+                    "et glissés (acid)"),
 }
 
 #: Les deux mesures d'une ligne de 303, en alternance : ``(pas, note,
@@ -314,11 +320,11 @@ def arp_part(progression: list[dict], order: str = "montant",
 
 #: Allures de mélodie, avec leur libellé.
 MELODY_STYLES: dict[str, str] = {
-    "posée": "peu de notes, longues (ambient, downtempo, nappes)",
-    "chantante": "noires et croches, une phrase qui respire "
-                 "(trance, synthwave, lo-fi)",
-    "syncopée": "un riff en croches et doubles-croches décalées "
-                "(house, funk, techno)",
+    "posée": N_("peu de notes, longues (ambient, downtempo, nappes)"),
+    "chantante": N_("noires et croches, une phrase qui respire "
+                    "(trance, synthwave, lo-fi)"),
+    "syncopée": N_("un riff en croches et doubles-croches décalées "
+                   "(house, funk, techno)"),
 }
 
 #: Rythmes d'une mesure pour chaque allure : ``(début, durée)`` en pas.

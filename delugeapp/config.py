@@ -20,6 +20,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .i18n import N_, normalize, tr
+
 if TYPE_CHECKING:  # pragma: no cover - uniquement pour les annotations
     from delugeapp.core.audio_out import Player
     from delugeapp.core.db import Library
@@ -308,7 +310,7 @@ class Settings:
             g("always_backup_before_write"), s.always_backup_before_write)
         s.backup_dir = _as_str(g("backup_dir"), s.backup_dir)
         s.theme_accent = _as_color(g("theme_accent"), s.theme_accent)
-        s.language = (_as_str(g("language"), s.language).strip().lower() or "fr")
+        s.language = normalize(_as_str(g("language"), s.language))
         s.scan_hash = _as_bool(g("scan_hash"), s.scan_hash)
         s.scan_analyze = _as_bool(g("scan_analyze"), s.scan_analyze)
         s.index_on_start = _as_bool(g("index_on_start"), s.index_on_start)
@@ -398,7 +400,7 @@ class Settings:
 
 
 #: Ce qu'on dit quand une action voudrait écrire dans la sauvegarde.
-BACKUP_READ_ONLY = (
+BACKUP_READ_ONLY = N_(
     "Ce dossier est la sauvegarde de la carte : l'application le lit, elle "
     "n'y écrit jamais. Elle travaille sur la carte du Deluge, par sa copie "
     "de travail — Réglages ▸ Carte du Deluge.")
@@ -466,8 +468,8 @@ def save_settings(s: Settings) -> None:
 # ---------------------------------------------------------------------------
 # Contexte applicatif
 # ---------------------------------------------------------------------------
-_NO_CARD_TITLE = "Carte SD introuvable"
-_NO_CARD_TEXT = (
+_NO_CARD_TITLE = N_("Carte SD introuvable")
+_NO_CARD_TEXT = N_(
     "Aucune carte SD Deluge valide n'est sélectionnée.\n\n"
     "Ouvrez « Réglages » pour indiquer le dossier de la carte, ou lancez la "
     "détection automatique des lecteurs amovibles."
@@ -542,10 +544,10 @@ class AppContext:
         if self.has_card:
             if not (write and getattr(self.sd, "read_only", False)):
                 return self.sd
-            raison = (getattr(self.sd, "read_only_reason", "")
-                      or "Cet emplacement est en lecture seule.")
+            raison = tr(getattr(self.sd, "read_only_reason", "")
+                        or N_("Cet emplacement est en lecture seule."))
             log.info("Écriture refusée : %s", raison)
-            self._inform(parent, "Rien n'est écrit ici", raison)
+            self._inform(parent, tr("Rien n'est écrit ici"), raison)
             return None
         log.warning("Action refusée : carte SD absente ou invalide (%s)",
                     self.settings.sd_path or "aucun chemin")
@@ -558,7 +560,7 @@ class AppContext:
             # Sans QApplication, construire un QMessageBox ferait avorter le processus.
             return None
         try:
-            QMessageBox.warning(parent, _NO_CARD_TITLE, _NO_CARD_TEXT)
+            QMessageBox.warning(parent, tr(_NO_CARD_TITLE), tr(_NO_CARD_TEXT))
         except Exception:  # pragma: no cover - pas de QApplication
             log.exception("Affichage de l'avertissement « carte SD » impossible")
         return None

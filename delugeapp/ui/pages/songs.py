@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ...i18n import N_, decimal, language, tr
 from ..theme import PAD
 from ..widgets.common import (
     Card,
@@ -84,10 +85,10 @@ class _PackPlan:
 class SongsPage(Page):
     """Morceaux de la carte."""
 
-    TITLE = "Morceaux"
-    EMPTY_DETAIL = ("Indiquez l'emplacement de votre carte dans les réglages. "
-                    "Chaque morceau montrera alors ses pistes, son tempo "
-                    "et tout ce dont il dépend.")
+    TITLE = N_("Morceaux")
+    EMPTY_DETAIL = N_("Indiquez l'emplacement de votre carte dans les "
+                      "réglages. Chaque morceau montrera alors ses pistes, "
+                      "son tempo et tout ce dont il dépend.")
     ICON = "song"
 
     def __init__(self, ctx, parent=None) -> None:
@@ -105,38 +106,39 @@ class SongsPage(Page):
         outer.setSpacing(8)
 
         header, actions = self.header(
-            "Morceaux", "Contenu, dépendances et ce qui manque")
+            tr("Morceaux"), tr("Contenu, dépendances et ce qui manque"))
         outer.addWidget(header)
 
-        export = tool_button("Clip en MIDI", "export",
-                             "Exporter le clip sélectionné en fichier MIDI")
+        export = tool_button(tr("Clip en MIDI"), "export",
+                             tr("Exporter le clip sélectionné en fichier "
+                                "MIDI"))
         export.clicked.connect(self.guard(self._export_clip))
         actions.addWidget(export)
 
         self._song_midi = tool_button(
-            "Morceau en MIDI", "midi",
-            "Exporter tout le morceau : une piste MIDI par clip",
+            tr("Morceau en MIDI"), "midi",
+            tr("Exporter tout le morceau : une piste MIDI par clip"),
             primary=True)
         self._song_midi.clicked.connect(self.guard(self._export_song_midi))
         actions.addWidget(self._song_midi)
 
         self._pack = tool_button(
-            "Rassembler…", "save",
-            "Copier le morceau, ses presets et ses échantillons dans un "
-            "dossier")
+            tr("Rassembler…"), "save",
+            tr("Copier le morceau, ses presets et ses échantillons dans un "
+               "dossier"))
         self._pack.clicked.connect(self.guard(self._export_pack))
         actions.addWidget(self._pack)
 
-        report = tool_button("Rapport HTML", "info",
-                             "Enregistrer une fiche du morceau")
+        report = tool_button(tr("Rapport HTML"), "info",
+                             tr("Enregistrer une fiche du morceau"))
         report.clicked.connect(self.guard(self._export_report))
         actions.addWidget(report)
 
-        reveal = tool_button("Dans l'explorateur", "folder")
+        reveal = tool_button(tr("Dans l'explorateur"), "folder")
         reveal.clicked.connect(self.guard(self._reveal))
         actions.addWidget(reveal)
 
-        self._search = SearchBar("Rechercher un morceau…")
+        self._search = SearchBar(tr("Rechercher un morceau…"))
         self._search.searchChanged.connect(self.guard(lambda _t: self._reload()))
         outer.addWidget(self._search)
 
@@ -172,7 +174,7 @@ class SongsPage(Page):
         column.setSpacing(8)
 
         head = Card("")
-        self._name = ElidedLabel("Aucun morceau sélectionné")
+        self._name = ElidedLabel(tr("Aucun morceau sélectionné"))
         self._name.setProperty("role", "title")
         head.body().addWidget(self._name)
 
@@ -188,16 +190,17 @@ class SongsPage(Page):
         column.addWidget(head)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_clips_tab(), "Clips")
-        tabs.addTab(self._build_instruments_tab(), "Instruments")
-        tabs.addTab(self._build_samples_tab(), "Échantillons")
+        tabs.addTab(self._build_clips_tab(), tr("Clips"))
+        tabs.addTab(self._build_instruments_tab(), tr("Instruments"))
+        tabs.addTab(self._build_samples_tab(), tr("Échantillons"))
         column.addWidget(tabs, 1)
         return host
 
     def _build_clips_tab(self) -> QWidget:
         self._clips = QTableWidget(0, 5)
         self._clips.setHorizontalHeaderLabels(
-            ["Clip", "Preset", "Mesures", "Notes", "Section"])
+            [tr("Clip"), tr("Preset"), tr("Mesures"), tr("Notes"),
+             tr("Section")])
         self._clips.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
         self._clips.verticalHeader().setVisible(False)
@@ -210,7 +213,7 @@ class SongsPage(Page):
     def _build_instruments_tab(self) -> QWidget:
         self._instruments = QTableWidget(0, 4)
         self._instruments.setHorizontalHeaderLabels(
-            ["Nature", "Nom", "Dossier", "Présent"])
+            [tr("Nature"), tr("Nom"), tr("Dossier"), tr("Présent")])
         self._instruments.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.Stretch)
         self._instruments.verticalHeader().setVisible(False)
@@ -220,7 +223,8 @@ class SongsPage(Page):
 
     def _build_samples_tab(self) -> QWidget:
         self._samples = QTableWidget(0, 2)
-        self._samples.setHorizontalHeaderLabels(["Fichier", "Présent"])
+        self._samples.setHorizontalHeaderLabels([tr("Fichier"),
+                                                 tr("Présent")])
         self._samples.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
         self._samples.verticalHeader().setVisible(False)
@@ -242,12 +246,12 @@ class SongsPage(Page):
         # panneau — une barre de défilement horizontale pour cacher ce qui
         # était déjà affiché à côté.
         return [
-            ("Nom", get("name"), 180, left),
-            ("Tempo", get("tempo"), 80, right,
+            (tr("Nom"), get("name"), 180, left),
+            (tr("Tempo"), get("tempo"), 80, right,
              lambda v: f"{v:.0f} BPM" if v else "—"),
-            ("Clips", get("clips"), 60, right),
-            ("Notes", get("notes"), 65, right),
-            ("Mesures", get("bars"), 75, right,
+            (tr("Clips"), get("clips"), 60, right),
+            (tr("Notes"), get("notes"), 65, right),
+            (tr("Mesures"), get("bars"), 75, right,
              lambda v: f"{v:.0f}" if v else "—"),
         ]
 
@@ -271,7 +275,7 @@ class SongsPage(Page):
                     self.guard(lambda *_a: self._on_selected()))
         else:
             self._model.set_rows(rows)
-        self._count.setText(f"{len(rows)} morceau(x)")
+        self._count.setText(tr("%d morceau(x)") % len(rows))
 
     def _on_selected(self) -> None:
         if self._model is None or self._proxy is None:
@@ -299,7 +303,7 @@ class SongsPage(Page):
         except Exception as exc:  # noqa: BLE001
             log.debug("morceau illisible %s : %s", rel, exc)
             self._song = None
-            self._stats.set_rows([("Erreur", str(exc))])
+            self._stats.set_rows([(tr("Erreur"), str(exc))])
             self._preview.clear()
             for table in (self._clips, self._instruments, self._samples):
                 table.setRowCount(0)
@@ -310,17 +314,18 @@ class SongsPage(Page):
 
         stats = song.stats()
         self._stats.set_rows([
-            ("Tempo", f"{song.tempo_bpm:.1f} BPM"),
-            ("Gamme", song.scale_name()),
-            ("Clips de session", stats["clips"]),
-            ("Clips d'arrangement", stats["arrangement_clips"]),
-            ("Notes", stats["notes"]),
-            ("Plus long clip", f"{stats['bars']:.0f} mesures"),
-            ("Sections", stats["sections"]),
-            ("Instruments", stats["instruments"]),
-            ("Densité", f"{stats['density']:.1f} notes/mesure"),
-            ("Swing", f"{song.swing_amount}"),
-            ("Firmware", song.firmware or "—"),
+            (tr("Tempo"), "%s BPM" % decimal(song.tempo_bpm, 1)),
+            (tr("Gamme"), song.scale_name()),
+            (tr("Clips de session"), stats["clips"]),
+            (tr("Clips d'arrangement"), stats["arrangement_clips"]),
+            (tr("Notes"), stats["notes"]),
+            (tr("Plus long clip"), tr("%.0f mesures") % stats["bars"]),
+            (tr("Sections"), stats["sections"]),
+            (tr("Instruments"), stats["instruments"]),
+            (tr("Densité"),
+             tr("%s notes/mesure") % decimal(stats["density"], 1)),
+            (tr("Swing"), f"{song.swing_amount}"),
+            (tr("Firmware"), song.firmware or "—"),
         ])
 
         self._fill_clips(song)
@@ -332,8 +337,9 @@ class SongsPage(Page):
         for clip in song.clips + song.arrangement_clips:
             index = self._clips.rowCount()
             self._clips.insertRow(index)
-            self._clips.setItem(index, 0,
-                                QTableWidgetItem(clip.name or f"clip {index + 1}"))
+            self._clips.setItem(
+                index, 0,
+                QTableWidgetItem(clip.name or tr("clip %d") % (index + 1)))
             preset = clip.preset_name or "—"
             if clip.preset_folder:
                 preset = f"{preset}  ({clip.preset_folder})"
@@ -350,8 +356,8 @@ class SongsPage(Page):
     def _fill_instruments(self, song) -> None:
         """Instruments du morceau, avec la présence du preset sur la carte."""
         self._instruments.setRowCount(0)
-        labels = {"sound": "synthé", "kit": "kit", "midi": "MIDI",
-                  "cv": "CV", "audio": "audio"}
+        labels = {"sound": tr("synthé"), "kit": tr("kit"), "midi": "MIDI",
+                  "cv": "CV", "audio": tr("audio")}
         for kind, name, folder in song.preset_refs():
             index = self._instruments.rowCount()
             self._instruments.insertRow(index)
@@ -366,9 +372,9 @@ class SongsPage(Page):
             if present is None:
                 label, colour = "—", Qt.GlobalColor.gray
             elif present:
-                label, colour = "oui", Qt.GlobalColor.green
+                label, colour = tr("oui"), Qt.GlobalColor.green
             else:
-                label, colour = "ABSENT", Qt.GlobalColor.red
+                label, colour = tr("ABSENT"), Qt.GlobalColor.red
             state = QTableWidgetItem(label)
             state.setForeground(colour)
             if trouve:
@@ -415,7 +421,7 @@ class SongsPage(Page):
             self._samples.setItem(index, 0, item)
             present = (self.sd is not None
                        and self.sd.resolve_sample(ref) is not None)
-            state = QTableWidgetItem("oui" if present else "ABSENT")
+            state = QTableWidgetItem(tr("oui") if present else tr("ABSENT"))
             state.setForeground(Qt.GlobalColor.green if present
                                 else Qt.GlobalColor.red)
             self._samples.setItem(index, 1, state)
@@ -425,16 +431,16 @@ class SongsPage(Page):
     def _export_clip(self) -> None:
         """Exporte le clip sélectionné en MIDI."""
         if self._song is None:
-            self.say("Aucun morceau sélectionné.")
+            self.say(tr("Aucun morceau sélectionné."))
             return
         clips = self._song.clips + self._song.arrangement_clips
         index = self._clips.currentRow()
         if not 0 <= index < len(clips):
-            self.say("Choisissez un clip dans l'onglet « Clips ».")
+            self.say(tr("Choisissez un clip dans l'onglet « Clips »."))
             return
         clip = clips[index]
         if clip.note_count == 0:
-            self.say("Ce clip ne contient aucune note.")
+            self.say(tr("Ce clip ne contient aucune note."))
             return
 
         from PyQt6.QtWidgets import QFileDialog
@@ -443,23 +449,23 @@ class SongsPage(Page):
 
         default = f"{Path(self._current).stem} - {clip.name or index + 1}.mid"
         chosen, _f = QFileDialog.getSaveFileName(
-            self, "Exporter le clip en MIDI", default,
-            "Fichier MIDI (*.mid)")
+            self, tr("Exporter le clip en MIDI"), default,
+            tr("Fichier MIDI (*.mid)"))
         if not chosen:
             return
         try:
             midifile.clip_to_midi(Path(chosen), clip, self._song.tempo_bpm)
         except Exception as exc:  # noqa: BLE001
             log.exception("export MIDI impossible")
-            self.say(f"Export impossible : {exc}")
+            self.say(tr("Export impossible : %s") % exc)
             return
-        self.say(f"Clip exporté : {Path(chosen).name} "
-                 f"({clip.note_count} notes)")
+        self.say(tr("Clip exporté : %s (%d notes)")
+                 % (Path(chosen).name, clip.note_count))
 
     def _export_song_midi(self) -> None:
         """Exporte le morceau entier : une piste MIDI par clip."""
         if self._song is None:
-            self.say("Aucun morceau sélectionné.")
+            self.say(tr("Aucun morceau sélectionné."))
             return
 
         from PyQt6.QtWidgets import QFileDialog
@@ -469,33 +475,33 @@ class SongsPage(Page):
         total = sum(c.note_count for c in self._song.clips
                     + self._song.arrangement_clips)
         if total == 0:
-            self.say("Ce morceau ne contient aucune note.")
+            self.say(tr("Ce morceau ne contient aucune note."))
             return
 
         default = "%s.mid" % Path(self._current).stem
         chosen, _f = QFileDialog.getSaveFileName(
-            self, "Exporter le morceau en MIDI", default,
-            "Fichier MIDI (*.mid)")
+            self, tr("Exporter le morceau en MIDI"), default,
+            tr("Fichier MIDI (*.mid)"))
         if not chosen:
             return
         try:
             pistes = midifile.song_to_midi(Path(chosen), self._song)
         except Exception as exc:  # noqa: BLE001
             log.exception("export MIDI du morceau impossible")
-            self.say("Export impossible : %s" % exc)
+            self.say(tr("Export impossible : %s") % exc)
             return
         if not pistes:
-            self.say("Aucun clip à exporter.")
+            self.say(tr("Aucun clip à exporter."))
             return
-        self.say("%d piste(s) exportées dans %s — les clips du Deluge étant "
-                 "des boucles, toutes démarrent au début."
+        self.say(tr("%d piste(s) exportées dans %s — les clips du Deluge "
+                    "étant des boucles, toutes démarrent au début.")
                  % (pistes, Path(chosen).name))
 
     def _export_pack(self) -> None:
         """Rassemble le morceau et ses dépendances dans un dossier."""
         card = self.card_or_warn()
         if card is None or self._song is None or not self._current:
-            self.say("Aucun morceau sélectionné.")
+            self.say(tr("Aucun morceau sélectionné."))
             return
 
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
@@ -505,37 +511,38 @@ class SongsPage(Page):
 
         pack = songpack.collect(card, self._current)
         if not pack:
-            self.say("Morceau illisible.")
+            self.say(tr("Morceau illisible."))
             return
 
         dialog = PlanDialog(_PackPlan(pack), self,
-                            "Rassembler « %s »" % pack.name)
+                            tr("Rassembler « %s »") % pack.name)
         if dialog.exec() != QDialog.DialogCode.Accepted:
-            self.say("Opération annulée.")
+            self.say(tr("Opération annulée."))
             return
 
         dossier = QFileDialog.getExistingDirectory(
-            self, "Où rassembler le morceau ?", str(Path.home()))
+            self, tr("Où rassembler le morceau ?"), str(Path.home()))
         if not dossier:
             return
 
         cible = Path(dossier) / songpack.safe_folder_name(pack.name)
         if cible.exists() and any(cible.iterdir()):
             if QMessageBox.question(
-                    self, "Dossier déjà utilisé",
-                    "%s n'est pas vide.\n\nLes fichiers de même nom seront "
-                    "remplacés. Continuer ?" % cible.name,
+                    self, tr("Dossier déjà utilisé"),
+                    tr("%s n'est pas vide.\n\nLes fichiers de même nom "
+                       "seront remplacés. Continuer ?") % cible.name,
                     QMessageBox.StandardButton.Yes
                     | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No) \
                     != QMessageBox.StandardButton.Yes:
                 return
 
-        self.say("Copie de %d fichier(s)…" % len(pack))
+        self.say(tr("Copie de %d fichier(s)…") % len(pack))
         self.run(self._do_pack, card, pack, cible,
                  on_result=self.guard(self._pack_done),
-                 on_error=self.guard(lambda m: self.say("Échec : %s" % m)),
-                 title="Rassemblement")
+                 on_error=self.guard(
+                     lambda m: self.say(tr("Échec : %s") % m)),
+                 title=tr("Rassemblement"))
 
     def _do_pack(self, card, pack, cible, progress=None, should_stop=None):
         from ...core import songpack
@@ -554,35 +561,36 @@ class SongsPage(Page):
 
         if erreurs:
             QMessageBox.warning(
-                self, "Rassemblement partiel",
-                "%d fichier(s) copiés, %d en échec :%s%s"
+                self, tr("Rassemblement partiel"),
+                tr("%d fichier(s) copiés, %d en échec :%s%s")
                 % (len(copies), len(erreurs), _NL + _NL,
                    _NL.join(erreurs[:12])))
-        self.say("%d fichier(s) copiés dans %s. Le dossier a la forme d'une "
-                 "carte : le recopier à la racine d'une autre suffit."
+        self.say(tr("%d fichier(s) copiés dans %s. Le dossier a la forme "
+                    "d'une carte : le recopier à la racine d'une autre "
+                    "suffit.")
                  % (len(copies), cible))
 
     def _export_report(self) -> None:
         """Enregistre une fiche HTML du morceau."""
         if self._song is None:
-            self.say("Aucun morceau sélectionné.")
+            self.say(tr("Aucun morceau sélectionné."))
             return
 
         from PyQt6.QtWidgets import QFileDialog
 
         default = f"{Path(self._current).stem}.html"
         chosen, _f = QFileDialog.getSaveFileName(
-            self, "Enregistrer la fiche du morceau", default,
-            "Page HTML (*.html)")
+            self, tr("Enregistrer la fiche du morceau"), default,
+            tr("Page HTML (*.html)"))
         if not chosen:
             return
         try:
             Path(chosen).write_text(self._report_html(), encoding="utf-8")
         except OSError as exc:
             log.exception("écriture du rapport impossible")
-            self.say(f"Écriture impossible : {exc}")
+            self.say(tr("Écriture impossible : %s") % exc)
             return
-        self.say(f"Fiche enregistrée : {Path(chosen).name}")
+        self.say(tr("Fiche enregistrée : %s") % Path(chosen).name)
 
     def _report_html(self) -> str:
         """Fiche du morceau en HTML, aux couleurs de l'application."""
@@ -606,11 +614,24 @@ class SongsPage(Page):
         if missing:
             items = "".join(f"<li>{esc(m)}</li>" for m in missing)
             missing_html = (
-                f"<h2 style='color:#F2453D'>Échantillons manquants "
-                f"({len(missing)})</h2><ul>{items}</ul>")
+                "<h2 style='color:#F2453D'>%s</h2><ul>%s</ul>"
+                % (esc(tr("Échantillons manquants (%d)") % len(missing)),
+                   items))
+
+        # Les intitulés de la fiche, dans la langue de l'interface.
+        t = {nom: esc(tr(texte)) for nom, texte in (
+            ("chiffres", N_("Chiffres")), ("session", N_("Clips de session")),
+            ("arrangement", N_("Clips d'arrangement")), ("notes", N_("Notes")),
+            ("long", N_("Plus long clip")), ("sections", N_("Sections")),
+            ("instruments", N_("Instruments")), ("densite", N_("Densité")),
+            ("clips", N_("Clips")), ("nom", N_("Nom")),
+            ("preset", N_("Preset")), ("mesures", N_("Mesures")))}
+        longueur = esc(tr("%.0f mesures") % stats["bars"])
+        densite = esc(tr("%s notes par mesure")
+                      % decimal(stats["density"], 1))
 
         return f"""<!DOCTYPE html>
-<html lang="fr"><head><meta charset="utf-8">
+<html lang="{language()}"><head><meta charset="utf-8">
 <title>{esc(song.name)}</title>
 <style>
  body {{ font-family: "Segoe UI", sans-serif; background:#1C1F26;
@@ -623,20 +644,22 @@ class SongsPage(Page):
  .meta {{ color:#7A828F; }}
 </style></head><body>
 <h1>{esc(song.name)}</h1>
-<p class="meta">{song.tempo_bpm:.1f} BPM · {esc(song.scale_name())} ·
+<p class="meta">{decimal(song.tempo_bpm, 1)} BPM · {esc(song.scale_name())} ·
 firmware {esc(song.firmware or '—')}</p>
-<h2>Chiffres</h2>
+<h2>{t["chiffres"]}</h2>
 <table>
-<tr><th>Clips de session</th><td>{stats['clips']}</td></tr>
-<tr><th>Clips d'arrangement</th><td>{stats['arrangement_clips']}</td></tr>
-<tr><th>Notes</th><td>{stats['notes']}</td></tr>
-<tr><th>Plus long clip</th><td>{stats['bars']:.0f} mesures</td></tr>
-<tr><th>Sections</th><td>{stats['sections']}</td></tr>
-<tr><th>Instruments</th><td>{stats['instruments']}</td></tr>
-<tr><th>Densité</th><td>{stats['density']:.1f} notes par mesure</td></tr>
+<tr><th>{t["session"]}</th><td>{stats['clips']}</td></tr>
+<tr><th>{t["arrangement"]}</th>
+<td>{stats['arrangement_clips']}</td></tr>
+<tr><th>{t["notes"]}</th><td>{stats['notes']}</td></tr>
+<tr><th>{t["long"]}</th><td>{longueur}</td></tr>
+<tr><th>{t["sections"]}</th><td>{stats['sections']}</td></tr>
+<tr><th>{t["instruments"]}</th><td>{stats['instruments']}</td></tr>
+<tr><th>{t["densite"]}</th><td>{densite}</td></tr>
 </table>
-<h2>Clips</h2>
-<table><tr><th>Nom</th><th>Preset</th><th>Mesures</th><th>Notes</th></tr>
+<h2>{t["clips"]}</h2>
+<table><tr><th>{t["nom"]}</th><th>{t["preset"]}</th><th>{t["mesures"]}</th>
+<th>{t["notes"]}</th></tr>
 {rows}</table>
 {missing_html}
 </body></html>"""

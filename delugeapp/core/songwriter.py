@@ -51,6 +51,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..i18n import N_, decimal, plural, tr
 from . import dxml
 from .fixedpoint import format_fixed, parse_fixed
 from .model import Note, encode_notes, ticks_per_bar
@@ -65,7 +66,7 @@ __all__ = [
     "events_to_rows", "pattern_rows", "fold", "build", "preview",
     "write_song", "free_song_name", "ascii_label",
     # Recettes, une par outil de création.
-    "PART_ORDER", "PART_LABELS", "ROLE_PART", "key_of", "part_roles",
+    "PART_ORDER", "part_label", "ROLE_PART", "key_of", "part_roles",
     "part_presets", "drum_rows", "drum_kit_for", "progression_song",
     "pattern_song", "sketch_song", "preset_song", "slices_song",
     "loop_tempo",
@@ -783,7 +784,7 @@ def _internal_sync(file_value: int) -> int:
 def _label(text: str, fallback: str) -> str:
     """Nom lisible par la machine : ASCII, sans caractère interdit."""
     clean = safe_deluge_name(text or "") if text else ""
-    return clean if clean and clean != "SANS NOM" else fallback
+    return clean if clean and clean != tr("SANS NOM") else fallback
 
 
 def ascii_label(text: str) -> str:
@@ -1253,9 +1254,10 @@ def preview(spec: SongSpec, order: list[int], y_scroll: int) -> str:
 def build(spec: SongSpec) -> dxml.DelugeDoc:
     """Le document du morceau, au format c1.2.1."""
     if not spec.tracks or not spec.clips:
-        raise ValueError("un morceau sans instrument ni clip ne s'écrit pas")
+        raise ValueError(tr("un morceau sans instrument ni clip ne s'écrit "
+                            "pas"))
     if len(spec.sections) > MAX_SECTIONS:
-        raise ValueError("au plus %d sections" % MAX_SECTIONS)
+        raise ValueError(tr("au plus %d sections") % MAX_SECTIONS)
     order = _session_order(spec)
     names = _unique_names(spec)
     repeats = _section_repeats(spec)
@@ -1369,7 +1371,7 @@ def free_song_name(sd: SDCard, name: str) -> str:
         rel = "SONGS/%s %d.XML" % (base, index)
         index += 1
         if index > 999:
-            raise ValueError("trop de morceaux portent déjà ce nom")
+            raise ValueError(tr("trop de morceaux portent déjà ce nom"))
     return rel
 
 
@@ -1406,14 +1408,14 @@ def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
     target = sd.abs(rel)
     if target.exists():
         # Créé entre la simulation et l'écriture : on ne remplace rien.
-        result.error = "%s existe déjà : rien n'a été écrit" % rel
+        result.error = tr("%s existe déjà : rien n'a été écrit") % rel
         return result
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         dxml.save(doc, target, backup=False)
     except (OSError, dxml.DelugeXMLError) as exc:
         log.exception("écriture du morceau impossible : %s", rel)
-        result.error = "écriture impossible : %s" % exc
+        result.error = tr("écriture impossible : %s") % exc
         return result
     sd.invalidate_cache()
     result.applied = True
@@ -1423,20 +1425,21 @@ def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
 
 
 def _plan_lines(spec: SongSpec, rel: str, missing: list[str]) -> list[str]:
-    lines = ["Nouveau fichier : %s" % rel,
-             "Tempo : %g BPM — %d instrument(s), %d clip(s)"
+    lines = [tr("Nouveau fichier : %s") % rel,
+             tr("Tempo : %g BPM — %d instrument(s), %d clip(s)")
              % (round(float(spec.bpm), 2), len(spec.tracks),
                 len(spec.clips))]
     if spec.sections:
-        lines.append("Sections : " + " → ".join(s.name for s in spec.sections))
+        lines.append(tr("Sections : %s")
+                     % " → ".join(tr(s.name) for s in spec.sections))
     lines.extend(spec.summary)
     if missing:
-        lines.append("%d échantillon(s) absent(s) de la carte : ces sons "
-                     "resteront muets." % len(missing))
+        lines.append(tr("%d échantillon(s) absent(s) de la carte : ces sons "
+                        "resteront muets.") % len(missing))
     unconverted = sorted({rel for t in spec.tracks for rel in t.unconverted})
     if unconverted:
-        lines.append("%d échantillon(s) ancien(s) gardent leurs bornes "
-                     "d'origine." % len(unconverted))
+        lines.append(tr("%d échantillon(s) ancien(s) gardent leurs bornes "
+                        "d'origine.") % len(unconverted))
     return lines
 
 
@@ -1446,9 +1449,15 @@ def _plan_lines(spec: SongSpec, rel: str, missing: list[str]) -> list[str]:
 
 #: Ordre des parties d'un accompagnement, de bas en haut de l'écran.
 PART_ORDER = ("Accords", "Basse", "Arpège", "Mélodie")
-#: Nom de clip de chaque partie (ASCII : l'écran de la machine).
-PART_LABELS = {"Accords": "Accords", "Basse": "Basse", "Arpège": "Arpege",
-               "Mélodie": "Melodie", "Batterie": "Batterie"}
+
+
+def part_label(part: str) -> str:
+    """Nom de clip d'une partie, dans la langue de l'interface au moment où
+    le morceau s'écrit : « Arpege » ou « Arpeggio ». ASCII : l'écran de la
+    machine n'a pas d'accents. La partie elle-même (« Arpège ») reste la
+    clé, en français."""
+    return ascii_label(tr(part))
+
 #: Pistes de batterie sans rôle connu (motif euclidien…) : on leur donne un
 #: rôle de percussion libre, dans cet ordre.
 SPARE_ROLES = ("Rim", "Shaker", "Claves", "Block", "Cowbell", "Tambourine",
@@ -1586,14 +1595,13 @@ def _bars_text(length: int) -> str:
     bars = length / float(BAR)
     if abs(bars - round(bars)) < 1e-9:
         bars = int(round(bars))
-        return "%d mesure%s" % (bars, "s" if bars > 1 else "")
-    return "%s mesure" % ("%.2f" % bars).rstrip("0").rstrip(".").replace(
-        ".", ",")
+        return plural(bars, N_("%d mesure"), N_("%d mesures")) % bars
+    return tr("%s mesure") % decimal(bars, 2).rstrip("0").rstrip(",.")
 
 
 def _add_drums(tracks, clips, summary, drums, kit, row_map, length=None,
                section: int = 0, playing: bool = True,
-               label: str = "Batterie") -> None:
+               label: str = "") -> None:
     if drums is None or kit is None or not row_map:
         return
     if not any(t.is_kit for t in tracks):
@@ -1604,8 +1612,9 @@ def _add_drums(tracks, clips, summary, drums, kit, row_map, length=None,
         return
     rows, clip_length = fold(rows, clip_length)
     clips.append(ClipSpec(track=track, length=clip_length, rows=rows,
-                          section=section, name=label, playing=playing))
-    summary.append("Batterie : kit %s, %d rangée(s), clip de %s" % (
+                          section=section, playing=playing,
+                          name=label or part_label("Batterie")))
+    summary.append(tr("Batterie : kit %s, %d rangée(s), clip de %s") % (
         tracks[track].name, len(tracks[track].drum_params),
         _bars_text(clip_length)))
 
@@ -1626,7 +1635,7 @@ def progression_song(parts: dict, *, name: str, bpm: float, genre: str = "",
 
     tonal = {k: v for k, v in (parts or {}).items() if k != "Batterie" and v}
     if not tonal:
-        raise ValueError("aucune partie à écrire")
+        raise ValueError(tr("aucune partie à écrire"))
     sounds = sounds if sounds is not None else part_presets(tonal, genre)
     length = int(total_steps(tonal)) * STEP
     tracks, index = _synth_tracks(tonal, sounds)
@@ -1635,9 +1644,9 @@ def progression_song(parts: dict, *, name: str, bpm: float, genre: str = "",
     for part, track in index.items():
         rows, clip_length = fold(events_to_rows(tonal[part], length), length)
         clips.append(ClipSpec(track=track, length=clip_length, rows=rows,
-                              name=PART_LABELS[part]))
-        summary.append("%s : %s, clip de %s" % (
-            part, tracks[track].name, _bars_text(clip_length)))
+                              name=part_label(part)))
+        summary.append(tr("%s : %s, clip de %s") % (
+            tr(part), tracks[track].name, _bars_text(clip_length)))
     _add_drums(tracks, clips, summary, drums, kit, row_map, length)
     key_root, mode = key_of(root, scale)
     return SongSpec(name=name, bpm=bpm, root=key_root, mode_notes=mode,
@@ -1659,10 +1668,11 @@ def pattern_song(pattern, kit, row_map: dict, *, name: str, bpm: float,
                       sd=sd)
     rows, length = pattern_rows(pattern, row_map)
     if not rows:
-        raise ValueError("le motif ne joue aucune rangée du kit")
+        raise ValueError(tr("le motif ne joue aucune rangée du kit"))
     rows, length = fold(rows, length)
-    clip = ClipSpec(track=0, length=length, rows=rows, name="Batterie")
-    summary = ["Batterie : kit %s, %d rangée(s), clip de %s" % (
+    clip = ClipSpec(track=0, length=length, rows=rows,
+                    name=part_label("Batterie"))
+    summary = [tr("Batterie : kit %s, %d rangée(s), clip de %s") % (
         track.name, len(track.drum_params), _bars_text(length))]
     return SongSpec(name=name, bpm=bpm, tracks=[track], clips=[clip],
                     summary=summary)
@@ -1682,9 +1692,10 @@ def sketch_song(result, *, name: str, bpm: float, genre: str = "",
     """
     sections = list(getattr(result, "sections", []) or [])
     if not sections:
-        raise ValueError("esquisse vide")
+        raise ValueError(tr("esquisse vide"))
     if len(sections) > MAX_SECTIONS:
-        raise ValueError("le Deluge connaît %d sections au plus" % MAX_SECTIONS)
+        raise ValueError(tr("le Deluge connaît %d sections au plus")
+                         % MAX_SECTIONS)
     parts = {k: v for k, v in (result.parts or {}).items()
              if k != "Batterie" and v}
     sounds = sounds if sounds is not None else part_presets(parts, genre)
@@ -1710,8 +1721,8 @@ def sketch_song(result, *, name: str, bpm: float, genre: str = "",
             rows, clip_length = fold(rows, span)
             clips.append(ClipSpec(track=track, length=clip_length, rows=rows,
                                   section=number, playing=playing,
-                                  name="%s %s" % (section.name,
-                                                  PART_LABELS[part])))
+                                  name="%s %s" % (tr(section.name),
+                                                  part_label(part))))
         if kit_index is not None and any(p.startswith("Batterie")
                                          for p in section.parts):
             rows, _length = pattern_rows(drums, row_map, length=span,
@@ -1721,12 +1732,14 @@ def sketch_song(result, *, name: str, bpm: float, genre: str = "",
                 clips.append(ClipSpec(track=kit_index, length=clip_length,
                                       rows=rows, section=number,
                                       playing=playing,
-                                      name="%s Batterie" % section.name))
+                                      name="%s %s" % (
+                                          tr(section.name),
+                                          part_label("Batterie"))))
     if not clips:
-        raise ValueError("aucune partie à écrire")
+        raise ValueError(tr("aucune partie à écrire"))
     key_root, mode = key_of(root, scale)
-    summary = ["Parties : " + ", ".join(
-        [p for p in PART_ORDER if p in index]
+    summary = [tr("Parties : %s") % ", ".join(
+        tr(p) for p in [p for p in PART_ORDER if p in index]
         + (["Batterie"] if kit_index is not None else []))]
     return SongSpec(name=name, bpm=bpm, root=key_root, mode_notes=mode,
                     tracks=tracks, clips=clips, summary=summary,
@@ -1781,9 +1794,9 @@ def preset_song(preset, *, name: str, bpm: float, genre: str = "",
     rows, clip_length = fold(events_to_rows(events, length), length)
     tracks = [track]
     clips = [ClipSpec(track=0, length=clip_length, rows=rows,
-                      name=PART_LABELS[part])]
-    summary = ["%s : %s, clip de %s" % (part, track.name,
-                                        _bars_text(clip_length))]
+                      name=part_label(part))]
+    summary = [tr("%s : %s, clip de %s") % (tr(part), track.name,
+                                            _bars_text(clip_length))]
     _add_drums(tracks, clips, summary, drums, kit, row_map, length)
     key_root, mode = key_of(root, scale)
     return SongSpec(name=name, bpm=bpm, root=key_root, mode_notes=mode,
@@ -1800,7 +1813,7 @@ def slices_song(sliceset, *, name: str, bpm: float | None = None) -> SongSpec:
     from . import slicer
 
     if not sliceset or not sliceset.sr:
-        raise ValueError("aucune tranche")
+        raise ValueError(tr("aucune tranche"))
     seconds = sliceset.duration
     if not bpm or bpm <= 0:
         bpm = float(sliceset.bpm or 0) or loop_tempo(seconds)
@@ -1818,8 +1831,9 @@ def slices_song(sliceset, *, name: str, bpm: float | None = None) -> SongSpec:
         if notes:
             rows[index] = notes
     track = kit_track(kit)
-    clip = ClipSpec(track=0, length=length, rows=rows, name="Boucle")
-    summary = ["Boucle : %d tranche(s) de %s, clip de %s à %g BPM" % (
+    clip = ClipSpec(track=0, length=length, rows=rows,
+                    name=ascii_label(tr("Boucle")))
+    summary = [tr("Boucle : %d tranche(s) de %s, clip de %s à %g BPM") % (
         len(sliceset.slices), Path(sliceset.rel).name, _bars_text(length),
         round(float(bpm), 2))]
     return SongSpec(name=name, bpm=float(bpm), tracks=[track], clips=[clip],

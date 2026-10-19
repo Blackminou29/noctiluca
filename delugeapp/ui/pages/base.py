@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...config import AppContext
+from ...i18n import N_, tr
 from .. import art, icons
 from ..theme import (
     BORDER_SOFT,
@@ -115,8 +116,9 @@ class Page(QWidget):
     #: autres pages — Morceaux, tableau de bord — doivent se rafraîchir.
     songWritten = pyqtSignal(str)
 
-    #: Titre affiché dans la navigation, en français.
-    TITLE = "Page"
+    #: Titre affiché dans la navigation — en français, traduit à
+    #: l'affichage (``tr(self.TITLE)``).
+    TITLE = N_("Page")
     #: Nom d'icône, parmi ceux de :data:`delugeapp.ui.icons.ICON_NAMES`.
     ICON = "info"
     #: Message de l'état vide quand la carte manque.
@@ -124,12 +126,12 @@ class Page(QWidget):
     #: Ce n'est pas une erreur : c'est l'état du tout premier démarrage.
     #: L'écran accueille donc, au lieu d'alerter — et il propose d'abord le
     #: geste le plus court, qui est de laisser l'application chercher.
-    EMPTY_MESSAGE = "Où est votre carte Deluge ?"
-    EMPTY_DETAIL = ("Branchez la carte, ou indiquez le dossier qui la "
-                    "contient. Tout le reste de l'application s'allumera "
-                    "ensuite.")
+    EMPTY_MESSAGE = N_("Où est votre carte Deluge ?")
+    EMPTY_DETAIL = N_("Branchez la carte, ou indiquez le dossier qui la "
+                      "contient. Tout le reste de l'application s'allumera "
+                      "ensuite.")
     #: Second geste de l'état vide, plus rapide que le premier.
-    EMPTY_ACTION2 = "Détecter la carte"
+    EMPTY_ACTION2 = N_("Détecter la carte")
     #: Vrai si la page a besoin d'une carte valide pour montrer quoi que ce soit.
     NEEDS_CARD = True
 
@@ -156,11 +158,11 @@ class Page(QWidget):
 
         # L'icône de la page, et non un triangle d'alerte : l'utilisateur
         # est au bon endroit, il lui manque seulement la carte.
-        self._empty = EmptyState(self.EMPTY_MESSAGE, self.ICON,
-                                 "Indiquer le dossier",
-                                 detail=self.EMPTY_DETAIL,
+        self._empty = EmptyState(tr(self.EMPTY_MESSAGE), self.ICON,
+                                 tr("Indiquer le dossier"),
+                                 detail=tr(self.EMPTY_DETAIL),
                                  color=self.color,
-                                 action2=self.EMPTY_ACTION2)
+                                 action2=tr(self.EMPTY_ACTION2))
         self._empty.actionClicked.connect(self.settingsRequested.emit)
         self._empty.action2Clicked.connect(self.detectRequested.emit)
         self._stack.addWidget(self._empty)
@@ -265,7 +267,7 @@ class Page(QWidget):
             self._refresh()
         except Exception:  # noqa: BLE001 - rempart, cf. SPEC §6.3
             log.exception("rafraîchissement de la page %s en échec", self.TITLE)
-            self.say("Une erreur est survenue : voir le journal.")
+            self.say(tr("Une erreur est survenue : voir le journal."))
 
     def _refresh(self) -> None:
         """Corps du rafraîchissement. À redéfinir."""
@@ -368,12 +370,17 @@ class Page(QWidget):
 
         if "/" in str(hint or "") and self.reveal_item(str(hint)):
             return
-        cible = _sans_accents(hint)
-        if not cible:
+        # Les adresses sont écrites en français dans le code
+        # (``Health#Doublons``) ; les onglets, eux, parlent la langue de
+        # l'interface.
+        cibles = {_sans_accents(hint), _sans_accents(tr(str(hint or "")))}
+        cibles.discard("")
+        if not cibles:
             return
         for onglets in self.findChildren(QTabWidget):
             for index in range(onglets.count()):
-                if cible in _sans_accents(onglets.tabText(index)):
+                onglet = _sans_accents(onglets.tabText(index))
+                if any(cible in onglet for cible in cibles):
                     onglets.setCurrentIndex(index)
                     return
         log.debug("partie introuvable sur %s : %r", self.TITLE, hint)
@@ -472,7 +479,7 @@ class Page(QWidget):
                 fn(*args, **kwargs)
             except Exception:  # noqa: BLE001
                 log.exception("action de la page %s en échec", self.TITLE)
-                self.say("Action impossible : voir le journal.")
+                self.say(tr("Action impossible : voir le journal."))
         return wrapper
 
     def audition(self, sound, notes=60, seconds: float = 0.8) -> bool:
@@ -496,7 +503,7 @@ class Page(QWidget):
                 return False
             if not lien.play_notes(notes, seconds=seconds, sound=sound):
                 return False
-            self.say("Écouté sur le Deluge (canal %d)." % lien.channel)
+            self.say(tr("Écouté sur le Deluge (canal %d).") % lien.channel)
             return True
         except Exception as exc:        # noqa: BLE001 - l'écoute n'est pas vitale
             log.debug("écoute sur le Deluge impossible : %s", exc)
@@ -506,7 +513,7 @@ class Page(QWidget):
         """Lance un travail long hors du fil de l'interface."""
         from ..tasks import run_task
 
-        kwargs.setdefault("title", "Traitement…")
+        kwargs.setdefault("title", tr("Traitement…"))
         return run_task(self, fn, *args, **kwargs)
 
 

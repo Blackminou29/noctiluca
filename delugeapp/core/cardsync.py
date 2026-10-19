@@ -51,6 +51,7 @@ from typing import Callable, Protocol
 
 from .delugefiles import (NOT_CONNECTED, STOPPED, CardEntry, FileError,
                           fat_stamp, from_fat)
+from ..i18n import N_, tr, untranslated
 
 log = logging.getLogger(__name__)
 
@@ -80,11 +81,12 @@ BACKUP_STATE = META_DIR + "/sauvegarde.json"
 #: Ce que macOS, Windows et le firmware laissent sur une carte, et qui n'est
 #: pas de la musique. Mesuré sur la sauvegarde : 11 061 fichiers et 4,2 Go
 #: de corbeilles et d'index Spotlight.
-_JUNK_DIRS = {"system volume information", ".trashes", ".spotlight-v100",
-              ".fseventsd", ".temporaryitems", META_DIR,
-              # Les originaux que ``samplefix`` met de côté : des copies de
-              # sûreté, mieux à l'abri sur le PC que sur la carte.
-              "_backup"}
+_JUNK_DIRS = untranslated({
+    "system volume information", ".trashes", ".spotlight-v100", ".fseventsd",
+    ".temporaryitems", META_DIR,
+    # Les originaux que ``samplefix`` met de côté : des copies de sûreté,
+    # mieux à l'abri sur le PC que sur la carte.
+    "_backup"})
 _JUNK_FILES = {".ds_store", "thumbs.db", "desktop.ini"}
 #: Les fichiers temporaires des écritures de l'application, qu'un arrêt
 #: brutal peut laisser derrière lui : ``.dc-tmp`` (ici), ``.tmp~``
@@ -322,7 +324,8 @@ class FolderCard:
     def write_new(self, rel, data, mtime, progress=None):
         cible = self.root / rel
         if cible.exists():
-            raise FileError("existe déjà sur la carte : /" + rel, code=8)
+            raise FileError(tr("existe déjà sur la carte : /%s") % rel,
+                            code=8)
         cible.parent.mkdir(parents=True, exist_ok=True)
         _write_atomic(cible, data, mtime)
 
@@ -352,13 +355,13 @@ def _write_atomic(cible: Path, data: bytes, mtime: float | None) -> None:
 
 #: Ce qu'une action fait, en clair.
 KINDS = {
-    "adopt": "déjà identique",
-    "copy_backup": "repris de la sauvegarde",
-    "pull": "reçu du Deluge",
-    "push": "envoyé au Deluge",
-    "conflict": "changé des deux côtés",
-    "delete_local": "supprimé sur le Deluge",
-    "delete_card": "supprimé sur le PC",
+    "adopt": N_("déjà identique"),
+    "copy_backup": N_("repris de la sauvegarde"),
+    "pull": N_("reçu du Deluge"),
+    "push": N_("envoyé au Deluge"),
+    "conflict": N_("changé des deux côtés"),
+    "delete_local": N_("supprimé sur le Deluge"),
+    "delete_card": N_("supprimé sur le PC"),
 }
 
 
@@ -378,7 +381,7 @@ class Action:
 
     @property
     def label(self) -> str:
-        return KINDS.get(self.kind, self.kind)
+        return tr(KINDS.get(self.kind, self.kind))
 
 
 @dataclass
@@ -426,14 +429,15 @@ class SyncPlan:
     def summary(self) -> str:
         c = self.counts()
         morceaux = []
-        for kind, phrase in (("pull", "%d à recevoir"), ("push", "%d à envoyer"),
-                             ("copy_backup", "%d repris de la sauvegarde"),
-                             ("conflict", "%d changés des deux côtés"),
-                             ("delete_local", "%d supprimés sur le Deluge"),
-                             ("delete_card", "%d supprimés sur le PC")):
+        for kind, phrase in (("pull", tr("%d à recevoir")),
+                             ("push", tr("%d à envoyer")),
+                             ("copy_backup", tr("%d repris de la sauvegarde")),
+                             ("conflict", tr("%d changés des deux côtés")),
+                             ("delete_local", tr("%d supprimés sur le Deluge")),
+                             ("delete_card", tr("%d supprimés sur le PC"))):
             if c.get(kind):
                 morceaux.append(phrase % c[kind])
-        return ", ".join(morceaux) if morceaux else "à jour"
+        return ", ".join(morceaux) if morceaux else tr("à jour")
 
     @property
     def empty(self) -> bool:
@@ -525,7 +529,8 @@ def plan_sync(card: dict[str, CardEntry], local: dict[str, LocalFile],
                 else:
                     plan.actions.append(Action(
                         "pull", rel, ec.size,
-                        "la copie de travail diffère de la carte", **sur_carte))
+                        tr("la copie de travail diffère de la "
+                           "carte"), **sur_carte))
             elif carte_change and local_change:
                 plan.actions.append(Action("conflict", rel, ec.size + lf.size,
                                            **sur_carte))
@@ -536,7 +541,7 @@ def plan_sync(card: dict[str, CardEntry], local: dict[str, LocalFile],
         elif ec is not None:
             if m is not None and not carte_change:
                 plan.actions.append(Action("delete_card", rel, ec.size,
-                                           "supprimé de la copie de travail",
+                                           tr("supprimé de la copie de travail"),
                                            **sur_carte))
             else:
                 source = None
@@ -558,7 +563,7 @@ def plan_sync(card: dict[str, CardEntry], local: dict[str, LocalFile],
         elif lf is not None:
             if m is not None and not local_change:
                 plan.actions.append(Action("delete_local", rel, lf.size,
-                                           "le Deluge ne l'a plus"))
+                                           tr("le Deluge ne l'a plus")))
             else:
                 plan.actions.append(Action("push", rel, lf.size))
     if backup is not None:
@@ -613,11 +618,11 @@ class SyncResult:
         return not self.errors
 
     def summary(self) -> str:
-        morceaux = ["%d %s" % (n, KINDS.get(k, k)) for k, n in
+        morceaux = ["%d %s" % (n, tr(KINDS.get(k, k))) for k, n in
                     sorted(self.done.items()) if k != "adopt" and n]
         if self.errors:
-            morceaux.append("%d erreur(s)" % len(self.errors))
-        return ", ".join(morceaux) if morceaux else "rien à faire"
+            morceaux.append(tr("%d erreur(s)") % len(self.errors))
+        return ", ".join(morceaux) if morceaux else tr("rien à faire")
 
 
 def _conflict_name(rel: str, existants: set[str]) -> str:
@@ -632,7 +637,7 @@ def _conflict_name(rel: str, existants: set[str]) -> str:
         complet = (dossier + "/" + candidat).strip("/")
         if _key(complet) not in existants:
             return complet
-    raise FileError("aucun nom libre pour la version du PC de " + rel)
+    raise FileError(tr("aucun nom libre pour la version du PC de %s") % rel)
 
 
 def _to_history(work: Path, rel: str) -> None:
@@ -688,19 +693,19 @@ def apply_plan(plan: SyncPlan, transport, work: Path,
                 resultat.stopped = True
                 break
             if exc.code == NOT_CONNECTED:
-                resultat.errors.append("le Deluge a été débranché")
+                resultat.errors.append(tr("le Deluge a été débranché"))
                 resultat.stopped = resultat.lost = True
                 break
             log.warning("synchronisation de %s : %s", action.rel, exc)
-            resultat.errors.append("%s : %s" % (action.rel, exc))
+            resultat.errors.append(tr("%s : %s") % (action.rel, exc))
             muettes = muettes + 1 if exc.code == 15 else 0
             if muettes >= 2:
-                resultat.errors.append("le Deluge ne répond plus")
+                resultat.errors.append(tr("le Deluge ne répond plus"))
                 resultat.stopped = resultat.lost = True
                 break
         except OSError as exc:
             log.warning("synchronisation de %s : %s", action.rel, exc)
-            resultat.errors.append("%s : %s" % (action.rel, exc))
+            resultat.errors.append(tr("%s : %s") % (action.rel, exc))
     if not resultat.stopped:
         for rel in plan.forget:
             manifest.pop(rel, None)
@@ -802,7 +807,7 @@ def _apply_one(action: Action, transport, work: Path,
         for cle in [k for k in manifest if _key(k) == _key(rel)]:
             del manifest[cle]
         return None
-    raise ValueError("action inconnue : %s" % action.kind)
+    raise ValueError(tr("action inconnue : %s") % action.kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -861,19 +866,20 @@ class Exchange:
     def summary(self) -> str:
         c = self.counts
         morceaux = []
-        for cle, phrase in (("pull", "%d reçu(s)"), ("push", "%d envoyé(s)"),
-                            ("conflict", "%d changé(s) des deux côtés"),
-                            ("delete_local", "%d retiré(s), le Deluge ne les "
-                                             "a plus"),
-                            ("delete_card", "%d supprimé(s) de la carte"),
-                            ("copy_backup", "%d repris de la sauvegarde")):
+        for cle, phrase in (("pull", tr("%d reçu(s)")),
+                            ("push", tr("%d envoyé(s)")),
+                            ("conflict", tr("%d changé(s) des deux côtés")),
+                            ("delete_local", tr("%d retiré(s), le Deluge ne les "
+                                                "a plus")),
+                            ("delete_card", tr("%d supprimé(s) de la carte")),
+                            ("copy_backup", tr("%d repris de la sauvegarde"))):
             if c.get(cle):
                 morceaux.append(phrase % c[cle])
         if self.errors:
-            morceaux.append("%d erreur(s)" % len(self.errors))
+            morceaux.append(tr("%d erreur(s)") % len(self.errors))
         if self.stopped:
-            morceaux.append("interrompue")
-        return ", ".join(morceaux) if morceaux else "rien à faire"
+            morceaux.append(tr("interrompue"))
+        return ", ".join(morceaux) if morceaux else tr("rien à faire")
 
     def to_dict(self) -> dict:
         return {"when": self.when, "reason": self.reason,
@@ -995,15 +1001,15 @@ class BackupUpdate:
     def summary(self) -> str:
         morceaux = []
         if self.added:
-            morceaux.append("%d ajoutés" % len(self.added))
+            morceaux.append(tr("%d ajoutés") % len(self.added))
         if self.replaced:
-            morceaux.append("%d remplacés (anciennes versions gardées)"
+            morceaux.append(tr("%d remplacés (anciennes versions gardées)")
                             % len(self.replaced))
         if self.kept:
-            morceaux.append("%d absents de la carte, gardés" % len(self.kept))
+            morceaux.append(tr("%d absents de la carte, gardés") % len(self.kept))
         if self.errors:
-            morceaux.append("%d erreur(s)" % len(self.errors))
-        return ", ".join(morceaux) if morceaux else "déjà à jour"
+            morceaux.append(tr("%d erreur(s)") % len(self.errors))
+        return ", ".join(morceaux) if morceaux else tr("déjà à jour")
 
 
 def _same_content(a: Path, b: Path) -> bool:
@@ -1089,7 +1095,7 @@ def update_backup(work: Path, backup: Path, apply: bool = False,
         if should_stop is not None and should_stop():
             break
         if progress is not None and i % 50 == 0:
-            progress("Sauvegarde : %d / %d" % (i, len(locaux)))
+            progress(tr("Sauvegarde : %d / %d") % (i, len(locaux)))
         source, cible = work / rel, backup / rel
         local = locaux[rel]
         try:
@@ -1121,7 +1127,7 @@ def update_backup(work: Path, backup: Path, apply: bool = False,
             identiques[rel] = [local.size, local.mtime_ns,
                                int(copie.st_size), int(copie.st_mtime_ns)]
         except OSError as exc:
-            rapport.errors.append("%s : %s" % (rel, exc))
+            rapport.errors.append(tr("%s : %s") % (rel, exc))
     derniere = float(etat.get("updated", 0) or 0)
     if apply and not rapport.errors:
         derniere = time.time()

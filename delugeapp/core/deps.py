@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
+from ..i18n import tr
 from . import dxml
 from .db import Library
 from .model import Song
@@ -75,9 +76,9 @@ class DepGraph:
 
     def summary(self) -> str:
         """Phrase de bilan, pour la barre d'état."""
-        return (f"{len(self.used_by)} échantillons utilisés, "
-                f"{len(self.unused)} inutilisés, "
-                f"{len(self.missing)} références cassées")
+        return (tr("%d échantillons utilisés, %d inutilisés, %d références "
+                   "cassées")
+                % (len(self.used_by), len(self.unused), len(self.missing)))
 
 
 def build_graph(sd: SDCard, lib: Library) -> DepGraph:
@@ -414,7 +415,7 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
             raw = path.read_bytes()
         except OSError as exc:
             log.warning("fichier illisible %s : %s", path, exc)
-            _fail(f"{sd.rel(path)} : illisible ({exc})")
+            _fail(tr("%s : illisible (%s)") % (sd.rel(path), exc))
             continue
         low = raw.lower()
         if not any(n in low for n in needles):
@@ -423,7 +424,7 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
             doc = dxml.loads(raw, path)
         except Exception as exc:  # noqa: BLE001
             log.warning("XML illisible %s : %s", path, exc)
-            _fail(f"{sd.rel(path)} : XML illisible ({exc})")
+            _fail(tr("%s : XML illisible (%s)") % (sd.rel(path), exc))
             continue
 
         count = 0
@@ -446,7 +447,8 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
                 dxml.save(doc, path, backup=True)
             except Exception as exc:  # noqa: BLE001
                 log.error("écriture impossible dans %s : %s", path, exc)
-                _fail(f"{sd.rel(path)} : écriture impossible ({exc})")
+                _fail(tr("%s : écriture impossible (%s)")
+                      % (sd.rel(path), exc))
                 continue
         changes.append((path, count))
 

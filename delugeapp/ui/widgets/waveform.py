@@ -24,6 +24,7 @@ from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
+from ...i18n import tr
 from ..theme import (
     GOLD,
     GOLD_HI,
@@ -73,9 +74,9 @@ class WaveformView(QWidget):
         # Ce que le cadre dit quand il n'a rien à montrer. Réglable, parce
         # que « choisissez-en un dans la liste » n'a aucun sens dans le
         # générateur, où il n'y a pas de liste : le son s'y fabrique.
-        self._empty_message = "Aucun échantillon sélectionné"
-        self._empty_hint = ("Choisissez-en un dans la liste pour voir sa "
-                            "forme d'onde")
+        self._empty_message = tr("Aucun échantillon sélectionné")
+        self._empty_hint = tr("Choisissez-en un dans la liste pour voir sa "
+                              "forme d'onde")
 
         self.setMinimumHeight(70)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -92,7 +93,8 @@ class WaveformView(QWidget):
         try:
             array = np.asarray(peaks, dtype=np.float32)
             if array.ndim != 2 or array.shape[1] != 2 or array.size == 0:
-                raise ValueError(f"forme inattendue : {array.shape}")
+                raise ValueError(tr("forme inattendue : %s")
+                                 % (array.shape,))
             self._peaks = array
         except Exception as exc:  # noqa: BLE001 - données inattendues
             log.debug("enveloppe illisible : %s", exc)

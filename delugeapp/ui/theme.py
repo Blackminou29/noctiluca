@@ -37,6 +37,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPen, QPolygonF
 
 from delugeapp.config import CONFIG_DIR
+from delugeapp.i18n import tr, untranslated
 
 log = logging.getLogger(__name__)
 
@@ -306,7 +307,7 @@ def category_color(name: str) -> str:
     return pad_color(digest[0])
 
 
-_SEVERITY_COLORS = {
+_SEVERITY_COLORS = untranslated({
     "info": PAD_CYAN,
     "warn": PAD_AMBER,
     "warning": PAD_AMBER,
@@ -318,7 +319,7 @@ _SEVERITY_COLORS = {
     "success": PAD_GREEN,
     "succès": PAD_GREEN,
     "debug": GREY,
-}
+})
 
 
 def severity_color(sev: str) -> str:
@@ -402,7 +403,7 @@ def _asset(kind: str, color: str, size: int = 12) -> str:
             img.fill(QColor(0, 0, 0, 0))
             _draw_asset(img, kind, color, size)
             if not img.save(str(path), "PNG"):
-                raise OSError("écriture PNG refusée : {}".format(path))
+                raise OSError(tr("écriture PNG refusée : {}").format(path))
         value = 'url("{}")'.format(path.as_posix())
     except Exception:  # pragma: no cover - cache non accessible : on dégrade
         log.exception("Micro-image de thème indisponible (%s) — repli sans image", kind)

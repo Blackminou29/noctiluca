@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import dxml, wav
+from ..i18n import N_, tr, untranslated
 from .delugefiles import MAX_PATH, cable_time
 from .sdcard import FORBIDDEN_CHARS, RESERVED_NAMES, SDCard, norm_rel
 
@@ -66,8 +67,9 @@ KIND_DIRS = {"sample": "SAMPLES", "synth": "SYNTHS", "kit": "KITS",
 XML_ROOTS = {"sound": "synth", "kit": "kit", "song": "song"}
 
 #: Dossiers de passage des archives et des systèmes : jamais parcourus.
-_JUNK_DIRS = {"__macosx", ".trashes", ".spotlight-v100", ".fseventsd",
-              "system volume information", "$recycle.bin", ".git"}
+_JUNK_DIRS = untranslated({"__macosx", ".trashes", ".spotlight-v100",
+                           ".fseventsd", "system volume information",
+                           "$recycle.bin", ".git"})
 #: Fichiers que les systèmes et les logiciels de MAO laissent à côté des
 #: sons (``.reapeaks`` de Reaper : quatre sur la carte de l'utilisateur).
 _JUNK_FILES = {".ds_store", "thumbs.db", "desktop.ini"}
@@ -78,9 +80,10 @@ _DOCS = (".txt", ".pdf", ".md", ".rtf", ".html", ".htm", ".png", ".jpg",
          ".jpeg", ".gif", ".url", ".nfo", ".doc", ".docx")
 
 #: Ce que devient chaque fichier, en clair.
-ACTIONS = {"copy": "à copier", "convert": "à convertir puis copier",
-           "same": "déjà sur la carte", "kept": "laissé tel quel sur la carte",
-           "refused": "refusé"}
+ACTIONS = {"copy": N_("à copier"), "convert": N_("à convertir puis copier"),
+           "same": N_("déjà sur la carte"), "kept": N_("laissé tel quel sur la "
+                                                       "carte"),
+           "refused": N_("refusé")}
 
 #: Lettres sans décomposition ASCII.
 _TRANSLIT = {"ß": "ss", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE",
@@ -205,7 +208,7 @@ def _read_xml(chemin: Path) -> tuple[str, list[str], str]:
     try:
         doc = dxml.load(chemin)
     except dxml.DelugeXMLError as exc:
-        return "", [], "XML illisible : %s" % exc
+        return "", [], tr("XML illisible : %s") % exc
     nature = XML_ROOTS.get(str(doc.root.tag))
     if nature is None:
         return "", [], ""
@@ -228,12 +231,12 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
         nonlocal compte
         compte += 1
         if progress is not None and compte % 50 == 0:
-            progress("Lecture de ce qui est déposé : %d fichiers…" % compte)
+            progress(tr("Lecture de ce qui est déposé : %d fichiers…") % compte)
         ext = chemin.suffix.lower()
         try:
             taille = chemin.stat().st_size
         except OSError as exc:
-            scan.ignored.append((str(chemin), "illisible : %s" % exc))
+            scan.ignored.append((str(chemin), tr("illisible : %s") % exc))
             return
         if ext in wav.DELUGE_EXT + (".aifc",):
             probleme, reparable = wav.deluge_problem(chemin)
@@ -244,27 +247,27 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
             if erreur:
                 scan.ignored.append((str(chemin), erreur))
             elif not nature:
-                scan.ignored.append((str(chemin), "XML qui n'est ni un "
-                                     "preset, ni un kit, ni un morceau : "
-                                     "réglage de la machine, non envoyé"))
+                scan.ignored.append((str(chemin), tr("XML qui n'est ni un "
+                                        "preset, ni un kit, ni un morceau : "
+                                        "réglage de la machine, non envoyé")))
             else:
                 scan.found.append(Found(chemin, taille, nature, pack_rel,
                                         loose_rel, refs=refs))
         elif ext in _OTHER_AUDIO:
-            scan.ignored.append((str(chemin), "le Deluge ne lit que le WAV et "
-                                 "l'AIFF : exportez-le en WAV depuis votre "
-                                 "logiciel"))
+            scan.ignored.append((str(chemin), tr("le Deluge ne lit que le WAV et "
+                                    "l'AIFF : exportez-le en WAV depuis votre "
+                                    "logiciel")))
         elif ext in (".mid", ".midi"):
-            scan.ignored.append((str(chemin), "le Deluge ne lit pas les "
-                                 "fichiers MIDI"))
+            scan.ignored.append((str(chemin), tr("le Deluge ne lit pas les "
+                                    "fichiers MIDI")))
         elif ext == ".bin" and chemin.name.lower().startswith("deluge"):
-            scan.ignored.append((str(chemin), "firmware : il s'installe à la "
-                                 "main, jamais par l'application"))
+            scan.ignored.append((str(chemin), tr("firmware : il s'installe à la "
+                                    "main, jamais par l'application")))
         elif ext in _DOCS:
-            scan.ignored.append((str(chemin), "documentation : reste sur le "
-                                 "PC"))
+            scan.ignored.append((str(chemin), tr("documentation : reste sur le "
+                                    "PC")))
         else:
-            scan.ignored.append((str(chemin), "pas un fichier du Deluge"))
+            scan.ignored.append((str(chemin), tr("pas un fichier du Deluge")))
 
     for source in sources:
         if should_stop is not None and should_stop():
@@ -371,18 +374,18 @@ class ImportPlan:
 
         c = self.counts()
         a_copier = c.get("copy", 0) + c.get("convert", 0)
-        morceaux = ["%d fichier(s) à envoyer (%s)"
+        morceaux = [tr("%d fichier(s) à envoyer (%s)")
                     % (a_copier, human_size(self.bytes_to_copy()))]
         if c.get("convert"):
-            morceaux.append("dont %d à convertir" % c["convert"])
+            morceaux.append(tr("dont %d à convertir") % c["convert"])
         if c.get("same"):
-            morceaux.append("%d déjà sur la carte" % c["same"])
+            morceaux.append(tr("%d déjà sur la carte") % c["same"])
         if c.get("kept"):
-            morceaux.append("%d laissé(s) tel quel" % c["kept"])
+            morceaux.append(tr("%d laissé(s) tel quel") % c["kept"])
         if c.get("refused"):
-            morceaux.append("%d refusé(s)" % c["refused"])
+            morceaux.append(tr("%d refusé(s)") % c["refused"])
         if self.ignored:
-            morceaux.append("%d resté(s) sur le PC" % len(self.ignored))
+            morceaux.append(tr("%d resté(s) sur le PC") % len(self.ignored))
         return ", ".join(morceaux)
 
     def to_text(self) -> str:
@@ -394,7 +397,7 @@ class ImportPlan:
             groupe = self.of(action)
             if not groupe:
                 continue
-            lignes.append("— %s (%d) —" % (ACTIONS[action].capitalize(),
+            lignes.append("— %s (%d) —" % (tr(ACTIONS[action]).capitalize(),
                                           len(groupe)))
             for item in groupe:
                 ligne = "  %s   %s" % (item.rel, human_size(item.size))
@@ -405,15 +408,15 @@ class ImportPlan:
                     lignes.append("      %s" % item.reason)
             lignes.append("")
         if self.missing:
-            lignes.append("— Échantillons introuvables, cités par —")
+            lignes.append(tr("— Échantillons introuvables, cités par —"))
             for rel, refs in sorted(self.missing.items()):
                 lignes.append("  %s" % rel)
                 lignes.extend("      %s" % r for r in refs[:8])
                 if len(refs) > 8:
-                    lignes.append("      … et %d autres" % (len(refs) - 8))
+                    lignes.append(tr("      … et %d autres") % (len(refs) - 8))
             lignes.append("")
         if self.ignored:
-            lignes.append("— Resté sur le PC (%d) —" % len(self.ignored))
+            lignes.append(tr("— Resté sur le PC (%d) —") % len(self.ignored))
             for chemin, raison in self.ignored:
                 lignes.append("  %s" % chemin)
                 lignes.append("      %s" % raison)
@@ -496,7 +499,7 @@ def _free_name(rel: str, pris) -> str:
         complet = (dossier + "/" + candidat).strip("/")
         if norm_rel(complet) not in pris:
             return complet
-    raise ValueError("aucun nom libre pour %s" % rel)
+    raise ValueError(tr("aucun nom libre pour %s") % rel)
 
 
 def _fit(rel: str) -> str:
@@ -549,9 +552,9 @@ def plan_import(scan: ImportScan, card_root: Path, dest: str = "SAMPLES",
         action, raison = "copy", ""
         if trouve.problem:
             action = "convert" if trouve.fixable else "refused"
-            raison = (("le Deluge le refuserait : %s — converti sans perte "
-                       "audible" if trouve.fixable
-                       else "le Deluge le refuserait : %s") % trouve.problem)
+            raison = ((tr("le Deluge le refuserait : %s — converti sans perte "
+                          "audible") if trouve.fixable
+                       else tr("le Deluge le refuserait : %s")) % trouve.problem)
             if trouve.fixable and rel.lower().endswith(".aifc"):
                 rel = rel[:-5] + ".aif"
         if action != "refused":
@@ -561,22 +564,22 @@ def plan_import(scan: ImportScan, card_root: Path, dest: str = "SAMPLES",
                 if action == "copy" and _same_bytes(trouve.path,
                                                     card_root / deja[0]):
                     action, rel = "same", deja[0]
-                    raison = "identique, octet pour octet"
+                    raison = tr("identique, octet pour octet")
                 elif trouve.pack_rel:
                     action, rel = "kept", deja[0]
-                    raison = ("un fichier différent porte déjà ce nom sur la "
-                              "carte : c'est lui que les presets du pack "
-                              "joueront")
+                    raison = (tr("un fichier différent porte déjà ce nom sur la "
+                                 "carte : c'est lui que les presets du pack "
+                                 "joueront"))
                 else:
                     rel = _free_name(rel, set(existants) | set(prevus))
-                    raison = "nom déjà pris sur la carte : numéroté"
+                    raison = tr("nom déjà pris sur la carte : numéroté")
             elif cle in prevus:
                 if trouve.pack_rel:
                     action = "kept"
-                    raison = "en double dans ce qui est déposé"
+                    raison = tr("en double dans ce qui est déposé")
                 else:
                     rel = _free_name(rel, set(existants) | set(prevus))
-                    raison = "nom déjà pris par un autre fichier déposé"
+                    raison = tr("nom déjà pris par un autre fichier déposé")
         if action in ("copy", "convert"):
             prevus[norm_rel(rel)] = rel
         if trouve.pack_rel and norm_rel(rel) != norm_rel(original):
@@ -618,9 +621,9 @@ class ImportResult:
     stopped: bool = False
 
     def summary(self) -> str:
-        morceaux = ["%d fichier(s) posé(s) sur la carte" % len(self.written)]
+        morceaux = [tr("%d fichier(s) posé(s) sur la carte") % len(self.written)]
         if self.converted:
-            morceaux.append("dont %d converti(s)" % len(self.converted))
+            morceaux.append(tr("dont %d converti(s)") % len(self.converted))
         if self.errors:
             morceaux.append("%d erreur(s)" % len(self.errors))
         if self.stopped:
@@ -683,16 +686,16 @@ def _convert_new(source: Path, cible: Path) -> None:
     hors de la carte : rien d'inachevé n'y traîne jamais."""
     info = wav.probe(source)
     if not info.ok:
-        raise ValueError("illisible : %s" % info.error)
+        raise ValueError(tr("illisible : %s") % info.error)
     aiff = cible.suffix.lower() in (".aif", ".aiff")
     with tempfile.TemporaryDirectory(prefix="deluge-envoi-") as dossier:
         temporaire = Path(dossier) / ("conversion" + cible.suffix.lower())
         resultat = wav.convert(source, temporaire, **_conversion(info, aiff))
         if not resultat.ok:
-            raise ValueError("conversion impossible : %s" % resultat.error)
+            raise ValueError(tr("conversion impossible : %s") % resultat.error)
         probleme, _ = wav.deluge_problem(temporaire)
         if probleme:
-            raise ValueError("toujours refusé après conversion : %s"
+            raise ValueError(tr("toujours refusé après conversion : %s")
                              % probleme)
         _copy_new(temporaire, cible)
 
@@ -727,12 +730,12 @@ def apply_import(plan: ImportPlan, sd: SDCard,
             resultat.stopped = True
             break
         if progress is not None:
-            progress("Copie sur la carte : %d / %d — %s"
+            progress(tr("Copie sur la carte : %d / %d — %s")
                      % (i, len(a_faire), item.rel))
         cible = racine / item.rel
         try:
             if _exists_ci(racine, item.rel):
-                raise FileExistsError("apparu sur la carte depuis le plan")
+                raise FileExistsError(tr("apparu sur la carte depuis le plan"))
             cible.parent.mkdir(parents=True, exist_ok=True)
             if item.action == "convert":
                 _convert_new(item.source, cible)
@@ -744,6 +747,6 @@ def apply_import(plan: ImportPlan, sd: SDCard,
             resultat.written.append(item.rel)
         except (OSError, ValueError, dxml.DelugeXMLError) as exc:
             log.warning("envoi de %s : %s", item.rel, exc)
-            resultat.errors.append("%s : %s" % (item.rel, exc))
+            resultat.errors.append(tr("%s : %s") % (item.rel, exc))
     log.info("envoi vers la carte : %s", resultat.summary())
     return resultat

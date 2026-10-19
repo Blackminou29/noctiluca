@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..i18n import tr
 from .db import Library
 from .sdcard import norm_rel
 
@@ -286,24 +287,24 @@ def describe(row) -> str:
     l'utilisateur deviner.
     """
     if row is None:
-        return "Aucun descripteur."
+        return tr("Aucun descripteur.")
     morceaux: list[str] = []
     centroid = _value(row, "centroid")
     if centroid:
-        morceaux.append("brillance %.0f Hz" % centroid)
+        morceaux.append(tr("brillance %.0f Hz") % centroid)
     low = _value(row, "low_ratio")
     if low is not None:
-        morceaux.append("grave %.0f %%" % (low * 100.0))
+        morceaux.append(tr("grave %.0f %%") % (low * 100.0))
     high = _value(row, "high_ratio")
     if high is not None:
-        morceaux.append("aigu %.0f %%" % (high * 100.0))
+        morceaux.append(tr("aigu %.0f %%") % (high * 100.0))
     flatness = _value(row, "flatness")
     if flatness is not None:
-        morceaux.append("bruité %.0f %%" % (flatness * 100.0))
+        morceaux.append(tr("bruité %.0f %%") % (flatness * 100.0))
     attack = _value(row, "attack")
     if attack is not None:
-        morceaux.append("attaque %.0f ms" % (attack * 1000.0))
+        morceaux.append(tr("attaque %.0f ms") % (attack * 1000.0))
     crest = _value(row, "crest")
     if crest:
-        morceaux.append("crête/RMS %.1f" % crest)
-    return ", ".join(morceaux) if morceaux else "Pas encore analysé."
+        morceaux.append(tr("crête/RMS %.1f") % crest)
+    return ", ".join(morceaux) if morceaux else tr("Pas encore analysé.")

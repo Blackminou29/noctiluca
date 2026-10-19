@@ -1,6 +1,6 @@
 # Point d'étape — Deluge Companion
 
-**Dernière mise à jour :** 18 octobre 2026 (le PC et le Deluge, dans les deux sens, §3 untricies)
+**Dernière mise à jour :** 19 octobre 2026 (l'interface en anglais, §3 duotricies)
 **État :** **application terminée et fonctionnelle.** Les cinq phases sont écrites,
 `python main.py` démarre, **la suite complète passe** (le nombre exact est dans le dernier
 § daté). Deux audits de bugs (§3 duovicies) puis trois passes sur les générateurs et la
@@ -18,7 +18,8 @@ tempo, son sélectionné, mesuré sur la machine : voir §3 novovicies. **Sa car
 reste dans la machine** : firmware 1.3, copie de travail synchronisée par USB, la
 sauvegarde de l'utilisateur seulement lue — voir §3 tricies. **Les échanges vont dans
 les deux sens** : envoyer au Deluge les sons et packs du PC, voir ce qui attend et ce
-qui est arrivé, glisser un son vers le logiciel de MAO — voir §3 untricies.
+qui est arrivé, glisser un son vers le logiciel de MAO — voir §3 untricies. **L'interface parle français
+ou anglais**, au choix dans le menu « Langue » — voir §3 duotricies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -29,7 +30,8 @@ de modifier quoi que ce soit.
 Application Python (PyQt6) accompagnant l'utilisation d'un Synthstrom Deluge :
 gestion complète de la carte SD (échantillons, presets, kits, morceaux), générateur de
 presets de synthé par genre musical ou aléatoire, et boîte à outils de production
-électronique. Interface en français, identité visuelle reprise du *Guide du Deluge OLED*.
+électronique. Interface en français ou en anglais (le français est la langue source),
+identité visuelle reprise du *Guide du Deluge OLED*.
 
 **Le contrat d'architecture complet est dans [`SPEC.md`](SPEC.md)** : signatures exactes de
 tous les modules, format XML du Deluge, palette graphique, description de chacune des
@@ -303,6 +305,93 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 duotricies. L'interface en anglais (19 octobre 2026)
+
+> « Je souhaite que le logiciel soit traduit en anglais et qu'il soit possible de
+> choisir dans la barre de menu entre le français ou l'anglais. »
+
+### Ce qui existe maintenant
+
+| | |
+|---|---|
+| `delugeapp/i18n/` | `tr`, `N_`, `untranslated`, `plural`, `sources`, `tr_stored`, et les formats de nombres, d'heures et de dates ; ne dépend que de la bibliothèque standard |
+| `i18n/en/` | la traduction : 2 025 phrases, un fichier par module du code (`ui/pages/health.py` → `ui_pages_health.py`), listés dans `MODULES` |
+| menu « Langue » | entre « Outils » et « Aide » : « Français », « English », la langue retenue cochée ; choix enregistré tout de suite, question posée dans les deux langues |
+| `MainWindow.restart` et `main._run_windows` | « Oui » ferme la fenêtre comme à l'ordinaire, puis contexte et fenêtre se reconstruisent dans le même processus, dans la nouvelle langue |
+| `tests/i18n_analyse.py` | lit le code par son arbre syntaxique : clés, oublis, appels à l'import ; `python tests/i18n_analyse.py <fichier>` donne le squelette de ce qui manque |
+
+Les règles d'écriture, ce qui ne se traduit pas et les formats sont dans **SPEC §5.26** —
+à lire avant d'ajouter un texte.
+
+### Les choix
+
+* **Le français reste la langue source**, et la clé de la traduction : le code se lit
+  comme avant, et un texte oublié s'affiche en français plutôt qu'en clé illisible.
+* **Ce que l'application écrit prend la langue de l'interface**, à la demande de
+  l'utilisateur (« nomme en anglais quand l'interface est en anglais ») : noms de clips
+  des morceaux (« Chords », « Build-up Bass », « Loop »), dossiers d'un rangement par
+  durée (« Under 1 s »), dossiers de sauvegarde (« _manual », « _before restoring »),
+  pistes et repères MIDI, nom de repli « UNTITLED ». `tr()` s'applique au moment
+  d'écrire, sur une clé française qui ne bouge pas : les parties (« Accords ») et les
+  sections (« Montée ») restent les clés du code, et le manifeste d'une sauvegarde garde
+  son libellé en clé. Les noms des presets générés (« ACID GROWL ») étaient déjà en
+  anglais. Ce qui est déjà sur la carte ne change pas quand on change de langue.
+* **L'index et l'historique gardent leurs textes en français** (anomalies réparées des
+  XML, résumé d'un kit) et `tr_stored` les traduit à l'affichage — vérifié sur la vraie
+  sauvegarde : « 70 unescaped '&' fixed », « XML structure rebuilt by the tolerant
+  parser ». La page Santé reconnaît toujours les documents multi-racines à leur note.
+* **Le journal reste en français** : il sert au diagnostic.
+* **Changer de langue redémarre la fenêtre**, pas le processus : les textes se
+  traduisent à la création des widgets ; retraduire une fenêtre vivante aurait demandé
+  de toucher chacune des neuf pages.
+
+### Pièges rencontrés
+
+* **Le test qui clique chaque entrée de menu cliquait aussi « English »** : la fenêtre se
+  fermait pour redémarrer, et la suite du test tournait sur un contexte fermé jusqu'au
+  chien de garde (2 min). Les entrées de langue sont écartées là, et ont leur test.
+* **Un remplacement de `QMessageBox.question` défait par `addCleanup` passe après le
+  `tearDown`** de `MainWindowCase` : il rendait aux tests suivants la réponse « oui » de
+  la fixture, et deux tests des garde-fous tombaient. Bornés au corps du test
+  (`ExitStack`).
+* **Une phrase, une traduction** : le catalogue se fond en un dictionnaire.
+  « Lecture impossible : %s » voulait dire « jouer » partout sauf dans le découpage, où
+  il s'agissait de lire un fichier : le français y est devenu « Lecture de l'échantillon
+  impossible ».
+* **Un heredoc Bash abîme les « \ »** (déjà noté) : deux fois encore pendant cette passe ;
+  les correctifs qui en contiennent s'écrivent avec l'outil d'écriture.
+
+### Vérifié
+
+* **1 030 tests** sous unittest et sous pytest (646 noyau, 355 interface, 29 traduction).
+* `test_i18n` : aucun texte visible hors de `tr`/`N_` dans les 71 modules lus, aucun `tr`
+  à l'import, aucune clé sans traduction ni traduction orpheline, mêmes marques dans
+  chaque gabarit, une seule traduction par phrase. Quatre mutations (traduction retirée,
+  marque perdue, texte oublié, `tr` à l'import) font chacune échouer la suite ;
+  quatre autres retirent la traduction d'un nom écrit (clips, dossier de rangement,
+  dossier de sauvegarde, pistes MIDI) et sont attrapées de même.
+* `TestInterfaceEnAnglais` : 8 606 textes relevés sur les neuf pages et tous leurs
+  onglets, **aucun en français** (459 signalés quand l'interface est en français) ; les
+  commandes s'expliquent aussi en anglais. `TestClicsEnAnglais` : chaque bouton cliqué,
+  2 538 textes relevés (barre d'état, boîtes, dialogues), aucun en français (543 en
+  français). `TestMenuLangue`, `TestRedemarrageDansLeMemeProcessus` : le choix gardé, la
+  fenêtre rouverte dans l'autre langue, la traduction de Qt retirée en anglais.
+* Rendus en anglais à 980 et 1 360 px, défilés, sans carte puis avec la sauvegarde
+  indexée en lecture seule (index dans un dossier temporaire) : tout en anglais, la barre
+  de menus tient à 980 px. Réglages réels intacts.
+* Trois coupures vues à 980 px **existent à l'identique en français** et ne tiennent pas
+  à la traduction : la liste « Couleur » de la progression (Outils), la description du
+  genre (Générateur), l'en-tête « Instrument » des clips (Morceaux).
+
+### À voir avec l'utilisateur
+
+1. La relecture de l'anglais par quelqu'un qui joue du Deluge en anglais : les
+   termes suivent le manuel quand il les nomme (Mod FX, Arpeggiator, Pan…).
+2. **Fait** le 19 octobre 2026 : ce que l'application écrit se nomme dans la langue de
+   l'interface (ci-dessus).
 
 ---
 

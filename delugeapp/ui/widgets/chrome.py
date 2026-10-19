@@ -37,6 +37,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import QPushButton, QSizePolicy, QWidget
 
+from ...i18n import tr
 from .. import art, icons
 from ..theme import (
     BORDER,
@@ -98,8 +99,8 @@ class Wordmark(QWidget):
         self._suite = _police(FONT_UI, 7.2, 700, 3.0)
         self.setSizePolicy(QSizePolicy.Policy.Fixed,
                            QSizePolicy.Policy.Preferred)
-        self.setToolTip("Deluge Companion — la carte SD de votre Deluge, "
-                        "ses sons et ses outils")
+        self.setToolTip(tr("Deluge Companion — la carte SD de votre "
+                           "Deluge, ses sons et ses outils"))
 
     def set_compact(self, compact: bool) -> None:
         """Masque ou montre « COMPANION »."""
@@ -730,7 +731,7 @@ class DropVeil(QWidget):
             titre = QRectF(bord.left() + 24, pad.bottom() + 22,
                            bord.width() - 48, 34)
             p.drawText(titre, int(Qt.AlignmentFlag.AlignCenter),
-                       "Déposez pour envoyer au Deluge")
+                       tr("Déposez pour envoyer au Deluge"))
             p.setPen(QColor(GREY_LIGHT))
             p.setFont(_police(FONT_UI, 11))
             texte = QRectF(bord.left() + 40, titre.bottom() + 6,
@@ -738,8 +739,8 @@ class DropVeil(QWidget):
             p.drawText(texte, int(Qt.AlignmentFlag.AlignHCenter
                                   | Qt.AlignmentFlag.AlignTop
                                   | Qt.TextFlag.TextWordWrap),
-                       self._detail + "\nLe plan de l'envoi est montré avant "
-                       "toute copie.")
+                       self._detail + "\n" + tr("Le plan de l'envoi est "
+                                                 "montré avant toute copie."))
             p.end()
         except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
             log.debug("voile de dépôt non tracé : %s", exc)

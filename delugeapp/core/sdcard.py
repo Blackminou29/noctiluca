@@ -26,6 +26,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import N_, tr, untranslated
+
 log = logging.getLogger(__name__)
 
 
@@ -36,7 +38,7 @@ log = logging.getLogger(__name__)
 STD_DIRS = ("SONGS", "SYNTHS", "KITS", "SAMPLES")
 
 #: Dossiers techniques à ne jamais parcourir (comparaison en minuscules).
-IGNORED_DIRS = frozenset(
+IGNORED_DIRS = untranslated(frozenset(
     {
         "system volume information",
         ".spotlight-v100",
@@ -50,7 +52,7 @@ IGNORED_DIRS = frozenset(
         ".git",
         "__pycache__",
     }
-)
+))
 
 #: Préfixes de fichiers à ignorer (AppleDouble macOS).
 IGNORED_FILES_PREFIX = ("._",)
@@ -150,10 +152,11 @@ def safe_deluge_name(name: str) -> str:
     """Rend un nom utilisable sur la carte : ASCII, sans caractère interdit.
 
     Les accents sont translittérés (``Épée`` -> ``Epee``) plutôt que supprimés,
-    pour que le nom reste lisible sur l'écran du Deluge.
+    pour que le nom reste lisible sur l'écran du Deluge. Un nom vide devient
+    « SANS NOM », ou « UNTITLED » quand l'interface parle anglais.
     """
     if not name:
-        return "SANS NOM"
+        return tr("SANS NOM")
     # Translittération des accents vers l'ASCII.
     decomposed = unicodedata.normalize("NFKD", str(name))
     stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
@@ -172,43 +175,47 @@ def safe_deluge_name(name: str) -> str:
     cleaned = cleaned[:MAX_NAME_LEN].strip(" .")
     if cleaned.upper() in RESERVED_NAMES:
         cleaned += "_"
-    return cleaned or "SANS NOM"
+    return cleaned or tr("SANS NOM")
 
 
 def check_name(name: str) -> list[str]:
-    """Liste, en français, les problèmes d'un nom destiné à la carte.
+    """Liste, dans la langue de l'interface, les problèmes d'un nom destiné
+    à la carte.
 
     Retourne une liste vide si le nom est sain.
     """
     if name is None or not str(name).strip():
-        return ["Le nom est vide."]
+        return [tr("Le nom est vide.")]
     name = str(name)
     problems: list[str] = []
 
     bad = sorted({c for c in name if c in FORBIDDEN_CHARS})
     if bad:
-        problems.append("Caractères interdits par FAT32 : " + " ".join(bad))
+        problems.append(tr("Caractères interdits par FAT32 : %s")
+                        % " ".join(bad))
     if any(ord(c) < 32 for c in name):
-        problems.append("Le nom contient des caractères de contrôle.")
+        problems.append(tr("Le nom contient des caractères de contrôle."))
     try:
         name.encode("ascii")
     except UnicodeEncodeError:
-        problems.append(
+        problems.append(tr(
             "Le nom contient des caractères non ASCII ; le Deluge risque de "
             "les afficher incorrectement."
-        )
+        ))
     if len(name) > MAX_NAME_LEN:
         problems.append(
-            f"Le nom fait {len(name)} caractères (maximum {MAX_NAME_LEN})."
+            tr("Le nom fait %d caractères (maximum %d).")
+            % (len(name), MAX_NAME_LEN)
         )
     if name != name.strip():
-        problems.append("Le nom commence ou finit par une espace.")
+        problems.append(tr("Le nom commence ou finit par une espace."))
     if name.endswith("."):
-        problems.append("Le nom finit par un point.")
+        problems.append(tr("Le nom finit par un point."))
     if name.startswith("._"):
-        problems.append("Le préfixe « ._ » est réservé aux fichiers macOS.")
+        problems.append(tr("Le préfixe « ._ » est réservé aux fichiers "
+                           "macOS."))
     if name.upper() in RESERVED_NAMES:
-        problems.append("Ce nom est réservé par Windows.")
+        problems.append(tr("Ce nom est réservé par Windows."))
     return problems
 
 
@@ -325,9 +332,10 @@ class SDCard:
     def require_writable(self) -> None:
         """Lève :class:`PermissionError` si l'on ne doit pas écrire ici."""
         if self.read_only:
-            raise PermissionError(
+            raise PermissionError(tr(
                 self.read_only_reason
-                or "Cet emplacement est en lecture seule : rien n'y est écrit.")
+                or N_("Cet emplacement est en lecture seule : rien n'y est "
+                      "écrit.")))
 
     # -- conversions de chemins -------------------------------------------- #
 

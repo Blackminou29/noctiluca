@@ -26,6 +26,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import tr
 from . import units
 from .model import Kit, Song, SynthPreset
 from .sdcard import SDCard, norm_rel
@@ -69,33 +70,33 @@ class SongPack:
     def summary(self) -> str:
         """Résumé en une ligne."""
         if not self.song_rel:
-            return "Morceau introuvable."
-        texte = ("%d fichier(s) — %d preset(s), %d échantillon(s), %s"
+            return tr("Morceau introuvable.")
+        texte = (tr("%d fichier(s) — %d preset(s), %d échantillon(s), %s")
                  % (len(self), len(self.presets), len(self.samples),
                     units.human_size(self.bytes_total)))
         manque = len(self.missing_presets) + len(self.missing_samples)
         if manque:
-            texte += " ; %d introuvable(s)" % manque
+            texte += tr(" ; %d introuvable(s)") % manque
         return texte + "."
 
     def to_text(self) -> str:
         """Détail, fichier par fichier."""
-        lignes = ["Morceau : %s" % self.song_rel, "", self.summary(), ""]
+        lignes = [tr("Morceau : %s") % self.song_rel, "", self.summary(), ""]
         if self.presets:
-            lignes.append("Presets (%d) :" % len(self.presets))
+            lignes.append(tr("Presets (%d) :") % len(self.presets))
             lignes += ["  %s" % p for p in self.presets]
             lignes.append("")
         if self.samples:
-            lignes.append("Échantillons (%d) :" % len(self.samples))
+            lignes.append(tr("Échantillons (%d) :") % len(self.samples))
             lignes += ["  %s" % s for s in self.samples]
             lignes.append("")
         if self.missing_presets:
-            lignes.append("Presets introuvables (%d) :"
+            lignes.append(tr("Presets introuvables (%d) :")
                           % len(self.missing_presets))
             lignes += ["  %s" % p for p in self.missing_presets]
             lignes.append("")
         if self.missing_samples:
-            lignes.append("Échantillons introuvables (%d) :"
+            lignes.append(tr("Échantillons introuvables (%d) :")
                           % len(self.missing_samples))
             lignes += ["  %s" % s for s in self.missing_samples]
         return "\n".join(lignes).rstrip()
@@ -187,7 +188,7 @@ def collect(sd: SDCard, song_rel: str) -> SongPack:
     except Exception as exc:                        # noqa: BLE001
         log.exception("morceau illisible : %s", song_rel)
         pack.name = Path(song_rel).stem
-        pack.missing_presets.append("morceau illisible : %s" % exc)
+        pack.missing_presets.append(tr("morceau illisible : %s") % exc)
         return pack
 
     pack.name = song.name or Path(song_rel).stem
@@ -253,7 +254,7 @@ def write_pack(sd: SDCard, pack: SongPack, dest: Path,
     suffit à y jouer le morceau.
     """
     if not pack or not pack.files():
-        return [], ["Rien à copier."]
+        return [], [tr("Rien à copier.")]
 
     cible = Path(dest)
     prevus = pack.files()
@@ -275,7 +276,7 @@ def write_pack(sd: SDCard, pack: SongPack, dest: Path,
             # Un échantillon peut n'être trouvable qu'à la casse près.
             trouve = sd.resolve_sample(rel)
             if trouve is None:
-                erreurs.append("%s : introuvable" % rel)
+                erreurs.append(tr("%s : introuvable") % rel)
                 continue
             source = trouve
 
@@ -285,6 +286,6 @@ def write_pack(sd: SDCard, pack: SongPack, dest: Path,
             shutil.copy2(source, destination)
             copies.append(rel)
         except OSError as exc:
-            erreurs.append("%s : %s" % (rel, exc))
+            erreurs.append(tr("%s : %s") % (rel, exc))
 
     return copies, erreurs

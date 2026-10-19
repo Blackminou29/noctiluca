@@ -40,6 +40,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..i18n import tr
 from . import analysis, wav
 from .db import Library
 from .dxml import DelugeXMLError
@@ -133,10 +134,10 @@ class SliceSet:
     def summary(self) -> str:
         """Résumé en une ligne."""
         if not self.slices:
-            return "Aucune tranche."
+            return tr("Aucune tranche.")
         court = min(s.frames for s in self.slices) / float(self.sr or 1)
         long = max(s.frames for s in self.slices) / float(self.sr or 1)
-        texte = ("%d tranches, de %.0f à %.0f ms"
+        texte = (tr("%d tranches, de %.0f à %.0f ms")
                  % (len(self.slices), court * 1000.0, long * 1000.0))
         if self.bpm:
             texte += " — %.1f BPM" % self.bpm
@@ -364,7 +365,7 @@ def save_sliced_kit(sd: SDCard, sliceset: SliceSet, name: str = "",
     *serait* écrit, pour pouvoir l'annoncer avant confirmation (SPEC §0.2).
     """
     if not sliceset:
-        return "", "Aucune tranche à écrire."
+        return "", tr("Aucune tranche à écrire.")
 
     titre = safe_deluge_name(name or Path(sliceset.rel).stem)[:20] or "SLICES"
     base = str(folder or "KITS").strip("/") or "KITS"
@@ -376,10 +377,10 @@ def save_sliced_kit(sd: SDCard, sliceset: SliceSet, name: str = "",
         rel = "%s/%s %d.XML" % (base, titre, index)
         index += 1
         if index > 99:
-            return "", "Trop de kits portent déjà ce nom."
+            return "", tr("Trop de kits portent déjà ce nom.")
 
     if not apply:
-        return rel, ("%d tranches seraient écrites dans %s."
+        return rel, (tr("%d tranches seraient écrites dans %s.")
                      % (len(sliceset), rel))
     sd.require_writable()
 
@@ -391,8 +392,8 @@ def save_sliced_kit(sd: SDCard, sliceset: SliceSet, name: str = "",
     except (OSError, DelugeXMLError) as exc:
         # ``dxml.save`` traduit toute erreur d'écriture en DelugeXMLError.
         log.exception("écriture du kit impossible : %s", rel)
-        return "", "Écriture impossible : %s" % exc
-    return rel, "%d tranches écrites dans %s." % (len(sliceset), rel)
+        return "", tr("Écriture impossible : %s") % exc
+    return rel, tr("%d tranches écrites dans %s.") % (len(sliceset), rel)
 
 
 # --------------------------------------------------------------------------- #
@@ -432,11 +433,11 @@ def export_slices(sd: SDCard, sliceset: SliceSet, folder: str,
     prevus sont retournés.
     """
     if not sliceset:
-        return [], ["Aucune tranche à exporter."]
+        return [], [tr("Aucune tranche à exporter.")]
 
     base = str(folder or "").strip("/")
     if not base:
-        return [], ["Aucun dossier de destination."]
+        return [], [tr("Aucun dossier de destination.")]
 
     stem = safe_deluge_name(Path(sliceset.rel).stem)[:16] or "SLICE"
     prevus = ["%s/%s %02d.wav" % (base, stem, i + 1)
@@ -447,11 +448,11 @@ def export_slices(sd: SDCard, sliceset: SliceSet, folder: str,
 
     path = sd.resolve_sample(sliceset.rel)
     if path is None:
-        return [], ["Échantillon introuvable : %s" % sliceset.rel]
+        return [], [tr("Échantillon introuvable : %s") % sliceset.rel]
     try:
         data, sr = wav.read(path)
     except Exception as exc:                        # noqa: BLE001
-        return [], ["Lecture impossible : %s" % exc]
+        return [], [tr("Lecture de l'échantillon impossible : %s") % exc]
     if data.ndim == 1:
         data = data.reshape(-1, 1)
 
@@ -463,7 +464,7 @@ def export_slices(sd: SDCard, sliceset: SliceSet, folder: str,
         bloc = data[_clamp(tranche.start, 0, data.shape[0]):
                     _clamp(tranche.end, 0, data.shape[0])]
         if bloc.shape[0] == 0:
-            erreurs.append("%s : tranche vide" % rel)
+            erreurs.append(tr("%s : tranche vide") % rel)
             continue
         cible = sd.abs(rel)
         try:
@@ -471,5 +472,5 @@ def export_slices(sd: SDCard, sliceset: SliceSet, folder: str,
             wav.write(cible, bloc, sr or info.sample_rate, profondeur)
             ecrits.append(rel)
         except OSError as exc:
-            erreurs.append("%s : %s" % (rel, exc))
+            erreurs.append(tr("%s : %s") % (rel, exc))
     return ecrits, erreurs

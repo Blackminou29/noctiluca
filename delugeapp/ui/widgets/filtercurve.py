@@ -21,6 +21,7 @@ from PyQt6.QtCore import QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
+from ...i18n import tr
 from ..theme import (
     GOLD,
     GREY,
@@ -237,8 +238,8 @@ class FilterCurve(_LogAxis):
             painter.drawText(
                 QRectF(plot.left() + 4, plot.top() + 2, plot.width() - 8, 14),
                 Qt.AlignmentFlag.AlignLeft,
-                f"{self._mode} · coupure {_freq_label(cutoff_hz)}Hz"
-                f" · résonance {self._resonance}")
+                tr("%s · coupure %sHz · résonance %s")
+                % (self._mode, _freq_label(cutoff_hz), self._resonance))
             painter.end()
         except Exception as exc:  # noqa: BLE001 - un tracé ne doit rien casser
             log.debug("tracé de la courbe de filtre impossible : %s", exc)
@@ -258,9 +259,9 @@ class SpectrumView(_LogAxis):
         self._db: np.ndarray | None = None
         # Réglable : « écoutez un échantillon » ne veut rien dire dans
         # le générateur, où le son n'existe pas encore : il s'y fabrique.
-        self._empty_text = ("Aucun signal analysé\n\n"
-                            "Écoutez un échantillon pour voir son "
-                            "spectre")
+        self._empty_text = tr("Aucun signal analysé\n\n"
+                              "Écoutez un échantillon pour voir son "
+                              "spectre")
 
     def set_accent(self, color: str) -> None:
         """Trace le spectre à la couleur de la page qui l'accueille."""
@@ -280,7 +281,8 @@ class SpectrumView(_LogAxis):
             f = np.asarray(freqs, dtype=np.float64)
             d = np.asarray(db, dtype=np.float64)
             if f.size != d.size or f.size == 0:
-                raise ValueError(f"tailles incompatibles : {f.size}/{d.size}")
+                raise ValueError(tr("tailles incompatibles : %d/%d")
+                                 % (f.size, d.size))
             self._freqs, self._db = f, d
         except Exception as exc:  # noqa: BLE001 - données inattendues
             log.debug("spectre illisible : %s", exc)

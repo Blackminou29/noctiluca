@@ -43,6 +43,7 @@ import re
 
 import numpy as np
 
+from ..i18n import is_english, untranslated
 from .theory import NOTE_NAMES_FR
 
 log = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ DRUM_CATEGORIES = (
 #: banques nomment leurs fichiers « 808 Clap », « 808 Cowbell », « 808 Conga
 #: low »… Un tel indice rattachait toute la boîte à rythmes à la grosse
 #: caisse — c'était 4 des erreurs de classement mesurées sur cette carte.
-_NAME_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+_NAME_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = untranslated((
     ("Kick", ("kick", "bassdrum", "bass drum", "kik", " bd", "bd ")),
     ("Rim", ("rimshot", "rim shot", "rim")),
     ("Snare", ("snare", "snr", " sd", "sd ")),
@@ -123,7 +124,7 @@ _NAME_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Guiro", ("guiro",)),
     ("Timpany", ("timpani", "timpany", "timp")),
     ("Cowbell", ("bell",)),
-)
+))
 
 #: Familles à registre : la catégorie dépend d'un mot de hauteur.
 _REGISTER_FAMILIES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -546,12 +547,15 @@ def estimate_root_note(data: np.ndarray, sr: int) -> int | None:
         return None
 
 
-def note_name(midi: int, french: bool = True) -> str:
-    """Nom d'une note MIDI : ``60`` -> ``'Do3'`` en français, ``'C3'`` sinon."""
+def note_name(midi: int, french: bool | None = None) -> str:
+    """Nom d'une note MIDI : ``60`` -> ``'Do3'`` en français, ``'C3'`` en
+    anglais ; ``french=None`` suit la langue de l'interface."""
     try:
         value = int(midi)
     except (TypeError, ValueError):
         return ""
+    if french is None:
+        french = not is_english()
     names = NOTE_FR if french else NOTE_EN
     return f"{names[value % 12]}{value // 12 - 2}"
 
