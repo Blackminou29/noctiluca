@@ -49,17 +49,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol
 
-from .delugefiles import (NOT_CONNECTED, STOPPED, CardEntry, FileError,
-                          fat_stamp, from_fat)
+from .delugefiles import (FR_NO_FILE, FR_NO_PATH, NOT_CONNECTED, STOPPED,
+                          CardEntry, FileError, fat_stamp, from_fat)
 from ..i18n import N_, tr, untranslated
 
 log = logging.getLogger(__name__)
 
 __all__ = ["Action", "Exchange", "FolderCard", "LocalFile", "Record",
            "SyncPlan", "SyncResult", "UsbCard", "apply_plan", "backup_state",
-           "exchange_of", "is_junk", "load_exchanges", "load_manifest",
-           "pending_changes", "plan_sync", "recent_arrivals",
-           "record_exchange", "save_manifest", "scan_local", "update_backup"]
+           "changed_folders", "exchange_of", "is_junk", "load_exchanges",
+           "load_manifest", "merge_plans", "parent_folder",
+           "pending_changes", "plan_folders", "plan_sync",
+           "recent_arrivals", "record_exchange", "save_manifest",
+           "scan_local", "update_backup"]
 
 #: Dossier de l'application dans la copie de travail.
 META_DIR = ".deluge-companion"
@@ -119,7 +121,7 @@ def is_junk(rel: str) -> bool:
     if nom.startswith("._"):
         return True
     # Les ``.bak`` que chaque écriture XML laisse à côté du fichier : envoyés
-    # au Deluge, ils encombreraient sa carte — et le câble, à 45 Ko/s.
+    # au Deluge, ils encombreraient sa carte — et le câble, à 60 Ko/s.
     if low.endswith(".bak"):
         return True
     if nom.upper().startswith("~DC") and nom.upper().endswith((".TMP", ".OLD")):
@@ -260,6 +262,35 @@ class UsbCard:
         self.files.unreachable = []
         return self._run(self.files.walk, "/", is_junk)
 
+    def walk_folders(self, folders) -> dict[str, CardEntry]:
+        """Le contenu des seuls ``folders`` — chacun en entier, sans ses
+        sous-dossiers. Un dossier que la carte n'a pas encore est vide.
+
+        Mesuré le 22 octobre 2026 : parcourir toute la carte de
+        l'utilisateur coûte 292 requêtes de 12 ms, 3,5 s ; un dossier de
+        morceaux, cinq.
+        """
+        self.files.unreachable = []
+        trouve: dict[str, CardEntry] = {}
+        for dossier in folders:
+            if self._should_stop is not None and self._should_stop():
+                raise FileError(tr("transfert interrompu"), code=STOPPED)
+            try:
+                entrees = self._run(self.files.listdir, "/" + dossier)
+            except FileError as exc:
+                if exc.code in (FR_NO_FILE, FR_NO_PATH):
+                    continue
+                raise
+            for e in entrees:
+                rel = (dossier + "/" + e.name).strip("/")
+                if is_junk(rel):
+                    continue
+                if not e.addressable:
+                    self.files.unreachable.append(rel)
+                    continue
+                trouve[rel] = e
+        return trouve
+
     @property
     def unreachable(self) -> list[str]:
         return [r for r in self.files.unreachable if not is_junk(r)]
@@ -309,6 +340,26 @@ class FolderCard:
                 st = os.stat(os.path.join(dossier, nom))
                 date, heure = self._stamp(st.st_mtime)
                 trouve[rel] = CardEntry(nom, int(st.st_size), date, heure, 0x20)
+        return trouve
+
+    def walk_folders(self, folders) -> dict[str, CardEntry]:
+        """Comme :meth:`UsbCard.walk_folders`."""
+        trouve: dict[str, CardEntry] = {}
+        for dossier in folders:
+            base = self.root / dossier if dossier else self.root
+            if not base.is_dir():
+                continue
+            for p in base.iterdir():
+                rel = (dossier + "/" + p.name).strip("/")
+                if is_junk(rel):
+                    continue
+                if p.is_dir():
+                    trouve[rel] = CardEntry(p.name, 0, 0, 0, 0x10)
+                    continue
+                st = p.stat()
+                date, heure = self._stamp(st.st_mtime)
+                trouve[rel] = CardEntry(p.name, int(st.st_size), date, heure,
+                                        0x20)
         return trouve
 
     @staticmethod
@@ -398,6 +449,9 @@ class SyncPlan:
     #: reviendrait —, mais proposés : chez l'utilisateur, un kit créé par
     #: l'application dans la sauvegarde n'était jamais arrivé sur la carte.
     backup_only: list[tuple[str, int]] = field(default_factory=list)
+    #: Dossiers que le plan couvre (:func:`plan_folders`) ; ``None`` : toute
+    #: la carte. Hors de ces dossiers, il ne dit rien — pas même « rien ».
+    scope: list[str] | None = None
 
     def backup_music(self) -> list[tuple[str, int]]:
         """Ceux de :attr:`backup_only` qui sont de la musique (morceaux,
@@ -569,6 +623,75 @@ def plan_sync(card: dict[str, CardEntry], local: dict[str, LocalFile],
     if backup is not None:
         plan.backup_only = backup_only(cartes, locaux, Path(backup))
     return plan
+
+
+def parent_folder(rel: str) -> str:
+    """Le dossier d'un chemin relatif ; ``""`` pour la racine."""
+    return rel.replace("\\", "/").strip("/").rpartition("/")[0]
+
+
+def changed_folders(work: Path) -> list[str]:
+    """Les dossiers où la copie de travail a changé depuis la dernière
+    synchronisation : fichiers créés, modifiés **ou supprimés**.
+
+    C'est tout ce qu'une écriture de l'application a pu toucher — ce que
+    le Deluge a enregistré, lui, ne se voit qu'en parcourant sa carte.
+    """
+    work = Path(work)
+    if not (work / MANIFEST).is_file():
+        return []
+    locaux = {_key(r): r for r in scan_local(work)}
+    connus = {_key(r): rec for r, rec in load_manifest(work).items()}
+    dossiers: dict[str, str] = {}
+    for rel, _taille in pending_changes(work):
+        dossiers.setdefault(_key(parent_folder(rel)), parent_folder(rel))
+    for cle, rec in connus.items():
+        if cle not in locaux and not is_junk(rec.rel):
+            dossiers.setdefault(_key(parent_folder(rec.rel)),
+                                parent_folder(rec.rel))
+    return sorted(dossiers.values())
+
+
+def _restrict(entries: dict, folders) -> dict:
+    cles = {_key(f) for f in folders}
+    return {r: v for r, v in entries.items()
+            if _key(parent_folder(r)) in cles}
+
+
+def plan_folders(card: dict[str, CardEntry], local: dict[str, LocalFile],
+                 manifest: dict[str, Record], folders) -> SyncPlan:
+    """Le plan des seuls ``folders``, que ``card`` liste en entier
+    (:meth:`UsbCard.walk_folders`).
+
+    :func:`plan_sync` décide de chaque fichier d'après son seul triplet —
+    carte, copie de travail, manifeste : restreints tous trois aux mêmes
+    dossiers, il rend pour ces dossiers exactement ce que rendrait le plan
+    complet, et ne dit rien des autres. Sans sauvegarde : un fichier de la
+    carte absent de la copie y est reçu par le câble.
+    """
+    dossiers = sorted({f.strip("/") for f in folders})
+    plan = plan_sync(_restrict(card, dossiers), _restrict(local, dossiers),
+                     _restrict(manifest, dossiers))
+    plan.scope = dossiers
+    return plan
+
+
+def merge_plans(partial: SyncPlan, previous: SyncPlan | None) -> SyncPlan:
+    """Un plan restreint, complété de ce que le précédent savait hors de ses
+    dossiers : les suppressions qui attendent un accord, les noms
+    intransmissibles, ce que la sauvegarde a de plus. Sans quoi les
+    « suppressions à confirmer » disparaîtraient après chaque envoi."""
+    if partial.scope is None or previous is None:
+        return partial
+    dans = {_key(d) for d in partial.scope}
+
+    def dehors(rel: str) -> bool:
+        return _key(parent_folder(rel)) not in dans
+
+    partial.actions.extend(a for a in previous.needs_consent if dehors(a.rel))
+    partial.unreachable.extend(r for r in previous.unreachable if dehors(r))
+    partial.backup_only = list(previous.backup_only)
+    return partial
 
 
 def backup_only(cartes: dict, locaux: dict, backup: Path

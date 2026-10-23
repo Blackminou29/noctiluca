@@ -42,7 +42,7 @@ ICON_NAMES = (
     "export", "import", "trash", "star", "tag", "wave", "dice", "copy",
     "link", "warning", "check", "chevron-right", "chevron-down",
     "chevron-left", "plus",
-    "minus", "filter", "grid", "list", "info", "backup", "midi",
+    "minus", "filter", "grid", "list", "info", "backup", "midi", "atelier",
 )
 
 
@@ -126,6 +126,21 @@ def _draw_kit(p: QPainter, c: QColor) -> None:
     for row in range(3):
         for col in range(3):
             _rounded(p, 16 + col * 25, 16 + row * 25, 18, 18, 4)
+
+
+def _draw_atelier(p: QPainter, c: QColor) -> None:
+    """Pistes × sections : des pads allumés, d'autres au repos — le morceau
+    qu'on compose, comme la grille de la machine."""
+    allumes = ((1, 1, 0), (0, 1, 1), (1, 1, 1))
+    for row, cells in enumerate(allumes):
+        for col, lit in enumerate(cells):
+            x, y = 16 + col * 25, 16 + row * 25
+            if lit:
+                _fill(p, c)
+                _rounded(p, x, y, 18, 18, 4)
+            else:
+                _pen(p, c, 3.5)
+                _rounded(p, x + 2, y + 2, 14, 14, 3)
 
 
 def _draw_song(p: QPainter, c: QColor) -> None:
@@ -419,6 +434,7 @@ _DRAW = {
     "synth": _draw_synth,
     "kit": _draw_kit,
     "song": _draw_song,
+    "atelier": _draw_atelier,
     "wand": _draw_wand,
     "tools": _draw_tools,
     "health": _draw_health,

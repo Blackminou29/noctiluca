@@ -13,6 +13,8 @@ et répond comme le firmware c1.2.1 le ferait, d'après son code
   — jamais une image, mesuré sur la machine —, puis une à chaque
   changement tant que l'abonnement court ;
 * sur commande du test : horloge, départ, arrêt, retour MIDI Follow, notes ;
+* les contrôleurs MIDI Follow reçus, appliqués au son sélectionné selon le
+  réglage **Takeover** — Jump, Pickup ou Scale (:class:`Boutons`) ;
 * firmware 1.3 et une carte (``carte=dossier``) : les fichiers par USB,
   comme ``storage/smsysex.cpp`` (:class:`CarteUsb`). La 1.2.1 ignore ces
   commandes.
@@ -27,6 +29,7 @@ posé son bac à sable **avant** de l'importer.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -77,7 +80,20 @@ class PortSimule:
 
     def control_change(self, cc, value, channel=1) -> bool:
         self.envoyes.append(("cc", int(cc), int(value), int(channel)))
-        return self.is_open
+        machine = self.machine
+        if not self.is_open:
+            return False
+        if machine.salve is not None:
+            # La machine perd ce qui arrive pendant qu'elle traite : au-delà
+            # de ``salve`` contrôleurs sans qu'elle ait eu à répondre à un
+            # SysEx, les suivants sont perdus (mesuré le 22 octobre 2026).
+            if machine.en_attente >= machine.salve:
+                machine.cc_perdus += 1
+                return True
+            machine.en_attente += 1
+        if int(channel) == machine.canal_follow:
+            machine.boutons.recoit(int(cc), int(value))
+        return True
 
     def note_on(self, note, velocity=100, channel=1) -> bool:
         self.envoyes.append(("on", int(note), int(velocity), int(channel)))
@@ -102,6 +118,64 @@ class PortSimule:
     def poll(self, limit: int = 512) -> list[MidiMessage]:
         sortie, self.recus = self.recus[:limit], self.recus[limit:]
         return sortie
+
+
+class Boutons:
+    """Les réglages du son sélectionné, et ce que la machine fait d'un
+    contrôleur reçu en MIDI Follow selon son réglage **Takeover**.
+
+    Transcription de ``MidiTakeover::calculateKnobPos``
+    (``io/midi/midi_takeover.cpp``, firmware 1.3, commit 102cf9f) pour Jump,
+    Pickup et Scale. Les positions vont de −64 à +64 ; un contrôleur ``c``
+    vaut la position ``c − 64``, sauf 127 qui vaut +64. Seuls les numéros
+    présents dans :attr:`position` sont assignés à un réglage.
+    """
+
+    def __init__(self, mode: str = "jump") -> None:
+        self.mode = mode
+        #: Contrôleur -> position du bouton qu'il pilote.
+        self.position: dict[int, int] = {}
+        #: ``midiFollow.previousKnobPos`` : la dernière valeur reçue.
+        self.precedente: dict[int, int] = {}
+
+    @staticmethod
+    def _arrondi(x: float) -> int:
+        """``std::round`` : la moitié s'éloigne de zéro."""
+        return int(math.copysign(math.floor(abs(x) + 0.5), x))
+
+    def recoit(self, cc: int, valeur: int) -> None:
+        if cc not in self.position:
+            return
+        bouton = self.position[cc]
+        midi = valeur - 64 if valeur < 127 else 64
+        nouveau = bouton
+        if self.mode == "jump":
+            nouveau = midi
+            self.precedente[cc] = nouveau
+        else:
+            precedente = self.precedente.setdefault(cc, midi)
+            if ((precedente <= bouton and midi >= bouton)
+                    or (precedente >= bouton and midi <= bouton)):
+                nouveau = midi
+            elif self.mode == "scale" and midi != precedente:
+                x = float(nouveau)
+                ecart = midi - precedente
+                if ecart > 0:
+                    reste = 64 - midi
+                    if reste:
+                        x = max(x + (64 - bouton) * (ecart / reste), nouveau)
+                else:
+                    reste = midi + 64
+                    if reste:
+                        x = min(x + (bouton + 64) * (ecart / reste), nouveau)
+                nouveau = max(-64, min(64, self._arrondi(x)))
+            self.precedente[cc] = midi
+        self.position[cc] = nouveau
+
+    def valeur(self, cc: int) -> int:
+        """Ce que la machine renverrait : ``position + 64``, borné à 127
+        (``toDataByte``)."""
+        return max(0, min(127, self.position[cc] + 64))
 
 
 class DelugeSimule:
@@ -134,6 +208,15 @@ class DelugeSimule:
         self.horloge_ms = 0.0
         #: Faire taire la machine (une machine qui ne répond pas).
         self.muette = False
+        #: MIDI-Follow ▸ Channel ▸ Channel A, et le son qu'il pilote.
+        self.canal_follow = 1
+        self.boutons = Boutons()
+        #: Contrôleurs que la machine prend d'affilée avant d'en perdre —
+        #: 3 sur la vraie, d'une salve ; ``None`` : aucun perdu. Un SysEx
+        #: reçu (elle y répond après avoir tout lu) remet le compte à zéro.
+        self.salve: int | None = None
+        self.en_attente = 0
+        self.cc_perdus = 0
 
     # -- ce que voit le système ------------------------------------------- #
 
@@ -158,6 +241,7 @@ class DelugeSimule:
 
     def recoit_sysex(self, cable: int, data: bytes) -> None:
         self.demandes.append(data)
+        self.en_attente = 0
         if self.muette:
             return
         if data == sx.identity_request():
@@ -250,6 +334,13 @@ class DelugeSimule:
                                           int(time.monotonic() * 1000),
                                           int(stamp), b"",
                                           time.perf_counter()))
+
+    def retour_midi_follow(self) -> None:
+        """Le retour complet du son sélectionné, comme au départ de la
+        lecture en vue clip (``playback_handler.cpp``)."""
+        for cc in sorted(self.boutons.position):
+            self.court(0xB0 | (self.canal_follow - 1), cc,
+                       self.boutons.valeur(cc))
 
     def horloge(self, bpm: float, impulsions: int = 25) -> None:
         """Des impulsions d'horloge au tempo donné, horodatées par le pilote."""

@@ -39,4 +39,37 @@ TEXTS = {
     "arpégiateur %s": "%s arpeggiator",
     " en %s": " in %s",
     "%d modulation(s)": "%d modulation(s)",
+    "moteur de synthèse, jeu, glissé et volume":
+        "synthesis engine, voicing, glide and volume",
+    "formes d'onde, niveaux et accord des oscillateurs":
+        "waveforms, levels and tuning of the oscillators",
+    "type de filtre, coupure, résonance et saturation":
+        "filter type, cutoff, resonance and drive",
+    "enveloppes d'amplitude et de modulation":
+        "amplitude and modulation envelopes",
+    "formes et vitesses des LFO": "LFO shapes and rates",
+    "unisson, désaccord et panoramique": "unison, detune and panning",
+    "réverbération, délai et effet de modulation":
+        "reverb, delay and modulation effect",
+    "câbles de modulation": "modulation patch cables",
+    "arpégiateur": "arpeggiator",
+    "Plus brillant": "Brighter",
+    "Plus sombre": "Darker",
+    "Plus sale": "Dirtier",
+    "Plus propre": "Cleaner",
+    "Plus large": "Wider",
+    "Plus étroit": "Narrower",
+    "Plus d'espace": "More space",
+    "Plus sec": "Drier",
+    "Plus de mouvement": "More movement",
+    "Plus statique": "More static",
+    "Autre timbre": "Another timbre",
+    "Autre filtre": "Another filter",
+    "Autres enveloppes": "Other envelopes",
+    "Autre mouvement": "Another movement",
+    "Autre espace": "Another space",
+    "Autres modulations": "Other modulations",
+    "Autre largeur": "Another width",
+    "variante inconnue : %s": "unknown variation: %s",
+    "aspect inconnu : %s": "unknown facet: %s",
 }

@@ -158,10 +158,11 @@ class FilterCurve(_LogAxis):
     def _response_db(self, freqs: np.ndarray) -> np.ndarray:
         """Réponse combinée des deux filtres, en décibels.
 
-        Reprend ``render._response`` et ``render._cutoff_hz`` pour que la
-        courbe affichée soit exactement celle que le rendu applique.
+        Reprend ``render._response``, ``render._cutoff_hz`` et
+        ``render._hpf_hz`` pour que la courbe affichée soit exactement celle
+        que le rendu applique — aux lois du firmware (:mod:`paramlaws`).
         """
-        from ...core.render import _cutoff_hz, _resonance_q, _response
+        from ...core.render import _cutoff_hz, _hpf_hz, _resonance_q, _response
 
         poles = 2 if self._mode == "12dB" else 4
         cutoff = _cutoff_hz(self._cutoff / 50.0)
@@ -169,7 +170,7 @@ class FilterCurve(_LogAxis):
         response = _response(freqs, cutoff, q, poles)
 
         if self._hpf_cutoff is not None:
-            hp_cut = _cutoff_hz(self._hpf_cutoff / 50.0)
+            hp_cut = _hpf_hz(self._hpf_cutoff / 50.0)
             response = response * _response(freqs, hp_cut, 0.707, 2,
                                             high_pass=True)
         magnitude = np.abs(response)

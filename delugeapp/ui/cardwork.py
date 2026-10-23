@@ -10,7 +10,9 @@ la carte, sans que l'utilisateur ait à y penser :
   proposition de créer la copie de travail ;
 * **après chaque écriture** de l'application (un morceau, un preset, une
   réparation, des fichiers envoyés du PC) : ce qui a changé part sur la
-  carte, deux secondes après la dernière écriture, pour grouper ;
+  carte, deux secondes après la dernière écriture, pour grouper. Seuls les
+  dossiers touchés sont listés sur la carte (:func:`cardsync.plan_folders`)
+  — le parcours complet en coûte 3,5 s ;
 * **au retour dans la fenêtre** : ce que le Deluge a enregistré descend ;
 * **pendant que la machine joue**, rien : sa carte sert à jouer. Un
   transfert en cours s'arrête entre deux blocs dès qu'elle démarre, et
@@ -45,6 +47,19 @@ __all__ = ["CardWork"]
 
 #: Délai qui groupe les écritures de l'application avant l'envoi.
 WRITE_DELAY_MS = 2000
+#: La synchronisation qui suit une écriture de l'application : elle ne
+#: regarde que les dossiers que celle-ci a touchés.
+ECRITURE = untranslated("écriture")
+
+
+def _plus_large(attente: str | None, raison: str) -> str:
+    """Deux synchronisations qui attendent : une complète l'emporte sur
+    celle d'après une écriture, qui ne regarde que quelques dossiers."""
+    if attente is None or attente == ECRITURE:
+        return raison
+    if raison == ECRITURE:
+        return attente
+    return raison
 #: Au retour dans la fenêtre, pas plus d'une synchronisation par…
 FOCUS_INTERVAL = 30.0
 #: Au-delà, les fichiers d'un échange ne sont plus nommés un par un au
@@ -88,8 +103,7 @@ class CardWork(QObject):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(WRITE_DELAY_MS)
-        self._timer.timeout.connect(
-            lambda: self.sync(untranslated("écriture")))
+        self._timer.timeout.connect(lambda: self.sync(ECRITURE))
 
     # -- état ---------------------------------------------------------------- #
 
@@ -257,7 +271,7 @@ class CardWork(QObject):
         if client is None or not self.has_work_copy():
             return False
         if self._busy or self._playing():
-            self._pending = raison or "attente"
+            self._pending = _plus_large(self._pending, raison or "attente")
             if self._playing():
                 self._say(tr("Le Deluge joue : la synchronisation attend "
                              "l'arrêt."), 6000)
@@ -268,6 +282,7 @@ class CardWork(QObject):
             self.window, _synchronise, client, self.work_path(),
             self.ctx.settings.card_backup_path(), allow_card_deletes,
             raison, self._playing,
+            quick=raison == ECRITURE and not allow_card_deletes,
             title=tr("Synchronisation avec le Deluge"),
             on_result=self._done, on_error=self._failed)
         return True
@@ -276,6 +291,7 @@ class CardWork(QObject):
         plan, effet, secondes, attente, raison = resultat
         self._busy = False
         self._last_sync = time.monotonic()
+        plan = cardsync.merge_plans(plan, self.last_plan)
         self.last_plan, self.last_result = plan, effet
         self._generation += 1
         self.pending = attente
@@ -285,7 +301,7 @@ class CardWork(QObject):
         if effet.stopped and not effet.lost and self._playing():
             # Arrêté entre deux blocs parce que la machine s'est mise à
             # jouer : la suite part à l'arrêt.
-            self._pending = raison or "reprise"
+            self._pending = _plus_large(self._pending, raison or "reprise")
             texte = (tr("Le Deluge joue : la synchronisation s'est arrêtée "
                         "et reprendra à l'arrêt (%s).")
                      % (echange.summary() if not echange.empty
@@ -600,11 +616,21 @@ def _journal(echange: cardsync.Exchange) -> None:
 # --------------------------------------------------------------------------- #
 
 def _plan_with(carte: cardsync.UsbCard, travail: Path,
-               sauvegarde: Path | None, progress=None) -> cardsync.SyncPlan:
+               sauvegarde: Path | None, progress=None,
+               folders: list[str] | None = None) -> cardsync.SyncPlan:
+    """Le plan de toute la carte, ou des seuls ``folders`` listés."""
+    Path(travail).mkdir(parents=True, exist_ok=True)
+    if folders is not None:
+        if progress is not None:
+            progress(tr("Liste des dossiers modifiés, sur le Deluge…"))
+        plan = cardsync.plan_folders(carte.walk_folders(folders),
+                                     cardsync.scan_local(travail),
+                                     cardsync.load_manifest(travail), folders)
+        plan.unreachable = carte.unreachable
+        return plan
     if progress is not None:
         progress(tr("Liste des fichiers du Deluge…"))
     arbre = carte.walk()
-    Path(travail).mkdir(parents=True, exist_ok=True)
     plan = cardsync.plan_sync(arbre, cardsync.scan_local(travail),
                               cardsync.load_manifest(travail),
                               backup=sauvegarde)
@@ -635,11 +661,16 @@ def _apply_creation(plan, client, travail: Path, progress=None,
 
 def _synchronise(client, travail: Path, sauvegarde: Path | None,
                  allow_card_deletes: bool, raison: str = "", playing=None,
-                 progress=None, should_stop=None):
-    """Une synchronisation complète, hors du fil de l'interface.
+                 progress=None, should_stop=None, quick: bool = False):
+    """Une synchronisation, hors du fil de l'interface.
 
     Elle s'arrête entre deux blocs si l'on ferme la fenêtre ou si la machine
     se met à jouer (``playing``) : ce qui est fait reste acquis.
+
+    ``quick`` — après une écriture de l'application — ne liste sur la carte
+    que les dossiers où la copie de travail a changé
+    (:func:`cardsync.changed_folders`) ; un dossier impossible à lister
+    ainsi (nom intransmissible) fait revenir au parcours complet.
     """
     debut = time.monotonic()
 
@@ -648,18 +679,31 @@ def _synchronise(client, travail: Path, sauvegarde: Path | None,
                     or (playing is not None and playing()))
 
     carte = cardsync.UsbCard(client, arret)
+    dossiers = cardsync.changed_folders(travail) if quick else None
+    if dossiers == []:
+        # Rien n'a changé ici depuis la dernière fois : rien à lister.
+        return (cardsync.SyncPlan(scope=[]), cardsync.SyncResult(),
+                time.monotonic() - debut, [], raison)
     try:
-        plan = _plan_with(carte, travail, sauvegarde, progress)
+        try:
+            plan = _plan_with(carte, travail, sauvegarde, progress, dossiers)
+        except FileError as exc:
+            if dossiers is None or exc.code in (STOPPED, NOT_CONNECTED):
+                raise
+            log.info("dossiers modifiés illisibles (%s) : parcours complet",
+                     exc)
+            plan = _plan_with(carte, travail, sauvegarde, progress)
     except FileError as exc:
         # Arrêté — ou débranché — pendant le parcours de la carte : rien
-        # n'a bougé, la synchronisation reprendra.
+        # n'a bougé, la synchronisation reprendra. Le plan vide ne couvre
+        # rien : les suppressions qui attendaient un accord restent connues.
         if exc.code not in (STOPPED, NOT_CONNECTED):
             raise
         effet = cardsync.SyncResult(stopped=True,
                                     lost=exc.code == NOT_CONNECTED)
         if effet.lost:
             effet.errors.append(tr("le Deluge a été débranché"))
-        return (cardsync.SyncPlan(), effet, time.monotonic() - debut,
+        return (cardsync.SyncPlan(scope=[]), effet, time.monotonic() - debut,
                 cardsync.pending_changes(travail), raison)
     manifeste = cardsync.load_manifest(travail)
 

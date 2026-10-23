@@ -112,6 +112,8 @@ TEXTS = {
     "Mise à jour de la sauvegarde": "Updating the backup",
     "Sauvegarde mise à jour : %s.": "Backup updated: %s.",
     "Liste des fichiers du Deluge…": "Listing the Deluge's files…",
+    "Liste des dossiers modifiés, sur le Deluge…":
+        "Listing the changed folders on the Deluge…",
     "le Deluge a été débranché": "the Deluge was unplugged",
     "Deluge : %d / %d — %s": "Deluge: %d / %d — %s",
 }

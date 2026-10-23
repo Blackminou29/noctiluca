@@ -25,8 +25,10 @@ CATALOGUE = PAQUET / "i18n" / "en"
 
 #: Les fonctions dont un texte littéral est une clé du catalogue.
 TRADUIRE = {"tr", "N_"}
-#: La fonction dont tout le contenu est exempté.
-EXEMPTER = {"untranslated"}
+#: Les fonctions dont tout le contenu est exempté. ``tirage("glissé")``
+#: (``core/synthgen.py``) nomme une graine, pas un texte : le traduire
+#: changerait chaque son généré.
+EXEMPTER = {"untranslated", "tirage", "tirages"}
 #: Noms propres, identiques dans les deux langues.
 NOMS_PROPRES = {"Deluge Companion", "Synthstrom Deluge", "MIDI Follow",
                 "Deluge",
@@ -68,6 +70,9 @@ IDENTIFIANTS = {
     "pulsée", "syncopée", "posée", "aléatoire",
     "septièmes", "neuvièmes", "triades", "suspendus",
     "fantômes", "grosse caisse",
+    # Variations d'un clip (``core/variation.py``) et gammes.
+    "légère", "doublée", "réponse",
+    "mineur harmonique", "pentatonique mineure", "pentatonique majeure",
 }
 
 #: Unités, identiques dans les deux langues.

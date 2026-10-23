@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -62,7 +63,8 @@ log = logging.getLogger(__name__)
 __all__ = [
     "FIRMWARE", "MAGNITUDE", "BAR", "STEP", "MAX_SECTIONS",
     "Track", "ClipSpec", "SectionSpec", "SongSpec", "SongWrite",
-    "tempo_attrs", "synth_track", "kit_track", "upgrade_sound", "upgrade_kit",
+    "tempo_attrs", "synth_track", "kit_track", "midi_track", "cv_track",
+    "upgrade_sound", "upgrade_kit",
     "events_to_rows", "pattern_rows", "fold", "build", "preview",
     "write_song", "free_song_name", "ascii_label",
     # Recettes, une par outil de création.
@@ -140,32 +142,11 @@ _PRESET_ONLY = frozenset({"firmwareVersion", "earliestCompatibleFirmware",
 # Versions de firmware
 # --------------------------------------------------------------------------- #
 
-def _version_key(text: str) -> tuple:
-    """Clé de comparaison d'une version, dans l'ordre du firmware.
-
-    ``FirmwareVersion`` range les versions officielles avant les
-    communautaires ; un fichier sans version compte pour l'officielle 0.0.0.
-    Une préversion (``-beta``, ``-alpha``) passe avant la version finale.
-    """
-    raw = str(text or "").strip()
-    community = raw[:1].lower() == "c"
-    if community:
-        raw = raw[1:]
-    base, _sep, suffix = raw.partition("-")
-    numbers = []
-    for part in base.split("."):
-        digits = "".join(ch for ch in part if ch.isdigit())
-        numbers.append(int(digits) if digits else 0)
-    while len(numbers) < 3:
-        numbers.append(0)
-    # Sans suffixe, la version finale passe après toute préversion.
-    tag = (1, "") if not suffix else (0, suffix.lower())
-    return (1 if community else 0, tuple(numbers[:3]), tag)
-
-
-def _older(version: str, than: str) -> bool:
-    """Vrai si ``version`` précède ``than`` pour le firmware."""
-    return _version_key(version) < _version_key(than)
+#: La comparaison des versions vit dans :mod:`dxml`, qui lit
+#: ``firmwareVersion`` : le modèle en a besoin aussi (format des notes d'un
+#: morceau 1.3), et deux copies finiraient par diverger.
+_version_key = dxml.version_key
+_older = dxml.version_older
 
 
 # --------------------------------------------------------------------------- #
@@ -600,10 +581,20 @@ class Track:
     samples: list[str] = field(default_factory=list)
     #: Échantillons dont les bornes anciennes n'ont pas pu être converties.
     unconverted: list[str] = field(default_factory=list)
+    #: Piste MIDI ou CV : son canal, numéroté depuis 0 comme dans le
+    #: fichier (le canal MIDI 1 s'écrit 0 ; CV 1 aussi).
+    channel: int = -1
+    #: Suffixe d'une seconde piste MIDI sur le même canal (−1 : aucun).
+    suffix: int = -1
 
     @property
     def is_kit(self) -> bool:
         return self.kind == "kit"
+
+    @property
+    def is_external(self) -> bool:
+        """Piste qui ne sonne pas dans le Deluge : MIDI ou CV."""
+        return self.kind in ("midi", "cv")
 
 
 def _source_element(source, tag: str) -> tuple[ET.Element, str]:
@@ -754,6 +745,40 @@ def kit_track(source, name: str = "", folder: str = "KITS",
                  folder=folder or "KITS", body=body, params=params,
                  drum_params=drum_params, drum_names=drum_names,
                  samples=_sample_refs(body), unconverted=unconverted)
+
+
+#: Arpégiateur éteint d'un clip MIDI ou CV : sans ``<soundParams>``, ses
+#: réglages propres (``gate``, ``rate``…) sont dans la balise même — relevé
+#: sur les clips MIDI des morceaux c1.2.1 de l'utilisateur (« O Coast »).
+_NON_AUDIO_ARP = (("mode", "off"), ("syncLevel", "6"), ("numOctaves", "2"),
+                  ("gate", "0"), ("rate", "0"), ("ratchetProbability", "0"),
+                  ("ratchetAmount", "0"), ("sequenceLength", "0"),
+                  ("rhythm", "0"), ("syncType", "0"), ("arpMode", "off"),
+                  ("noteMode", "up"), ("octaveMode", "up"),
+                  ("mpeVelocity", "off"))
+
+
+def midi_track(channel: int, name: str = "") -> Track:
+    """Une piste MIDI : le Deluge joue ses notes sur un appareil extérieur.
+
+    ``channel`` va de 1 à 16, comme sur l'écran de la machine ; le fichier
+    le numérote depuis 0 (``<midi channel="0">`` est le canal 1).
+    """
+    number = max(1, min(16, int(channel)))
+    return Track(kind="midi", name=name or "MIDI %d" % number, folder="",
+                 body=ET.Element("midi"), params=ET.Element("defaultParams"),
+                 arp=dict(_NON_AUDIO_ARP), channel=number - 1)
+
+
+def cv_track(channel: int, name: str = "") -> Track:
+    """Une piste CV : une tension de hauteur et une porte, vers un synthé
+    modulaire. ``channel`` vaut 1 ou 2 (les deux sorties CV de la
+    machine). Une piste CV est **monophonique**."""
+    number = 2 if int(channel) == 2 else 1
+    return Track(kind="cv", name=name or "CV %d" % number, folder="",
+                 body=ET.Element("cvChannel"),
+                 params=ET.Element("defaultParams"),
+                 arp=dict(_NON_AUDIO_ARP), channel=number - 1)
 
 
 def _kit_params() -> ET.Element:
@@ -1060,7 +1085,18 @@ def _unique_names(spec: SongSpec) -> list[str]:
     """
     seen: set[tuple[str, str, str]] = set()
     names: list[str] = []
+    midi_seen: dict[int, int] = {}
     for track in spec.tracks:
+        if track.is_external:
+            # Une piste MIDI ou CV ne se nomme pas : le fichier la désigne
+            # par son canal. Deux pistes MIDI sur le même canal se
+            # distinguent par un suffixe (−1 pour la première).
+            if track.kind == "midi":
+                count = midi_seen.get(track.channel, 0)
+                track.suffix = count - 1
+                midi_seen[track.channel] = count + 1
+            names.append(track.name)
+            continue
         base = track.name or ("KIT" if track.is_kit else "SYNTH")
         candidate, index = base, 2
         while (track.kind, track.folder.upper(), candidate.upper()) in seen:
@@ -1072,7 +1108,17 @@ def _unique_names(spec: SongSpec) -> list[str]:
 
 
 def _clip_element(spec: SongSpec, clip: ClipSpec, name: str,
-                  colour: int) -> ET.Element:
+                  colour: int, blob: tuple[str, int] = ("noteDataWithLift",
+                                                         22),
+                  magnitude: int = MAGNITUDE) -> ET.Element:
+    """Un ``<instrumentClip>``.
+
+    ``blob`` est la balise des notes et sa largeur : un morceau 1.3 ne lit
+    que ``noteDataWithSplitProb`` (``model.note_blob_tag``) ; ``magnitude``,
+    celle du morceau qui recevra le clip (sa synchro d'arpège en dépend).
+    ``clip.length`` et ses notes sont déjà en ticks de ce morceau.
+    """
+    tag, width = blob
     track = spec.tracks[clip.track]
     el = ET.Element("instrumentClip")
     rows = clip.rows
@@ -1090,8 +1136,15 @@ def _clip_element(spec: SongSpec, clip: ClipSpec, name: str,
     el.set("yScrollKeyboard", "50")
     if track.is_kit:
         el.set("affectEntire", "0")
-    el.set("instrumentPresetName", name)
-    el.set("instrumentPresetFolder", track.folder)
+    if track.kind == "midi":
+        el.set("midiChannel", str(int(track.channel)))
+        if track.suffix != -1:
+            el.set("midiChannelSuffix", str(int(track.suffix)))
+    elif track.kind == "cv":
+        el.set("cvChannel", str(int(track.channel)))
+    else:
+        el.set("instrumentPresetName", name)
+        el.set("instrumentPresetFolder", track.folder)
     el.set("isPlaying", "1" if clip.playing else "0")
     el.set("isSoloing", "0")
     el.set("isArmedForRecording", "1")
@@ -1109,11 +1162,24 @@ def _clip_element(spec: SongSpec, clip: ClipSpec, name: str,
         params = copy.deepcopy(track.params)
         params.tag = "kitParams"
         el.append(params)
+    elif track.is_external:
+        # Ni son ni paramètres : l'arpégiateur porte ses propres réglages.
+        arp = ET.SubElement(el, "arpeggiator")
+        for key, value in _NON_AUDIO_ARP:
+            arp.set(key, str(track.arp.get(key, value)))
     else:
         arp = ET.SubElement(el, "arpeggiator")
         for key in ("mode", "syncLevel", "numOctaves", "syncType", "arpMode",
                     "noteMode", "octaveMode", "mpeVelocity"):
-            arp.set(key, track.arp.get(key, ""))
+            value = track.arp.get(key, "")
+            if key == "syncLevel" and magnitude != MAGNITUDE and value:
+                # La valeur interne dépend de la magnitude du morceau :
+                # fichier + 1 − magnitude ; ``track.arp`` la tient pour 2.
+                level = int(value)
+                if level:
+                    value = str(max(1, min(9, level + MAGNITUDE
+                                           - int(magnitude))))
+            arp.set(key, value)
         params = copy.deepcopy(track.params)
         params.tag = "soundParams"
         el.append(params)
@@ -1131,7 +1197,7 @@ def _clip_element(spec: SongSpec, clip: ClipSpec, name: str,
             row.set("colourOffset", str((drum * 7) % 72))
             notes = rows.get(drum, [])
             if notes:
-                row.set("noteDataWithLift", encode_notes(notes, True))
+                row.set(tag, encode_notes(notes, width=width))
             row.set("drumIndex", str(drum))
             sound_params = copy.deepcopy(drum_params)
             sound_params.tag = "soundParams"
@@ -1140,7 +1206,7 @@ def _clip_element(spec: SongSpec, clip: ClipSpec, name: str,
         for y in sorted(rows):
             row = ET.SubElement(holder, "noteRow")
             row.set("y", str(int(y)))
-            row.set("noteDataWithLift", encode_notes(rows[y], True))
+            row.set(tag, encode_notes(rows[y], width=width))
     if len(holder) == 0:
         el.remove(holder)
     return el
@@ -1202,8 +1268,16 @@ def _instances(spec: SongSpec, order: list[int]) -> dict[int, str]:
 def _instrument_element(track: Track, name: str,
                         instances: str | None) -> ET.Element:
     el = ET.Element(track.body.tag)
-    el.set("presetName", name)
-    el.set("presetFolder", track.folder)
+    if track.kind == "midi":
+        # Ordre de ``Instrument::writeDataToFile`` : canal et suffixe, puis
+        # ce qui est commun à toutes les pistes.
+        el.set("channel", str(int(track.channel)))
+        el.set("suffix", str(int(track.suffix)))
+    elif track.kind == "cv":
+        el.set("channel", str(int(track.channel)))
+    else:
+        el.set("presetName", name)
+        el.set("presetFolder", track.folder)
     el.set("defaultVelocity", _DEFAULT_VELOCITY)
     el.set("isArmedForRecording", "0")
     el.set("activeModFunction", "0")
@@ -1363,12 +1437,19 @@ class SongWrite:
 
 
 def free_song_name(sd: SDCard, name: str) -> str:
-    """Chemin relatif libre dans ``SONGS`` : un nom pris est numéroté."""
+    """Chemin relatif libre dans ``SONGS`` : un nom pris est numéroté.
+
+    Un nom déjà numéroté continue sa suite, comme sur la machine : « ATELIER
+    DEEP HOUSE 3 » après « ATELIER DEEP HOUSE 2 », et non « … 2 2 » — relevé
+    dans le journal de l'utilisateur le 22 octobre 2026.
+    """
     base = safe_deluge_name(name or "MORCEAU")
     rel = "SONGS/%s.XML" % base
-    index = 2
+    suite = re.match(r"^(?P<base>.*\S)\s+(?P<n>\d{1,3})$", base)
+    stem, index = ((suite.group("base"), int(suite.group("n")) + 1) if suite
+                   else (base, 2))
     while sd.abs(rel).exists() or Path(rel).stem.upper() in _RESERVED:
-        rel = "SONGS/%s %d.XML" % (base, index)
+        rel = "SONGS/%s %d.XML" % (stem, index)
         index += 1
         if index > 999:
             raise ValueError(tr("trop de morceaux portent déjà ce nom"))

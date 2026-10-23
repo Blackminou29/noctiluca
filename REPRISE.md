@@ -1,6 +1,6 @@
 # Point d'étape — Deluge Companion
 
-**Dernière mise à jour :** 19 octobre 2026 (l'interface en anglais, §3 duotricies)
+**Dernière mise à jour :** 23 octobre 2026 (modifier un son à la main, §3 novotricies)
 **État :** **application terminée et fonctionnelle.** Les cinq phases sont écrites,
 `python main.py` démarre, **la suite complète passe** (le nombre exact est dans le dernier
 § daté). Deux audits de bugs (§3 duovicies) puis trois passes sur les générateurs et la
@@ -19,7 +19,12 @@ reste dans la machine** : firmware 1.3, copie de travail synchronisée par USB, 
 sauvegarde de l'utilisateur seulement lue — voir §3 tricies. **Les échanges vont dans
 les deux sens** : envoyer au Deluge les sons et packs du PC, voir ce qui attend et ce
 qui est arrivé, glisser un son vers le logiciel de MAO — voir §3 untricies. **L'interface parle français
-ou anglais**, au choix dans le menu « Langue » — voir §3 duotricies.
+ou anglais**, au choix dans le menu « Langue » — voir §3 duotricies. **Le manuel**, dans les
+deux langues et la typographie du guide, s'ouvre par Aide ▸ Manuel (F1) — voir §3 tritricies.
+**L'atelier** compose un morceau du premier son à l'arrangement, joue ses clips sur le Deluge
+calés sur sa mesure, et complète un morceau de la machine sans le réécrire — voir §3 septtricies.
+**L'écoute sur l'ordinateur suit les lois du firmware** (durées, coupures, modulations) — voir §3 octotricies.
+**Un son se modifie à la main**, réglage par réglage, au cran de la machine et en clair — voir §3 novotricies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -35,7 +40,7 @@ identité visuelle reprise du *Guide du Deluge OLED*.
 
 **Le contrat d'architecture complet est dans [`SPEC.md`](SPEC.md)** : signatures exactes de
 tous les modules, format XML du Deluge, palette graphique, description de chacune des
-9 pages. C'est le document de référence.
+10 pages. C'est le document de référence.
 
 > `SPEC.md` contient plusieurs encadrés **« Correction mesurée »** (dont §1.5, §1.6, §4.5,
 > §4.9 ; la résolution des notes, au §1.6, a été corrigée le 14 octobre 2026).
@@ -305,6 +310,671 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 novotricies. Modifier un son à la main (23 octobre 2026)
+
+**La demande** : « le générateur de preset est bien et l'atelier est super », mais
+l'utilisateur veut aller plus loin et **modifier à la main les caractéristiques des sons**
+avant d'en faire un morceau.
+
+### Ce qui a été construit
+
+* `core/soundedit.py` (SPEC §4.40) : 56 réglages, rangés comme les menus du Deluge — Voix,
+  Oscillateurs, Filtres, Enveloppes, LFO, Effets —, plus les modulations. Chacun se lit et
+  s'écrit dans un `Sound`, et se **décrit dans sa grandeur réelle** par les lois du firmware
+  (§4.39) : « decay 13 → 1,8 s », « coupure 19 → 237 Hz », « glissé 7 → 58 ms »,
+  « lfo1 → hauteur 5 → ±0,34 demi-ton ». Les bornes viennent des menus du firmware
+  (saturation 0 à 15, unisson 1 à 8 voix) ; passer en FM éteint les filtres, comme la
+  machine.
+* `ui/widgets/soundeditor.py` (SPEC §5.29) : l'éditeur — encodeurs au cran de la machine et,
+  dessous, leur valeur réelle ; courbe du filtre ; enveloppes tirables ; une ligne par
+  modulation — dans une fenêtre qui travaille sur une copie : [Écouter], [Écouter en
+  réglant], [Revenir au son de départ], [Annuler], [Garder ce son].
+* [Modifier le son…] dans l'Atelier (onglet Sons, pour un synthé neuf : le son d'une piste du
+  morceau d'origine lui appartient) et dans le Générateur (le son retouché rejoint
+  l'historique). `AtelierTrack.edited` dit qu'une piste est retouchée ; ses variantes
+  gardent les retouches (ci-dessous).
+* Explications, traductions (183 textes, « Studio »/« Edit the sound… »), une section
+  « Modifier un son à la main » au chapitre de l'Atelier et une ligne au Générateur, en
+  français et en anglais.
+
+### Vérifié
+
+* Par le fichier : une piste retouchée (coupure 44, release 30, câble unipolaire) écrite en
+  morceau se relit avec ces valeurs dans le `<soundParams>` de son clip.
+* En cliquant : encodeurs au clavier, la FM, les modulations, le retour au départ, garder et
+  annuler, et les deux pages. Débrancher le bouton de l'Atelier ou la valeur sous l'encodeur
+  fait échouer les tests (vérifié).
+* **1 171 tests**, tous passent (dont `TestLesReglagesDuSon`, `TestEditeurDeSon`,
+  `TestEditeurDansLesPages`), aucun fil arrêté de force.
+* Regardé en PNG, en français et en anglais, à 940 × 640 et 720 × 540 : trois défauts
+  corrigés (libellés coupés dans l'encodeur, enveloppe 2 coupée, lignes de modulation trop
+  larges), et l'onglet Sons de l'Atelier à 980 × 700 (boutons coupés, description écrasée).
+
+### Puis : les variantes gardent les retouches
+
+**La demande** : « une fois un son retouché, les 8 variantes proposées doivent prendre en
+compte les modifications apportées au son ». Elles repartaient du son généré.
+
+* `soundedit.carry_edits(depart, retouche, variante)` (SPEC §4.40) : la variante du son
+  retouché. Un réglage tourné l'est d'autant (`variante + retouche − depart`, borné) ; un
+  choix reste le vôtre sauf si la variante change ce choix-là ; les câbles s'apparient
+  par source et destination — ajouté ou retiré à la main, il le reste.
+* `atelier.sound_variations` refait le son de départ par `generate(options)` et y reporte
+  les retouches ; une variante devenue identique au son est écartée (douze candidates
+  pour huit places). `Variant.retouched` : une variante adoptée reste retouchée, et ses
+  propres variantes gardent encore les retouches.
+* L'onglet Sons efface les variantes proposées avant une retouche, un « Autre son » ou un
+  preset de la carte : elles ne valaient que pour l'ancien son.
+
+**Mesuré** sur 114 sons de synthé (six genres, six graines) : le son de départ se refait
+à l'identique 114 fois ; huit variantes chaque fois ; aucune retouche perdue (coupure,
+forme d'onde, modulation ajoutée, nom). Retirer le report, le drapeau de l'adoption,
+l'effacement des anciennes variantes, la priorité du choix de la variante ou le câble
+retiré fait échouer les tests (vérifié). **1 176 tests**, tous passent.
+
+### Mes erreurs, relevées
+
+* Ma première mesure des variantes trouvait huit coupures « fausses » : quand la coupure
+  de départ dépassait 41, ma retouche de +9 butait déjà à 50, et j'attendais +9 quand même.
+* J'avais traité le moteur en dernier, « pour que la FM éteigne les filtres ». Le test de
+  mutation a montré que l'ordre ne change rien : un filtre tiré par la variante n'écrase
+  jamais celui que la FM a éteint. Précaution retirée.
+* Mon premier test des différences supposait un filtre en 24 dB ; le son de départ y était
+  déjà en 12 dB : « passer en 12 dB » ne changeait rien.
+* Un widget d'un onglet non affiché n'est jamais « visible » pour Qt : ma première vérification
+  des modulateurs en FM disait faux ; le test regarde `isHidden()`.
+* « Note » était déjà traduit « Rating » ailleurs (la note d'un échantillon) : la source de
+  modulation s'appelle « Note jouée ».
+
+## 3 octotricies. L'écoute du PC suit les lois du firmware (22 octobre 2026, soir)
+
+**Le signalement** : un morceau fait dans l'atelier, chargé sur le Deluge, « fonctionne » ;
+mais les presets écoutés sur le PC n'ont « rien à voir » avec l'écoute sur la machine.
+
+### La cause : un moteur aux lois estimées
+
+`core/render.py` traduisait les réglages par des courbes choisies « à l'oreille » (SPEC
+§4.21 : « plausible, pas exact »). J'ai lu les réglages de ses trois synthés dans les
+clips du morceau (ATELIER DEEP HOUSE : `<soundParams>` du clip, pas l'instrument), puis
+le code du firmware de sa machine (1.3, commit `102cf9f` : `functions.cpp`,
+`patcher.cpp`, `patch_cable_set.cpp`, `patch_cable.h`, `envelope.cpp`, `voice.cpp`,
+`filter.h`, `lpladder.cpp`, `phase_increment_fine_tuner.cpp`, `lookuptables.cpp`), et
+porté ses calculs à l'identique, en entiers, pour comparer réglage par réglage :
+
+| Réglage (ses sons) | Firmware | Ancien moteur |
+|---|---|---|
+| decay 13 (basse) | 1,79 s | 36 ms |
+| release 24 (nappe) | 2,21 s | 0,19 s |
+| coupure 19 | 237 Hz | 342 Hz |
+| vibrato `lfo1 → pitch` 5 | ±0,34 demi-ton | ±1,2 demi-ton |
+| `random → oscAPitch` 6 | écart fixe par note, ±0,7 demi-ton | dérive continue à 3 Hz, ±1,4 |
+| `envelope2 → lpfFrequency` 25 (nappe) | ±4 octaves autour du réglage : se referme vers 70 Hz | s'ajoute de 0 à +25 crans : reste ouverte |
+| unisson, désaccord 8 | ±4 cents | ±16 cents |
+| volumes | quadratiques (25 = −12 dB sous 50) | linéaires |
+
+Trois faits du firmware expliquent l'essentiel : un câble lu **sans attribut
+`polarity`** est **bipolaire** (`patch_cable_set.cpp:834`) — enveloppe, vélocité et note
+y valent −1..+1 ; la source *random* est **tirée une fois par note** (`voice.cpp:163`) ;
+la force d'un câble vers une hauteur est **élevée au carré**.
+
+### Ce qui a été fait
+
+* `core/paramlaws.py` (SPEC §4.39) : les lois, en flottants, chacune citée dans le
+  firmware. Les tables ont des formes exactes, recalculées (`decayTableSmall4(x) =
+  (2^(4(1−x)) − 1)/15`, `decayTableSmall8` avec 8 et 255, `expTableSmall = 2^x`,
+  `tanTable = 2²⁸·tan(1,44·i/64)`) ; seule `releaseRateTable64` est reprise (65 valeurs).
+  Écart au portage entier : moins de 0,01 % sur les coupures, 0 % sur decay et release
+  (le firmware tronque : au réglage 50, la vitesse 3,83 devient 3, soit 63 s au lieu de
+  50), moins de 0,8 % sur les attaques.
+* `core/render.py` : enveloppes aux durées et aux courbes du firmware ; câblage comme le
+  patcher (octaves, facteurs `1 + v·a`, ajouts) ; sources bipolaires ; *random* par note ;
+  volumes quadratiques et l'enveloppe 1 sur le volume ; unisson ; **glissé** ; vélocité
+  par son seul câble ; panoramique ; réglages lus dans l'**entier du fichier**
+  (`raw_unit`) et non dans l'affichage arrondi ; `render_parts` coupe la note précédente
+  d'un son mono et laisse à chaque note la traîne de son release ; mod FX, delay et
+  réverbération appliqués **au son entier**, voix additionnées, comme sur la machine.
+* `PatchCable.polarity` lu et écrit ; la courbe du filtre (widget) suit les mêmes lois.
+* Manuel, fr et en : une note « L'écoute de l'ordinateur suit les lois du Deluge » au
+  chapitre du Générateur.
+
+### Mesuré après
+
+* HARD CLOUD (la nappe) : hauteur à 10 cents d'écart-type au lieu de 77 (étendue 61 au
+  lieu de 271) ; le niveau tombe de 25 dB entre 0,1 et 1 s, au lieu de **monter** de 8 dB.
+* 228 de ses presets rendus : **aucun muet**, avant comme après ; crête médiane 0,47.
+* Rendus par catégorie, ses presets contre ceux du générateur : les plages se recouvrent
+  (basses générées plus sombres au départ, 565 Hz contre 1 147 en médiane ; nappes plus
+  brillantes à l'attaque). Le générateur n'était pas la cause ; un réglage fin reste
+  possible, mesures à l'appui.
+* Coût : un accompagnement synthwave se rendait en 6,9 s avec les vraies traînes, au-delà
+  des 2 s qu'un test laisse à un fil avant de le **tuer** — tué en plein calcul, il a fait
+  tomber la suite deux fois, dans le test suivant. Effets au son entier, cache sans
+  glissé inutile, notes mono rendues jusqu'à la suivante, traîne jusqu'à −40 dB : 2,1 s.
+  Et `render_parts` consulte désormais `should_stop` entre deux notes : à la fermeture,
+  le fil s'arrête au lieu d'être tué.
+
+### Mes erreurs, relevées
+
+* Mon premier relevé des réglages lisait l'instrument du morceau, qui ne porte que la
+  structure : les paramètres d'un son de morceau sont dans **chaque clip**.
+* `Sound.display` rend 0 pour un réglage absent : ma première version mettait la hauteur
+  générale à −4 octaves (tous les tests de hauteur et de filtre tombés d'un coup).
+* J'ai écrit que l'ancien calcul du panoramique penchait à droite : faux, l'affichage du
+  panoramique est bipolaire (0 au centre) ; c'est ma première version qui l'envoyait à
+  gauche, en le lisant comme un réglage 0.
+* `NoteEvent.velocity` est un pourcentage : je l'ai d'abord divisé par 127.
+* Un heredoc a de nouveau abîmé des « \ » de continuation : correctif refait à l'outil.
+
+### À éprouver avec l'utilisateur
+
+**Tests** : 1 154, tous passent, dont `TestLoisDuFirmware` (valeurs du portage entier)
+et `TestEcouteFidele` (*random* stable, enveloppe bipolaire qui referme, panoramique,
+vélocité par son câble, glissé et voix mono, polarité lue et écrite) ; aucun fil arrêté
+de force.
+
+Des WAV des trois clips, ancien et nouveau moteur, sont prêts à comparer au Deluge
+(`scratchpad/ecoute_deep_house`). Une vraie mesure de fidélité demanderait d'enregistrer
+la sortie du Deluge sur le PC, en jouant les mêmes notes : l'application saurait alors
+comparer les deux rendus d'elle-même. Cela demande son accord et son câblage audio.
+
+## 3 septtricies. L'atelier du compositeur (22 octobre 2026)
+
+**La demande** : que l'application soit le compagnon du compositeur, du choix des sons
+à l'arrangement final ; qu'elle travaille **sur la même chanson en même temps que le
+Deluge**, en créant et en insérant des clips ; que ces clips viennent d'un outil de
+composition de kits, synthés, pistes MIDI et CV ; que le générateur de presets reste
+dans le style voulu et propose des variations du son proposé.
+
+### Ce que disent les morceaux de l'utilisateur (136, en lecture seule)
+
+3 pistes en médiane, la moitié des morceaux n'ont qu'**une section**, **400 pistes sur
+472 n'ont qu'un clip**, des clips de 1, 2, 4 ou 8 mesures ; 20 pistes MIDI, aucune CV ;
+73 morceaux en disposition grille. Le besoin n'est donc pas un séquenceur de plus : c'est
+de passer **de la boucle au morceau** — des variations, des sections, un arrangement.
+
+### Ce qui a été construit
+
+* **`core/variation.py`** (§4.36 de la SPEC) : sept variations d'une partie mélodique,
+  sept d'un motif de batterie, dans la gamme, sur l'harmonie, parentes de l'original
+  (`kinship`), jouables, reproductibles.
+* **`core/synthgen.py`** : des **tirages nommés** par décision et par aspect, puis
+  `style_variations` — huit variantes qui ne retirent qu'un aspect ou ne poussent qu'un
+  curseur (§4.16.1).
+* **`core/atelier.py`** (§4.38) : le projet — style commun, pistes (kit, synthé, MIDI,
+  CV), clips et variations, sections ; en morceau neuf (`to_song_spec`), ou lu depuis un
+  morceau de la carte (`from_song`, progression devinée dans les notes).
+* **`core/songinsert.py`** (§4.37) : **compléter un morceau sans le réécrire** — une
+  nouvelle version, l'original octet pour octet plus les ajouts, prouvée avant d'écrire.
+* **`core/delugelink.py`** : `Transport` et `play_synced` — jouer un clip **calé sur
+  l'horloge de la machine**, dans le clip que suit MIDI Follow (§4.30.1).
+* **`core/model.py`** : les notes du firmware 1.3 (`noteDataWithSplitProb`) et les clips
+  MIDI/CV (§1.6) ; **`core/songwriter.py`** : `midi_track`, `cv_track`.
+* **La page Atelier** (§5.28), septième, `Ctrl+7` (Réglages passe à `Ctrl+0`) : Style,
+  Sons, Clips, Morceau ; ses commandes expliquées (`ui/aide.py`), traduites (« Studio »),
+  et décrites dans un chapitre du manuel, avec sa figure, dans les deux langues.
+
+« En même temps que le Deluge » prend deux chemins, qui se complètent : **en direct**
+(le clip part sur la machine, en enregistrement il s'inscrit dans le clip ouvert), et
+**par le fichier** (le morceau enregistré sur la machine revient par la
+synchronisation, l'atelier le complète, la nouvelle version repart).
+
+### Mesuré
+
+* **Formats des notes** : la 1.3 ne lit `noteDataWithLift` que dans un morceau déclaré
+  avant c1.3.0 (code de la machine, commit `102cf9f`). Lecture vérifiée sur 195
+  morceaux : aucune note lue autrement. **Calm Down**, réenregistré par la machine en
+  1.3 pendant la séance de l'utilisateur (voir plus bas), est le premier morceau 1.3 de
+  la carte : ses 162 notes confirment l'ordre des champs, et une copie complétée relit
+  ses 318 notes, arrangement identique à l'octet.
+* **Le générateur** : avant les tirages nommés, 0,5 → 0,7 de saleté changeait 18
+  réglages en médiane et la structure du son dans 584 cas sur 660 ; après, 1 réglage,
+  0 structure. Plausibilité (102 sur 104) et 6 signatures de genre inchangées ; poussées
+  monotones, 0 violation sur 660. `test_hierarchie_spectrale` était fragile (une seule
+  graine) : il prend désormais la médiane de six graines.
+* **Les variations** : 94 notes sur 6 225 sortaient de la gamme (la quinte d'une
+  basse) — corrigé ; `similarity` valait 0 pour toute variation d'octave — d'où
+  `kinship` ; un rythme décalé tombait à 0,19 de parenté — limité à 40 % des attaques.
+* **L'insertion** : prouvée sur des copies de 83 morceaux c1.x réels, relus par
+  `Song.load` ; seuls refus, les voulus (firmwares officiels 3.x et 4.x, format 2.x,
+  presets rangés dans SONGS). Six noms de version accentués échouaient : translittérés.
+  Empreintes de la copie de travail inchangées.
+* **Le jeu calé** : −1,7 ms d'écart médian à l'instant visé, 1,5 ms d'étendue — face à
+  une horloge **simulée**, sur cet ordinateur.
+* **L'arrangement** : la SPEC disait qu'aucun morceau ne s'en servait (46 morceaux en
+  3.0.4) ; quatre morceaux du compositeur en ont un (Calm Down, Nimp1, Nimp1 2, SONG1),
+  Calm Down avec des clips d'arrangement seul. Le firmware les désigne par le bit 31 :
+  les clips neufs, en fin de session, ne décalent aucune référence. Corrigé au §4.26.
+* **L'interface à 980 × 700** : trois défauts vus sur les rendus et corrigés (§5.28).
+
+### La séance réelle de l'utilisateur (journal, 17 h 07 – 18 h 23)
+
+Pendant ce travail, l'utilisateur a essayé l'Atelier dans sa vraie fenêtre, le Deluge
+branché (identifié c1.3.0, carte par USB) : **sept morceaux écrits** par « Écrire le
+morceau » — Synthwave, House, Detroit, Deep House (quatre fois), Funk —, chacun envoyé
+au Deluge par la synchronisation en 4 à 8 s, **aucune erreur au journal**. Il en a
+supprimé quatre et les trois ESSAI par « Suppressions à confirmer ». Douze kits bâtis en
+27 s (17 h 40) : « Autre son » sur la batterie, cliqué à la suite. Deux choses en sont
+sorties :
+
+* « ATELIER DEEP HOUSE **2 2** » : un nom déjà numéroté recevait un second numéro.
+  `songwriter.free_song_name` continue désormais la suite (« … 3 »), comme la machine.
+* Calm Down est revenu du Deluge réenregistré en 1.3 : voir « Formats des notes ».
+
+**Une mesure fautive, la mienne** : ma première lecture de la copie de travail, par le
+shell Bash, voyait l'état **d'avant** la séance (53 morceaux, Calm Down en c1.2.1,
+ESSAI ESQUISSE encore là), alors qu'aucun fichier n'a changé après 18 h. La relecture
+donne 52 morceaux, cohérents avec le journal ; la SPEC a été corrigée sur cette base.
+Cause non élucidée — avant de conclure sur la carte, relire les dates des fichiers.
+
+### Mes erreurs, relevées
+
+* Quatre de mes tests étaient fautifs avant le code : des copies de morceau qui
+  gardaient l'ancien format de notes dans un test 1.3, des horloges espacées de 0,1 ms,
+  une « mélodie » trop régulière pour être devinée, un seuil de parenté trop strict.
+* `_guess_part` groupait les attaques de tous les clips d'une piste : une mélodie y
+  passait pour des accords. Groupées clip par clip.
+* Les rangées d'un kit doivent suivre `drumIndex`, pas leur ordre dans le fichier.
+* La liste des pages des tests de clics (`InteractionCase._pages`) et celle du contrat
+  des pages ne connaissaient pas l'Atelier, et passaient : ajouté. Les comptes « neuf
+  pages » des tests sont passés à dix.
+* Une phrase du manuel annonçait « à deux millisecondes près » sur la machine ; mesuré
+  seulement face à une horloge simulée, la phrase a été retirée.
+
+### Ce qui attend l'accord de l'utilisateur
+
+Rien n'est parti vers sa machine de ma part. Deux essais restent à faire **avec lui** :
+jouer un clip sur le Deluge en lecture puis en enregistrement ; charger sur la machine
+une version complétée d'un de ses morceaux — « Calm Down 2 », complété depuis Calm
+Down, éprouverait du même coup le format 1.3 (`noteDataWithSplitProb`) et les clips
+d'arrangement seul.
+
+**Tests** : 1 143, tous passent (`python -m unittest discover -s tests`), dont 49 dans
+`tests/test_atelier.py` et 18 tests d'interface de l'Atelier qui cliquent ; retirer le
+branchement de la grille ou de l'adoption d'une variante les fait échouer (vérifié).
+
+## 3 sextricies. Le Deluge branché, mieux pris en charge (22 octobre 2026, matin)
+
+> « Améliorer la prise en charge du Deluge dans le logiciel lorsqu'il est branché au PC
+> par USB. »
+
+Méthode habituelle (consigne large) : son journal réel, puis des mesures sur la machine
+— **en lecture seule**, faute d'accord du moment pour lui envoyer quoi que ce soit (on
+ne savait pas quel morceau y était chargé).
+
+### Ce que le journal a montré
+
+**Sa vraie application était ouverte toute la nuit** (0 h 54 – 1 h 58), connectée au
+Deluge, pendant mes essais : les lignes « Deluge identifié » tombent aux heures de mes
+scripts — chaque réponse de la machine arrivait aux deux. Sous Windows 11, deux
+programmes ouvrent ses ports en même temps. Conséquences : les mesures de la nuit
+(§3 quintricies) ont été faites **à deux clients** (si sa fenêtre « Deluge en direct »
+était ouverte, la machine envoyait son écran en continu) ; et deux fenêtres de
+l'application synchroniseraient chacune la carte. Avant tout essai sur la machine :
+vérifier qu'aucune autre instance ne tourne (`Win32_Process`).
+
+### Fait
+
+* **Une seule fenêtre** (`main._already_running`, `main._Instance`, `QLocalServer`) :
+  un second lancement prie la première de se montrer et s'arrête — 216 ms, vérifié
+  avec deux vrais lancements isolés. Test.
+* **Synchroniser après une écriture sans parcourir toute la carte.** Mesuré : le
+  parcours complet coûte **292 requêtes de 12 ms**, 3,4 s (181 dossiers, dont 117 dans
+  SAMPLES ; 12 ms, c'est la machine qui lit une page de 25 entrées — l'aller-retour
+  USB n'en prend que 2). Désormais, la synchronisation « écriture » ne liste que les
+  dossiers où la copie a changé (`changed_folders`, suppressions comprises ;
+  `UsbCard.walk_folders` ; `plan_folders`) : **SONGS 5 requêtes, 0,07 s ; un dossier
+  de presets ou de sons 1, 0,01 s** (mesuré sur sa carte). Le plan restreint est le
+  plan complet sur ses dossiers (test qui couvre les cinq natures d'action) et ne dit
+  rien ailleurs ; les suppressions à confirmer d'ailleurs sont gardées
+  (`merge_plans`) ; une synchronisation complète en attente l'emporte (`_plus_large`) ;
+  un dossier illisible ainsi (nom non ASCII) fait revenir au parcours complet. Un arrêt
+  avant le plan rend désormais un plan qui ne couvre rien : il n'efface plus les
+  suppressions en attente. Ce que le Deluge enregistre descend toujours à la connexion,
+  au retour dans la fenêtre, ou sur demande. Neuf tests, dont cinq face au Deluge
+  simulé (une page de SONGS listée, et rien d'autre).
+* **L'écoute sur le Deluge joue la phrase de l'ordinateur** (`render.preview_notes`,
+  selon la catégorie : quatre notes graves pour une basse…), une note toutes les
+  0,55 s, et non plus un do isolé de 0,8 s. Test qui clique « Écouter », vérifié en
+  retirant le changement.
+* **Audit de la fenêtre, Deluge branché** (`audit_deluge_branche.py`, synchronisation
+  coupée, sauvegarde ouverte) : aucun blocage au-delà de 100 ms à la connexion ;
+  « Deluge en direct » ouverte, 160 images d'écran en 8 s (l'économiseur anime l'écran),
+  pire blocage 28 ms ; navigation 46 ms.
+* Manuel (fr, en), SPEC §4.34, §5.7, §5.24, README.
+
+Suite : **1 075 tests** (665 noyau, 381 interface, 29 traduction), tous verts. Rien
+n'est commité.
+
+### Les deux essais, avec son accord (11 h 18 – 11 h 30), seul client vérifié
+
+**L'écoute cadencée, par le vrai bouton « Écouter »** (`machine_ecoute_verif.py`,
+ESSAI ACCORDS, clip Accords, sans recopie d'écran), retour MIDI Follow comparé
+réglage par réglage :
+
+| envoi | positions | résultat |
+|---|---|---|
+| 11 h 19, Analog Ambient Square, dès la connexion | inconnues (0/127/valeur) | **aucun appliqué** — les 18 qui devaient changer à leur valeur d'origine |
+| 11 h 20, Fizzy Strings | connues (position/valeur) | **45/45** |
+| 11 h 22, Echo Chord, 10 s après la connexion | inconnues | **45/45** |
+| 11 h 28, Analog Ambient Square, dès la connexion | inconnues | **45/45** |
+
+Le chemin propre et le passage par les extrêmes marchent ; l'échec de 11 h 19 ne s'est
+pas reproduit, et reste inexpliqué (un menu ouvert sur la machine ? le firmware donne
+alors la main au menu, `soundEditor.midiCCReceived`). L'économiseur d'écran est hors de
+cause : il ne fait que dessiner (`screensaver.cpp`). Pongs en 4 ms par réglage
+(Display Param allumé ou non, on ne sait pas). La retenue de la recopie d'écran
+(`_hold_screen`) reste, sans preuve qu'elle soit nécessaire : la perte « pendant
+l'envoi de l'écran » a été vue à deux clients.
+
+**L'écriture en vol** (`machine_debit_ecriture.py`, dossier neuf
+`SAMPLES/ESSAI COMPANION/DEBIT`, retiré ensuite) : six fichiers de 150 Ko aléatoires,
+modes alternés, tous relus identiques — **48 et 50 Ko/s un bloc à la fois, 63 et 61
+avec deux, 61 et 61 avec trois**. Le firmware range les requêtes dans une file dynamique
+(`SysExQ`) : rien ne déborde. Intégré (`WRITE_AHEAD = 2`, `_write_blocks`,
+`WRITE_RATE` = 60 Ko/s) et vérifié par `write_new` de l'application : **58,5 et
+60,4 Ko/s tout compris** (temporaire, renommage, date, contrôle), relus identiques,
+datés, aucun temporaire laissé. Un pack de 18 Mo : 5 min au lieu de 7 ; manuel,
+README, SPEC suivent ; test « deux écritures en vol » qui échoue à un.
+
+Suite : **1 076 tests**, tous verts. Rien n'est commité.
+
+---
+
+## 3 quintricies. Premiers essais d'écriture sur la machine (22 octobre 2026)
+
+> « J'accepte tous les essais. »
+
+Trois essais proposés la veille, acceptés : écrire sur la carte, jouer une note, et
+(plus tard, dans un morceau d'essai) écouter un preset sur la machine. Script
+`machine_essais.py` du bloc-notes : **la vraie fenêtre**, configuration isolée (copie
+des réglages, avec `work_dir` désignant la vraie copie de travail — sans lui, la
+configuration isolée la cherche dans son propre dossier), ses **vrais boutons**
+cliqués, questions remplacées. Un **garde** sur `DelugeFiles` refusait toute
+écriture USB hors de `SONGS/ESSAI …` et `SAMPLES/ESSAI COMPANION` (sauf la date des
+deux fichiers annoncés par le plan à blanc), et chaque plan de synchronisation était
+relu avant d'être appliqué. Il n'a rien eu à refuser.
+
+### Mesuré (00 h 39 – 00 h 40)
+
+| | |
+|---|---|
+| plan à blanc avant l'essai | 2 fichiers à recevoir : `SETTINGS/FAVOURITES/SYNTHS_Bank0.xml` (nouveau, favoris vides) et `SETTINGS/MIDIFollow.XML`, **réenregistré à l'identique** et daté de zéro par la machine |
+| synchronisation à la connexion | 3,8 s : les deux reçus, datés sur la carte, l'ancien `MIDIFollow.XML` dans l'historique |
+| trois morceaux (Théorie ▸ En morceau, batterie comprise ; Arrangement ▸ Esquisse en morceau ; Kits ▸ 000 TR-808 ▸ Motif en morceau) | chacun parti **seul**, 2 s après l'écriture : 4,7 s (33 Ko), 7,2 s (168 Ko), 5,7 s (94 Ko) — dont 3,5 s pour lister la carte |
+| envoi d'un dossier glissé (`ESSAI COMPANION`) | « Été test.wav » → `Ete test.wav` ; un WAV 24 bits à en-tête étendu **converti** ; un MP3 et un texte **restés sur le PC** ; 12,9 s |
+| écriture par le câble | 35 à 52 Ko/s, 47 sur les gros fichiers |
+| dossier neuf | **créé par la machine elle-même** : le firmware crée les dossiers manquants à l'ouverture en écriture (`smsysex.cpp`, `createPathDirectories`) ; l'application n'appelle jamais `mkdir` |
+| relecture | les 5 fichiers relus par le câble, **identiques octet pour octet**, datés ; aucun temporaire `~DC…` laissé |
+| « Jouer un do » | envoyé à 00 h 40 min 14 s sur le canal 1 — **ce qu'il a entendu reste à lui demander** |
+| réglages réels, index réel | empreintes identiques avant et après |
+
+L'écran recopié n'a montré que l'économiseur pendant tout l'essai : personne ne
+touchait la machine.
+
+### L'écoute passive (00 h 15 – 00 h 35)
+
+Horloge et départ/arrêt reçus, tempo convergé vers 120,0 BPM en 0,6 s ; retour MIDI
+Follow reçu (52 paramètres au changement d'instrument, puis `lpfResonance`,
+`lpfFrequency`, `env2.decay`, `delayFeedback` quand il tournait les boutons) ; **aucune
+note**. Le code du firmware dit pourquoi : `SoundInstrument` (synthé, kit) joue sa voix
+en interne, seul `MIDIInstrument` (piste MIDI) envoie ses notes.
+
+### Corrigé dans la foulée
+
+* « Deluge en direct » disait « Aucune note tenue » pendant qu'on jouait un synthé :
+  elle dit désormais « Aucune note reçue — seules les pistes MIDI du Deluge envoient
+  leurs notes… » ; manuel, infobulle et SPEC suivent, avec un test.
+* L'index s'appelle `library.db`, pas `library.sqlite3` (manuel, SPEC, constante
+  `config.DB_PATH` périmée — `main.py` l'utilise désormais).
+* Le journal garde **quatre** fichiers (le courant et trois anciens), pas trois.
+* « Chemins récents » affichait « Aucun chemin récent » avec deux chemins dedans (le
+  texte d'attente) : il dit leur nombre ; test qui échoue sans le correctif.
+* Manuel : l'encadré de l'économiseur coupait la liste des boutons ; le parcours d'un
+  morceau dit maintenant qu'il part seul vers le Deluge, et en combien de temps.
+
+Suite complète : **1 055 tests** (647 noyau, 379 interface, 29 traduction), tous verts.
+Rien n'est commité. (Après le correctif de l'écoute, plus bas : **1 064**, dont 656 noyau.)
+
+### Sur la machine, d'après lui (vers 1 h)
+
+« Tous les essais sont chargés et fonctionnent » : les trois morceaux et les deux sons.
+L'encadré « Encore à éprouver sur la machine » du manuel est devenu « Éprouvé sur la
+machine », le README aussi. L'écran recopié montrait ensuite `ESSAI MOTIF 808`,
+128 BPM, « C-2 MAJOR » : `rootNote="0"`, comme **44 de ses propres morceaux** — la
+machine affiche la note absolue ; rien à corriger.
+
+### L'écoute d'un preset sur la machine, préparée
+
+`machine_ecoute_preset.py` clique « Écouter » sur la page Presets, réglage « Écouter
+sur le Deluge » coché ; **à blanc** par défaut (contrôleurs notés, rien n'est envoyé),
+`--envoyer` sinon. À blanc : **45 contrôleurs d'un seul coup** sur le canal 1, puis un
+do de 0,8 s. Deux constats, par le code :
+
+* **seuls les réglages qu'un bouton pilote partent** — pas la forme d'onde, ni un
+  échantillon, ni le mode de l'arpégiateur. La machine joue donc *ses* oscillateurs
+  réglés comme le preset. Le manuel et deux infobulles disaient « le vrai moteur de la
+  machine » : corrigé (fr et en) ;
+* **la note dure 0,8 s quel que soit le preset** : « 131 Warm Strings » (attaque au
+  maximum, `0x7FFFFFFF`) n'aurait presque rien fait entendre. Le manuel le dit ; l'essai
+  prend « 037 Echo Chord » (attaque nulle, écho marqué). L'ordinateur, lui, joue une
+  phrase selon la catégorie — à aligner, peut-être.
+
+### L'écoute réelle (1 h 10 min 58 s)
+
+Écran vérifié d'abord, en lecture seule : « SYNTH · VAPEUR STAB 65 · 1: ACCORDS ».
+Envoyé par le vrai bouton : 45 contrôleurs en **40 ms** sur le canal 1, puis le do.
+Aucun retour MIDI Follow en réponse (la machine ne renvoie pas ce qu'elle reçoit),
+écran inchangé.
+
+**Il n'a rien entendu changer — et la machine le confirme.** Au départ de la lecture
+en vue clip, elle renvoie tous les réglages du son (`playback_handler.cpp` ; rien en
+vue morceau, `isClipContext`). Écoute passive (`machine_retour.py`) à 1 h 19 :
+78 réglages reçus, et **les 19 qui devaient changer ont tous leur valeur d'origine**
+(calculée depuis les `soundParams` du clip, et identique au retour : la méthode est
+juste). Les 45 contrôleurs ont été **ignorés**. Le code du firmware désigne un suspect :
+`midi_takeover.cpp` — en **Jump** (défaut d'usine) un contrôleur s'applique ; en
+**Pickup** ou **Scale**, un saut isolé est ignoré tant qu'il n'a pas « rattrapé » la
+position du bouton. Le réglage (SETTINGS ▸ MIDI ▸ TAKEOVER) est en mémoire flash, pas
+sur la carte : à lui demander.
+
+### L'enquête (1 h 20 – 1 h 56) : deux causes, pas une
+
+Il a trouvé le menu — SHIFT + SELECT, pas SELECT seul, qui ouvre celui du son :
+**Takeover = Pickup**. Premier correctif (`takeover_steps`) : position connue puis
+valeur, ou 0/127/valeur. **Toujours rien** — en vue morceau (1 h 31), puis en vue clip
+par le chemin propre (1 h 41, 64 contrôleurs en 59 ms) : 0 réglage appliqué sur 19.
+Écartés, mesure ou code à l'appui : le premier port atteint bien la machine (identité
+demandée par lui, réponse reçue) ; canal A = 1 sans appareil attitré
+(`MIDIFollow.XML`, lu `+1`) ; filtre de retour désactivé (le firmware n'accepte que
+« enabled ») ; câble 1 sans MPE ni « relative » ; aucune commande apprise dans le
+morceau.
+
+**« Display Param » allumé à ma demande**, l'écran recopié a parlé :
+
+* salve de 135 contrôleurs en 0,2 s : « ARP GATE : 0 », « ARP GATE : 25 », puis plus
+  rien — **seuls les trois premiers** ont été appliqués ;
+* quatre réglages espacés de 30 ms, recopie allumée : filtre et panoramique appliqués,
+  résonance et volume **perdus** (`machine_cadence.py`) ;
+* les 45 réglages d'Echo Chord, **un ping entre chacun** et son pong attendu, sans
+  recopie (`machine_cadence2.py`) : aller-retour 14 à 22 ms par réglage, 0,8 s en
+  tout — **45 sur 45 appliqués**, lus au retour MIDI Follow suivant.
+
+La machine **perd ce qui arrive pendant qu'elle traite**, et pendant qu'elle envoie son
+écran. Le code du firmware ne montre pas où (`checkIncomingUsbMidi` lit chaque trame
+jusqu'au bout) ; le constat suffit pour y remédier.
+
+### Le correctif intégré (non encore vérifié sur la machine)
+
+`DelugeLink.send_sound` : Takeover (`takeover_steps`), **un ping entre deux réglages**
+et un avant la note (`_sync_point`), pris dès son arrivée par le robinet SysEx
+(`_tap`, qui passe le reste aux fichiers). Le ping part **par le port des notes** :
+depuis l'application, parti par le troisième, il revenait en 4 ms et les réglages se
+perdaient encore — il a très probablement doublé les contrôleurs. Recopie de l'écran
+**retenue** pendant l'envoi (`_hold_screen`) : non renouvelée, et l'envoi attend
+qu'elle expire (2 s au plus). Le Deluge simulé applique Takeover (`Boutons`) et perd
+au-delà de trois contrôleurs sans SysEx (`salve`) ; tests qui échouent sans la
+cadence. Manuel (fr, en) : Takeover, la cadence, la recopie retenue, une entrée de
+dépannage « L'écoute sur le Deluge ne change pas le son » ; SPEC §5 corrigée (elle
+disait que la recopie « n'encombre pas les notes »).
+
+La machine a été débranchée avant l'essai de cette version : **à vérifier** — écoute
+par le vrai bouton, retour MIDI Follow comparé (`machine_ecoute_preset.py --envoyer
+--sans-ecran`, puis `machine_retour.py`), avec et sans « Deluge en direct » ouverte.
+
+### Reste à faire, avec lui
+
+* La vérification ci-dessus.
+* Lui rappeler : Display Param est resté allumé (MIDI-Follow ▸ Display Param) ; la
+  piste Accords d'ESSAI ACCORDS porte des réglages envoyés — ne pas enregistrer.
+* Retirer les fichiers d'essai, s'il le veut : par l'application (suppression dans la
+  copie de travail, puis « Suppressions à confirmer »).
+
+---
+
+## 3 quatertricies. Le manuel vérifié face à la machine (21-22 octobre 2026)
+
+> « J'ai branché mon Deluge au PC, fais les vérifications qui s'imposent. »
+
+Firmware **c1.3.0** (`deluge-v1_3_0-beta+2026_10_18-102cf9f.bin` à la racine), code du
+firmware lu au même commit (et en `release_1_2_1` pour comparer). **Lecture seule** :
+configuration isolée, empreinte des réglages et de la copie de travail comparée avant
+et après, et dans chaque script `MidiOut.send`, `note_on`, `control_change`… et les
+écritures de `DelugeFiles` remplacés par une fonction qui lève. Seul message affiché :
+« HELLO SYSEX » (Faire signe).
+
+### Mesuré
+
+| | |
+|---|---|
+| ports | `Deluge`, `MIDIOUT2`, `MIDIOUT3` ; SysEx par le troisième ; connexion en 61 ms |
+| aller-retour | 1,7 à 2,2 ms |
+| carte par USB | 2 938 fichiers listés en 3,4 s ; lecture 170 Ko/s ; un échantillon d'1 Mo identique octet pour octet à la copie de travail |
+| synchronisation | carte et copie de travail à l'image l'une de l'autre ; le plan (calculé, non appliqué) ne recevrait que `SETTINGS/MIDIFollow.XML`, **au contenu identique** : la machine l'a réenregistré et daté de zéro, et l'application l'a vu |
+| MIDI Follow | `SETTINGS/MIDIFollow.XML` : Channel A = 1, retour sur A, note de base 36 ; 79 paramètres pilotables (52 sans le fichier) |
+| « Deluge en direct » | firmware, aller-retour, carte par USB, Channel A lus et cochés ; l'écran recopié (SYNTH · TB01 · SECTION 1 quand la machine est réveillée) |
+
+### Ce que la machine a démenti
+
+* **Les chemins de menu** du manuel, de l'interface (Réglages, « Deluge en direct »,
+  infobulle du canal) et du README : « MIDI ▸ Follow ▸ Channel A », « Feedback =
+  Channel A », « MIDI ▸ Clock ▸ Out ». L'écran dit **MIDI ▸ MIDI-Follow ▸ Channel ▸
+  Channel A**, **MIDI-Follow ▸ Feedback ▸ Channel**, **MIDI ▸ Clock ▸ Output** (actif
+  d'usine), **MIDI-Follow ▸ Kit Root Note** — en 1.3 comme en 1.2.1. Corrigés partout,
+  traductions comprises ; SPEC §4.29 porte la correction.
+* **`MIDIFollow.XML` « à la racine de la carte »** (manuel, README) : il est dans
+  `SETTINGS/` en 1.3. Le code le savait déjà.
+* **La sauvegarde de la page Santé oubliait `SETTINGS/`** — réglages MIDI Follow,
+  `CommunityFeatures.XML` et **les favoris** (`FAVOURITES/SONG_Bank0.xml`) : elle ne
+  regardait qu'à la racine. Corrigé (`backup.SETTINGS_DIR`), avec un test qui échoue
+  sans le correctif.
+* **L'économiseur d'écran de la 1.3** (`hid/display/screensaver.cpp`, mode « Deluge » :
+  des traits qui tombent en diagonale) : la recopie le montre fidèlement, et le popup de
+  « Faire signe » reste dessous. Seul un geste sur la machine le réveille (encodeurs,
+  boutons) ; le MIDI ne le fait pas. Le manuel le dit, avec Settings ▸ Defaults ▸
+  Screensaver, et le dépannage a une entrée.
+* **La liste « Réglages à faire » de « Deluge en direct » était coupée** à 660 px de
+  haut (« Elle part par… ») : dans une zone défilante désormais.
+* **« aller-retour 1,7 ms » en anglais** : la virgule était écrite en dur dans
+  `latency_text`.
+* « À la connexion, l'application demande l'image de son écran » : non, la version,
+  le ping et la carte par USB ; l'écran, seulement à l'ouverture de « Deluge en direct ».
+* « Le câble transporte quelques dizaines de Ko/s » : 170 en lecture, 45 en écriture.
+
+### Pas encore vu, faute d'un geste sur la machine
+
+L'horloge et le départ/arrêt (lancer la lecture), le retour MIDI Follow (changer
+d'instrument, tourner un bouton), les notes jouées — une écoute passive de 20 minutes
+les attendait (voir plus bas). **Et, avec son accord seulement** : une note ou un preset
+joué sur la machine (« Jouer un do », écoute sur le Deluge — qui modifie le son
+sélectionné), un morceau écrit par l'application chargé sur la machine, un premier envoi
+réel du PC vers la carte. **Fait le lendemain, avec son accord : §3 quintricies.**
+
+---
+
+## 3 tritricies. Le manuel, en français et en anglais (21 octobre 2026)
+
+> « Je voudrais que tu écrives le manuel du logiciel. Le thème doit correspondre à celui
+> du guide Deluge écrit précédemment. Il doit être disponible en anglais et en français
+> dans l'onglet aide du logiciel. Le manuel doit être complet pour aider au mieux un
+> nouvel utilisateur. »
+
+### Ce qui existe maintenant
+
+| | |
+|---|---|
+| `delugeapp/docs/manuel.fr.md`, `manuel.en.md` | le texte : 4 parties, 24 chapitres, 135 ancres, 10 figures ; 13 500 mots en français, 12 650 en anglais |
+| `ui/manuel.py` | lecture du balisage, mise en page dans la typographie du guide, fenêtre (sommaire, recherche, bascule de langue, PDF) |
+| `ui/manuel_dessins.py` | ouvertures de partie (treillis, cartouche, chiffre romain, pads), pads de chapitre, dix figures au QPainter |
+| Aide ▸ Manuel (F1) | ouvre le chapitre de la page affichée ; Aide ▸ Premiers pas, le parcours guidé |
+
+Le contrat — balisage, thème, mesures, tests — est en **SPEC §5.27**.
+
+### Les choix
+
+* **Le texte vit hors du code**, un fichier par langue, dans un balisage lisible tel quel.
+  Le passer par `tr()` aurait fait 2 000 clés d'un paragraphe chacune ; le test
+  `test_les_deux_langues_ont_la_meme_structure` tient les deux textes ensemble mieux
+  qu'un catalogue.
+* **Le thème est celui du guide, pas celui de l'application** : une page de papier, comme
+  le livre, dans une fenêtre dont le cadre et le sommaire restent ceux de la façade. Les
+  polices et les couleurs sont reprises de `build/docxkit.py` ; les ouvertures de partie,
+  des cartouches de `figs_couverture.py`, redessinées par `art.py`.
+* **Les figures sont des schémas, pas des captures d'écran** : une capture vieillit à la
+  première retouche de l'interface et devrait exister dans les deux langues. Les dessins
+  n'écrivent rien de leur cru ; leurs libellés viennent du texte. À la place des captures,
+  chaque chapitre de page a un lien qui **ouvre la vraie page**.
+* **F1 ouvre le chapitre de la page affichée** : c'est là que la question se pose.
+* **Le manuel se lit dans l'une ou l'autre langue**, quelle que soit celle de l'interface.
+* **Il dit ce que fait le code, vérifié dans le code** — y compris quand le README ou une
+  infobulle disait autre chose (ci-dessous).
+
+### Pièges rencontrés
+
+* **Retoucher le document de Qt après coup le casse** : remettre les images à la largeur
+  de la colonne par `QTextCursor.setCharFormat` laissait 392 blocs sur 1 038 à hauteur
+  nulle — des paragraphes entiers invisibles entre deux encadrés. Vu sur une capture,
+  mesuré bloc par bloc, réglé par `markContentsDirty`.
+* **Une ancre posée sur une image** est reportée par Qt au texte suivant : le sommaire
+  menait sous l'ouverture de partie.
+* **La feuille de style de l'application** fixe la couleur du texte des listes, et Qt
+  ignore alors celle des éléments : le sommaire a un délégué.
+* **À l'impression, Qt ajoute 2 cm de marge** : les images débordaient de la page.
+* **Le contrôle « aucun français dans l'interface anglaise »** lisait le texte du manuel,
+  qui cite exprès « Français » ou « Été » : la page du manuel en est écartée, et a son
+  propre test.
+* **Le heredoc Bash et les « \ »**, encore : un correctif perdu, refait par fichier.
+
+### Ce que le manuel a relevé
+
+* Trois infobulles disaient faux : « Enregistrer dans SYNTHS » et « Enregistrer dans
+  KITS » promettaient une confirmation qui n'a lieu que si le nom est déjà pris ;
+  « Exporter le rapport » annonçait un fichier texte pour une page HTML. Corrigées.
+* Aucune interface n'ajoute d'étiquette à un échantillon (`add_tag` n'est appelé de
+  nulle part) : l'aperçu montre des étiquettes que l'utilisateur ne peut pas poser. Le
+  manuel en parle au conditionnel ; à trancher.
+* La correction audio garde ses originaux dans `_BACKUP/samplefix-…`, et
+  `samplefix.restore` sait les remettre en place, mais **aucun bouton ne l'appelle** — le
+  README parlait d'un bouton de restauration. Le manuel dit où sont les originaux.
+* `UNREADABLE_XML` est émis par le diagnostic sans figurer dans `health.ISSUE_CODES`.
+
+### Vérifié
+
+* **1 052 tests** sous unittest et sous pytest (646 noyau, 377 interface dont 22 pour le
+  manuel, 29 traduction).
+* Rendus de la fenêtre en français et en anglais, à 1 220 et 980 px, chaque partie et
+  chaque figure regardée ; le PDF (52 pages A4 en français) rendu page à page.
+* `TestLeManuelDecritChaqueCommande` a d'abord échoué sur huit cases des réglages, citées
+  entre guillemets au lieu de leur libellé : elles le sont désormais.
+
+### À voir avec l'utilisateur
+
+1. Relire le manuel devant la machine, surtout la partie III : les réglages MIDI Follow
+   et l'écriture des morceaux n'ont jamais été éprouvés sur un vrai Deluge.
+2. Les étiquettes d'échantillon et la restauration des corrections audio : les ajouter
+   à l'interface, ou les retirer du discours.
 
 ---
 

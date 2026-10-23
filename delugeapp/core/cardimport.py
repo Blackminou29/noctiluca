@@ -17,7 +17,7 @@ Mesuré chez l'utilisateur avant de l'écrire (18 octobre 2026) :
   dossiers ``__MACOSX`` venus des archives ;
 * tous les vrais WAV, comme les 1 745 échantillons de la carte, respectent
   les règles de lecture du firmware (:func:`wav.deluge_problem`) ;
-* 271 Mo par le câble, c'est près d'une heure trois quarts à 45 Ko/s : le
+* 271 Mo par le câble, c'est près d'une heure vingt à 60 Ko/s : le
   plan le dit avant de copier.
 
 Les règles

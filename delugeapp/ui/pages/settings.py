@@ -447,6 +447,12 @@ class SettingsPage(Page):
         self._recent_box.clear()
         for item in self.ctx.settings.recent_paths:
             self._recent_box.addItem(item)
+        # Aucune ligne n'est choisie : le texte d'attente s'affiche, et il
+        # doit dire si la liste est vide ou non.
+        self._recent_box.setPlaceholderText(
+            tr("%d chemin(s) déjà utilisé(s) — choisir…")
+            % self._recent_box.count() if self._recent_box.count()
+            else tr("Aucun chemin récent"))
         self._recent_box.setCurrentIndex(-1)
         self._recent_box.blockSignals(False)
 
@@ -578,8 +584,9 @@ class SettingsPage(Page):
             tr("Écouter les presets sur le Deluge plutôt que sur "
                "l'ordinateur"))
         self._midi_audition.setToolTip(
-            tr("Le son vient alors du vrai moteur de la machine, et non de "
-               "l'approximation calculée par l'application"))
+            tr("Le Deluge joue alors : l'instrument sélectionné sur lui prend "
+               "les réglages du preset qu'un bouton pilote — filtres, "
+               "enveloppes, effets —, mais garde ses propres oscillateurs"))
         self._midi_audition.toggled.connect(
             self.guard(self._apply_midi_audition))
         body.addWidget(self._midi_audition)
@@ -675,12 +682,13 @@ class SettingsPage(Page):
 
         self._midi_machine.setText(self._texte_machine(etat))
         self._midi_guide.setText(
-            tr("<b>Sur le Deluge</b>, une fois : MIDI ▸ Follow ▸ "
-               "<b>Channel A = %d</b> — sans ce réglage, la machine ignore ce "
-               "que l'application joue — puis <b>Feedback = Channel A</b>, "
-               "pour que le son sélectionné revienne à l'application. "
-               "L'horloge, elle, sort d'elle-même (MIDI ▸ Clock ▸ Out). Un "
-               "kit répond à partir de la note 36 (Follow ▸ Kit Root Note).")
+            tr("<b>Sur le Deluge</b>, une fois : MIDI ▸ MIDI-Follow ▸ "
+               "Channel ▸ <b>Channel A = %d</b> — sans ce réglage, la machine "
+               "ignore ce que l'application joue — puis MIDI-Follow ▸ "
+               "Feedback ▸ <b>Channel = A</b>, pour que le son sélectionné "
+               "revienne à l'application. L'horloge, elle, sort d'elle-même "
+               "(MIDI ▸ Clock ▸ Output). Un kit répond à partir de la note 36 "
+               "(MIDI-Follow ▸ Kit Root Note).")
             % int(reglages.midi_channel))
 
         if not midiport.available():

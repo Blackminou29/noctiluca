@@ -12,7 +12,7 @@ Pourquoi un registre central plutôt qu'une infobulle à chaque création
 ---------------------------------------------------------------------
 
 Parce qu'on peut alors **vérifier la couverture** : un test parcourt les
-neuf pages et échoue s'il reste une commande muette, ou si une explication
+dix pages et échoue s'il reste une commande muette, ou si une explication
 désigne une commande qui n'existe plus. Cent infobulles éparpillées ne se
 vérifient pas.
 
@@ -153,9 +153,17 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                     "quoi explorer autour d'une idée qui plaît"),
         "Écouter": N_("Joue le son généré — sur le Deluge s'il est branché et "
                       "l'écoute réglée sur lui, sinon en rendu approché"),
-        "Enregistrer dans SYNTHS": N_("Écrit le preset sur la carte, dans "
-                                      "SYNTHS/ — avec confirmation, et sans "
-                                      "jamais écraser un fichier existant"),
+        "Enregistrer dans SYNTHS": N_("**Écrit sur la carte.** Demande un "
+                                      "nom et un sous-dossier de SYNTHS, "
+                                      "puis y écrit le preset ; un fichier "
+                                      "du même nom n'est remplacé qu'après "
+                                      "une question"),
+        "Modifier le son…": N_("Ouvre l'éditeur du son courant : oscillateurs, "
+                               "filtres, enveloppes, LFO, effets et "
+                               "modulations, chaque réglage au cran de la "
+                               "machine et en clair. Le son retouché rejoint "
+                               "l'historique  (rien n'est écrit sur la "
+                               "carte)"),
         "Essayer en morceau": N_("**Écrit sur la carte.** Crée dans SONGS un "
                                  "morceau neuf où le son joue une phrase "
                                  "faite pour son rôle (basse, accords, "
@@ -188,8 +196,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                                 "kit d'artiste…), choisie selon le genre, "
                                 "puis complète les rôles manquants  (rien "
                                 "n'est encore écrit)"),
-        "Enregistrer dans KITS": N_("Écrit le kit sur la carte, dans KITS/ — "
-                                    "avec confirmation"),
+        "Enregistrer dans KITS": N_("**Écrit sur la carte.** Écrit le kit "
+                                    "dans KITS/, sous le nom indiqué ; un "
+                                    "fichier du même nom n'est remplacé "
+                                    "qu'après une question"),
         "Autre son": N_("Remplace le son de la rangée choisie dans la liste "
                         "par un autre du même rôle — de la même machine "
                         "d'abord, puis d'une machine voisine — sans toucher "
@@ -202,6 +212,111 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "@_kit_folder": N_("Limite la recherche d'échantillons à un dossier "
                            "de la carte ; vide, toute la bibliothèque est "
                            "candidate"),
+    },
+
+    # ---------------------------------------------------------------- #
+    "Atelier": {
+        "@_compose_button": N_("Fabrique un morceau neuf dans le style de "
+                               "l'onglet Style : une piste par partie cochée, "
+                               "un premier clip chacune, et la structure du "
+                               "genre avec les variations qu'elle appelle  "
+                               "(rien n'est encore écrit sur la carte)"),
+        "@_import_button": N_("Ouvre dans l'atelier un morceau de la carte — "
+                              "les derniers reçus du Deluge en tête : ses "
+                              "pistes, ses clips, son tempo et sa gamme "
+                              "deviennent ceux du projet, sa progression est "
+                              "lue dans ses notes. Rien n'est modifié"),
+        "@_write_button": N_("**Écrit sur la carte.** Crée dans SONGS un "
+                             "morceau neuf : une section du Deluge par "
+                             "section du projet, leurs clips, leurs "
+                             "répétitions et l'arrangement complet. ")
+                          + _PLAN,
+        "@_complete_button": N_("**Écrit sur la carte.** Écrit une nouvelle "
+                                "version du morceau d'origine (« Cool1 5 » "
+                                "après « Cool1 4 ») qui le contient octet pour "
+                                "octet, plus vos pistes, vos clips et vos "
+                                "sections neuves ; l'original n'est pas "
+                                "touché. Le plan est montré avant d'écrire"),
+        "@_root": N_("Tonique du morceau : accords, basse et mélodie restent "
+                     "dans sa gamme"),
+        "@_scale": N_("Gamme du morceau ; le morceau écrit la donne au mode "
+                      "gamme du Deluge"),
+        "@_bpm": N_("Tempo du morceau ; choisir un genre le place au milieu de "
+                    "sa plage"),
+        "@_ambiance": N_("Ambiance de la progression d'accords — "
+                         "mélancolique, house, jazz… ; par défaut, celle du "
+                         "genre"),
+        "@_chord_color": N_("Triades, septièmes, neuvièmes ou suspendus ; par "
+                            "défaut, ce que l'ambiance appelle"),
+        "@_seed": N_("Même graine et mêmes réglages, même morceau : notez-la "
+                     "pour retrouver une composition"),
+        "@_dice": N_("Nouvelle graine au hasard"),
+        "@_new_kind": N_("Nature de la piste à ajouter : un kit, un synthé du "
+                         "Deluge, une piste MIDI vers un appareil extérieur, "
+                         "ou une piste CV vers un modulaire"),
+        "@_new_part": N_("Ce que jouera la piste ajoutée"),
+        "@_add_track_button": N_("Ajoute la piste au projet, avec un son du "
+                                 "style et un premier clip  (rien n'est "
+                                 "écrit sur la carte)"),
+        "@_remove_track_button": N_("Retire la piste choisie du projet, et "
+                                    "ses cases de toutes les sections"),
+        "@_listen_sound_button": N_("Joue le son de la piste — sur le Deluge "
+                                    "si l'écoute y est réglée, sinon en rendu "
+                                    "approché ; une batterie joue son premier "
+                                    "clip"),
+        "@_other_sound_button": N_("Un autre son du même style pour un "
+                                   "synthé, ou un autre kit bâti dans votre "
+                                   "bibliothèque"),
+        "@_card_sound_button": N_("Prend pour la piste un preset ou un kit de "
+                                  "la carte, choisi dans l'index"),
+        "@_edit_sound_button": N_("Ouvre l'éditeur du son de la piste : chaque "
+                                  "réglage au cran de la machine, et ce qu'il "
+                                  "vaut sur le Deluge (1,8 s, 237 Hz…). "
+                                  "« Garder ce son » le donne à la piste  "
+                                  "(rien n'est écrit sur la carte)"),
+        "@_channel": N_("Canal MIDI (1 à 16) ou sortie CV (1 ou 2) de la "
+                        "piste"),
+        "@_variants_button": N_("Huit variantes du son, toutes dans le "
+                                "style : un seul aspect tiré à nouveau "
+                                "(filtre, enveloppes, espace…) ou un curseur "
+                                "poussé (plus brillant, plus sale…), le reste "
+                                "du son restant le même. Un son retouché à la "
+                                "main garde ses retouches"),
+        "@_adopt_button": N_("La piste prend le son de la variante choisie"),
+        "@_listen_clip_button": N_("Joue le clip choisi sur l'ordinateur, "
+                                   "avec le son de sa piste"),
+        "@_live_button": N_("Joue le clip en boucle sur le Deluge, dans le "
+                            "clip que suit MIDI Follow : machine en lecture, "
+                            "calé sur sa mesure ; en enregistrement (REC), il "
+                            "s'y inscrit. Recliquez pour arrêter"),
+        "@_vary_button": N_("Une variation du clip, ajoutée à la piste : "
+                            "rythme, notes, plus ou moins de notes, réponse, "
+                            "octave, fin de phrase — pour une batterie, "
+                            "ornements, remplissage, cassure, montée…"),
+        "@_new_clip_button": N_("Un clip neuf pour la piste, sur la "
+                                "progression du morceau"),
+        "@_clip_bars": N_("Longueur du clip neuf"),
+        "@_delete_clip_button": N_("Retire le clip de la piste ; les sections "
+                                   "qui le jouaient se taisent pour elle  "
+                                   "(rien n'est écrit sur la carte)"),
+        "@_section_name": N_("Nom de la section ; ses clips le portent sur le "
+                             "Deluge"),
+        "@_section_bars": N_("Durée de la section, en mesures : ses clips y "
+                             "bouclent"),
+        "@_listen_section_button": N_("Joue le début de la section (huit "
+                                      "mesures au plus), toutes pistes "
+                                      "ensemble"),
+        "@_add_section_button": N_("Ajoute une section après celle choisie, "
+                                   "avec les mêmes clips"),
+        "@_remove_section_button": N_("Retire la section choisie du "
+                                      "morceau"),
+        "@_left_button": N_("Avance la section d'un cran dans le morceau"),
+        "@_right_button": N_("Recule la section d'un cran dans le morceau"),
+        "@_structure_button": N_("Remplace les sections par la structure du "
+                                 "genre — intro, montée, thème, cassure… —, "
+                                 "avec les variations qu'elle appelle ; un "
+                                 "morceau d'origine garde ses propres "
+                                 "sections"),
     },
 
     # ---------------------------------------------------------------- #
@@ -335,8 +450,9 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "Corriger automatiquement": N_("Montre d'abord le plan exact des "
                                        "opérations ; rien n'est fait avant "
                                        "votre accord"),
-        "Exporter le rapport": N_("Écrit le diagnostic dans un fichier texte, "
-                                  "à l'endroit que vous choisirez"),
+        "Exporter le rapport": N_("Écrit le diagnostic dans une page HTML, "
+                                  "à l'endroit que vous choisirez — hors de "
+                                  "la carte"),
         "@_keep": N_("Lequel des doublons garder : les autres seront proposés "
                      "à la suppression"),
         "Supprimer les doublons": N_("**Écrit sur la carte.** Montre d'abord "
@@ -406,21 +522,22 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                      "(réglages, index, journal)"),
         "@_midi_auto": N_("Ouvre les ports dès que la machine apparaît, sans "
                           "rien demander"),
-        "@_midi_audition": N_("Les presets sonneront sur le Deluge, avec son "
-                              "vrai moteur, au lieu de l'approximation "
-                              "calculée ici"),
+        "@_midi_audition": N_("Les presets sonneront sur le Deluge : "
+                              "l'instrument sélectionné sur lui prend leurs "
+                              "filtres, enveloppes et effets, mais garde ses "
+                              "propres oscillateurs"),
         "@_midi_out_box": N_("Port par lequel l'application parle au Deluge"),
         "@_midi_in_box": N_("Port par lequel elle l'écoute ; facultatif"),
         "@_midi_channel": N_("Canal que le Deluge écoute en mode MIDI Follow "
                              ": il doit être réglé sur la machine aussi (MIDI "
-                             "▸ Follow ▸ Channel A)"),
+                             "▸ MIDI-Follow ▸ Channel ▸ Channel A)"),
         "@_midi_follow_tempo": N_("Quand la machine joue, son horloge donne "
                                   "le tempo des outils : écoutes, fichiers "
                                   "MIDI et morceaux de la boîte à outils"),
         "@_midi_live": N_("Ouvre une fenêtre à garder à côté : l'écran du "
-                          "Deluge recopié, son tempo, les notes tenues et les "
-                          "réglages du son sélectionné — rien n'est écrit sur "
-                          "la machine"),
+                          "Deluge recopié, son tempo, les notes de ses pistes "
+                          "MIDI et les réglages du son sélectionné — rien "
+                          "n'est écrit sur la machine"),
         "Connecter": N_("Ouvre les ports du Deluge : notes et contrôleurs par "
                         "le premier, SysEx par le troisième ; la machine dit "
                         "alors sa version"),

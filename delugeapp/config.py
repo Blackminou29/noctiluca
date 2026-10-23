@@ -82,7 +82,7 @@ def _config_dir() -> Path:
 
 CONFIG_DIR: Path = _config_dir()
 SETTINGS_PATH: Path = CONFIG_DIR / "settings.json"
-DB_PATH: Path = CONFIG_DIR / "library.sqlite3"
+DB_PATH: Path = CONFIG_DIR / "library.db"
 LOG_PATH: Path = CONFIG_DIR / "app.log"
 DEFAULT_BACKUP_DIR: Path = CONFIG_DIR / "backups"
 

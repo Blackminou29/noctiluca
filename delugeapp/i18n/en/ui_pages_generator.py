@@ -157,4 +157,8 @@ TEXTS = {
     "Kit enregistré : %s": "Kit saved: %s",
     "Essai": "Try-out",
     "%s : %s (%s).": "%s: %s (%s).",
+    "Modifier le son…": "Edit the sound…",
+    "Modifier le son — %s": "Edit the sound — %s",
+    "Son retouché : %s.": "Sound edited: %s.",
+    "Le son n'a pas changé.": "The sound has not changed.",
 }

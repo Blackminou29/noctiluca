@@ -181,8 +181,8 @@ def _build_context(args: argparse.Namespace):
     redémarrage de la fenêtre.
     """
     from delugeapp import i18n
-    from delugeapp.config import (CONFIG_DIR, AppContext, load_settings,
-                                  save_settings)
+    from delugeapp.config import (CONFIG_DIR, DB_PATH, AppContext,
+                                  load_settings, save_settings)
     from delugeapp.core.audio_out import Player
     from delugeapp.core.db import Library
     from delugeapp.core.sdcard import SDCard
@@ -208,7 +208,7 @@ def _build_context(args: argparse.Namespace):
     # L'index : son absence ne doit pas empêcher le démarrage, mais sans lui
     # les pages n'ont rien à montrer, donc on le signale clairement.
     try:
-        library = Library(CONFIG_DIR / "library.db")
+        library = Library(DB_PATH)
         if args.reset_db:
             library.clear()
             library.vacuum()
@@ -334,7 +334,65 @@ def _dispose(window) -> None:
         pass                            # déjà détruite par Qt
 
 
-def _run_windows(app, args: argparse.Namespace, splash=None) -> int:
+#: Le canal local par lequel une fenêtre qu'on relance appelle la première
+#: (``QLocalServer`` : un tube nommé sous Windows).
+INSTANCE_NAME = "DelugeCompanion-instance"
+
+
+def _already_running(name: str = INSTANCE_NAME) -> bool:
+    """Une fenêtre est-elle déjà ouverte ? Si oui, elle est priée de se
+    montrer, et celle qu'on lance n'a plus qu'à s'effacer.
+
+    Deux fenêtres se disputeraient le Deluge branché : chacune
+    synchroniserait sa carte, et chaque réponse de la machine arrive aux
+    deux — vu le 22 octobre 2026, sous Windows 11, plusieurs programmes
+    ouvrent ses ports en même temps.
+    """
+    from PyQt6.QtNetwork import QLocalSocket
+
+    socket = QLocalSocket()
+    socket.connectToServer(name)
+    if not socket.waitForConnected(300):
+        return False
+    socket.write(b"montrer\n")
+    socket.flush()
+    socket.waitForBytesWritten(300)
+    socket.disconnectFromServer()
+    return True
+
+
+class _Instance:
+    """L'oreille de la fenêtre ouverte : un second lancement la montre."""
+
+    def __init__(self, name: str = INSTANCE_NAME) -> None:
+        from PyQt6.QtNetwork import QLocalServer
+
+        self.window = None
+        self.server = QLocalServer()
+        # Un canal laissé par un arrêt brutal (Linux, macOS) empêcherait
+        # d'écouter ; sous Windows, il disparaît avec le processus.
+        QLocalServer.removeServer(name)
+        self.listening = self.server.listen(name)
+        if not self.listening:
+            logging.getLogger("delugeapp").warning(
+                "canal d'instance indisponible : %s",
+                self.server.errorString())
+        self.server.newConnection.connect(self._appel)
+
+    def _appel(self) -> None:
+        while self.server.hasPendingConnections():
+            self.server.nextPendingConnection().disconnectFromServer()
+        fenetre = self.window
+        if fenetre is not None:
+            logging.getLogger("delugeapp").info(
+                "second lancement : la fenêtre ouverte est montrée")
+            fenetre.showNormal()
+            fenetre.raise_()
+            fenetre.activateWindow()
+
+
+def _run_windows(app, args: argparse.Namespace, splash=None,
+                 instance: _Instance | None = None) -> int:
     """Ouvre la fenêtre, et la rouvre tant qu'elle demande un redémarrage.
 
     Changer de langue redémarre la fenêtre dans le même processus : elle se
@@ -357,6 +415,8 @@ def _run_windows(app, args: argparse.Namespace, splash=None) -> int:
         app.setWindowIcon(icons.app_icon(256))
 
         window = MainWindow(ctx)
+        if instance is not None:
+            instance.window = window
         window.show()
         if splash is not None:
             splash.finish(window)
@@ -418,6 +478,11 @@ def main(argv: list[str] | None = None) -> int:
 
     _install_excepthook()
 
+    if _already_running():
+        log.info("déjà ouverte : la fenêtre existante est montrée")
+        return 0
+    instance = _Instance()
+
     splash = None
     if not args.no_splash:
         try:
@@ -428,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
         log.info("journal : %s", log_path)
 
     try:
-        return _run_windows(app, args, splash)
+        return _run_windows(app, args, splash, instance)
     finally:
         log.info("arrêt de Deluge Companion")
 

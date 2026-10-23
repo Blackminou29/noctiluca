@@ -1972,6 +1972,23 @@ class TestBackup(unittest.TestCase):
         self.assertEqual(list(info.path.rglob("._*")), [])
         self.assertIn("essai", info.name)
 
+    def test_les_reglages_du_firmware_1_3_sont_sauvegardes(self):
+        """Le firmware 1.3 range ses réglages et les favoris dans
+        ``SETTINGS/`` — mesuré sur la machine de l'utilisateur, le 21 octobre
+        2026. La sauvegarde ne regardait qu'à la racine, et les perdait."""
+        reglages = self.root / "SETTINGS"
+        (reglages / "FAVOURITES").mkdir(parents=True)
+        (reglages / "MIDIFollow.XML").write_bytes(b"<defaults />")
+        (reglages / "FAVOURITES" / "SONG_Bank0.xml").write_bytes(b"<x />")
+        info = backup.create_backup(self.sd, self.bdir)
+        self.assertTrue((info.path / "SETTINGS/MIDIFollow.XML").is_file())
+        self.assertTrue(
+            (info.path / "SETTINGS/FAVOURITES/SONG_Bank0.xml").is_file())
+        # La racine, celle des firmwares plus anciens, reste sauvegardée.
+        self.assertTrue((info.path / "CommunityFeatures.XML").is_file())
+        diff = backup.diff_backup(info, self.sd)
+        self.assertEqual((diff["added"], diff["changed"]), ([], []))
+
     def test_sauvegarde_avec_echantillons(self):
         info = backup.create_backup(self.sd, self.bdir, include_samples=True)
         self.assertTrue(info.include_samples)
@@ -3471,18 +3488,31 @@ class TestRender(unittest.TestCase):
         C'est le contrôle qui a révélé une erreur réelle : trois câbles de
         modulation empilés sur la coupure du filtre laissaient les basses
         grandes ouvertes, avec un centroïde de 13 kHz.
+
+        La médiane de six graines, et non une seule : sur 22 tirages, la
+        médiane d'une graine varie du simple au double (671 à 1 505 Hz pour
+        les basses de l'ancien générateur, sur huit graines) ; le test
+        passait par chance. Vu le 22 octobre 2026, quand chaque décision du
+        générateur a reçu son propre tirage : la graine 1 seule mettait les
+        basses à 2 315 Hz contre 2 237 pour les nappes, alors que sur huit
+        graines rien n'avait bougé (basse 1 017 Hz contre 1 028 avant, nappe
+        1 570 contre 1 648).
         """
         import statistics
 
         def centroid(role: str) -> float:
-            values = []
-            for key in genres.genre_keys():
-                preset = synthgen.generate(synthgen.GenOptions(
-                    genre=key, role=role, seed=1))
-                mono = render.render_sound(preset.sound, seconds=1.0,
-                                           sr=self.SR).mean(axis=1)
-                values.append(analysis.spectral(mono, self.SR)["centroid"])
-            return statistics.median(values)
+            medians = []
+            for seed in range(1, 7):
+                values = []
+                for key in genres.genre_keys():
+                    preset = synthgen.generate(synthgen.GenOptions(
+                        genre=key, role=role, seed=seed))
+                    mono = render.render_sound(preset.sound, seconds=0.5,
+                                               sr=self.SR).mean(axis=1)
+                    values.append(analysis.spectral(mono,
+                                                    self.SR)["centroid"])
+                medians.append(statistics.median(values))
+            return statistics.median(medians)
 
         bass = centroid("bass")
         self.assertLess(bass, centroid("lead"))
@@ -3696,6 +3726,211 @@ class TestRender(unittest.TestCase):
                                        delta=0.01)
                 self.assertAlmostEqual(float(table[0]), float(table[-1]),
                                        places=5)
+
+
+class TestLoisDuFirmware(unittest.TestCase):
+    """:mod:`paramlaws` face au firmware de la machine (1.3, ``102cf9f``).
+
+    Les valeurs attendues viennent d'un portage **entier** du code du
+    firmware (``getExp``, ``lookupReleaseRate``, ``instantTan``,
+    ``Envelope::render``), fait le 22 octobre 2026 : les lois en flottants
+    doivent les redonner. Jusque-là, le moteur d'écoute estimait ces lois, et
+    un decay de 13 y durait 36 ms au lieu de 1,8 s.
+    """
+
+    def setUp(self):
+        from delugeapp.core import paramlaws
+
+        self.laws = paramlaws
+
+    def test_durees_d_enveloppe(self):
+        L = self.laws
+        for reglage, attaque, decay, release in (
+                (3, 0.0012, 0.3409, 0.1703), (13, 0.0063, 1.7945, 0.8973),
+                (21, 0.0239, 3.5890, 1.7777), (25, 0.0464, 4.8774, 2.4078),
+                (50, 2.9722, 63.4060, 27.1740)):
+            with self.subTest(reglage=reglage):
+                u = float(L.unit(reglage))
+                self.assertAlmostEqual(float(L.attack_seconds(6 * u)), attaque,
+                                       delta=attaque * 0.02)
+                self.assertAlmostEqual(float(L.decay_seconds(u)), decay,
+                                       delta=decay * 0.001)
+                self.assertAlmostEqual(float(L.release_seconds(u)), release,
+                                       delta=release * 0.001)
+        # Réglage 0 : le firmware saute l'attaque.
+        self.assertEqual(float(L.attack_seconds(6 * float(L.unit(0)))), 0.0)
+
+    def test_coupures_et_vitesses(self):
+        L = self.laws
+        for reglage, lpf, lfo in ((0, 12.4, 0.004877), (19, 237.3, 0.3303),
+                                  (25, 602.4, 1.25), (40, 6185.3, 34.82),
+                                  (50, 20214.0, 319.99)):
+            with self.subTest(reglage=reglage):
+                self.assertAlmostEqual(
+                    float(L.lpf_hz(L.exp_octaves("lpfFrequency", reglage))),
+                    lpf, delta=lpf * 0.002)
+                self.assertAlmostEqual(
+                    float(L.lfo_hz(L.exp_octaves("lfo1Rate", reglage))),
+                    lfo, delta=lfo * 0.002)
+
+    def test_volume_quadratique_et_unisson(self):
+        L = self.laws
+        # Le réglage 25 sonne 12 dB sous le réglage 50.
+        self.assertAlmostEqual(float(L.volume_gain(1 + L.unit(25))
+                                     / L.volume_gain(1 + L.unit(50))), 0.25,
+                               places=3)
+        self.assertEqual(L.unison_cents(8, 2), [-4.0, 4.0])
+        self.assertEqual(L.unison_cents(7, 3), [-3.5, 0.0, 3.5])
+        self.assertAlmostEqual(L.glide_seconds(7), 0.0581, delta=0.001)
+        self.assertEqual(L.glide_seconds(0), 0.0)
+
+    def test_sources_et_cables(self):
+        L = self.laws
+        self.assertEqual(float(L.velocity_source(64)), 0.0)
+        self.assertEqual(float(L.note_source(64)), 0.0)
+        self.assertEqual(float(L.envelope_source(0.0)), -1.0)
+        # Un câble lu sans polarité est bipolaire ; « unipolar » ramène la
+        # source dans 0..1, l'aftertouch reste unipolaire.
+        self.assertEqual(L.to_polarity(-1.0, "envelope2"), -1.0)
+        self.assertEqual(float(L.to_polarity(-1.0, "envelope2", "unipolar")),
+                         0.0)
+        self.assertEqual(L.to_polarity(0.3, "aftertouch"), 0.3)
+        # Vers une hauteur, la force est élevée au carré ; vers la hauteur
+        # générale, multipliée par 1/√2 : un vibrato de 5 vaut ±0,34
+        # demi-ton, pas ±1,2.
+        a = L.cable_strength(0x6666666)    # HARD CLOUD : lfo1 → pitch, 5
+        vibrato = float(L.cable_octaves(1.0, a, "pitch", "lfo1")) * 12
+        self.assertAlmostEqual(vibrato, 0.34, delta=0.01)
+        self.assertAlmostEqual(float(L.cable_octaves(1.0, 0.5,
+                                                     "lpfFrequency")), 4.0)
+        self.assertAlmostEqual(float(L.cable_factor(1.0, 0.5)), 1.5)
+
+    def test_courbes_exactes_des_tables(self):
+        """``decayTableSmall4`` et ``decayTableSmall8`` ont une forme
+        exacte : quelques valeurs du firmware (sur 65535)."""
+        L = self.laws
+        for x, attendu in ((0.125, 45061), (0.25, 30583), (0.5, 13107),
+                           (0.75, 4369)):
+            self.assertAlmostEqual(float(1 - L.attack_curve(x)) * 65535,
+                                   attendu, delta=1.5)
+        for x, attendu in ((0.125, 32639), (0.25, 16191), (0.5, 3855),
+                           (0.75, 771)):
+            self.assertAlmostEqual(float(L.decay_curve(x)) * 65535, attendu,
+                                   delta=1.5)
+
+
+class TestEcouteFidele(unittest.TestCase):
+    """Le moteur d'écoute applique les lois du firmware, et ce qu'elles
+    changent s'entend."""
+
+    SR = 22050
+
+    def _son(self, cables=(), **reglages):
+        from delugeapp.core.fixedpoint import from_display
+        from delugeapp.core.model import PatchCable
+
+        sound = SynthPreset.new("FIDELE").sound
+        sound.osc1.type = "saw"
+        sound.osc2.type = "saw"
+        sound.unison_num = 1
+        defaut = {"oscAVolume": 45, "oscBVolume": 0, "volume": 40,
+                  "lpfFrequency": 50, "lpfResonance": 0}
+        defaut.update(reglages)
+        for cle, valeur in defaut.items():
+            sound.set_param(cle, from_display(valeur, scale=50))
+        sound.patch_cables = [
+            PatchCable(src, dst, PatchCable.amount_from_display(force),
+                       polarity=pol)
+            for src, dst, force, pol in cables]
+        return sound
+
+    def _hauteur(self, mono, t0, t1, attendu):
+        seg = mono[int(t0 * self.SR):int(t1 * self.SR)]
+        ac = np.correlate(seg, seg, "full")[seg.size - 1:]
+        lo = int(self.SR / (attendu * 1.3))
+        hi = int(self.SR / (attendu / 1.3))
+        return self.SR / (lo + int(np.argmax(ac[lo:hi])))
+
+    def test_random_vers_la_hauteur_ne_tangue_pas(self):
+        """*random* est tiré une fois par note : la hauteur ne bouge pas
+        pendant la note. L'ancien rendu la faisait dériver à 3 Hz."""
+        son = self._son([("random", "oscAPitch", 8, "")])
+        mono = render.render_sound(son, note=57, seconds=1.2,
+                                   sr=self.SR).mean(axis=1)
+        debut = self._hauteur(mono, 0.1, 0.3, 220.0)
+        fin = self._hauteur(mono, 0.8, 1.0, 220.0)
+        self.assertAlmostEqual(debut, fin, delta=debut * 0.004)
+
+    def test_une_enveloppe_bipolaire_referme_le_filtre(self):
+        """Câble sans polarité : l'enveloppe 2 vaut −1 à son palier nul, et
+        tire la coupure **sous** son réglage. Unipolaire, elle n'ajoute
+        rien au palier."""
+        from delugeapp.core.fixedpoint import from_display
+
+        def niveau_tenu(polarite):
+            son = self._son([("envelope2", "lpfFrequency", 25, polarite)],
+                            lpfFrequency=30)
+            son.env2.attack = from_display(0, scale=50)
+            son.env2.decay = from_display(5, scale=50)
+            son.env2.sustain = from_display(0, scale=50)
+            mono = render.render_sound(son, note=57, seconds=1.2,
+                                       sr=self.SR, gate=0.9).mean(axis=1)
+            seg = mono[int(0.7 * self.SR):int(1.0 * self.SR)]
+            return 20 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-12)
+
+        self.assertLess(niveau_tenu(""), niveau_tenu("unipolar") - 10)
+
+    def test_le_panoramique_est_centre_au_reglage_25(self):
+        son = self._son(pan=25)
+        audio = render.render_sound(son, note=57, seconds=0.5, sr=self.SR)
+        gauche = float(np.sqrt(np.mean(audio[:, 0] ** 2)))
+        droite = float(np.sqrt(np.mean(audio[:, 1] ** 2)))
+        self.assertAlmostEqual(gauche, droite, delta=gauche * 0.01)
+
+    def test_la_velocite_n_agit_que_par_son_cable(self):
+        sans = self._son()
+        avec = self._son([("velocity", "volume", 50, "")])
+        def crete(son, v):
+            return float(np.max(np.abs(render.render_sound(
+                son, note=57, seconds=0.4, sr=self.SR, velocity=v))))
+        self.assertAlmostEqual(crete(sans, 0.3), crete(sans, 1.0),
+                               delta=crete(sans, 1.0) * 0.02)
+        self.assertLess(crete(avec, 0.3), crete(avec, 1.0) * 0.5)
+
+    def test_une_basse_mono_glisse_et_coupe_sa_note(self):
+        """Mono, glissé 20 : la seconde note part de la première et la
+        coupe ; sans glissé, elle part juste."""
+        from delugeapp.core.accomp import NoteEvent
+        from delugeapp.core.fixedpoint import from_display
+
+        son = self._son()
+        son.polyphonic = "mono"
+        son.set_param("portamento", from_display(20, scale=50))
+        partie = [NoteEvent(0, 4, 45, 100), NoteEvent(4, 4, 57, 100)]
+        audio = render.render_parts({"Basse": partie}, {"Basse": son},
+                                    bpm=120, sr=self.SR).mean(axis=1)
+        depart = 0.5   # la seconde note, à la double-croche 4
+        tot = self._hauteur(audio, depart + 0.005, depart + 0.04, 165.0)
+        tard = self._hauteur(audio, depart + 0.35, depart + 0.45, 220.0)
+        self.assertLess(tot, 200.0, "la note ne glisse pas")
+        self.assertAlmostEqual(tard, 220.0, delta=3.0)
+
+    def test_la_polarite_d_un_cable_se_lit_et_s_ecrit(self):
+        import xml.etree.ElementTree as ET
+
+        from delugeapp.core.model import PatchCable
+
+        el = ET.fromstring('<patchCable source="envelope2" '
+                           'destination="lpfFrequency" amount="0x20000000" '
+                           'polarity="unipolar" />')
+        cable = PatchCable.from_xml(el)
+        self.assertEqual(cable.polarity, "unipolar")
+        sortie = ET.Element("patchCable")
+        cable.to_xml(sortie)
+        self.assertEqual(sortie.get("polarity"), "unipolar")
+        sans = ET.Element("patchCable")
+        PatchCable("lfo1", "pitch", 1).to_xml(sans)
+        self.assertIsNone(sans.get("polarity"))
 
 
 class TestSampleFix(unittest.TestCase):
@@ -7623,6 +7858,12 @@ class TestSongWriter(unittest.TestCase):
         # DEFAULT.XML est le morceau de départ de la machine : jamais ce nom.
         self.assertEqual(songwriter.free_song_name(self.sd, "default"),
                          "SONGS/default 2.XML")
+        # Un nom déjà numéroté continue sa suite : « Essai 3 », pas
+        # « Essai 2 2 » (vu dans le journal de l'utilisateur).
+        self.assertEqual(songwriter.free_song_name(self.sd, "Essai 2"),
+                         "SONGS/Essai 3.XML")
+        self.assertEqual(songwriter.free_song_name(self.sd, "SONG1"),
+                         "SONGS/SONG1.XML")
 
     def test_le_morceau_ecrit_se_relit(self):
         from delugeapp.core import songwriter
@@ -8367,6 +8608,12 @@ class TestLiaisonVivante(unittest.TestCase):
         self.assertEqual(latency_text(2.54), "2,5 ms")
         self.assertEqual(latency_text(41.2), "41 ms")
         self.assertEqual(latency_text(-1), "0,0 ms")
+        # Vu face à la machine, interface en anglais : « 1,7 ms ».
+        from delugeapp import i18n
+
+        i18n.set_language("en")
+        self.addCleanup(i18n.set_language, "fr")
+        self.assertEqual(latency_text(1.74), "1.7 ms")
 
     def test_sans_troisieme_port_les_sysex_passent_par_le_premier(self):
         self.machine = _deluge_simule().DelugeSimule(cables=1)
@@ -8448,6 +8695,173 @@ class TestLiaisonVivante(unittest.TestCase):
         self.assertIn("params", self.lien.service())
         self.assertEqual(self.lien.machine["lpfFrequency"], 28 << 25)
         self.assertEqual(self.lien.state().feedback, 1)
+
+    # -- l'écoute d'un son, selon le réglage Takeover de la machine ---------- #
+
+    #: Mesuré le 22 octobre 2026 sur la piste « Accords » d'ESSAI ACCORDS
+    #: (retour MIDI Follow), puis ce qu'« Écouter » y envoyait pour Echo
+    #: Chord. La machine, en Pickup, n'en a appliqué aucun.
+    DEPART = {"volume": 84, "pan": 64, "lpfFrequency": 92,
+              "lpfResonance": 84}
+    VOULU = {"volume": 122, "pan": 100, "lpfFrequency": 53,
+             "lpfResonance": 22}
+
+    def _ecoute(self, mode, retour=False, joue=False, salve=None):
+        """Envoie le son voulu à une machine réglée en ``mode`` ; rend les
+        positions obtenues et, par réglage, les valeurs parties."""
+        from delugeapp.core import midifollow
+        from delugeapp.core.model import Sound
+
+        self.machine.salve = salve
+        self.assertTrue(self.lien.connect())
+        self.lien.set_channel(1)
+        carte = self.lien.follow_map
+        son = Sound()
+        for cle, cc in self.VOULU.items():
+            son.set_param(cle, midifollow.raw_from_cc(cc, cle))
+        boutons = self.machine.boutons
+        boutons.mode = mode
+        boutons.position = {carte[c]: v - 64 for c, v in self.DEPART.items()}
+        if retour:
+            self.machine.retour_midi_follow()
+        if joue:
+            self.machine.court(self.midiport.START)
+        self.lien.service()
+        sortie = self.machine.sorties[1]
+        sortie.envoyes.clear()
+        self.assertEqual(self.lien.send_sound(son, keys=list(self.VOULU)),
+                         len(self.VOULU))
+        obtenu = {c: boutons.valeur(carte[c]) for c in self.VOULU}
+        envois = {c: [e[2] for e in sortie.envoyes
+                      if e[0] == "cc" and e[1] == carte[c]]
+                  for c in self.VOULU}
+        return obtenu, envois
+
+    def test_en_pickup_un_saut_d_un_coup_est_ignore(self):
+        """Ce que la machine a fait le 22 octobre, et que le Deluge simulé
+        doit refaire : la règle du firmware, pas celle de l'application."""
+        boutons = _deluge_simule().Boutons("pickup")
+        boutons.position = {7: 84 - 64}
+        boutons.recoit(7, 122)
+        self.assertEqual(boutons.valeur(7), 84)
+        boutons.recoit(7, 122)
+        self.assertEqual(boutons.valeur(7), 84, "toujours pas rattrapé")
+
+    def test_l_ecoute_s_applique_dans_les_trois_modes(self):
+        from delugeapp.core.delugelink import DelugeLink
+
+        for mode in ("jump", "pickup", "scale"):
+            for retour in (False, True):
+                with self.subTest(mode=mode, retour=retour):
+                    # Une machine et un lien neufs ; les ports simulés du
+                    # ``setUp`` les trouvent par ``self.machine``.
+                    self.machine = _deluge_simule().DelugeSimule()
+                    self.lien = DelugeLink()
+                    self.machine.brancher(self.lien)
+                    obtenu, _envois = self._ecoute(mode, retour=retour)
+                    self.assertEqual(obtenu, self.VOULU)
+                    self.lien.disconnect()
+
+    def test_sans_retour_le_bouton_est_franchi_aux_deux_extremes(self):
+        _obtenu, envois = self._ecoute("pickup")
+        for cle, cc in self.VOULU.items():
+            self.assertEqual(envois[cle], [0, 127, cc])
+
+    def test_avec_le_retour_la_position_actuelle_part_d_abord(self):
+        """Le retour MIDI Follow dit où est chaque bouton : on part de là,
+        sans passer par les extrêmes, et on retient la nouvelle valeur — la
+        machine ne renvoie pas ce qu'elle reçoit."""
+        from delugeapp.core import midifollow
+
+        _obtenu, envois = self._ecoute("pickup", retour=True)
+        for cle, cc in self.VOULU.items():
+            self.assertEqual(envois[cle], [self.DEPART[cle], cc])
+            self.assertEqual(
+                midifollow.cc_value(self.lien.machine[cle], cle), cc)
+
+    def test_une_salve_trop_rapide_est_perdue(self):
+        """Mesuré le 22 octobre 2026, écran recopié et « Display Param »
+        allumé : d'une salve de 135 contrôleurs en 0,2 s, la machine n'a
+        appliqué que les trois premiers. Le Deluge simulé fait de même."""
+        self.machine.salve = 3
+        self.assertTrue(self.lien.connect())
+        self.lien.service()
+        cc = self.lien.follow_map["volume"]
+        self.machine.boutons.position = {cc: 0}
+        self.machine.en_attente = 0
+        for valeur in (10, 20, 30, 40, 50):
+            self.lien._out.control_change(cc, valeur, 1)
+        self.assertEqual(self.machine.boutons.valeur(cc), 30)
+        self.assertEqual(self.machine.cc_perdus, 2)
+
+    def test_l_ecoute_attend_la_machine_entre_deux_reglages(self):
+        """Un ping entre deux réglages, et le suivant ne part qu'à son
+        retour : sur la machine, les 45 réglages d'Echo Chord sont alors
+        tous passés (0,8 s), au lieu d'un seul."""
+        from delugeapp.core import delugesysex as sx
+
+        obtenu, _envois = self._ecoute("pickup", salve=3)
+        self.assertEqual(obtenu, self.VOULU)
+        self.assertEqual(self.machine.cc_perdus, 0)
+        # Par le port des contrôleurs, pas par celui des SysEx : deux ports
+        # sont deux files, et un pong venu par l'autre les a doublés.
+        pings = [e[1] for e in self.machine.sorties[1].envoyes
+                 if e[0] == "sysex" and e[1][5] == sx.CMD_PING
+                 and e[1][6] >= 0x40]
+        # Un entre deux réglages, et un avant la note.
+        self.assertEqual(len(pings), len(self.VOULU))
+        self.assertFalse([e for e in self.machine.sorties[3].envoyes
+                          if e[0] == "sysex" and e[1][5] == sx.CMD_PING
+                          and e[1][6] >= 0x40])
+
+    def test_la_recopie_de_l_ecran_se_tait_pendant_l_envoi(self):
+        """Mesuré : la machine perd des contrôleurs pendant qu'elle envoie
+        son écran. L'envoi attend que l'abonnement expire chez elle, et ne
+        le renouvelle pas avant d'avoir fini."""
+        from unittest import mock
+
+        from delugeapp.core import delugesysex as sx
+        from delugeapp.core import midifollow
+        from delugeapp.core.model import Sound
+
+        self.assertTrue(self.lien.connect())
+        self.lien.service()
+        self.assertTrue(self.lien.set_screen(True))
+        son = Sound()
+        son.set_param("volume", midifollow.raw_from_cc(100, "volume"))
+        with mock.patch.object(sx, "STREAM_SECONDS", 0.3):
+            fin_abonnement = self.lien._screen_sent + 0.3
+            self.assertEqual(self.lien.send_sound(son, keys=["volume"]), 1)
+            self.assertGreaterEqual(time.monotonic(), fin_abonnement)
+        # Retenue, la recopie ne se renouvelle pas ; relâchée, elle reprend.
+        demandes = len(self.machine.demandes)
+        self.lien._screen_hold += 1          # un envoi en cours
+        self.lien._screen_sent -= 5
+        self.lien.service()
+        self.assertEqual(len(self.machine.demandes), demandes)
+        self.lien._release_screen()
+        self.lien.service()
+        self.assertEqual(len(self.machine.demandes), demandes + 1)
+
+    def test_sans_cadence_la_salve_se_perd(self):
+        """Le même envoi, pong jamais attendu : la machine en perd."""
+        from unittest import mock
+
+        with mock.patch.object(type(self.lien), "_sync_point",
+                               lambda self, timeout=0: True):
+            obtenu, _envois = self._ecoute("pickup", salve=3)
+        self.assertNotEqual(obtenu, self.VOULU)
+        self.assertGreater(self.machine.cc_perdus, 0)
+
+    def test_machine_qui_joue_sans_retour_la_valeur_part_seule(self):
+        """Les extrêmes s'entendraient : la valeur part seule. En Pickup, la
+        machine l'ignore alors — limite dite dans le manuel."""
+        obtenu, envois = self._ecoute("pickup", joue=True)
+        self.assertTrue(self.lien.running)
+        for cle, cc in self.VOULU.items():
+            self.assertEqual(envois[cle], [cc])
+        self.assertEqual(obtenu, self.DEPART)
+        self.assertNotIn("volume", self.lien.machine)
 
     def test_les_notes_tenues_sur_la_machine(self):
         self.assertTrue(self.lien.connect())
@@ -9368,11 +9782,12 @@ class TestEnvoyerAuDeluge(unittest.TestCase):
     def test_le_plan_dit_le_temps_du_cable(self):
         from delugeapp.core.delugefiles import cable_time
 
-        # Les deux packs de l'utilisateur.
+        # Les deux packs de l'utilisateur, à 60 Ko/s — deux blocs en vol,
+        # mesuré le 22 octobre 2026 (7 min et 1 h 43 à 45 Ko/s, avant).
         self.assertEqual(cable_time(write_bytes=int(18.3 * 1024 * 1024)),
-                         "environ 7 min")
+                         "environ 5 min")
         self.assertEqual(cable_time(write_bytes=int(271.2 * 1024 * 1024)),
-                         "environ 1 h 43")
+                         "environ 1 h 17")
         self.assertEqual(cable_time(write_bytes=100_000), "quelques secondes")
         self.assertEqual(cable_time(read_bytes=4_000_000), "environ 30 s")
 
@@ -9437,6 +9852,32 @@ class TestCableEnFile(unittest.TestCase):
         self.assertEqual(vus[premier], 2)
         self.assertEqual(self._lectures(), 10)
 
+    def test_deux_ecritures_en_vol(self):
+        """Mesuré le 22 octobre 2026 : 61 à 63 Ko/s avec deux blocs en vol,
+        48 à 50 un à la fois, rien de plus avec trois."""
+        import queue
+
+        donnees = bytes((i * 11) % 256 for i in range(5_000))
+        vus: list[int] = []
+        machine = self.machine
+
+        def ecritures():
+            return sum(1 for n, _ in machine.carte_usb.commandes
+                       if n == "write")
+
+        class FileComptee(queue.Queue):
+            def get(self, *args, **kwargs):
+                vus.append(ecritures())
+                return super().get(*args, **kwargs)
+
+        self.files._replies = FileComptee()
+        self.files.write_new("/SONGS/GROS.BIN", donnees, mtime=None)
+        self.assertEqual((self.racine / "SONGS" / "GROS.BIN").read_bytes(),
+                         donnees)
+        # À la première attente d'une réponse, deux blocs sont déjà partis.
+        premier = next(i for i, n in enumerate(vus) if n)
+        self.assertEqual(vus[premier], 2)
+
     def test_un_transfert_s_arrete_entre_deux_blocs(self):
         from delugeapp.core.delugefiles import STOPPED, FileError
 
@@ -9454,6 +9895,97 @@ class TestCableEnFile(unittest.TestCase):
         with self.assertRaises(FileError) as arret:
             self.files.read("/SONGS/A.XML")
         self.assertEqual(arret.exception.code, STOPPED)
+
+    # -- après une écriture : seuls les dossiers touchés ----------------------- #
+
+    def _travail(self):
+        """Une copie de travail à l'image de la carte simulée."""
+        from delugeapp.ui import cardwork
+
+        for rel, donnees in (("SYNTHS/P.XML", b"<sound p/>"),
+                             ("SAMPLES/DRUMS/k.wav", b"RIFF-k"),
+                             ("SAMPLES/DRUMS/s.wav", b"RIFF-s")):
+            (self.racine / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.racine / rel).write_bytes(donnees)
+        travail = Path(self._tmp.name) / "travail"
+        plan, effet, *_ = cardwork._synchronise(self.files, travail, None,
+                                                 False)
+        self.assertEqual(effet.done["pull"], 4, plan.actions)
+        return cardwork, travail
+
+    def _dossiers_listes(self, depuis):
+        return [a["path"] for n, a in self.machine.carte_usb.commandes[depuis:]
+                if n == "dir"]
+
+    def test_apres_une_ecriture_seul_son_dossier_est_liste(self):
+        cardwork, travail = self._travail()
+        (travail / "SONGS" / "NEUF.XML").write_bytes(b"<song neuf/>")
+        avant = len(self.machine.carte_usb.commandes)
+        plan, effet, *_ = cardwork._synchronise(
+            self.files, travail, None, False, raison=cardwork.ECRITURE,
+            quick=True)
+        self.assertEqual(plan.scope, ["SONGS"])
+        self.assertEqual([(a.kind, a.rel) for a in plan.actions],
+                         [("push", "SONGS/NEUF.XML")])
+        self.assertEqual(effet.done["push"], 1)
+        self.assertEqual((self.racine / "SONGS" / "NEUF.XML").read_bytes(),
+                         b"<song neuf/>")
+        # Une page pour SONGS — et pas les cinq dossiers de la carte.
+        listes = self._dossiers_listes(avant)
+        self.assertEqual(set(listes), {"/SONGS"})
+
+    def test_ce_que_le_deluge_a_enregistre_attend_le_parcours_complet(self):
+        cardwork, travail = self._travail()
+        (self.racine / "SYNTHS" / "MACHINE.XML").write_bytes(b"<sound m/>")
+        (travail / "SONGS" / "NEUF.XML").write_bytes(b"<song neuf/>")
+        plan, *_ = cardwork._synchronise(self.files, travail, None, False,
+                                         quick=True)
+        self.assertNotIn("SYNTHS/MACHINE.XML", [a.rel for a in plan.actions])
+        self.assertFalse((travail / "SYNTHS" / "MACHINE.XML").exists())
+        plan, *_ = cardwork._synchronise(self.files, travail, None, False)
+        self.assertEqual([(a.kind, a.rel) for a in plan.actions],
+                         [("pull", "SYNTHS/MACHINE.XML")])
+
+    def test_une_suppression_locale_attend_toujours_l_accord(self):
+        cardwork, travail = self._travail()
+        (travail / "SAMPLES" / "DRUMS" / "k.wav").unlink()
+        plan, effet, *_ = cardwork._synchronise(self.files, travail, None,
+                                                 False, quick=True)
+        self.assertEqual(plan.scope, ["SAMPLES/DRUMS"])
+        self.assertEqual([a.rel for a in plan.needs_consent],
+                         ["SAMPLES/DRUMS/k.wav"])
+        self.assertTrue((self.racine / "SAMPLES" / "DRUMS" / "k.wav").exists())
+        self.assertEqual(sum(effet.done.values()), 0)
+
+    def test_un_dossier_neuf_part_tel_quel(self):
+        """Un dossier que la carte n'a pas encore : listé vide, puis créé
+        par la machine elle-même à l'écriture (``createPathDirectories``)."""
+        cardwork, travail = self._travail()
+        neuf = travail / "SAMPLES" / "ESSAI" / "a.wav"
+        neuf.parent.mkdir(parents=True)
+        neuf.write_bytes(b"RIFF-a")
+        plan, effet, *_ = cardwork._synchronise(self.files, travail, None,
+                                                 False, quick=True)
+        self.assertEqual(plan.scope, ["SAMPLES/ESSAI"])
+        self.assertEqual(effet.done["push"], 1)
+
+    def test_une_synchronisation_complete_en_attente_n_est_pas_perdue(self):
+        """La machine joue ; la connexion attend, puis on écrit : à l'arrêt,
+        c'est la synchronisation complète qui part, pas la restreinte."""
+        from delugeapp.ui.cardwork import ECRITURE, _plus_large
+
+        self.assertEqual(_plus_large(None, ECRITURE), ECRITURE)
+        self.assertEqual(_plus_large("connexion", ECRITURE), "connexion")
+        self.assertEqual(_plus_large(ECRITURE, "retour"), "retour")
+        self.assertEqual(_plus_large(ECRITURE, ECRITURE), ECRITURE)
+
+    def test_rien_de_change_rien_n_est_liste(self):
+        cardwork, travail = self._travail()
+        avant = len(self.machine.carte_usb.commandes)
+        plan, effet, _s, attente, _r = cardwork._synchronise(
+            self.files, travail, None, False, quick=True)
+        self.assertEqual((plan.scope, attente), ([], []))
+        self.assertEqual(self._dossiers_listes(avant), [])
 
     def test_un_cable_debranche_le_dit_tout_de_suite(self):
         from delugeapp.core.delugefiles import NOT_CONNECTED, FileError
@@ -9521,6 +10053,71 @@ class TestEchangesAvecLeDeluge(unittest.TestCase):
             TestSynchroCarte._ecrit(self.travail, "SONGS/%s.XML" % nom,
                                     b"<song %s/>" % nom.encode(),
                                     time.time())
+
+    def test_le_plan_restreint_est_le_plan_complet_sur_ses_dossiers(self):
+        """Sur les dossiers qu'il couvre, le plan restreint décide comme le
+        plan complet — fichier par fichier ; ailleurs, il ne dit rien."""
+        ecrit = TestSynchroCarte._ecrit
+        ecrit(self.carte, "SAMPLES/K/k.wav", b"k", 1_700_000_200)
+        ecrit(self.carte, "SAMPLES/K/s.wav", b"s", 1_700_000_300)
+        self._synchronise()
+        # De tout : reçu, envoyé, supprimé d'un côté puis de l'autre, changé
+        # des deux côtés, dans deux dossiers sur trois.
+        ecrit(self.carte, "SONGS/DELUGE.XML", b"<song d/>", 1_700_100_000)
+        ecrit(self.travail, "SONGS/PC.XML", b"<song pc/>", time.time())
+        ecrit(self.carte, "SONGS/A.XML", b"<song a2/>", 1_700_100_000)
+        ecrit(self.travail, "SONGS/A.XML", b"<song a3/>", time.time())
+        (self.carte / "SAMPLES" / "K" / "k.wav").unlink()
+        (self.travail / "SAMPLES" / "K" / "s.wav").unlink()
+        ecrit(self.carte, "SYNTHS/Q.XML", b"<sound q/>", 1_700_100_000)
+        carte = self.cs.FolderCard(self.carte)
+        local = self.cs.scan_local(self.travail)
+        manifeste = self.cs.load_manifest(self.travail)
+        complet = self.cs.plan_sync(carte.walk(), local, manifeste)
+        dossiers = ["SONGS", "SAMPLES/K"]
+        restreint = self.cs.plan_folders(carte.walk_folders(dossiers), local,
+                                         manifeste, dossiers)
+
+        def dans(plan):
+            return sorted((a.kind, a.rel) for a in plan.actions
+                          if self.cs.parent_folder(a.rel) in dossiers)
+
+        self.assertEqual(dans(restreint), dans(complet))
+        self.assertEqual(len(dans(restreint)), len(restreint.actions))
+        self.assertEqual({a.kind for a in restreint.actions},
+                         {"pull", "push", "conflict", "delete_local",
+                          "delete_card"})
+        self.assertIn(("pull", "SYNTHS/Q.XML"),
+                      [(a.kind, a.rel) for a in complet.actions])
+
+    def test_les_dossiers_changes_comptent_les_suppressions(self):
+        TestSynchroCarte._ecrit(self.carte, "SAMPLES/K/k.wav", b"k",
+                                1_700_000_200)
+        self._synchronise()
+        self.assertEqual(self.cs.changed_folders(self.travail), [])
+        TestSynchroCarte._ecrit(self.travail, "SONGS/B.XML", b"<song b/>",
+                                time.time())
+        (self.travail / "SAMPLES" / "K" / "k.wav").unlink()
+        self.assertEqual(self.cs.changed_folders(self.travail),
+                         ["SAMPLES/K", "SONGS"])
+
+    def test_un_plan_restreint_garde_les_suppressions_d_ailleurs(self):
+        """Sans quoi « Suppressions à confirmer » se viderait après chaque
+        envoi d'un morceau."""
+        cs = self.cs
+        ancien = cs.SyncPlan(actions=[
+            cs.Action("delete_card", "SAMPLES/K/k.wav", 10),
+            cs.Action("delete_card", "SONGS/VIEUX.XML", 5)],
+            unreachable=["SAMPLES/Été/x.wav"])
+        neuf = cs.SyncPlan(actions=[cs.Action("push", "SONGS/NEUF.XML", 3)],
+                           scope=["SONGS"])
+        fusion = cs.merge_plans(neuf, ancien)
+        self.assertEqual([a.rel for a in fusion.needs_consent],
+                         ["SAMPLES/K/k.wav"])
+        self.assertEqual(fusion.unreachable, ["SAMPLES/Été/x.wav"])
+        # Un plan complet remplace tout.
+        complet = cs.SyncPlan()
+        self.assertEqual(cs.merge_plans(complet, ancien).needs_consent, [])
 
     def test_les_temporaires_ne_voyagent_jamais(self):
         for rel in ("SAMPLES/a.wav.dc-tmp", "SAMPLES/b.wav.tmp~",

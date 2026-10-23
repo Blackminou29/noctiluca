@@ -130,7 +130,12 @@ TEXTS = {
     "Espace": "Space",
     "Écouter / arrêter": "Play / stop",
     "Aller à la page correspondante": "Go to the matching page",
-    "Cette fenêtre": "This window",
+    "Le manuel, au chapitre de la page affichée":
+        "The manual, at the chapter of the page shown",
+    "Manuel": "Manual",
+    "Premiers pas": "First steps",
+    "Le manuel s'ouvre par la touche F1, au chapitre de la page affichée.":
+        "The F1 key opens the manual, at the chapter of the page shown.",
     "À propos de %s": "About %s",
     "Accompagne l'utilisation d'un Synthstrom Deluge : gestion de la carte "
     "SD, génération de presets et de kits, outils de composition.":

@@ -25,7 +25,7 @@ from ..i18n import tr
 
 log = logging.getLogger(__name__)
 
-__all__ = ["export_song"]
+__all__ = ["export_song", "export_insert"]
 
 
 def export_song(parent, ctx, build: Callable, default_name: str,
@@ -93,4 +93,61 @@ def export_song(parent, ctx, build: Callable, default_name: str,
     else:
         say(tr("Morceau écrit : %s. Il se charge sur le Deluge comme tout "
                "autre morceau.") % done.rel)
+    return done.rel
+
+
+def export_insert(parent, ctx, build_plan: Callable,
+                  say: Callable[[str], None]) -> str:
+    """Complète un morceau de la carte : plan montré, confirmé, puis écrit.
+
+    Le morceau d'origine n'est jamais touché : le plan
+    (:func:`delugeapp.core.songinsert.plan_insert`) décrit un fichier
+    **nouveau**, numéroté comme le fait la machine, qui contient l'original
+    octet pour octet plus les ajouts — et la preuve en est refaite avant
+    d'écrire.
+
+    :param build_plan: ``build_plan(carte) -> InsertPlan`` ; une
+        ``ValueError`` y porte un message destiné à l'utilisateur.
+    :returns: le chemin relatif écrit, ou ``""``.
+    """
+    from ..core import songinsert
+
+    card = ctx.sd_or_warn(parent, write=True)
+    if card is None:
+        return ""
+    try:
+        plan = build_plan(card)
+    except ValueError as exc:
+        say(tr("Morceau impossible à compléter : %s.") % exc)
+        return ""
+    except Exception as exc:  # noqa: BLE001 - rempart, cf. SPEC §6.3
+        log.exception("plan du morceau complété impossible")
+        say(tr("Morceau impossible à compléter : %s") % exc)
+        return ""
+    if not plan.ok:
+        say(tr("Morceau impossible à compléter : %s.") % plan.error)
+        return ""
+    if getattr(ctx.settings, "confirm_writes", True):
+        answer = QMessageBox.question(
+            parent, tr("Compléter le morceau"),
+            plan.text() + "\n\n" + tr("Écrire cette nouvelle version sur la "
+                                       "carte ? Le morceau d'origine n'est "
+                                       "pas touché."),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer != QMessageBox.StandardButton.Yes:
+            say(tr("Rien n'a été écrit."))
+            return ""
+    done = songinsert.write_insert(card, plan, apply=True)
+    if not done.applied:
+        say(tr("Morceau non écrit : %s.") % done.error)
+        return ""
+    try:
+        from ..core.scan import index_songs
+
+        index_songs(card, ctx.lib, [card.abs(done.rel)])
+    except Exception:  # noqa: BLE001 - l'index se rattrapera à l'analyse
+        log.exception("indexation du morceau impossible")
+    say(tr("Nouvelle version écrite : %s. Chargez-la sur le Deluge ; "
+           "l'original reste tel quel.") % done.rel)
     return done.rel

@@ -118,6 +118,10 @@ class GeneratorPage(Page):
         listen.clicked.connect(self.guard(self._listen))
         actions.addWidget(listen)
 
+        self._edit_button = tool_button(tr("Modifier le son…"), "settings")
+        self._edit_button.clicked.connect(self.guard(self._edit))
+        actions.addWidget(self._edit_button)
+
         save = tool_button(tr("Enregistrer dans SYNTHS"), "save")
         save.clicked.connect(self.guard(self._save))
         actions.addWidget(save)
@@ -595,6 +599,36 @@ class GeneratorPage(Page):
             self._play(self._audio)
         else:
             self._render_async(self._preset)
+
+    def _edit(self) -> None:
+        """Ouvre l'éditeur sur le son courant ; le son retouché rejoint
+        l'historique, comme un son généré."""
+        if self._preset is None:
+            self.say(tr("Générez d'abord un son."))
+            return
+        import copy
+
+        from PyQt6.QtWidgets import QDialog
+
+        from ..theme import PAGE_COLORS
+        from ..widgets.soundeditor import SoundEditorDialog
+
+        dialog = SoundEditorDialog(
+            self.ctx, self._preset.sound,
+            title=tr("Modifier le son — %s") % self._preset.sound.name,
+            color=PAGE_COLORS.get("Generator", PAGE_COLORS.get("Atelier")),
+            parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        changes = dialog.changes()
+        preset = copy.deepcopy(self._preset)
+        preset.sound = dialog.edited_sound()
+        preset.name = preset.sound.name or preset.name
+        self._show_preset(preset)
+        if changes:
+            self.say(tr("Son retouché : %s.") % " · ".join(changes[:3]))
+        else:
+            self.say(tr("Le son n'a pas changé."))
 
     def _play(self, audio) -> None:
         if self.player is None:

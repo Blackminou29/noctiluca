@@ -28,8 +28,9 @@ Le protocole, lu dans le code de la machine
 
 Mesuré sur la machine (firmware 1.3.0, 18 octobre 2026) : ping en 1 ms,
 une page de dossier en 5 à 17 ms, lecture à 113-129 Ko/s une requête à la
-fois et 156 à 159 Ko/s avec deux d'avance, écriture à 45 Ko/s, contenu
-identique octet pour octet à la sauvegarde. Cinq gigaoctets ne se
+fois et 156 à 159 Ko/s avec deux d'avance, écriture à 61 Ko/s avec deux
+blocs en vol (48 un à un), contenu identique octet pour octet à la
+sauvegarde. Cinq gigaoctets ne se
 transfèrent donc pas : seules les différences voyagent.
 
 Ce que ce module s'interdit
@@ -92,12 +93,17 @@ AM_DIR = 0x10
 #: contre 126 à 129 une à la fois. Écriture : 45 Ko/s — un SysEx de
 #: 1 000 octets met à lui seul 11 ms à passer du PC à la machine.
 READ_RATE = 155 * 1024
-WRITE_RATE = 45 * 1024
+#: Avec deux blocs en vol (:data:`WRITE_AHEAD`) : 61 à 63 Ko/s mesurés le
+#: 22 octobre 2026, 48 à 50 un à la fois.
+WRITE_RATE = 60 * 1024
 #: Requêtes de lecture gardées en vol. Pas plus de deux : la machine jette
 #: **en silence** ce qui dépasse 1 024 paquets USB en attente d'envoi
 #: (``ConnectedUSBMIDIDevice::bufferMessage``), et une réponse de 1 024
 #: octets en occupe environ 410.
 READ_AHEAD = 2
+#: Blocs d'écriture gardés en vol : deux gagnent un quart, trois rien de
+#: plus (mesuré, voir :meth:`DelugeFiles._write_blocks`).
+WRITE_AHEAD = 2
 
 #: Codes propres au client, à côté des ``FRESULT`` de la machine.
 STOPPED = -2           # transfert interrompu à la demande
@@ -674,28 +680,53 @@ class DelugeFiles:
         partie = self._part(objet, "^open")
         self._check(partie, tr("création"), chemin)
         fid = int(partie.get("fid", 0))
-        envoye = 0
         try:
             # Un fichier vide est déjà complet : l'ouverture l'a créé.
-            while envoye < len(data):
-                self._check_stop(chemin)
-                bloc = data[envoye:envoye + self._write_block(fid, envoye)]
-                objet, _ = self.request({"write": {"fid": fid, "addr": envoye,
-                                                   "size": len(bloc)}},
-                                        payload=bloc)
-                partie = self._part(objet, "^write")
-                self._check(partie, tr("écriture"), chemin)
-                if int(partie.get("size", -1)) != len(bloc):
-                    raise FileError(tr("bloc écrit incomplet : %s") % chemin,
-                                    path=chemin)
-                envoye += len(bloc)
-                if progress is not None:
-                    progress(envoye, len(data))
+            self._write_blocks(fid, data, chemin, progress)
         except FileError:
             self._close(fid)
             self._delete_quietly(chemin)
             raise
         self._close(fid)
+
+    def _write_blocks(self, fid: int, data: bytes, chemin: str,
+                      progress: Callable[[int, int], None] | None) -> None:
+        """Envoie ``data`` dans le fichier ouvert ``fid``, en gardant
+        :data:`WRITE_AHEAD` blocs en vol.
+
+        La machine range ses requêtes dans une file (``SysExQ``, une
+        ``deque``) et les traite dans l'ordre ; chaque bloc porte son
+        adresse, et chaque réponse son numéro. Mesuré sur elle le 22 octobre
+        2026, fichiers de 150 Ko relus identiques : 48 à 50 Ko/s un bloc à la
+        fois, 61 à 63 avec deux en vol, rien de plus avec trois.
+        """
+        en_vol: dict[int, int] = {}             # numéro -> taille du bloc
+        envoye = confirme = 0
+        with self._lock:
+            self._vider()
+            while envoye < len(data) or en_vol:
+                self._check_stop(chemin)
+                while len(en_vol) < WRITE_AHEAD and envoye < len(data):
+                    bloc = data[envoye:envoye + self._write_block(fid, envoye)]
+                    numero = self._msg_id()
+                    while numero in en_vol:
+                        numero = self._msg_id()
+                    self._emit(self._compose(
+                        {"write": {"fid": fid, "addr": envoye,
+                                   "size": len(bloc)}}, numero, bloc))
+                    en_vol[numero] = len(bloc)
+                    envoye += len(bloc)
+                reponse = self._next_reply(en_vol, "write")
+                taille = en_vol.pop(reponse[6])
+                objet, _ = self._decode(reponse)
+                partie = self._part(objet, "^write")
+                self._check(partie, tr("écriture"), chemin)
+                if int(partie.get("size", -1)) != taille:
+                    raise FileError(tr("bloc écrit incomplet : %s") % chemin,
+                                    path=chemin)
+                confirme += taille
+                if progress is not None:
+                    progress(confirme, len(data))
 
     @staticmethod
     def _write_block(fid: int, addr: int) -> int:

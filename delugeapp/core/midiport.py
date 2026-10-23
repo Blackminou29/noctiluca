@@ -86,6 +86,12 @@ CLOCK = 0xF8
 START = 0xFA
 CONTINUE = 0xFB
 STOP = 0xFC
+#: Pointeur de position, en doubles-croches depuis le début : la machine
+#: l'envoie avant CONTINUE quand elle reprend ailleurs qu'au début
+#: (``PlaybackHandler::sendOutPositionViaMIDI``).
+SONG_POSITION = 0xF2
+#: Ce que suit la position de lecture de la machine.
+TRANSPORT = frozenset({CLOCK, START, CONTINUE, STOP, SONG_POSITION})
 
 #: Contrôleurs utiles au-delà de la carte MIDI Follow.
 CC_ALL_SOUND_OFF = 120
@@ -727,6 +733,10 @@ class MidiIn:
         #: carte, qui attend chaque réponse pour envoyer la suite : appelé
         #: depuis le fil du pilote, il rend ``True`` s'il garde le message.
         self._tap = None
+        #: Destinataire direct de l'horloge et du transport
+        #: (:data:`TRANSPORT`), appelé depuis le fil du pilote. Le message
+        #: va **aussi** dans la file.
+        self._realtime = None
         #: Dernière erreur d'ouverture, en clair.
         self.last_error = ""
 
@@ -758,7 +768,15 @@ class MidiIn:
                 try:
                     if msg == _MIM_DATA:
                         brut = int(param1 or 0) & 0xFFFFFFFF
-                        self._push(brut & 0xFF, (brut >> 8) & 0xFF,
+                        statut = brut & 0xFF
+                        horloge = self._realtime
+                        if horloge is not None and statut in TRANSPORT:
+                            # L'horloge sert à caler des notes sur la
+                            # mesure de la machine : elle est prise à
+                            # l'arrivée, pas quand l'interface vide la file.
+                            horloge(statut, (brut >> 8) & 0x7F,
+                                    (brut >> 16) & 0x7F, time.perf_counter())
+                        self._push(statut, (brut >> 8) & 0xFF,
                                    (brut >> 16) & 0xFF,
                                    int(param2 or 0) & 0xFFFFFFFF)
                     elif msg in (_MIM_LONGDATA, _MIM_LONGERROR):
@@ -911,6 +929,12 @@ class MidiIn:
         """Confie certains SysEx à ``tap(données, instant) -> bool`` dès leur
         arrivée, au lieu de la file. ``None`` le retire."""
         self._tap = tap
+
+    def set_realtime_tap(self, tap) -> None:
+        """Signale à ``tap(statut, data1, data2, instant)`` chaque message
+        d'horloge ou de transport, dès son arrivée. Il ne doit rien faire de
+        long : il est appelé par le fil du pilote. ``None`` le retire."""
+        self._realtime = tap
 
     def poll(self, limit: int = 512) -> list[MidiMessage]:
         """Rend ce qui est arrivé depuis le dernier appel."""

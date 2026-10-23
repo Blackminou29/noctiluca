@@ -48,8 +48,14 @@ STAMP_FORMAT = "%Y-%m-%d_%Hh%M"
 #: Extensions des fichiers de configuration à sauvegarder avec les XML.
 CONFIG_EXT = (".xml",)
 
-#: Fichiers de réglages présents à la racine de la carte.
+#: Fichiers de réglages présents à la racine de la carte (firmware 1.2.1).
 ROOT_FILES = ("CommunityFeatures.XML", "MIDIFollow.XML", "SETTINGS.XML")
+
+#: Où le firmware 1.3 range ces réglages, et les favoris. Mesuré sur la
+#: machine de l'utilisateur le 21 octobre 2026 : ``SETTINGS/`` contient
+#: ``CommunityFeatures.XML``, ``MIDIFollow.XML`` et
+#: ``FAVOURITES/SONG_Bank0.xml`` — que la sauvegarde ne prenait pas.
+SETTINGS_DIR = "SETTINGS"
 
 
 @dataclass
@@ -198,7 +204,7 @@ def _zip_count(path: Path) -> int:
 def _files_to_backup(sd: SDCard, include_samples: bool) -> list[Path]:
     """Fichiers à sauvegarder, parasites écartés."""
     out: list[Path] = []
-    for top in STD_DIRS:
+    for top in STD_DIRS + (SETTINGS_DIR,):
         if top == "SAMPLES" and not include_samples:
             continue
         base = sd.abs(top)
@@ -247,10 +253,10 @@ def create_backup(sd: SDCard, backup_dir: Path, label: str = "",
     journalisé. Lève ``OSError`` si le dossier de destination est inutilisable.
     """
     base = Path(backup_dir)
-    # Dans SAMPLES, SYNTHS, KITS ou SONGS, la sauvegarde se recopierait
-    # elle-même en cours de route, et le Deluge listerait ses copies comme
-    # des presets et des morceaux.
-    for top in STD_DIRS:
+    # Dans SAMPLES, SYNTHS, KITS, SONGS ou SETTINGS, la sauvegarde se
+    # recopierait elle-même en cours de route, et le Deluge listerait ses
+    # copies comme des presets et des morceaux.
+    for top in STD_DIRS + (SETTINGS_DIR,):
         dossier = sd.abs(top)
         try:
             base.resolve().relative_to(dossier.resolve())

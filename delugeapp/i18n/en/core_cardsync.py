@@ -3,6 +3,7 @@
 jour avec la carte du Deluge."""
 
 TEXTS = {
+    "transfert interrompu": "transfer interrupted",
     "existe déjà sur la carte : /%s": "already exists on the card: /%s",
     "déjà identique": "already identical",
     "repris de la sauvegarde": "taken from the backup",

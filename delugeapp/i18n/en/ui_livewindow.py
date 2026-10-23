@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Anglais de ``delugeapp/ui/livewindow.py``.
 
-Les intitulés des menus du Deluge (« MIDI ▸ Follow ▸ Channel A ») sont
-ceux du firmware, déjà en anglais : ils restent tels quels.
+Les intitulés des menus du Deluge (« MIDI ▸ MIDI-Follow ▸ Channel ▸
+Channel A ») sont ceux du firmware, déjà en anglais : ils restent tels quels.
 """
 
 TEXTS = {
@@ -20,37 +20,40 @@ TEXTS = {
     "Liaison vérifiée : aller-retour %s.": "Link checked: round trip %s.",
     "Carte ouverte par USB : la copie de travail se tient à son image.":
         "Card open over USB: the working copy stays identical to it.",
-    "Sur le Deluge, MIDI Follow est éteint : MIDI ▸ Follow ▸ Channel A = %d.":
-        "On the Deluge, MIDI Follow is off: MIDI ▸ Follow ▸ Channel A = %d.",
+    "Sur le Deluge, MIDI Follow est éteint : MIDI ▸ MIDI-Follow ▸ Channel ▸ "
+    "Channel A = %d.":
+        "On the Deluge, MIDI Follow is off: MIDI ▸ MIDI-Follow ▸ Channel ▸ "
+        "Channel A = %d.",
     "Le Deluge suit le canal %d, l'application joue sur le canal %d : "
-    "accordez-les (Réglages, ou MIDI ▸ Follow ▸ Channel A).":
+    "accordez-les (Réglages, ou MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A).":
         "The Deluge follows channel %d, the application plays on channel %d: "
-        "make them match (Settings, or MIDI ▸ Follow ▸ Channel A).",
+        "make them match (Settings, or MIDI ▸ MIDI-Follow ▸ Channel ▸ "
+        "Channel A).",
     "MIDI Follow réglé sur la machine : Channel A = %d (lu sur sa carte).":
         "MIDI Follow set on the machine: Channel A = %d (read from its card).",
-    "Retour MIDI Follow éteint : MIDI ▸ Follow ▸ Feedback = Channel A, pour "
-    "que le son sélectionné revienne ici.":
-        "MIDI Follow feedback is off: MIDI ▸ Follow ▸ Feedback = Channel A, "
-        "so that the selected sound comes back here.",
+    "Retour MIDI Follow éteint : MIDI ▸ MIDI-Follow ▸ Feedback ▸ Channel = "
+    "A, pour que le son sélectionné revienne ici.":
+        "MIDI Follow feedback is off: MIDI ▸ MIDI-Follow ▸ Feedback ▸ "
+        "Channel = A, so that the selected sound comes back here.",
     "MIDI Follow : %s du son sélectionné.":
         "MIDI Follow: %s from the selected sound.",
     "%d réglage reçu": "%d setting received",
     "%d réglages reçus": "%d settings received",
-    "MIDI Follow, sur le Deluge : MIDI ▸ Follow ▸ Channel A = %d, puis "
-    "Feedback = Channel A. Changez ensuite d'instrument : ses réglages "
-    "arrivent ici.":
-        "MIDI Follow, on the Deluge: MIDI ▸ Follow ▸ Channel A = %d, then "
-        "Feedback = Channel A. Then change instrument: its settings arrive "
-        "here.",
+    "MIDI Follow, sur le Deluge : MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A "
+    "= %d, puis Feedback ▸ Channel = A. Changez ensuite d'instrument : ses "
+    "réglages arrivent ici.":
+        "MIDI Follow, on the Deluge: MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A "
+        "= %d, then Feedback ▸ Channel = A. Then change instrument: its "
+        "settings arrive here.",
     "Changez d'instrument sur le Deluge : ses réglages arrivent ici.":
         "Change instrument on the Deluge: its settings arrive here.",
     "Horloge reçue : %s BPM.": "Clock received: %s BPM.",
     "Horloge : dernier tempo %s BPM (machine arrêtée).":
         "Clock: last tempo %s BPM (machine stopped).",
     "Horloge : lancez la lecture sur le Deluge. Elle part par défaut (MIDI ▸ "
-    "Clock ▸ Out).":
+    "Clock ▸ Output).":
         "Clock: start playback on the Deluge. It is sent by default (MIDI ▸ "
-        "Clock ▸ Out).",
+        "Clock ▸ Output).",
     "Deluge en direct — Deluge Companion": "Deluge Live — Deluge Companion",
     "DELUGE EN DIRECT": "DELUGE LIVE",
     "Écran de la machine": "The machine's screen",
@@ -75,6 +78,10 @@ TEXTS = {
     "Tempo et notes": "Tempo and notes",
     "Horloge muette": "Clock silent",
     "Aucune note tenue": "No note held",
+    "Aucune note reçue — seules les pistes MIDI du Deluge envoient leurs "
+    "notes, pas ses synthés ni ses kits.":
+        "No note received — only the Deluge's MIDI tracks send their notes, "
+        "not its synths or kits.",
     "Son sélectionné sur la machine": "Sound selected on the machine",
     "Réglage": "Setting",
     "Valeur": "Value",

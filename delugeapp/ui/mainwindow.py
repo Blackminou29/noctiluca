@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Fenêtre principale : assemble les neuf pages.
+"""Fenêtre principale : assemble les dix pages.
 
 Barre latérale à gauche, en-tête en haut, pages au centre, barre d'état en
-bas. Les pages sont **créées au premier affichage** : en construire neuf au
+bas. Les pages sont **créées au premier affichage** : en construire dix au
 démarrage allongerait le lancement sans que l'utilisateur en voie plus d'une.
 
 Deux points qui ne sont pas de simples détails d'assemblage :
@@ -89,12 +89,16 @@ _RAIL_KEY = "window/rail"
 
 
 def _page_classes():
-    """Les neuf pages, dans l'ordre de la barre latérale.
+    """Les dix pages, dans l'ordre de la barre latérale.
 
     Importées ici et non au niveau du module : chaque page tire ses propres
     dépendances, et les charger toutes à l'import ralentirait le démarrage
     sans raison.
+
+    L'Atelier vient après le Générateur : on y assemble en morceau les sons
+    que l'on y fabrique.
     """
+    from .pages.atelier import AtelierPage
     from .pages.dashboard import DashboardPage
     from .pages.generator import GeneratorPage
     from .pages.health import HealthPage
@@ -106,7 +110,7 @@ def _page_classes():
     from .pages.toolbox import ToolboxPage
 
     return (DashboardPage, SamplesPage, SynthsPage, KitsPage, SongsPage,
-            GeneratorPage, ToolboxPage, HealthPage, SettingsPage)
+            GeneratorPage, AtelierPage, ToolboxPage, HealthPage, SettingsPage)
 
 
 #: La question du redémarrage, par (langue choisie, langue de la phrase).
@@ -150,6 +154,8 @@ class MainWindow(QMainWindow):
         self._deluge_seen: bool | None = None
         #: La fenêtre « Deluge en direct », créée au premier appel.
         self._live_window = None
+        #: La fenêtre du manuel, créée au premier appel.
+        self._manual_window = None
         #: Dernier tempo de la machine transmis aux pages (arrondi).
         self._tempo_suivi: int | None = None
         #: Vrai quand la fenêtre se ferme pour se rouvrir — dans une autre
@@ -662,9 +668,11 @@ class MainWindow(QMainWindow):
             # rangée de pads de la machine, et l'on repère une destination à
             # la teinte avant même d'avoir lu l'étiquette. Le chiffre est
             # celui du raccourci.
-            button = NavPad(tr(cls.TITLE), cls.ICON, page_color(key), index,
+            # Dix pages : la dixième prend le 0, comme sur un clavier.
+            chiffre = index % 10
+            button = NavPad(tr(cls.TITLE), cls.ICON, page_color(key), chiffre,
                             self._rail)
-            button.setToolTip(f"{tr(cls.TITLE)}  (Ctrl+{index})")
+            button.setToolTip(f"{tr(cls.TITLE)}  (Ctrl+{chiffre})")
             button.setProperty("navColor", page_color(key))
             button.clicked.connect(
                 lambda _c=False, k=key: self.go_to(k))
@@ -915,8 +923,12 @@ class MainWindow(QMainWindow):
         self._build_language_menu(bar)
 
         help_menu = bar.addMenu(tr("&Aide"))
+        self._add_action(help_menu, tr("Manuel"), self.open_manual, "F1")
+        self._add_action(help_menu, tr("Premiers pas"),
+                         lambda: self.open_manual("premiers-pas"))
+        help_menu.addSeparator()
         self._add_action(help_menu, tr("Raccourcis clavier"),
-                         self._show_shortcuts, "F1")
+                         self._show_shortcuts)
         self._add_action(help_menu, tr("À propos"), self._show_about)
 
     def _build_language_menu(self, bar) -> None:
@@ -962,10 +974,10 @@ class MainWindow(QMainWindow):
                 tr("Action impossible : voir le journal."), 8000)
 
     def _build_shortcuts(self) -> None:
-        """``Ctrl+1`` à ``Ctrl+9`` pour les pages, ``Espace`` pour l'écoute."""
+        """``Ctrl+1`` à ``Ctrl+0`` pour les pages, ``Espace`` pour l'écoute."""
         for index, key in enumerate(self._classes, 1):
             action = QAction(self)
-            action.setShortcut(QKeySequence(f"Ctrl+{index}"))
+            action.setShortcut(QKeySequence(f"Ctrl+{index % 10}"))
             action.triggered.connect(
                 lambda _c=False, k=key: self.go_to(k))
             self.addAction(action)
@@ -1357,6 +1369,45 @@ class MainWindow(QMainWindow):
 
     # -- aide --------------------------------------------------------------- #
 
+    def open_manual(self, ancre: str = "") -> None:
+        """Ouvre le manuel — ou le ramène devant —, au chapitre de la page
+        affichée, ou sur ``ancre`` si elle est donnée.
+
+        Il s'ouvre dans la langue de l'interface ; sa fenêtre permet d'en
+        changer. Un lien du manuel vers une page de l'application ramène la
+        fenêtre principale devant, sur cette page.
+        """
+        from .manuel import FenetreManuel
+
+        if self._manual_window is None:
+            self._manual_window = FenetreManuel(i18n.language())
+            self._manual_window.navigateRequested.connect(
+                lambda cible: self._safely(lambda: self._from_manual(cible)))
+            self._manual_window.liveRequested.connect(
+                lambda: self._safely(self.open_live_window))
+        fenetre = self._manual_window
+        if ancre:
+            fenetre.aller(ancre)
+        else:
+            fenetre.montrer_page(self._current_key())
+        fenetre.show()
+        fenetre.raise_()
+        fenetre.activateWindow()
+
+    def _from_manual(self, cible: str) -> None:
+        """Un lien du manuel demande une page : elle vient devant."""
+        self.go_to(cible)
+        self.raise_()
+        self.activateWindow()
+
+    def _current_key(self) -> str:
+        """La clé de la page affichée (``Samples``…), ou rien."""
+        courante = self._stack.currentWidget()
+        for cle, page in self._pages.items():
+            if page is courante:
+                return cle
+        return ""
+
     def _show_shortcuts(self) -> None:
         rows = [
             ("Ctrl+R", tr("Analyser la carte")),
@@ -1370,8 +1421,8 @@ class MainWindow(QMainWindow):
             ("Ctrl+D", tr("Deluge en direct")),
             ("Ctrl+B", tr("Replier la barre latérale")),
             (tr("Espace"), tr("Écouter / arrêter")),
-            ("Ctrl+1 … Ctrl+9", tr("Aller à la page correspondante")),
-            ("F1", tr("Cette fenêtre")),
+            ("Ctrl+1 … Ctrl+0", tr("Aller à la page correspondante")),
+            ("F1", tr("Le manuel, au chapitre de la page affichée")),
             ("Ctrl+Q", tr("Quitter")),
         ]
         body = "".join(
@@ -1387,10 +1438,12 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, tr("À propos de %s") % APP_NAME,
             f"<h3>{APP_NAME} {__version__}</h3>"
-            "<p>%s</p><p style='color:#7A828F'>%s<br>%s</p>" % (
+            "<p>%s</p><p>%s</p><p style='color:#7A828F'>%s<br>%s</p>" % (
                 tr("Accompagne l'utilisation d'un Synthstrom Deluge : "
                    "gestion de la carte SD, génération de presets et de "
                    "kits, outils de composition."),
+                tr("Le manuel s'ouvre par la touche F1, au chapitre de la "
+                   "page affichée."),
                 tr("Identité visuelle reprise du Guide du Deluge OLED."),
                 tr("Aucune écriture sur la carte sans confirmation.")))
 
@@ -1474,6 +1527,8 @@ class MainWindow(QMainWindow):
         self._link_timer.stop()
         if self._live_window is not None:
             self._live_window.close()
+        if self._manual_window is not None:
+            self._manual_window.close()
         self._save_state()
         stubborn = tasks.stop_all(4000)
         if stubborn:

@@ -7,7 +7,10 @@ qu'on travaille sur la machine :
 * **l'écran du Deluge**, recopié en direct (SysEx du firmware
   communautaire) ;
 * **son tempo** et son état de lecture, lus dans l'horloge MIDI qu'il envoie ;
-* **les notes tenues**, et l'accord qu'elles forment ;
+* **les notes tenues**, et l'accord qu'elles forment — celles des pistes MIDI
+  du Deluge : un synthé ou un kit joué sur ses pads joue sa voix en interne
+  et n'envoie aucune note (code du firmware : ``SoundInstrument`` contre
+  ``MIDIInstrument``) ;
 * **le son sélectionné** : les réglages que la machine renvoie en mode MIDI
   Follow quand on change d'instrument ou qu'on tourne un bouton ;
 * **les réglages à faire sur la machine**, cochés au fur et à mesure que la
@@ -26,10 +29,12 @@ import logging
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -96,29 +101,32 @@ def checklist(state, channel: int,
         a = follow.channel_a
         if a is None:
             lignes.append((False, tr("Sur le Deluge, MIDI Follow est "
-                                     "éteint : MIDI ▸ Follow ▸ Channel A = "
-                                     "%d.") % channel))
+                                     "éteint : MIDI ▸ MIDI-Follow ▸ Channel "
+                                     "▸ Channel A = %d.") % channel))
         elif a != channel:
             lignes.append((False, tr("Le Deluge suit le canal %d, "
                                      "l'application joue sur le canal %d : "
                                      "accordez-les (Réglages, ou MIDI ▸ "
-                                     "Follow ▸ Channel A).") % (a, channel)))
+                                     "MIDI-Follow ▸ Channel ▸ Channel A).")
+                           % (a, channel)))
         else:
             lignes.append((True, tr("MIDI Follow réglé sur la machine : "
                                     "Channel A = %d (lu sur sa carte).") % a))
         if a is not None and follow.feedback != "a":
             lignes.append((False, tr("Retour MIDI Follow éteint : MIDI ▸ "
-                                     "Follow ▸ Feedback = Channel A, pour que "
-                                     "le son sélectionné revienne ici.")))
+                                     "MIDI-Follow ▸ Feedback ▸ Channel = A, "
+                                     "pour que le son sélectionné revienne "
+                                     "ici.")))
     if state.feedback:
         lignes.append((True, tr("MIDI Follow : %s du son sélectionné.")
                        % (plural(state.feedback, N_("%d réglage reçu"),
                                  N_("%d réglages reçus")) % state.feedback)))
     elif follow is None:
-        lignes.append((False, tr("MIDI Follow, sur le Deluge : MIDI ▸ Follow "
-                                 "▸ Channel A = %d, puis Feedback = Channel "
-                                 "A. Changez ensuite d'instrument : ses "
-                                 "réglages arrivent ici.") % channel))
+        lignes.append((False, tr("MIDI Follow, sur le Deluge : MIDI ▸ "
+                                 "MIDI-Follow ▸ Channel ▸ Channel A = %d, "
+                                 "puis Feedback ▸ Channel = A. Changez "
+                                 "ensuite d'instrument : ses réglages "
+                                 "arrivent ici.") % channel))
     elif follow.channel_a == channel and follow.feedback == "a":
         lignes.append((False, tr("Changez d'instrument sur le Deluge : ses "
                                  "réglages arrivent ici.")))
@@ -131,7 +139,7 @@ def checklist(state, channel: int,
     else:
         lignes.append((False, tr("Horloge : lancez la lecture sur le Deluge. "
                                  "Elle part par défaut (MIDI ▸ Clock ▸ "
-                                 "Out).")))
+                                 "Output).")))
     return lignes
 
 
@@ -263,7 +271,18 @@ class DelugeLiveWindow(QWidget):
         self.checklist_label = QLabel("")
         self.checklist_label.setWordWrap(True)
         self.checklist_label.setTextFormat(Qt.TextFormat.RichText)
-        reglages.body().addWidget(self.checklist_label)
+        self.checklist_label.setAlignment(Qt.AlignmentFlag.AlignTop
+                                          | Qt.AlignmentFlag.AlignLeft)
+        # Dans une zone défilante : sept constats ne tiennent pas dans une
+        # fenêtre de 660 pixels de haut, et le dernier — l'horloge — était
+        # coupé à mi-phrase (vu face à la machine, 21 octobre 2026).
+        defilante = QScrollArea()
+        defilante.setWidgetResizable(True)
+        defilante.setFrameShape(QFrame.Shape.NoFrame)
+        defilante.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        defilante.setWidget(self.checklist_label)
+        reglages.body().addWidget(defilante, 1)
         ligne = QHBoxLayout()
         self.connect_button = QPushButton(tr("Connecter"))
         self.connect_button.setToolTip(
@@ -278,7 +297,6 @@ class DelugeLiveWindow(QWidget):
         ligne.addWidget(self.settings_button)
         ligne.addStretch(1)
         reglages.body().addLayout(ligne)
-        reglages.body().addStretch(1)
         bas.addWidget(reglages, 2)
         colonne.addLayout(bas, 2)
 
@@ -435,7 +453,11 @@ class DelugeLiveWindow(QWidget):
             self.notes_label.setText("  ".join(
                 theory_mod.note_to_name(n) for n in tenues))
         else:
-            self.notes_label.setText(tr("Aucune note tenue"))
+            # Connecté, sans note : le dire sans laisser croire à une panne.
+            self.notes_label.setText(tr("Aucune note reçue — seules les "
+                                        "pistes MIDI du Deluge envoient "
+                                        "leurs notes, pas ses synthés ni "
+                                        "ses kits."))
         self.chord_label.setText(theory_mod.name_chord(tenues))
         self._fill_params(lien.machine_values())
         follow = self._follow()

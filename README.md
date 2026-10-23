@@ -2,8 +2,9 @@
 
 Application de bureau qui accompagne un **Synthstrom Deluge** : elle gère le
 contenu de la carte SD, range les échantillons et les presets, répare les
-références cassées, génère des presets de synthé et des kits, et réunit les
-outils utiles au quotidien d'un producteur de musique électronique.
+références cassées, génère des presets de synthé et des kits, compose avec
+vous un morceau du premier son à l'arrangement, et réunit les outils utiles
+au quotidien d'un producteur de musique électronique.
 
 Tout tient dans un dossier : pas de serveur, pas de compte, pas d'accès
 réseau. L'application lit la carte montée par un lecteur SD ou par l'USB du
@@ -27,6 +28,9 @@ python main.py
 Deux paquets sont nécessaires — **PyQt6** pour l'interface et **numpy** pour
 tout ce qui touche à l'audio. **sounddevice** est optionnel : sans lui,
 l'application démarre normalement, mais les boutons d'écoute restent inactifs.
+
+Une seule fenêtre à la fois : relancer l'application ramène celle qui est
+déjà ouverte — deux fenêtres se disputeraient le Deluge branché.
 
 ### Options de ligne de commande
 
@@ -85,6 +89,15 @@ retrouve.
 **Chaque commande s'explique** : laissez la souris dessus une seconde. Les
 actions qui écrivent sur la carte le disent avant d'être cliquées.
 
+**Le manuel** est dans le menu *Aide* : `F1` l'ouvre au chapitre de la page
+affichée, *Premiers pas* sur un parcours guidé de dix minutes. Vingt-cinq
+chapitres en quatre parties — prise en main, les dix pages, le Deluge branché,
+référence —, mis en page comme le *Guide du Deluge* : papier, Georgia,
+encadrés, figures et ouvertures de partie au treillis. Il se lit en français
+ou en anglais, se parcourt par son sommaire ou sa recherche (accents et
+majuscules ignorés), ouvre d'un clic la page dont il parle, et s'enregistre en
+PDF.
+
 ---
 
 ## Se repérer
@@ -96,14 +109,14 @@ partie.
 - **Chaque page a sa couleur**, prise dans les pads de la machine : ambre
   pour le tableau de bord, cyan pour les échantillons, violet pour les
   presets, vert pour les kits, bleu pour les morceaux, magenta pour le
-  générateur, menthe pour la boîte à outils, orange pour la santé, indigo
+  générateur, rouge pour l'atelier, menthe pour la boîte à outils, orange pour la santé, indigo
   pour les réglages. Comme chaque partie du guide a la sienne, la page la
   porte partout : son pad allumé dans la colonne de gauche, le filet
   lumineux sous la barre du haut, l'en-tête et son treillis, le bouton
   principal, les sélections, les onglets, les cases et les curseurs.
 - **La colonne de gauche est une rangée de pads.** Éteints, ils montrent leur
   couleur en veilleuse ; celui de la page affichée s'allume. Le chiffre à
-  droite est son raccourci (`Ctrl+1` à `Ctrl+9`), et `Ctrl+B` réduit la
+  droite est son raccourci (`Ctrl+1` à `Ctrl+9`, puis `Ctrl+0`), et `Ctrl+B` réduit la
   colonne à ses pads.
 - **L'écran en haut** est celui du Deluge : la carte ouverte et ce qu'elle
   contient. Chaque message de l'application y passe quelques secondes, et
@@ -138,7 +151,10 @@ Avec le **firmware 1.3**, le Deluge ouvre sa carte au PC par le câble USB.
 L'application travaille alors sur une **copie de travail** qu'elle tient à
 l'image de la carte : ce que vous créez part sur la carte, ce que vous
 enregistrez sur le Deluge revient — à la connexion, après chaque écriture,
-au retour dans la fenêtre, jamais pendant que la machine joue.
+au retour dans la fenêtre, jamais pendant que la machine joue. Après une
+écriture, seuls les dossiers touchés sont relus sur la carte : un morceau
+part en quelques centièmes de seconde de plus que son transfert, au lieu des
+3,5 s d'un parcours complet.
 *Réglages › Carte du Deluge › Créer la copie de travail*, une fois : elle
 reprend de votre sauvegarde ce qui y est déjà et ne fait passer par le câble
 que le reste (une minute chez vous).
@@ -164,8 +180,8 @@ qui envoie dans le dossier choisi dans son arbre.
 
 Le **plan** s'affiche avant toute copie : où va chaque fichier, ce qui est
 déjà sur la carte, ce que le Deluge refuserait, et **combien de temps le
-câble y mettra** — 45 Ko/s : un pack de 18 Mo, sept minutes ; de 271 Mo,
-près d'une heure trois quarts. Les fichiers partent ensuite en arrière-plan,
+câble y mettra** — 60 Ko/s : un pack de 18 Mo, cinq minutes ; de 271 Mo,
+près d'une heure vingt. Les fichiers partent ensuite en arrière-plan,
 ou à la prochaine connexion du Deluge ; l'écran de la barre du haut dit
 combien attendent (« 3 À ENVOYER »).
 
@@ -194,16 +210,18 @@ s'écrit au journal, fichier par fichier.
 | **Suivre son tempo** | l'horloge qu'elle envoie en jouant donne son tempo aux outils de composition |
 | **Lire le son sélectionné** | avec le retour MIDI Follow, ses réglages s'affichent quand vous changez d'instrument ou tournez un bouton |
 | **Écouter pour de vrai** | les presets sonnent sur le Deluge, avec son moteur, au lieu de l'approximation calculée par l'ordinateur |
-| **Régler à distance** | 52 paramètres de l'instrument sélectionné, par le mode MIDI Follow du firmware communautaire |
+| **Régler à distance** | les paramètres de l'instrument sélectionné — 52 d'usine, 79 avec la table du firmware 1.3 —, par le mode MIDI Follow du firmware communautaire |
 | **Envoyer un motif** | le motif d'essai d'un kit part en mesure, avec l'horloge MIDI |
 | **Tout éteindre** | un bouton de secours qui relâche toutes les notes, sur tous les canaux |
 
-**Une fois, sur le Deluge** : MIDI ▸ Follow ▸ **Channel A** = le canal de
-l'application (1 par défaut) — sans ce réglage, la machine ignore ce que
-l'application lui joue —, puis **Feedback** = Channel A, pour que le son
-sélectionné revienne à l'application. L'horloge, elle, sort d'elle-même
-(MIDI ▸ Clock ▸ Out). La fenêtre *Deluge en direct* coche ces réglages à
-mesure qu'elle les constate.
+**Une fois, sur le Deluge** (SHIFT + SELECT) : MIDI ▸ MIDI-Follow ▸ Channel
+▸ **Channel A** = le canal de l'application (1 par défaut) — sans ce réglage,
+la machine ignore ce que l'application lui joue —, puis MIDI-Follow ▸
+Feedback ▸ **Channel** = A, pour que le son sélectionné revienne à
+l'application. L'horloge, elle, sort d'elle-même (MIDI ▸ Clock ▸ Output,
+actif d'usine). Ces chemins valent en 1.2.1 comme en 1.3 (`gui/ui/menus.cpp`
+du firmware de la machine). La fenêtre *Deluge en direct* coche ces réglages
+dès l'ouverture : la 1.3 les écrit dans `SETTINGS/MIDIFollow.XML`.
 
 Trois choses à savoir :
 
@@ -213,17 +231,23 @@ Trois choses à savoir :
   *Réglages › Deluge branché* : envoyer du son dans une machine reliée à un
   ampli ne doit pas être une surprise ;
 * **se connecter ne joue rien.** L'application demande à la machine sa
-  version et l'image de son écran — des messages de lecture —, rien
-  d'autre. Les fichiers passent toujours par la carte : le firmware c1.2.1
-  ne les ouvre pas en USB.
+  version, mesure l'aller-retour et lui demande si sa carte s'ouvre par
+  USB — des messages de lecture —, rien d'autre. Avec le firmware c1.2.1,
+  les fichiers passent par une carte glissée dans le PC : il ne les ouvre
+  pas en USB.
 
-La correspondance des contrôleurs est lue dans `MIDIFollow.XML`, à la racine
-de votre carte ; sans ce fichier, ce sont les assignations d'usine, et la
-page *Réglages* le dit.
+La correspondance des contrôleurs est lue dans `SETTINGS/MIDIFollow.XML` en
+firmware 1.3, à la racine de la carte avant ; sans ce fichier, ce sont les
+assignations d'usine, et la page *Réglages* le dit.
+
+Au repos, le firmware 1.3 lance un **économiseur d'écran** : la recopie le
+montre tel quel (des traits qui tombent, en mode « Deluge »), et le message
+de « Faire signe » reste dessous. Seul un geste sur la machine le réveille
+(Settings ▸ Defaults ▸ Screensaver pour le régler).
 
 ---
 
-## Les neuf pages
+## Les dix pages
 
 | Page | Raccourci | À quoi elle sert |
 | --- | --- | --- |
@@ -233,14 +257,15 @@ page *Réglages* le dit.
 | **Kits** | `Ctrl+4` | voir les kits pad par pad, repérer les pads muets ou cassés |
 | **Morceaux** | `Ctrl+5` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; export MIDI et rassemblement des dépendances |
 | **Générateur** | `Ctrl+6` | créer des presets de synthé et des kits : par **genre musical** ou au hasard, avec écoute avant d'écrire |
-| **Outils** | `Ctrl+7` | gammes et accords, progressions, mixage harmonique, rythmes euclidiens, grooves, export MIDI |
-| **Santé** | `Ctrl+8` | diagnostic complet, réparation guidée, rangement, sauvegarde |
-| **Réglages** | `Ctrl+9` | carte SD, audio, analyse, apparence, sauvegardes |
+| **Atelier** | `Ctrl+7` | composer un morceau dans un style — sons et leurs variantes, clips et leurs variations, sections — puis l'écrire, le jouer sur le Deluge, ou compléter un des vôtres |
+| **Outils** | `Ctrl+8` | gammes et accords, progressions, mixage harmonique, rythmes euclidiens, grooves, export MIDI |
+| **Santé** | `Ctrl+9` | diagnostic complet, réparation guidée, rangement, sauvegarde |
+| **Réglages** | `Ctrl+0` | carte SD, audio, analyse, apparence, sauvegardes |
 
 Autres raccourcis : `Ctrl+R` analyser, `Ctrl+F` rechercher, `Ctrl+G`
 générateur, `Ctrl+O` choisir la carte, `Ctrl+B` replier la barre latérale,
-`Ctrl+,` réglages, `Espace` écouter, `F1` la liste complète, `Ctrl+Q`
-quitter.
+`Ctrl+,` réglages, `Espace` écouter, `F1` le manuel, `Ctrl+Q` quitter. La
+liste complète est dans *Aide › Raccourcis clavier*.
 
 ---
 
@@ -308,8 +333,8 @@ Trois précautions, qui viennent de mesures sur une vraie carte :
   mixage ; les sommets rabotés à l'enregistrement ne reviennent pas.
 
 Chaque fichier réécrit laisse son original dans
-`_BACKUP/samplefix-<date>/`, d'où un bouton de restauration le remet en place
-à l'octet près.
+`_BACKUP/samplefix-<date>/`, d'où `samplefix.restore` le remet en place à
+l'octet près — aucun bouton de l'interface ne l'appelle encore.
 
 ---
 
@@ -389,6 +414,7 @@ autres, avec ses instruments, ses clips et, pour une esquisse, ses sections.
 | Générateur | **Essayer en morceau** | le son en situation : une phrase faite pour son rôle et la batterie du genre |
 | Générateur › Kit | **Kit en morceau** | le kit construit et le rythme de son genre |
 | Échantillons › Découper | **Écrire en morceau** | le kit des tranches et un clip qui rejoue la boucle |
+| Atelier | **Écrire le morceau** | le morceau composé : une section du Deluge par section, leurs clips, leurs répétitions et l'arrangement |
 
 Le nom est demandé, puis le plan s'affiche — fichier, instruments, clips,
 échantillons absents — avant toute écriture. **Aucun fichier existant n'est
@@ -403,8 +429,47 @@ mesure de batterie — comme on les construit sur la machine.
 Le format est celui qu'écrit le firmware communautaire c1.2.1. Un kit ou un
 preset ancien de la carte reçoit les conversions que la machine ferait en le
 chargeant ; elles ont été comparées aux morceaux que vous avez enregistrés
-sur la machine. **Ces morceaux n'ont pas encore été chargés sur un Deluge** :
-le premier essai sur la machine reste à faire.
+sur la machine. **Éprouvé sur un Deluge en firmware 1.3** (22 octobre 2026) :
+une progression avec sa batterie, une esquisse à six sections et un motif sur
+le kit TR-808, envoyés par le câble, se chargent et jouent.
+
+---
+
+## Composer dans l'atelier
+
+La page **Atelier** tient ensemble ce que les outils savent faire chacun de
+leur côté, autour d'**un morceau** et d'**un style** — du choix des sons à
+l'arrangement :
+
+1. **Style** — un genre, une tonalité, un tempo, l'ambiance des accords, et
+   les six curseurs du générateur, communs à tous les synthés du morceau :
+   c'est ce qui les fait sonner ensemble. Chaque partie — batterie, basse,
+   accords, arpège, mélodie — joue sur un kit, un synthé du Deluge, une
+   **piste MIDI** vers un appareil extérieur ou une **piste CV** vers un
+   modulaire.
+2. **Sons** — un son par piste, et **huit variantes dans le style** : chacune
+   ne retire qu'un aspect (le filtre, les enveloppes, l'espace…) ou ne pousse
+   qu'un curseur (plus brillant, plus sale…). Plus sale, c'est le même son en
+   plus sale, pas un autre son. **Modifier le son…** ouvre l'éditeur :
+   oscillateurs, filtres, enveloppes, LFO, effets et modulations, chaque
+   réglage au cran de la machine et, dessous, ce qu'il vaut sur le Deluge
+   (« decay 13 · 1,8 s »). Le même éditeur s'ouvre depuis le Générateur.
+3. **Clips** — un premier clip par piste, puis ses **variations** : rythme
+   décalé, autres notes, plus ou moins de notes, réponse, octave, fin de
+   phrase ; pour la batterie, ornements, roulement, cassure, demi-temps,
+   montée. Toujours dans la gamme, toujours parentes de l'original.
+4. **Morceau** — une grille pistes × sections, la structure du genre en un
+   clic, puis **Écrire le morceau** : un morceau neuf, sections et
+   arrangement compris.
+
+**Travailler en même temps que la machine.** *Jouer sur le Deluge* envoie un
+clip à la machine, dans le clip que suit MIDI Follow, calé sur sa mesure —
+en enregistrement, il s'y inscrit. *Partir d'un morceau…* ouvre un de vos
+morceaux (les derniers reçus du Deluge en tête) ; *Compléter le morceau* en
+écrit une **nouvelle version** (« Cool1 5 » après « Cool1 4 ») qui le
+contient **octet pour octet**, plus vos pistes, vos clips et vos sections :
+le fichier est relu et la preuve refaite avant d'écrire, et l'original n'est
+jamais touché.
 
 ---
 
@@ -422,7 +487,11 @@ Deux garanties utiles :
 * un preset généré **fait du son** — un oscillateur muet, un filtre fermé,
   une enveloppe sans attaque ni tenue sont rattrapés avant l'écriture ;
 * l'**écoute est hors-ligne** : le preset est rendu par le moteur interne
-  (`core/render.py`) et joué sur l'ordinateur, sans passer par le Deluge.
+  (`core/render.py`) et joué sur l'ordinateur, sans passer par le Deluge —
+  aux **lois de réglage du firmware** de la machine (`core/paramlaws.py`) :
+  durées d'enveloppe, coupures, vitesses, volumes, glissé, et la manière
+  dont chaque modulation s'ajoute. Le timbre exact du filtre et des effets
+  reste approché.
 
 La même mécanique produit des kits de batterie complets, en choisissant parmi
 les échantillons de la carte ceux qui correspondent aux rôles du genre.
@@ -435,6 +504,7 @@ les échantillons de la carte ceux qui correspondent aux rôles du genre.
 main.py                  lancement, journal, écran de démarrage, garde-fous
 delugeapp/
   config.py              réglages persistants et contexte applicatif
+  docs/                  le texte du manuel, manuel.fr.md et manuel.en.md
   core/                  tout le métier, sans aucune dépendance à Qt
     sdcard.py            seule porte vers la carte (FAT32 insensible à la casse)
     dxml.py              lecture et écriture tolérantes du XML Deluge
@@ -447,14 +517,19 @@ delugeapp/
     genres.py synthgen.py kitgen.py   génération
     theory.py rhythm.py midifile.py   théorie, rythme, export MIDI
     songwriter.py        écriture de morceaux du Deluge depuis les outils
+    variation.py         variations d'un clip, dans la gamme et parentes
+    atelier.py           le projet de l'atelier : style, pistes, clips, sections
+    songinsert.py        compléter un morceau sans le réécrire, preuve à l'appui
     midiport.py          MIDI et SysEx par winmm, sans dépendance
     midifollow.py        les 52 contrôleurs du mode MIDI Follow
     delugelink.py delugesysex.py      le lien vivant avec la machine
     delugefiles.py cardsync.py        la carte par USB, la copie de travail
     cardimport.py        envoyer au Deluge : du PC vers la carte
     render.py audio_out.py            moteur d'écoute et sortie audio
+    paramlaws.py         les lois des réglages du Deluge, lues dans son firmware
+    soundedit.py         les réglages d'un son, modifiables à la main
   ui/
-    mainwindow.py        assemblage des neuf pages
+    mainwindow.py        assemblage des dix pages
     theme.py icons.py    identité graphique, icônes dessinées à la main
     art.py               treillis de circuits et pads du guide, au QPainter
     tasks.py             travaux longs hors du fil de l'interface
@@ -462,12 +537,16 @@ delugeapp/
     livewindow.py        « Deluge en direct » : écran, tempo, son sélectionné
     cardwork.py          la copie de travail tenue à l'image de la carte
     sendfiles.py         glisser-déposer, plan et copie vers le Deluge
+    manuel.py            le manuel : lecture, mise en page du guide, fenêtre
+    manuel_dessins.py    ses ouvertures de partie et ses figures, au QPainter
     pages/               une page par domaine
     widgets/             façade (écran, pads de navigation), potentiomètre,
                          enveloppe, forme d'onde, pads, piano…
 tests/
-  test_core.py           646 tests du cœur
-  test_ui.py             344 tests d'interface
+  test_core.py           677 tests du cœur
+  test_ui.py             410 tests d'interface, dont ceux du manuel
+  test_i18n.py           29 tests de la traduction
+  test_atelier.py        60 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
   deluge_simule.py       un Deluge simulé, qui répond comme la vraie machine
 SPEC.md                  contrat d'architecture : formats, règles, budgets
 ```
@@ -484,7 +563,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-990 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+1 176 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

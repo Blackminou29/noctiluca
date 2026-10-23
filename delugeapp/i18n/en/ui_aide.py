@@ -136,10 +136,12 @@ TEXTS = {
     "sur lui, sinon en rendu approché":
         "Plays the generated sound — on the Deluge if it is plugged in and "
         "playback is set to it, otherwise as an approximate render",
-    "Écrit le preset sur la carte, dans SYNTHS/ — avec confirmation, et sans "
-    "jamais écraser un fichier existant":
-        "Writes the preset to the card, in SYNTHS/ — with confirmation, and "
-        "never overwriting an existing file",
+    "**Écrit sur la carte.** Demande un nom et un sous-dossier de SYNTHS, "
+    "puis y écrit le preset ; un fichier du même nom n'est remplacé qu'après "
+    "une question":
+        "**Writes to the card.** Asks for a name and a SYNTHS subfolder, then "
+        "writes the preset there; a file with the same name is only replaced "
+        "after a question",
     "**Écrit sur la carte.** Crée dans SONGS un morceau neuf où le son joue "
     "une phrase faite pour son rôle (basse, accords, arpège, mélodie), sur "
     "une progression et la batterie du genre : de quoi l'essayer en situation "
@@ -186,8 +188,10 @@ TEXTS = {
         "Assembles a kit around a drum machine or a bank from the card (909, "
         "Linndrum, an artist kit…), chosen for the genre, then fills in the "
         "missing roles  (nothing is written yet)",
-    "Écrit le kit sur la carte, dans KITS/ — avec confirmation":
-        "Writes the kit to the card, in KITS/ — with confirmation",
+    "**Écrit sur la carte.** Écrit le kit dans KITS/, sous le nom indiqué ; "
+    "un fichier du même nom n'est remplacé qu'après une question":
+        "**Writes to the card.** Writes the kit into KITS/, under the name "
+        "given; a file with the same name is only replaced after a question",
     "Remplace le son de la rangée choisie dans la liste par un autre du même "
     "rôle — de la même machine d'abord, puis d'une machine voisine — sans "
     "toucher au reste du kit  (rien n'est encore écrit)":
@@ -379,9 +383,10 @@ TEXTS = {
     "votre accord":
         "Shows the exact plan of operations first; nothing is done without "
         "your consent",
-    "Écrit le diagnostic dans un fichier texte, à l'endroit que vous "
-    "choisirez":
-        "Writes the diagnosis to a text file, wherever you choose",
+    "Écrit le diagnostic dans une page HTML, à l'endroit que vous "
+    "choisirez — hors de la carte":
+        "Writes the diagnosis to an HTML page, wherever you choose — off the "
+        "card",
     "Lequel des doublons garder : les autres seront proposés à la "
     "suppression":
         "Which of the duplicates to keep: the others will be offered for "
@@ -472,28 +477,29 @@ TEXTS = {
         "Opens the application's configuration folder (settings, index, log)",
     "Ouvre les ports dès que la machine apparaît, sans rien demander":
         "Opens the ports as soon as the machine appears, without asking",
-    "Les presets sonneront sur le Deluge, avec son vrai moteur, au lieu de "
-    "l'approximation calculée ici":
-        "Presets will sound on the Deluge, with its real engine, instead of "
-        "the approximation computed here",
+    "Les presets sonneront sur le Deluge : l'instrument sélectionné sur lui "
+    "prend leurs filtres, enveloppes et effets, mais garde ses propres "
+    "oscillateurs":
+        "Presets will sound on the Deluge: the instrument selected on it takes "
+        "their filters, envelopes and effects, but keeps its own oscillators",
     "Port par lequel l'application parle au Deluge":
         "Port through which the application talks to the Deluge",
     "Port par lequel elle l'écoute ; facultatif":
         "Port through which it listens to it; optional",
     "Canal que le Deluge écoute en mode MIDI Follow : il doit être réglé sur "
-    "la machine aussi (MIDI ▸ Follow ▸ Channel A)":
+    "la machine aussi (MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A)":
         "Channel the Deluge listens to in MIDI Follow mode: it must be set on "
-        "the machine too (MIDI ▸ Follow ▸ Channel A)",
+        "the machine too (MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A)",
     "Quand la machine joue, son horloge donne le tempo des outils : écoutes, "
     "fichiers MIDI et morceaux de la boîte à outils":
         "When the machine plays, its clock sets the tempo of the tools: "
         "playback, MIDI files and songs from the toolbox",
     "Ouvre une fenêtre à garder à côté : l'écran du Deluge recopié, son "
-    "tempo, les notes tenues et les réglages du son sélectionné — rien n'est "
-    "écrit sur la machine":
+    "tempo, les notes de ses pistes MIDI et les réglages du son sélectionné — "
+    "rien n'est écrit sur la machine":
         "Opens a window to keep alongside: the Deluge's mirrored screen, its "
-        "tempo, the held notes and the settings of the selected sound — "
-        "nothing is written to the machine",
+        "tempo, the notes of its MIDI tracks and the settings of the selected "
+        "sound — nothing is written to the machine",
     "Ouvre les ports du Deluge : notes et contrôleurs par le premier, SysEx "
     "par le troisième ; la machine dit alors sa version":
         "Opens the Deluge's ports: notes and controllers through the first, "
@@ -536,4 +542,143 @@ TEXTS = {
         "changed, keeping the old version alongside; nothing in it is "
         "deleted. The plan is shown first",
     "(%s sans nom)": "(unnamed %s)",
+    "Fabrique un morceau neuf dans le style de l'onglet Style : une piste par "
+    "partie cochée, un premier clip chacune, et la structure du genre avec "
+    "les variations qu'elle appelle  (rien n'est encore écrit sur la carte)":
+        "Makes a new song in the style of the Style tab: one track per ticked "
+        "part, a first clip each, and the genre's structure with the "
+        "variations it calls for  (nothing is written to the card yet)",
+    "Ouvre dans l'atelier un morceau de la carte — les derniers reçus du "
+    "Deluge en tête : ses pistes, ses clips, son tempo et sa gamme deviennent "
+    "ceux du projet, sa progression est lue dans ses notes. Rien n'est modifié":
+        "Opens a song from the card in the studio — the latest received from "
+        "the Deluge first: its tracks, its clips, its tempo and its scale "
+        "become the project's, its progression is read from its notes. "
+        "Nothing is changed",
+    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf : une section du "
+    "Deluge par section du projet, leurs clips, leurs répétitions et "
+    "l'arrangement complet. ":
+        "**Writes to the card.** Creates a new song in SONGS: one Deluge "
+        "section per project section, their clips, their repeats and the "
+        "complete arrangement. ",
+    "**Écrit sur la carte.** Écrit une nouvelle version du morceau d'origine "
+    "(« Cool1 5 » après « Cool1 4 ») qui le contient octet pour octet, plus "
+    "vos pistes, vos clips et vos sections neuves ; l'original n'est pas "
+    "touché. Le plan est montré avant d'écrire":
+        "**Writes to the card.** Writes a new version of the original song "
+        "(“Cool1 5” after “Cool1 4”) that contains it byte for byte, plus "
+        "your new tracks, clips and sections; the original is not touched. "
+        "The plan is shown before writing",
+    "Tonique du morceau : accords, basse et mélodie restent dans sa gamme":
+        "Root of the song: chords, bass and melody stay in its scale",
+    "Gamme du morceau ; le morceau écrit la donne au mode gamme du Deluge":
+        "Scale of the song; the written song gives it to the Deluge's scale "
+        "mode",
+    "Tempo du morceau ; choisir un genre le place au milieu de sa plage":
+        "Tempo of the song; choosing a genre puts it in the middle of its "
+        "range",
+    "Ambiance de la progression d'accords — mélancolique, house, jazz… ; par "
+    "défaut, celle du genre":
+        "Mood of the chord progression — melancholic, house, jazz…; by "
+        "default, the genre's",
+    "Triades, septièmes, neuvièmes ou suspendus ; par défaut, ce que "
+    "l'ambiance appelle":
+        "Triads, sevenths, ninths or suspended chords; by default, what the "
+        "mood calls for",
+    "Même graine et mêmes réglages, même morceau : notez-la pour retrouver "
+    "une composition":
+        "Same seed and same settings, same song: note it down to find a "
+        "composition again",
+    "Nouvelle graine au hasard": "New random seed",
+    "Nature de la piste à ajouter : un kit, un synthé du Deluge, une piste "
+    "MIDI vers un appareil extérieur, ou une piste CV vers un modulaire":
+        "Kind of track to add: a kit, a Deluge synth, a MIDI track to an "
+        "external device, or a CV track to a modular",
+    "Ce que jouera la piste ajoutée": "What the added track will play",
+    "Ajoute la piste au projet, avec un son du style et un premier clip  "
+    "(rien n'est écrit sur la carte)":
+        "Adds the track to the project, with a sound in the style and a first "
+        "clip  (nothing is written to the card)",
+    "Retire la piste choisie du projet, et ses cases de toutes les sections":
+        "Removes the chosen track from the project, and its cells from every "
+        "section",
+    "Joue le son de la piste — sur le Deluge si l'écoute y est réglée, sinon "
+    "en rendu approché ; une batterie joue son premier clip":
+        "Plays the track's sound — on the Deluge if listening is set to it, "
+        "otherwise as an approximate render; drums play their first clip",
+    "Un autre son du même style pour un synthé, ou un autre kit bâti dans "
+    "votre bibliothèque":
+        "Another sound in the same style for a synth, or another kit built "
+        "from your library",
+    "Prend pour la piste un preset ou un kit de la carte, choisi dans l'index":
+        "Takes a preset or a kit from the card for the track, chosen in the "
+        "index",
+    "Canal MIDI (1 à 16) ou sortie CV (1 ou 2) de la piste":
+        "MIDI channel (1 to 16) or CV output (1 or 2) of the track",
+    "Huit variantes du son, toutes dans le style : un seul aspect tiré à "
+    "nouveau (filtre, enveloppes, espace…) ou un curseur poussé (plus "
+    "brillant, plus sale…), le reste du son restant le même. Un son retouché "
+    "à la main garde ses retouches":
+        "Eight variations of the sound, all in the style: a single facet "
+        "drawn again (filter, envelopes, space…) or a slider pushed "
+        "(brighter, dirtier…), the rest of the sound staying the same. A "
+        "sound edited by hand keeps its edits",
+    "La piste prend le son de la variante choisie":
+        "The track takes the sound of the chosen variation",
+    "Joue le clip choisi sur l'ordinateur, avec le son de sa piste":
+        "Plays the chosen clip on the computer, with its track's sound",
+    "Joue le clip en boucle sur le Deluge, dans le clip que suit MIDI Follow "
+    ": machine en lecture, calé sur sa mesure ; en enregistrement (REC), il "
+    "s'y inscrit. Recliquez pour arrêter":
+        "Loops the clip on the Deluge, in the clip MIDI Follow is following: "
+        "machine playing, locked to its bar; recording (REC), it is written "
+        "into it. Click again to stop",
+    "Une variation du clip, ajoutée à la piste : rythme, notes, plus ou moins "
+    "de notes, réponse, octave, fin de phrase — pour une batterie, ornements, "
+    "remplissage, cassure, montée…":
+        "A variation of the clip, added to the track: rhythm, notes, more or "
+        "fewer notes, answer, octave, end of phrase — for drums, ornaments, "
+        "fill, breakdown, build-up…",
+    "Un clip neuf pour la piste, sur la progression du morceau":
+        "A new clip for the track, on the song's progression",
+    "Longueur du clip neuf": "Length of the new clip",
+    "Retire le clip de la piste ; les sections qui le jouaient se taisent "
+    "pour elle  (rien n'est écrit sur la carte)":
+        "Removes the clip from the track; the sections that played it fall "
+        "silent for it  (nothing is written to the card)",
+    "Nom de la section ; ses clips le portent sur le Deluge":
+        "Name of the section; its clips carry it on the Deluge",
+    "Durée de la section, en mesures : ses clips y bouclent":
+        "Length of the section, in bars: its clips loop in it",
+    "Joue le début de la section (huit mesures au plus), toutes pistes "
+    "ensemble":
+        "Plays the start of the section (eight bars at most), all tracks "
+        "together",
+    "Ajoute une section après celle choisie, avec les mêmes clips":
+        "Adds a section after the chosen one, with the same clips",
+    "Retire la section choisie du morceau":
+        "Removes the chosen section from the song",
+    "Avance la section d'un cran dans le morceau":
+        "Moves the section one step later in the song",
+    "Recule la section d'un cran dans le morceau":
+        "Moves the section one step earlier in the song",
+    "Remplace les sections par la structure du genre — intro, montée, thème, "
+    "cassure… —, avec les variations qu'elle appelle ; un morceau d'origine "
+    "garde ses propres sections":
+        "Replaces the sections with the genre's structure — intro, build-up, "
+        "theme, breakdown… —, with the variations it calls for; a song you "
+        "started from keeps its own sections",
+    "Ouvre l'éditeur du son courant : oscillateurs, filtres, enveloppes, LFO, "
+    "effets et modulations, chaque réglage au cran de la machine et en clair. "
+    "Le son retouché rejoint l'historique  (rien n'est écrit sur la carte)":
+        "Opens the editor of the current sound: oscillators, filters, "
+        "envelopes, LFOs, effects and modulation, each setting at the "
+        "machine's step and in plain terms. The edited sound joins the "
+        "history  (nothing is written to the card)",
+    "Ouvre l'éditeur du son de la piste : chaque réglage au cran de la "
+    "machine, et ce qu'il vaut sur le Deluge (1,8 s, 237 Hz…). « Garder ce "
+    "son » le donne à la piste  (rien n'est écrit sur la carte)":
+        "Opens the editor of the track's sound: each setting at the machine's "
+        "step, and what it is worth on the Deluge (1.8 s, 237 Hz…). “Keep "
+        "this sound” gives it to the track  (nothing is written to the card)",
 }

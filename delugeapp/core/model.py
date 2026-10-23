@@ -604,6 +604,11 @@ class PatchCable:
     #: (``<depthControlledBy>``) : ``[(source, profondeur)]``. Il peut y en
     #: avoir plusieurs — « 5. Boc Pad » en a deux, ``lfo2`` et ``random``.
     depth_cables: list[tuple[str, int]] = field(default_factory=list)
+    #: ``unipolar`` ou ``bipolar`` (firmware communautaire) ; vide : le
+    #: firmware lit alors le câble **bipolaire** (``patch_cable_set.cpp``) —
+    #: une enveloppe y vaut −1 au repos. Calm Down, enregistré en 1.3, en
+    #: porte 28 « unipolar » et 88 « bipolar ».
+    polarity: str = ""
 
     @classmethod
     def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "PatchCable":
@@ -612,6 +617,7 @@ class PatchCable:
             source=_txt(el, "source", ""),
             destination=_txt(el, "destination", ""),
             amount=_fx(el, "amount", 0),
+            polarity=_txt(el, "polarity", ""),
         )
         depth = dxml.get_child(el, "depthControlledBy")
         if depth is not None:
@@ -631,6 +637,8 @@ class PatchCable:
             _set(el, "destination", cable_destination(self.destination),
                  dialect)
         _set(el, "amount", format_fixed(self.amount), dialect)
+        if self.polarity:
+            _set(el, "polarity", self.polarity, dialect)
         if not self.depth_cables:
             dxml.remove_child(el, "depthControlledBy")
             return
@@ -1619,13 +1627,21 @@ def _s32(value: int) -> int:
 @dataclass
 class Note:
     """Une note d'un clip. ``pos``/``length`` sont en ticks du morceau :
-    ``96 << inputTickMagnitude`` par mesure (voir :func:`ticks_per_bar`)."""
+    ``96 << inputTickMagnitude`` par mesure (voir :func:`ticks_per_bar`).
+
+    ``iterance`` et ``fill`` n'existent que dans les morceaux du firmware
+    1.3 (``noteDataWithSplitProb``) : l'itération y a quitté l'octet de
+    condition pour un champ à elle (diviseur << 8 | pas), 0 voulant dire
+    « aucune ».
+    """
 
     pos: int = 0
     length: int = 24
     velocity: int = 64
     condition: int = 20
     lift: int = 64
+    iterance: int = 0
+    fill: int = 0
 
     @property
     def probability(self) -> float:
@@ -1640,19 +1656,46 @@ class Note:
         return self.condition >= 0x80
 
 
-def decode_notes(blob: str | None, with_lift: bool = False) -> list[Note]:
-    """Décode un blob ``noteData`` (20 car./note) ou ``noteDataWithLift`` (22).
+#: Blobs de notes d'une rangée, du plus récent au plus ancien, et la largeur
+#: d'une note en caractères hexadécimaux (``NoteRow::readFromFile``, firmware
+#: 1.3, commit ``102cf9f``). **Un morceau qui se déclare c1.3.0 ou plus
+#: récent n'a plus son ``noteDataWithLift`` lu** : ses notes sont dans
+#: ``noteDataWithSplitProb``, et y écrire l'ancien blob donnerait un clip
+#: muet.
+NOTE_BLOBS: tuple[tuple[str, int], ...] = (
+    ("noteDataWithSplitProb", 28),
+    ("noteDataWithIteranceAndFill", 26),
+    ("noteDataWithLift", 22),
+    ("noteData", 20),
+)
+#: Probabilité « toujours » (``kNumProbabilityValues``) et lift par défaut.
+_ALWAYS = 20
+_DEFAULT_LIFT = 64
 
-    Disposition vérifiée sur la carte réelle :
-    ``pos(8) length(8) velocity(2) [lift(2)] condition(2)``.
-    ``pos`` et ``length`` sont des entiers 32 bits signés.
+
+def decode_notes(blob: str | None, with_lift: bool = False,
+                 width: int | None = None) -> list[Note]:
+    """Décode un blob de notes.
+
+    Dispositions, vérifiées sur la carte réelle (20 et 22) et dans le code du
+    firmware 1.3 (26 et 28) :
+
+    * 20 — ``noteData`` : ``pos(8) length(8) velocity(2) condition(2)`` ;
+    * 22 — ``noteDataWithLift`` : ``… velocity(2) lift(2) condition(2)`` ;
+    * 26 — ``noteDataWithIteranceAndFill`` (préversions 1.3) : ``… lift(2)
+      probabilité(2) itération(2, index de l'ancien menu) fill(2)`` ;
+    * 28 — ``noteDataWithSplitProb`` (1.3) : ``… lift(2) probabilité(2)
+      itération(4) fill(2)``.
+
+    ``pos`` et ``length`` sont des entiers 32 bits signés. ``width`` impose
+    la largeur ; à défaut, ``with_lift`` choisit entre 22 et 20.
     """
     if not blob:
         return []
     text = blob.strip()
     if text[:2].lower() == "0x":
         text = text[2:]
-    step = 22 if with_lift else 20
+    step = int(width) if width else (22 if with_lift else 20)
     notes: list[Note] = []
     for i in range(0, len(text) - step + 1, step):
         chunk = text[i:i + step]
@@ -1660,31 +1703,74 @@ def decode_notes(blob: str | None, with_lift: bool = False) -> list[Note]:
             pos = _s32(int(chunk[0:8], 16))
             length = _s32(int(chunk[8:16], 16))
             velocity = int(chunk[16:18], 16)
-            if with_lift:
+            iterance = fill = 0
+            if step >= 26:
+                lift = int(chunk[18:20], 16)
+                # Le bit 7 de la probabilité est un drapeau de la machine ;
+                # la valeur elle-même va de 0 à 20 (×5 %).
+                condition = min(_ALWAYS, int(chunk[20:22], 16) & 0x7F)
+                if step == 28:
+                    iterance = int(chunk[22:26], 16)
+                    fill = int(chunk[26:28], 16)
+                else:
+                    iterance = int(chunk[22:24], 16)
+                    fill = int(chunk[24:26], 16)
+            elif step == 22:
                 lift = int(chunk[18:20], 16)
                 condition = int(chunk[20:22], 16)
             else:
-                lift = 64
+                lift = _DEFAULT_LIFT
                 condition = int(chunk[18:20], 16)
         except ValueError:
             log.debug("Groupe de note illisible : %r", chunk)
             continue
         notes.append(Note(pos=pos, length=length, velocity=velocity,
-                          condition=condition, lift=lift))
+                          condition=condition, lift=lift, iterance=iterance,
+                          fill=fill))
     return notes
 
 
-def encode_notes(notes: Iterable[Note], with_lift: bool = True) -> str:
-    """Encode une liste de notes en blob hexadécimal Deluge (préfixe ``0x``)."""
+def encode_notes(notes: Iterable[Note], with_lift: bool = True,
+                 width: int | None = None) -> str:
+    """Encode une liste de notes en blob hexadécimal Deluge (préfixe ``0x``).
+
+    ``width`` vaut 20, 22 (``with_lift``, par défaut) ou 28 — le
+    ``noteDataWithSplitProb`` d'un morceau 1.3, tel que l'écrit
+    ``NoteRow::writeToFile`` : probabilité 20 pour « toujours », itération
+    et fill à zéro (« aucune »).
+    """
+    step = int(width) if width else (22 if with_lift else 20)
     parts = ["0x"]
     for note in notes:
         parts.append("%08X" % (int(note.pos) & 0xFFFFFFFF))
         parts.append("%08X" % (int(note.length) & 0xFFFFFFFF))
         parts.append("%02X" % (int(note.velocity) & 0xFF))
-        if with_lift:
-            parts.append("%02X" % (int(note.lift or 64) & 0xFF))
+        if step == 28:
+            parts.append("%02X" % (int(note.lift or _DEFAULT_LIFT) & 0xFF))
+            condition = int(note.condition)
+            # Une ancienne itération (octet >= 0x80) n'a pas de place ici :
+            # la note joue toujours plutôt que de jouer au hasard.
+            probability = condition if 0 <= condition <= _ALWAYS else _ALWAYS
+            parts.append("%02X" % probability)
+            parts.append("%04X" % (int(getattr(note, "iterance", 0)) & 0xFFFF))
+            parts.append("%02X" % (int(getattr(note, "fill", 0)) & 0xFF))
+            continue
+        if step == 22:
+            parts.append("%02X" % (int(note.lift or _DEFAULT_LIFT) & 0xFF))
         parts.append("%02X" % (int(note.condition) & 0xFF))
     return "".join(parts)
+
+
+def note_blob_tag(firmware: str) -> tuple[str, int]:
+    """Balise et largeur des notes qu'un morceau de ce firmware relit.
+
+    ``noteDataWithLift`` n'est lu que pour une version antérieure à c1.3.0
+    (officielles comprises, qui passent avant les communautaires) ; au-delà,
+    seul ``noteDataWithSplitProb`` l'est.
+    """
+    if firmware and not dxml.version_older(firmware, "c1.3.0"):
+        return "noteDataWithSplitProb", 28
+    return "noteDataWithLift", 22
 
 
 @dataclass
@@ -1695,21 +1781,26 @@ class NoteRow:
     notes: list[Note] = field(default_factory=list)
     muted: bool = False
     colour_offset: int = 0
+    #: Son du kit que joue la rangée (``drumIndex``) ; ``None`` hors kit.
+    drum_index: int | None = None
 
     @classmethod
     def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "NoteRow":
-        """Lit un <noteRow> et décode son blob de notes."""
-        raw_lift = dxml.get(el, "noteDataWithLift")
-        raw = dxml.get(el, "noteData")
-        if raw_lift is not None:
-            notes = decode_notes(raw_lift, with_lift=True)
-        else:
-            notes = decode_notes(raw, with_lift=False)
+        """Lit un <noteRow> et décode son blob de notes, quel que soit le
+        firmware qui l'a écrit (:data:`NOTE_BLOBS`)."""
+        notes: list[Note] = []
+        for tag, width in NOTE_BLOBS:
+            raw = dxml.get(el, tag)
+            if raw is not None:
+                notes = decode_notes(raw, width=width)
+                break
+        drum = dxml.get(el, "drumIndex")
         return cls(
             y=_int(el, "y", 0),
             notes=notes,
             muted=_txt(el, "muted", "0") in ("1", "true"),
             colour_offset=_int(el, "colourOffset", 0),
+            drum_index=parse_int(drum, 0) if drum is not None else None,
         )
 
     def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
@@ -1743,6 +1834,13 @@ class Clip:
     #: Ticks d'une mesure dans le morceau qui contient ce clip : le morceau
     #: le pose à la lecture, d'après son ``inputTickMagnitude``.
     ticks_per_bar: int = TICKS_PER_BAR
+    #: Nature de la piste : ``sound``, ``kit``, ``midi``, ``cv`` ou ``audio``.
+    #: Un clip MIDI ou CV ne nomme pas de preset : il vise un canal
+    #: (``midiChannel``, ``cvChannel``, numérotés depuis 0).
+    kind: str = "sound"
+    channel: int = -1
+    #: Suffixe d'un canal MIDI partagé par plusieurs pistes (−1 : aucun).
+    suffix: int = -1
 
     @property
     def bars(self) -> float:
@@ -1775,6 +1873,17 @@ class Clip:
                     or dxml.get_child(el, "kitParams") is not None
                     or folder.upper().startswith("KITS")),
         )
+        if el.tag == "audioClip":
+            clip.kind = "audio"
+        elif dxml.get(el, "midiChannel") is not None:
+            clip.kind = "midi"
+            clip.channel = _int(el, "midiChannel", 0)
+            clip.suffix = _int(el, "midiChannelSuffix", -1)
+        elif dxml.get(el, "cvChannel") is not None:
+            clip.kind = "cv"
+            clip.channel = _int(el, "cvChannel", 0)
+        elif clip.is_kit:
+            clip.kind = "kit"
         rows = dxml.get_child(el, "noteRows")
         if rows is not None:
             clip.note_rows = [NoteRow.from_xml(r, dialect)
@@ -1837,11 +1946,16 @@ _SESSION_HOLDERS = ("sessionClips", "tracks")
 #: Tags XML des clips d'arrangement selon le firmware.
 _ARRANGEMENT_HOLDERS = ("arrangementOnlyClips", "arrangementOnlyTracks")
 
-#: Correspondance tag d'instrument -> nature.
+#: Correspondance tag d'instrument -> nature. Une piste MIDI s'écrit
+#: ``<midi>`` depuis le firmware communautaire (19 sur les 20 des morceaux de
+#: l'utilisateur) ; ``<midiChannel>`` est l'ancien nom, que la machine lit
+#: toujours.
 _INSTRUMENT_KINDS = {
     "sound": "sound",
     "kit": "kit",
+    "midi": "midi",
     "midiChannel": "midi",
+    "mpeZone": "midi",
     "cvChannel": "cv",
     "audioOutput": "audio",
     "track": "sound",
@@ -1963,11 +2077,16 @@ class Song:
                 kind = _INSTRUMENT_KINDS.get(child.tag)
                 if kind is None:
                     continue
-                song.instruments.append({
+                entry = {
                     "kind": kind,
                     "name": _txt(child, "presetName", "") or _txt(child, "name", ""),
                     "folder": _txt(child, "presetFolder", ""),
-                })
+                }
+                if kind in ("midi", "cv"):
+                    # Ni nom ni preset : la piste est son canal.
+                    entry["channel"] = _int(child, "channel", 0)
+                    entry["suffix"] = _int(child, "suffix", -1)
+                song.instruments.append(entry)
 
         song.clips = cls._read_clips(el, _SESSION_HOLDERS, dialect)
         song.arrangement_clips = cls._read_clips(el, _ARRANGEMENT_HOLDERS, dialect)

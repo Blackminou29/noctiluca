@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import logging
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from ..i18n import N_, tr
+from ..i18n import N_, tr, untranslated
 from .fixedpoint import INT32_MAX, INT32_MIN, from_display
 from .genres import ROLES, GenreProfile, genre as get_genre
 from .model import (
@@ -207,11 +207,60 @@ class GenOptions:
     mode: str = ""
     use_samples: list[str] = field(default_factory=list)
     name: str = ""
+    #: Graine propre d'un aspect du son (:data:`FACETS`), à la place de
+    #: ``seed`` : c'est ainsi qu'une variante tire un autre filtre en gardant
+    #: le reste.
+    facets: dict[str, int] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
 # Outils de tirage
 # --------------------------------------------------------------------------- #
+
+#: Les aspects d'un son, dans l'ordre où le générateur les règle. Chacun a
+#: ses propres tirages : changer un aspect — sa graine, ou le curseur qui le
+#: règle — ne touche pas aux autres.
+FACETS: dict[str, str] = {
+    "moteur": N_("moteur de synthèse, jeu, glissé et volume"),
+    "timbre": N_("formes d'onde, niveaux et accord des oscillateurs"),
+    "filtre": N_("type de filtre, coupure, résonance et saturation"),
+    "enveloppes": N_("enveloppes d'amplitude et de modulation"),
+    "mouvement": N_("formes et vitesses des LFO"),
+    "largeur": N_("unisson, désaccord et panoramique"),
+    "espace": N_("réverbération, délai et effet de modulation"),
+    "modulations": N_("câbles de modulation"),
+    "arpège": N_("arpégiateur"),
+}
+
+
+class _Tirages:
+    """Les tirages d'un aspect du son, nommés et indépendants.
+
+    Chaque décision — « la coupure », « la saturation » — a son propre
+    générateur, tiré de la graine de l'aspect et de son nom. Le nombre de
+    tirages d'une décision ne décale donc jamais celui d'une autre.
+
+    **Pourquoi.** Tous les tirages passaient par un seul générateur : un
+    curseur qui ouvrait une branche (la réduction numérique au-delà de 0,5
+    de saleté) consommait un nombre de plus, et décalait tout ce qui suivait.
+    Mesuré à graine égale, 0,5 → 0,7 de saleté changeait 18 réglages en
+    médiane et la structure du son (oscillateurs, câbles, mode de jeu) dans
+    584 cas sur 660 : un autre son, pas le même en plus sale. La brillance,
+    elle, ne changeait qu'un réglage.
+    """
+
+    __slots__ = ("_base", "_flux")
+
+    def __init__(self, base: str) -> None:
+        self._base = base
+        self._flux: dict[str, random.Random] = {}
+
+    def __call__(self, name: str) -> random.Random:
+        flux = self._flux.get(name)
+        if flux is None:
+            flux = random.Random(f"{self._base}|{name}")
+            self._flux[name] = flux
+        return flux
 
 def _clamp01(value: float) -> float:
     """Ramène un curseur dans [0, 1]."""
@@ -280,10 +329,15 @@ def generate(opts: GenOptions) -> SynthPreset:
     """
     seed = opts.seed if opts.seed is not None else random.randrange(1 << 30)
     role = opts.role if opts.role in ROLES else "bass"
-    # Genre et rôle entrent dans la graine : sans cela, la graine 42 faisait
-    # les mêmes choix — mode de jeu, effet, saturation — dans tous les genres,
-    # comme le faisait le générateur de kits avec ses grosses caisses.
-    rng = random.Random(f"{seed}|{opts.genre}|{role}")
+    facets = dict(opts.facets or {})
+
+    def tirages(facet: str) -> _Tirages:
+        # Genre et rôle entrent dans la graine : sans cela, la graine 42
+        # faisait les mêmes choix — mode de jeu, effet, saturation — dans
+        # tous les genres, comme le générateur de kits avec ses grosses
+        # caisses. L'aspect y entre aussi, et sa graine propre s'il en a une.
+        return _Tirages(f"{facets.get(facet, seed)}|{opts.genre}|{role}"
+                        f"|{facet}")
 
     profile = get_genre(opts.genre).for_role(role)
 
@@ -291,15 +345,20 @@ def generate(opts: GenOptions) -> SynthPreset:
     sound = preset.sound
     sound.params = dict(DEFAULT_PARAMS)
 
-    _apply_mode(sound, profile, opts, rng)
-    _apply_oscillators(sound, profile, opts, rng)
-    _apply_filter(sound, profile, opts, rng)
-    _apply_envelopes(sound, profile, opts, rng)
-    _apply_lfos(sound, profile, opts, rng)
-    _apply_unison(sound, profile, opts, rng)
-    _apply_fx(sound, profile, opts, rng)
-    _apply_cables(sound, profile, opts, rng)
-    _apply_arp(sound, profile, opts, rng, role)
+    _apply_mode(sound, profile, opts, tirages("moteur"))
+    _apply_oscillators(sound, profile, opts, tirages("timbre"))
+    _apply_filter(sound, profile, opts, tirages("filtre"))
+    _apply_envelopes(sound, profile, opts, tirages("enveloppes"))
+    _apply_lfos(sound, profile, opts, tirages("mouvement"))
+    _apply_unison(sound, profile, opts, tirages("largeur"))
+    _apply_fx(sound, profile, opts, tirages("espace"))
+    _apply_cables(sound, profile, opts, tirages("modulations"))
+    _apply_arp(sound, profile, opts, tirages("arpège"), role)
+    # Le volume général appartient au moteur : une variante qui tire un autre
+    # espace ou un autre filtre ne doit pas jouer plus fort. Volume médian
+    # des vrais presets : 38 à 40.
+    sound.set_param("volume", _disp(_span(tirages("moteur")("volume"),
+                                          (30, 44), 0.5)))
 
     _ensure_audible(sound)
 
@@ -312,7 +371,7 @@ def generate(opts: GenOptions) -> SynthPreset:
 
 
 def _apply_mode(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                rng: random.Random) -> None:
+                tirage: _Tirages) -> None:
     """Choisit le mode de synthèse et la polyphonie."""
     if opts.mode in MODES:
         sound.mode = opts.mode
@@ -320,27 +379,29 @@ def _apply_mode(sound: Sound, profile: GenreProfile, opts: GenOptions,
         # Le rôle et le genre choisissent le moteur : une cloche est FM, un
         # effet sur deux est en ring mod sur la carte. À défaut, la FM reste
         # minoritaire — elle demande un accord des modulateurs pour sonner.
-        sound.mode = _pick(rng, profile.modes or DEFAULT_MODES, "subtractive")
+        sound.mode = _pick(tirage("moteur"), profile.modes or DEFAULT_MODES,
+                           "subtractive")
     role = opts.role
     if role in ("bass", "lead"):
-        sound.polyphonic = _pick(rng, _MONO_ROLES_POLY, "poly")
+        sound.polyphonic = _pick(tirage("jeu"), _MONO_ROLES_POLY, "poly")
     elif role == "drone":
         sound.polyphonic = "poly"
     else:
         # « auto » : 1 à 2 % des vrais presets de ces rôles, contre 16 % des
         # presets générés jusqu'ici.
-        sound.polyphonic = _pick(rng, [("poly", 40.0), ("auto", 1.0)], "poly")
+        sound.polyphonic = _pick(tirage("jeu"), [("poly", 40.0), ("auto", 1.0)],
+                                 "poly")
     # Huit voix, quelle que soit la polyphonie : c'est ce qu'écrit la machine
     # pour chacun des 94 sons des morceaux de la carte, legato et auto
     # compris. Le 0 qu'on écrivait pour les sons non polyphoniques est une
     # valeur qu'elle ne produit jamais (son menu remplace 0 par 127) et
     # qu'elle lit comme un plafond de zéro voix (``AudioEngine::solicitVoice``).
     sound.max_voices = 8
-    _apply_glide(sound, profile, role, rng)
+    _apply_glide(sound, profile, role, tirage)
 
 
 def _apply_glide(sound: Sound, profile: GenreProfile, role: str,
-                 rng: random.Random) -> None:
+                 tirage: _Tirages) -> None:
     """Pose un portamento, à la fréquence des vrais presets du rôle.
 
     Sur une basse ou un lead, le glissé va avec le jeu monophonique : 86 %
@@ -352,12 +413,13 @@ def _apply_glide(sound: Sound, profile: GenreProfile, role: str,
     if role in ("bass", "lead"):
         chance *= 1.35 if sound.polyphonic in ("mono", "legato") else 0.4
     chance = min(0.9, chance * max(0.0, float(getattr(profile, "glide", 1.0))))
-    if rng.random() < chance:
-        sound.set_param("portamento", _disp(_span(rng, bounds)))
+    r = tirage("glissé")
+    if r.random() < chance:
+        sound.set_param("portamento", _disp(_span(r, bounds)))
 
 
 def _apply_oscillators(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                       rng: random.Random) -> None:
+                       tirage: _Tirages) -> None:
     """Règle les deux oscillateurs, et les échantillons si on en donne."""
     samples = [s for s in (opts.use_samples or []) if s]
     if samples:
@@ -365,32 +427,35 @@ def _apply_oscillators(sound: Sound, profile: GenreProfile, opts: GenOptions,
         if len(samples) > 1:
             sound.osc2 = Osc(type="sample", file_name=samples[1])
         else:
-            sound.osc2 = Osc(type=_pick(rng, profile.osc_types, "square"))
-            sound.set_param("oscBVolume", _disp(_span(rng, (0, 18))))
+            sound.osc2 = Osc(type=_pick(tirage("osc 2"), profile.osc_types,
+                                        "square"))
+            sound.set_param("oscBVolume", _disp(_span(tirage("niveau B"),
+                                                      (0, 18))))
     else:
         # Sans échantillon fourni, écarter d'emblée les formes qui en
         # réclament un : les tirer puis les corriger ensuite donnerait un son
         # qui ne ressemble plus au profil du genre.
         playable = [(name, weight) for name, weight in profile.osc_types
                     if name not in _SILENT_OSC_TYPES]
-        first = _pick(rng, playable, "saw")
-        if first in _ANALOG_VARIANT and rng.random() < _ANALOG_CHANCE:
+        first = _pick(tirage("osc 1"), playable, "saw")
+        if first in _ANALOG_VARIANT and tirage("analogique").random() \
+                < _ANALOG_CHANCE:
             first = _ANALOG_VARIANT[first]
         sound.osc1 = Osc(type=first)
         # Le second oscillateur reprend souvent la même forme, décalée.
-        second = (first if rng.random() < 0.45
-                  else _pick(rng, playable, "square"))
+        r = tirage("osc 2")
+        second = first if r.random() < 0.45 else _pick(r, playable, "square")
         sound.osc2 = Osc(type=second)
 
-    sound.set_param("oscAVolume", _disp(_span(rng, (40, 50), 0.8)))
+    sound.set_param("oscAVolume", _disp(_span(tirage("niveau A"), (40, 50), 0.8)))
 
     if sound.osc2.type not in _SILENT_OSC_TYPES or sound.osc2.file_name:
         # Un deuxième oscillateur plus discret que le premier : c'est ce qui
         # épaissit un son sans le rendre confus.
-        level = _span(rng, (0, 42), 0.35 + 0.4 * _clamp01(opts.width))
+        level = _span(tirage("niveau B"), (0, 42), 0.35 + 0.4 * _clamp01(opts.width))
         sound.set_param("oscBVolume", _disp(level))
         # Désaccord ou transposition à l'octave / à la quinte.
-        choice = rng.random()
+        choice = tirage("accord B").random()
         if choice < 0.35:
             sound.osc2.transpose = -12
         elif choice < 0.5:
@@ -398,25 +463,27 @@ def _apply_oscillators(sound: Sound, profile: GenreProfile, opts: GenOptions,
         elif choice < 0.6:
             sound.osc2.transpose = 7
         sound.osc2.cents = int(round(
-            rng.uniform(-1, 1) * 25 * _clamp01(opts.width)))
+            tirage("cents B").uniform(-1, 1) * 25 * _clamp01(opts.width)))
 
     if opts.role == "bass":
         # Une basse se joue bas : sans cela le générateur produit des sons
         # justes mais inutilisables comme basse.
-        sound.transpose = rng.choice([-24, -12, -12, 0])
+        sound.transpose = tirage("octave").choice([-24, -12, -12, 0])
 
     # Largeur d'impulsion, utile aux formes carrées.
     if "square" in (sound.osc1.type or ""):
-        sound.set_param("oscAPulseWidth", _disp(_span(rng, (10, 40))))
+        sound.set_param("oscAPulseWidth", _disp(_span(tirage("impulsion"),
+                                                      (10, 40))))
 
     if sound.mode == "fm":
-        _apply_fm(sound, opts, rng)
+        _apply_fm(sound, opts, tirage)
 
-    if rng.random() < 0.18 + 0.3 * _clamp01(opts.dirt):
-        sound.set_param("noiseVolume", _disp(_span(rng, (2, 20))))
+    r = tirage("bruit")
+    if r.random() < 0.18 + 0.3 * _clamp01(opts.dirt):
+        sound.set_param("noiseVolume", _disp(_span(r, (2, 20))))
 
 
-def _apply_fm(sound: Sound, opts: GenOptions, rng: random.Random) -> None:
+def _apply_fm(sound: Sound, opts: GenOptions, tirage: _Tirages) -> None:
     """Accorde les deux modulateurs FM et règle leur profondeur.
 
     En FM, ce sont les modulateurs qui font le timbre ; les laisser à
@@ -424,111 +491,132 @@ def _apply_fm(sound: Sound, opts: GenOptions, rng: random.Random) -> None:
     """
     bell = opts.role == "bell"
     table = FM_BELL_TRANSPOSE if bell else FM_MOD1_TRANSPOSE
+    cents = tirage("cents FM")
     sound.modulator1 = Modulator(
-        transpose=int(_pick(rng, [(str(t), w) for t, w in table], "0")),
+        transpose=int(_pick(tirage("accord FM 1"), [(str(v), w) for v, w in table],
+                            "0")),
         # Un léger écart de cents rend un timbre FM vivant ; les cloches
         # en prennent davantage, ce qui accentue l'inharmonicité.
-        cents=int(round(rng.uniform(0, 12 if bell else 4)))
-        if rng.random() < (0.6 if bell else 0.25) else 0)
+        cents=int(round(cents.uniform(0, 12 if bell else 4)))
+        if cents.random() < (0.6 if bell else 0.25) else 0)
     sound.modulator2 = Modulator(
-        transpose=int(_pick(rng, [(str(t), w) for t, w in FM_MOD2_TRANSPOSE],
+        transpose=int(_pick(tirage("accord FM 2"),
+                            [(str(v), w) for v, w in FM_MOD2_TRANSPOSE],
                             "-12")),
-        to_modulator1=1 if rng.random() < 0.4 else 0)
+        to_modulator1=1 if tirage("FM 2 vers 1").random() < 0.4 else 0)
     depth = (18, 40) if bell else (10, 34)
     sound.set_param("modulator1Amount",
-                    _disp(_span(rng, depth, 0.4 + 0.3 * _clamp01(opts.dirt))))
-    sound.set_param("modulator1Feedback", _disp(_span(rng, (0, 14))))
-    if rng.random() < 0.5:
-        sound.set_param("modulator2Amount", _disp(_span(rng, (0, 24))))
+                    _disp(_span(tirage("profondeur FM"), depth,
+                                0.4 + 0.3 * _clamp01(opts.dirt))))
+    sound.set_param("modulator1Feedback", _disp(_span(tirage("rétroaction FM"),
+                                                      (0, 14))))
+    r = tirage("niveau FM 2")
+    if r.random() < 0.5:
+        sound.set_param("modulator2Amount", _disp(_span(r, (0, 24))))
 
 
 def _apply_filter(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                  rng: random.Random) -> None:
+                  tirage: _Tirages) -> None:
     """Règle le filtre : mode, coupure, résonance."""
-    sound.lpf_mode = _pick(rng, profile.filter_mode, "24dB")
+    sound.lpf_mode = _pick(tirage("type"), profile.filter_mode, "24dB")
     if sound.lpf_mode not in LPF_MODES:
         sound.lpf_mode = "24dB"
 
-    cutoff = _span(rng, profile.cutoff, _clamp01(opts.brightness))
+    cutoff = _span(tirage("coupure"), profile.cutoff, _clamp01(opts.brightness))
     sound.set_param("lpfFrequency", _disp(cutoff))
-    resonance = _span(rng, profile.resonance, _clamp01(opts.dirt))
+    resonance = _span(tirage("résonance"), profile.resonance, _clamp01(opts.dirt))
     sound.set_param("lpfResonance", _disp(resonance))
 
     # Un passe-haut dégage le grave inutile, à la fréquence et au réglage
     # des vrais presets du rôle ; sur une basse, rare et bas.
     chance, bounds = _HPF.get(_kin(opts.role), (0.3, (8, 20)))
-    if rng.random() < chance:
+    r = tirage("passe-haut")
+    if r.random() < chance:
         sound.hpf_mode = "HPLadder"
-        sound.set_param("hpfFrequency", _disp(_span(rng, bounds)))
+        sound.set_param("hpfFrequency", _disp(_span(r, bounds)))
 
     # Saturation : 27 à 56 % des vrais presets selon le rôle, réglée entre 2
     # et 5. Le curseur de saleté en change la fréquence et la force.
     dirt = _clamp01(opts.dirt)
-    if rng.random() < _SATURATION.get(_kin(opts.role), 0.35) * (0.3 + 1.4 * dirt):
-        level = int(_pick(rng, [(str(v), w) for v, w in _SATURATION_LEVELS],
+    r = tirage("saturation")
+    if r.random() < _SATURATION.get(_kin(opts.role), 0.35) * (0.3 + 1.4 * dirt):
+        level = int(_pick(r, [(str(v), w) for v, w in _SATURATION_LEVELS],
                           "3"))
         sound.clipping_amount = level + int(round(max(0.0, dirt - 0.5) * 6))
 
-    if dirt > 0.5 and rng.random() < dirt:
+    # Le tirage a lieu quel que soit le curseur : c'est lui qui, autrefois
+    # sauté sous 0,5 de saleté, décalait tout le reste du son.
+    if tirage("réduction").random() < dirt and dirt > 0.5:
         if "sampleRateReduction" in profile.fx:
             sound.set_param("sampleRateReduction",
-                            _disp(_span(rng, profile.fx["sampleRateReduction"],
+                            _disp(_span(tirage("fréquence réduite"),
+                                        profile.fx["sampleRateReduction"],
                                         dirt)))
         if "bitCrush" in profile.fx:
             sound.set_param("bitCrush",
-                            _disp(_span(rng, profile.fx["bitCrush"], dirt)))
+                            _disp(_span(tirage("bitcrush"), profile.fx["bitCrush"],
+                                        dirt)))
 
 
 def _apply_envelopes(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                     rng: random.Random) -> None:
+                     tirage: _Tirages) -> None:
     """Règle l'enveloppe d'amplitude et celle de modulation."""
-    def _env(ranges: dict, bias: float) -> Envelope:
+    def _env(name: str, ranges: dict, bias: float) -> Envelope:
         return Envelope(
-            attack=_disp(_span(rng, ranges.get("attack", (0, 6)), bias)),
-            decay=_disp(_span(rng, ranges.get("decay", (14, 30)), bias)),
-            sustain=_disp(_span(rng, ranges.get("sustain", (20, 40)), bias)),
-            release=_disp(_span(rng, ranges.get("release", (10, 24)), bias)),
+            attack=_disp(_span(tirage(name + " attaque"),
+                               ranges.get("attack", (0, 6)), bias)),
+            decay=_disp(_span(tirage(name + " decay"),
+                              ranges.get("decay", (14, 30)), bias)),
+            sustain=_disp(_span(tirage(name + " sustain"),
+                                ranges.get("sustain", (20, 40)), bias)),
+            release=_disp(_span(tirage(name + " release"),
+                                ranges.get("release", (10, 24)), bias)),
         )
 
-    sound.env1 = _env(profile.env1, 0.5)
-    sound.env2 = _env(profile.env2 or profile.env1, _clamp01(opts.movement))
+    sound.env1 = _env(untranslated("env 1"), profile.env1, 0.5)
+    sound.env2 = _env(untranslated("env 2"), profile.env2 or profile.env1,
+                      _clamp01(opts.movement))
 
 
 def _apply_lfos(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                rng: random.Random) -> None:
+                tirage: _Tirages) -> None:
     """Choisit les formes et les vitesses des deux LFO."""
     types = profile.lfo_types or ["triangle"]
-    sound.lfo1 = LFO(type=rng.choice(types))
-    sound.lfo2 = LFO(type=rng.choice(types))
+    sound.lfo1 = LFO(type=tirage("forme 1").choice(types))
+    sound.lfo2 = LFO(type=tirage("forme 2").choice(types))
     movement = _clamp01(opts.movement)
-    sound.set_param("lfo1Rate", _disp(_span(rng, profile.lfo_rate, movement)))
-    sound.set_param("lfo2Rate", _disp(_span(rng, profile.lfo_rate,
+    sound.set_param("lfo1Rate", _disp(_span(tirage("vitesse 1"), profile.lfo_rate,
+                                            movement)))
+    sound.set_param("lfo2Rate", _disp(_span(tirage("vitesse 2"), profile.lfo_rate,
                                             movement * 0.7)))
     # Le LFO 1 se cale sur le tempo selon le genre : c'est le « wobble » de
     # la dubstep, la pulsation de la trance. Valeurs de fichier : 5 = noire,
     # 6 = croche, 7 = double-croche.
     chance, levels = profile.lfo_sync
-    if levels and rng.random() < max(0.0, min(1.0, chance)):
-        sound.lfo1.sync_level = int(rng.choice(list(levels)))
+    r = tirage("synchro 1")
+    if levels and r.random() < max(0.0, min(1.0, chance)):
+        sound.lfo1.sync_level = int(r.choice(list(levels)))
     # Le LFO 2 aussi, plus rarement, pour un mouvement rythmique secondaire.
-    if rng.random() < 0.35 * movement + 0.1:
-        sound.lfo2.sync_level = rng.choice([5, 6, 7, 7, 8])
+    r = tirage("synchro 2")
+    if r.random() < 0.35 * movement + 0.1:
+        sound.lfo2.sync_level = r.choice([5, 6, 7, 7, 8])
 
 
 def _apply_unison(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                  rng: random.Random) -> None:
+                  tirage: _Tirages) -> None:
     """Règle l'unisson et le désaccord, qui font la largeur du son."""
     width = _clamp01(opts.width)
-    sound.unison_num = _span(rng, profile.unison, width)
-    sound.unison_detune = _span(rng, profile.detune, width)
-    sound.unison_spread = int(round(width * rng.uniform(0, 40)))
+    sound.unison_num = _span(tirage("unisson"), profile.unison, width)
+    sound.unison_detune = _span(tirage("désaccord"), profile.detune, width)
+    sound.unison_spread = int(round(width * tirage("étalement").uniform(0, 40)))
     # Le panoramique reste modéré : un son trop latéralisé gêne au mixage.
-    if rng.random() < 0.25:
-        sound.set_param("pan", _disp(int(rng.uniform(-8, 8)), bipolar=True))
+    r = tirage("panoramique")
+    if r.random() < 0.25:
+        sound.set_param("pan", _disp(int(r.uniform(-8, 8)), bipolar=True))
 
 
 def _apply_fx(sound: Sound, profile: GenreProfile, opts: GenOptions,
-              rng: random.Random) -> None:
+              tirage: _Tirages) -> None:
     """Règle réverbération, délai et effets de modulation."""
     space = _clamp01(opts.space)
     for key, bounds in (profile.fx or {}).items():
@@ -536,34 +624,36 @@ def _apply_fx(sound: Sound, profile: GenreProfile, opts: GenOptions,
             continue        # déjà traités avec la saleté
         bias = space if key in ("reverbAmount", "delayFeedback",
                                 "delayRate") else _clamp01(opts.movement)
-        sound.set_param(key, _disp(_span(rng, bounds, bias)))
+        sound.set_param(key, _disp(_span(tirage(key), bounds, bias)))
 
     # Effet de modulation à la fréquence des vrais presets du rôle au centre
     # du curseur de largeur, qui la divise ou la multiplie par 2,5 à ses
     # extrémités.
     chance, kinds = _MOD_FX.get(_kin(opts.role), (0.22, [("chorus", 1.0)]))
-    if rng.random() < chance * (0.4 + 1.2 * _clamp01(opts.width)):
-        sound.mod_fx_type = _pick(rng, kinds, "chorus")
+    r = tirage("effet de modulation")
+    if r.random() < chance * (0.4 + 1.2 * _clamp01(opts.width)):
+        sound.mod_fx_type = _pick(r, kinds, "chorus")
         if "modFXDepth" not in (profile.fx or {}):
-            sound.set_param("modFXDepth", _disp(_span(rng, (8, 30))))
+            sound.set_param("modFXDepth", _disp(_span(tirage("profondeur"),
+                                                      (8, 30))))
     sound.delay_sync_level = int(_pick(
-        rng, [(str(v), w) for v, w in _DELAY_SYNC.get(_kin(opts.role),
-                                                       [(6, 1.0)])], "6"))
-    # Volume médian des vrais presets : 38 à 40.
-    sound.set_param("volume", _disp(_span(rng, (30, 44), 0.5)))
+        tirage("synchro du délai"),
+        [(str(v), w) for v, w in _DELAY_SYNC.get(_kin(opts.role),
+                                                 [(6, 1.0)])], "6"))
 
 
 def _apply_cables(sound: Sound, profile: GenreProfile, opts: GenOptions,
-                  rng: random.Random) -> None:
+                  tirage: _Tirages) -> None:
     """Pose les modulations (patch cables) d'après les recettes du genre."""
     recipes = profile.cable_recipes or [[("envelope2", "lpfFrequency",
                                           (12, 34))]]
-    recipe = list(rng.choice(recipes))
+    recipe = list(tirage("recette").choice(recipes))
     complexity = _clamp01(opts.complexity)
 
     cables: list[PatchCable] = []
-    for source, destination, bounds in recipe:
-        amount = _span(rng, bounds, 0.4 + 0.5 * complexity)
+    for index, (source, destination, bounds) in enumerate(recipe):
+        amount = _span(tirage("recette %d" % index), bounds,
+                       0.4 + 0.5 * complexity)
         cables.append(PatchCable(
             source=source, destination=destination,
             amount=PatchCable.amount_from_display(amount)))
@@ -581,7 +671,7 @@ def _apply_cables(sound: Sound, profile: GenreProfile, opts: GenOptions,
         ("aftertouch", "lpfFrequency", (6, 20)),
         ("random", "oscAPitch", (2, 8)),
     ]
-    rng.shuffle(extras)
+    tirage("appoint").shuffle(extras)
     wanted = int(round(complexity * 3))
     taken = 0
     # On écarte les destinations **déjà modulées par la recette**, et pas
@@ -599,15 +689,15 @@ def _apply_cables(sound: Sound, profile: GenreProfile, opts: GenOptions,
         cables.append(PatchCable(
             source=source, destination=destination,
             amount=PatchCable.amount_from_display(
-                _span(rng, bounds, complexity))))
+                _span(tirage("appoint " + destination), bounds, complexity))))
         busy.add(destination)
         taken += 1
 
-    _add_playing_cables(sound, opts, rng, cables)
+    _add_playing_cables(sound, opts, tirage, cables)
     sound.patch_cables = cables
 
 
-def _add_playing_cables(sound: Sound, opts: GenOptions, rng: random.Random,
+def _add_playing_cables(sound: Sound, opts: GenOptions, tirage: _Tirages,
                         cables: list[PatchCable]) -> None:
     """Pose les modulations qui rendent un preset jouable au clavier.
 
@@ -623,29 +713,33 @@ def _add_playing_cables(sound: Sound, opts: GenOptions, rng: random.Random,
     if "volume" not in targets:
         cables.append(PatchCable(
             "velocity", "volume",
-            PatchCable.amount_from_display(_span(rng, (30, 50), 0.8))))
+            PatchCable.amount_from_display(_span(tirage("vélocité"), (30, 50),
+                                                 0.8))))
 
     lfo1_free = (sound.lfo1.sync_level == 0
                  and not any(c.source == "lfo1" for c in cables))
+    r = tirage("vibrato")
     if (opts.role in _VIBRATO_ROLES and lfo1_free and "pitch" not in targets
-            and rng.random() < 0.55):
+            and r.random() < 0.55):
         cables.append(PatchCable(
             "lfo1", "pitch", PatchCable.amount_from_display(
-                _span(rng, (2, 6)))))
+                _span(r, (2, 6)))))
 
+    r = tirage("suivi de clavier")
     if (opts.role in _KEYTRACK_ROLES and ("note", "lpfFrequency") not in busy
-            and rng.random() < 0.3):
+            and r.random() < 0.3):
         cables.append(PatchCable(
             "note", "lpfFrequency", PatchCable.amount_from_display(
-                _span(rng, (8, 20)))))
+                _span(r, (8, 20)))))
 
     # Les sons tenus bougent dans l'espace stéréo (``random → pan`` :
     # 126 presets de la carte, ``lfo2 → pan`` : 56).
+    r = tirage("panoramique modulé")
     if (opts.role in ("pad", "drone") and "pan" not in targets
-            and rng.random() < 0.6):
+            and r.random() < 0.6):
         cables.append(PatchCable(
-            rng.choice(["lfo2", "random"]), "pan",
-            PatchCable.amount_from_display(_span(rng, (8, 22)))))
+            r.choice(["lfo2", "random"]), "pan",
+            PatchCable.amount_from_display(_span(r, (8, 22)))))
 
     # En FM, une enveloppe qui referme le modulateur donne l'attaque
     # brillante qui s'adoucit — celle des pianos électriques et des cloches
@@ -654,18 +748,18 @@ def _add_playing_cables(sound: Sound, opts: GenOptions, rng: random.Random,
             and "modulator1Amount" not in targets):
         cables.append(PatchCable(
             "envelope2", "modulator1Amount", PatchCable.amount_from_display(
-                _span(rng, (14, 34)))))
+                _span(tirage("enveloppe FM"), (14, 34)))))
 
 
 def _apply_arp(sound: Sound, profile: GenreProfile, opts: GenOptions,
-               rng: random.Random, role: str) -> None:
+               tirage: _Tirages, role: str) -> None:
     """Active l'arpégiateur selon la probabilité du genre et du rôle."""
-    if rng.random() >= max(0.0, min(1.0, profile.arp_probability)):
+    if tirage("arpège").random() >= max(0.0, min(1.0, profile.arp_probability)):
         sound.arp.mode = "off"
         sound.arp.arp_mode = "off"
         return
-    old = _pick(rng, [("up", 3.0), ("down", 1.5), ("both", 1.5),
-                      ("random", 1.0)], "up")
+    old = _pick(tirage("sens"), [("up", 3.0), ("down", 1.5), ("both", 1.5),
+                            ("random", 1.0)], "up")
     # Le firmware c1.x **ignore** l'ancien attribut ``mode`` dès que le
     # fichier se déclare c1.2.0 ou plus récent (``sound.cpp``) : il lit
     # ``arpMode``, ``noteMode`` et ``octaveMode``. Les presets générés sont
@@ -675,17 +769,18 @@ def _apply_arp(sound: Sound, profile: GenreProfile, opts: GenOptions,
     sound.arp.arp_mode = "arp"
     sound.arp.note_mode = {"up": "up", "down": "down", "both": "upDown",
                            "random": "random"}[old]
-    sound.arp.octave_mode = _pick(rng, [("up", 5.0), ("upDown", 1.5),
-                                        ("alt", 0.8)], "up")
+    sound.arp.octave_mode = _pick(tirage("octaves"), [("up", 5.0), ("upDown", 1.5),
+                                                 ("alt", 0.8)], "up")
     # Octaves relevées sur les 80 arpèges de la carte : 2 (47), 1 (25), 3 (6).
-    sound.arp.num_octaves = int(_pick(rng, [("2", 5.0), ("1", 3.0),
-                                            ("3", 1.0)], "2"))
-    sound.arp.sync_level = int(_pick(rng, [(str(v), w) for v, w in _ARP_SYNC],
+    sound.arp.num_octaves = int(_pick(tirage("étendue"), [("2", 5.0), ("1", 3.0),
+                                                     ("3", 1.0)], "2"))
+    sound.arp.sync_level = int(_pick(tirage("division"),
+                                     [(str(v), w) for v, w in _ARP_SYNC],
                                      "7"))
     # Vitesse au neutre (72 arpèges sur 80) : la division vient de la
     # synchro, la vitesse ne fait que la décaler.
     sound.set_param("arpeggiatorRate", _disp(25))
-    sound.set_param("arpeggiatorGate", _disp(_span(rng, (18, 32))))
+    sound.set_param("arpeggiatorGate", _disp(_span(tirage("durée"), (18, 32))))
 
 
 # --------------------------------------------------------------------------- #
@@ -886,6 +981,144 @@ def variations(preset: SynthPreset, n: int = 8, amount: float = 0.3,
             f"{preset.sound.name[:56]} {i + 1}")
         variant.name = variant.sound.name
         out.append(variant)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Variantes dans le style
+# --------------------------------------------------------------------------- #
+
+#: Variantes « dans une direction » : le même son, un curseur poussé. La
+#: graine ne change pas, et chaque décision a son propre tirage
+#: (:class:`_Tirages`) : seuls bougent les réglages que ce curseur règle.
+NUDGES: dict[str, tuple[str, float]] = {
+    N_("Plus brillant"): ("brightness", 0.2),
+    N_("Plus sombre"): ("brightness", -0.2),
+    N_("Plus sale"): ("dirt", 0.2),
+    N_("Plus propre"): ("dirt", -0.2),
+    N_("Plus large"): ("width", 0.2),
+    N_("Plus étroit"): ("width", -0.2),
+    N_("Plus d'espace"): ("space", 0.2),
+    N_("Plus sec"): ("space", -0.2),
+    N_("Plus de mouvement"): ("movement", 0.2),
+    N_("Plus statique"): ("movement", -0.2),
+}
+
+#: Aspects qu'une variante tire à nouveau. Le moteur et l'arpège n'y sont
+#: pas : changer de moteur fait un autre instrument, et l'arpégiateur est
+#: éteint sur la plupart des sons.
+VARIABLE_FACETS = ("timbre", "filtre", "enveloppes", "mouvement", "espace",
+                   "modulations", "largeur")
+
+#: Libellé d'une variante qui tire un aspect à nouveau.
+FACET_LABELS: dict[str, str] = {
+    "timbre": N_("Autre timbre"), "filtre": N_("Autre filtre"),
+    "enveloppes": N_("Autres enveloppes"), "mouvement": N_("Autre mouvement"),
+    "espace": N_("Autre espace"), "modulations": N_("Autres modulations"),
+    "largeur": N_("Autre largeur"),
+}
+
+
+def _copy_options(opts: GenOptions) -> GenOptions:
+    return replace(opts, use_samples=list(opts.use_samples or []),
+                   facets=dict(opts.facets or {}))
+
+
+def nudged(opts: GenOptions, label: str) -> GenOptions | None:
+    """Les réglages de ``opts``, un curseur poussé (:data:`NUDGES`).
+
+    Rend ``None`` si le curseur est déjà en butée : la variante serait le
+    même son.
+    """
+    if label not in NUDGES:
+        raise ValueError(tr("variante inconnue : %s") % label)
+    macro, delta = NUDGES[label]
+    current = _clamp01(getattr(opts, macro, 0.5))
+    target = _clamp01(current + delta)
+    if abs(target - current) < 1e-6:
+        return None
+    out = _copy_options(opts)
+    setattr(out, macro, round(target, 3))
+    return out
+
+
+def rerolled(opts: GenOptions, facet: str, seed: int) -> GenOptions:
+    """Les réglages de ``opts``, un seul aspect tiré à nouveau."""
+    if facet not in FACETS:
+        raise ValueError(tr("aspect inconnu : %s") % facet)
+    out = _copy_options(opts)
+    out.facets[facet] = int(seed)
+    return out
+
+
+@dataclass
+class Variant:
+    """Une variante d'un preset généré : son libellé (clé française,
+    traduite à l'affichage), ses réglages, et le preset obtenu."""
+
+    label: str
+    options: GenOptions
+    preset: SynthPreset
+    #: L'aspect tiré à nouveau, ou le curseur poussé.
+    changed: str = ""
+    #: Le preset porte des retouches faites à la main
+    #: (:func:`.soundedit.carry_edits`) : ``generate(options)`` ne le refait
+    #: plus.
+    retouched: bool = False
+
+
+def style_variations(opts: GenOptions, n: int = 8,
+                     seed: int | None = None) -> list[Variant]:
+    """``n`` variantes **dans le style** du son que donnent ``opts``.
+
+    Une variante ne sort jamais du profil du genre et du rôle : elle tire à
+    nouveau un seul aspect (un autre filtre, d'autres enveloppes…) ou pousse
+    un seul curseur (plus brillant, plus sale…), le reste du son restant
+    identique. ``mutate`` déplace au contraire chaque réglage au hasard, sans
+    connaître le profil.
+
+    Les aspects d'abord, puis les directions, du côté où le curseur a le
+    plus de marge. Reproductible pour une même ``seed``.
+    """
+    base_seed = seed if seed is not None else random.randrange(1 << 30)
+    rng = random.Random(f"variantes|{base_seed}")
+    # Les aspects dans un ordre propre à la graine : deux séries de variantes
+    # ne commencent pas toutes par le timbre.
+    facets = [("facet", f) for f in VARIABLE_FACETS]
+    rng.shuffle(facets)
+    nudges = []
+    for up, down in ((N_("Plus brillant"), N_("Plus sombre")),
+                     (N_("Plus sale"), N_("Plus propre")),
+                     (N_("Plus d'espace"), N_("Plus sec")),
+                     (N_("Plus large"), N_("Plus étroit")),
+                     (N_("Plus de mouvement"), N_("Plus statique"))):
+        current = _clamp01(getattr(opts, NUDGES[up][0], 0.5))
+        nudges.append(("nudge", up if current <= 0.5 else down))
+    # Aspect et direction en alternance : les premières variantes couvrent
+    # déjà les deux façons de varier.
+    order: list[tuple[str, str]] = []
+    while facets or nudges:
+        if facets:
+            order.append(facets.pop(0))
+        if nudges:
+            order.append(nudges.pop(0))
+    out: list[Variant] = []
+    base_name = (opts.name or "").strip()
+    for index, (kind, key) in enumerate(order[:max(0, int(n))]):
+        if kind == "facet":
+            options = rerolled(opts, key, rng.randrange(1 << 30))
+            label = FACET_LABELS[key]
+        else:
+            options = nudged(opts, key)
+            if options is None:
+                continue
+            label = key
+        preset = generate(options)
+        if base_name:
+            preset.sound.name = safe_deluge_name(f"{base_name[:56]} {index + 2}")
+            preset.name = preset.sound.name
+        out.append(Variant(label=label, options=options, preset=preset,
+                           changed=key))
     return out
 
 

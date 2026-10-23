@@ -97,6 +97,8 @@ TEXTS = {
     "Utiliser cette carte": "Use this card",
     "Chemins récents": "Recent paths",
     "Aucun chemin récent": "No recent path",
+    "%d chemin(s) déjà utilisé(s) — choisir…":
+        "%d path(s) used before — choose…",
     "Ce dossier n'existe pas.": "This folder does not exist.",
     "Arborescence Deluge reconnue — %s libres sur %s.":
         "Deluge folder tree recognised — %s free out of %s.",
@@ -149,10 +151,12 @@ TEXTS = {
         "Connect as soon as the Deluge appears",
     "Écouter les presets sur le Deluge plutôt que sur l'ordinateur":
         "Play presets on the Deluge rather than on the computer",
-    "Le son vient alors du vrai moteur de la machine, et non de "
-    "l'approximation calculée par l'application":
-        "The sound then comes from the machine's real engine, not from the "
-        "approximation computed by the application",
+    "Le Deluge joue alors : l'instrument sélectionné sur lui prend les "
+    "réglages du preset qu'un bouton pilote — filtres, enveloppes, effets —, "
+    "mais garde ses propres oscillateurs":
+        "The Deluge then plays: the instrument selected on it takes the "
+        "preset's knob settings — filters, envelopes, effects — but keeps its "
+        "own oscillators",
     "Les outils suivent le tempo du Deluge":
         "The tools follow the Deluge's tempo",
     "Quand la machine joue, son horloge donne le tempo des écoutes, des "
@@ -172,17 +176,18 @@ TEXTS = {
     "Écran de la machine, tempo, notes et son sélectionné":
         "The machine's screen, tempo, notes and selected sound",
     "Déconnecter": "Disconnect",
-    "<b>Sur le Deluge</b>, une fois : MIDI ▸ Follow ▸ <b>Channel A = %d</b> "
-    "— sans ce réglage, la machine ignore ce que l'application joue — puis "
-    "<b>Feedback = Channel A</b>, pour que le son sélectionné revienne à "
-    "l'application. L'horloge, elle, sort d'elle-même (MIDI ▸ Clock ▸ Out). "
-    "Un kit répond à partir de la note 36 (Follow ▸ Kit Root Note).":
-        "<b>On the Deluge</b>, once: MIDI ▸ Follow ▸ <b>Channel A = %d</b> — "
-        "without this setting, the machine ignores what the application "
-        "plays — then <b>Feedback = Channel A</b>, so that the selected "
-        "sound comes back to the application. The clock goes out by itself "
-        "(MIDI ▸ Clock ▸ Out). A kit responds from note 36 (Follow ▸ Kit "
-        "Root Note).",
+    "<b>Sur le Deluge</b>, une fois : MIDI ▸ MIDI-Follow ▸ Channel ▸ "
+    "<b>Channel A = %d</b> — sans ce réglage, la machine ignore ce que "
+    "l'application joue — puis MIDI-Follow ▸ Feedback ▸ <b>Channel = A</b>, "
+    "pour que le son sélectionné revienne à l'application. L'horloge, elle, "
+    "sort d'elle-même (MIDI ▸ Clock ▸ Output). Un kit répond à partir de la "
+    "note 36 (MIDI-Follow ▸ Kit Root Note).":
+        "<b>On the Deluge</b>, once: MIDI ▸ MIDI-Follow ▸ Channel ▸ "
+        "<b>Channel A = %d</b> — without this setting, the machine ignores "
+        "what the application plays — then MIDI-Follow ▸ Feedback ▸ "
+        "<b>Channel = A</b>, so that the selected sound comes back to the "
+        "application. The clock goes out by itself (MIDI ▸ Clock ▸ Output). A "
+        "kit responds from note 36 (MIDI-Follow ▸ Kit Root Note).",
     "Cette machine n'expose pas de MIDI : %s":
         "This computer exposes no MIDI: %s",
     "cause inconnue": "unknown cause",

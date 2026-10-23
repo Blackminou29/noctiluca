@@ -191,6 +191,31 @@ les traiter comme « toujours » plutôt que comme une probabilité.
 > commence **avant la fin de la précédente est ignorée**. Un écrivain doit raccourcir la
 > première (`songwriter._clean_notes`).
 
+> **Correction mesurée (22 octobre 2026) — le firmware 1.3 lit un autre format.**
+> Lu dans le code de la machine (1.3, commit `102cf9f`, `NoteRow::readFromFile`) : un
+> morceau qui se **déclare** `c1.3.0` ou plus récent ne lit ses notes que dans
+> `noteDataWithSplitProb`, **28 caractères** par note :
+> `pos(8) length(8) velocity(2) lift(2) probabilité(2) iterance(4) fill(2)` — probabilité
+> 20 = toujours, iterance `0000` = éteinte, fill `00` = aucun. `noteDataWithLift` n'y est
+> lu que pour les morceaux plus anciens ; la branche de développement écrit
+> `noteDataWithIteranceAndFill` (26 caractères). Un morceau enregistré une fois en 1.3 ne
+> parle donc plus que ce format. `model.NOTE_BLOBS` lit les quatre
+> (`decode_notes(blob, width=)`), `model.note_blob_tag(firmware)` dit lequel écrire, et
+> `Note` porte `iterance` et `fill`. Vérifié sur 195 morceaux : **aucune note lue
+> autrement** qu'avant. La copie de travail, le soir même : 52 morceaux — 40 en 3.0.4
+> (`noteData`), 11 en c1.2.1 (`noteDataWithLift`) et **Calm Down, réenregistré par la
+> machine en 1.3** à 17 h 15 (`firmwareVersion="c1.3.0"`,
+> `earliestCompatibleFirmware="4.1.0-alpha"`). Ses 162 notes confirment l'ordre des
+> champs : probabilité 20 pour 160 d'entre elles, iterance `0000` pour 154 (huit en
+> portent une : `0201`, `0301`, `0401`), fill `00` pour toutes ; une note garde une
+> ancienne condition 134. Une copie complétée par `songinsert` (§4.37) relit ses 318
+> notes, toutes au format 28 caractères, arrangement identique à l'octet.
+>
+> Les clips d'une piste MIDI ou CV se lisent aussi : `Clip.kind` (`midi`, `cv`, `kit`,
+> `synth`, `audio`), `Clip.channel` (attribut `midiChannel` ou `cvChannel`, compté de 0),
+> `Clip.suffix` (`midiChannelSuffix`). Les morceaux de l'utilisateur ont 20 pistes MIDI,
+> aucune CV.
+
 ### 1.7 Chemins d'échantillons
 `fileName` est relatif à la racine SD, séparateur `/`, **casse non fiable**
 (`SAMPLES/Multisamples/…` alors que le dossier réel est `SAMPLES/MULTISAMPLES`).
@@ -354,6 +379,11 @@ delugeapp/
     delugefiles.py              # la carte par USB, firmware 1.3 (§4.33)
     cardsync.py                 # copie de travail et synchronisation (§4.34)
     cardimport.py               # envoyer au Deluge, du PC vers la carte (§4.35)
+    variation.py                # variations d'un clip (§4.36)
+    songinsert.py               # compléter un morceau sans le réécrire (§4.37)
+    atelier.py                  # le projet de l'atelier (§4.38)
+    paramlaws.py                # les lois des réglages, lues dans le firmware (§4.39)
+    soundedit.py                # les réglages d'un son, modifiables à la main (§4.40)
   ui/
     __init__.py
     theme.py
@@ -376,6 +406,8 @@ delugeapp/
       piano.py
       filtercurve.py
       delugescreen.py           # l'écran de la machine, pixel pour pixel
+      atelierviews.py           # le clip et la grille des sections (§5.28)
+      soundeditor.py            # l'éditeur de son et sa fenêtre (§5.29)
     pages/
       __init__.py
       dashboard.py
@@ -384,6 +416,7 @@ delugeapp/
       kits.py
       songs.py
       generator.py
+      atelier.py                # l'Atelier (§5.28)
       toolbox.py
       health.py
       settings.py
@@ -392,6 +425,7 @@ tests/
   test_core.py
   test_ui.py
   test_i18n.py                  # le catalogue suit le code (§5.26)
+  test_atelier.py               # variations, atelier, compléter, jouer calé (§4.36-4.38)
   i18n_analyse.py               # lecture du code par son arbre, sans l'importer
   deluge_simule.py              # un Deluge simulé, fidèle aux mesures
 ```
@@ -405,7 +439,7 @@ tests/
 APP_NAME = "Deluge Companion"
 APP_ORG  = "DelugeCompanion"
 CONFIG_DIR: Path            # %APPDATA%/DelugeCompanion (créé au besoin)
-DB_PATH: Path               # CONFIG_DIR/library.sqlite3
+DB_PATH: Path               # CONFIG_DIR/library.db
 
 @dataclass
 class Settings:
@@ -1054,6 +1088,38 @@ de `seed`. `generate()` doit utiliser `random.Random(seed)` — jamais le `rando
 > une même graine ne fait plus les mêmes choix dans tous les genres. Une graine donne donc un
 > autre son qu'avant ce recalage — la reproductibilité vaut à version égale du générateur.
 
+#### 4.16.1 Des tirages nommés, et des variantes qui restent dans le style
+
+Chaque décision du son a **son propre tirage** : `_Tirages(base)("coupure")` rend un
+`random.Random` tiré de la graine de l'aspect et du nom de la décision. Un aspect
+(`FACETS` : moteur, timbre, filtre, enveloppes, mouvement, largeur, espace,
+modulations, arpège) a sa graine, `GenOptions.facets[aspect]`, la graine générale par
+défaut.
+
+> **Pourquoi (mesuré).** Tous les tirages passaient par un seul générateur : un curseur
+> qui ouvrait une branche consommait un nombre de plus et décalait tout ce qui suivait.
+> À graine égale, 0,5 → 0,7 de saleté changeait **18 réglages** en médiane et la
+> structure du son (oscillateurs, câbles, mode de jeu) dans **584 cas sur 660**. Après :
+> 1 réglage en médiane, **0** changement de structure. La mesure de plausibilité (102
+> sur 104) et les 6 signatures de genre sont inchangées ; les dix poussées sont
+> monotones (0 violation sur 660).
+
+```python
+NUDGES: dict[str, tuple[str, float]]     # « Plus brillant » -> ("brightness", +0.2)…
+VARIABLE_FACETS: tuple[str, ...]          # les aspects qu'une variante retire
+def nudged(opts, label) -> GenOptions | None      # None : curseur déjà en butée
+def rerolled(opts, facet, seed) -> GenOptions     # un seul aspect retiré
+@dataclass
+class Variant: label: str; options: GenOptions; preset: SynthPreset; changed: str = ""
+               retouched: bool = False   # porte des retouches (§4.40)
+def style_variations(opts, n=8, seed=None) -> list[Variant]
+```
+
+`style_variations` alterne un aspect retiré et un curseur poussé : le reste du son ne
+bouge pas, et le genre ne change jamais. Les noms suivent celui du son
+(`« SOFT BRIQUE 62 3 »`). Les noms des tirages sont des graines, pas des textes : ils ne
+se traduisent pas (l'analyse des textes exempte `tirage(…)`).
+
 ### 4.17 `delugeapp/core/kitgen.py`
 ```python
 @dataclass
@@ -1266,6 +1332,27 @@ def spectrum(data: np.ndarray, sr: int, n: int = 4096) -> tuple[np.ndarray, np.n
 ```
 Qualité attendue : plausible, pas exact. Aucune dépendance hors numpy. Doit rendre 2,5 s
 en moins de 400 ms.
+
+> **Correction mesurée (22 octobre 2026) — « plausible » ne suffisait pas.**
+> L'utilisateur a écrit un morceau dans l'atelier, l'a chargé sur le Deluge : les sons
+> écoutés sur le PC n'avaient « rien à voir ». Le moteur traduisait les réglages par des
+> courbes estimées. Relevé sur ses trois synthés, contre le portage entier du code du
+> firmware (1.3, commit `102cf9f`) : un decay de 13 durait **36 ms au lieu de 1,8 s**, un
+> release de 24 0,19 s au lieu de 2,2 s ; un vibrato de 5 balançait ±1,2 demi-ton au lieu
+> de ±0,34 ; `random → oscAPitch` faisait **dériver** la hauteur à 3 Hz quand le firmware
+> tire une valeur par note ; les enveloppes et la vélocité, sources **bipolaires** pour un
+> câble sans polarité, étaient lues de 0 à 1 — la nappe que l'enveloppe 2 referme sur la
+> machine restait ouverte ; les volumes, quadratiques, étaient linéaires ; l'unisson était
+> quatre fois trop désaccordé. Les réglages passent désormais par `paramlaws` (§4.39) ; le
+> traitement du signal reste approché (formes d'onde, résonance d'une échelle à
+> transistors rendue par un filtre à deux pôles, effets). Mesuré après : sur HARD CLOUD,
+> la hauteur varie de 10 cents d'écart-type au lieu de 77, et le niveau tombe de 25 dB en
+> une seconde au lieu de monter ; aucun des 228 presets de l'utilisateur rendus n'est
+> muet. `render_sound` prend `bpm` (LFO et delay calés) et `glide_from` (glissé) ;
+> `render_parts` coupe la note précédente d'un son mono, fait glisser, et laisse à chaque
+> note le release de son son (`tail_seconds`, 4 s au plus). Un réglage se lit dans
+> l'entier du fichier (`paramlaws.raw_unit`), pas dans l'affichage arrondi : celui-ci
+> montre le panoramique en bipolaire, 0 au centre.
 
 ### 4.22 `delugeapp/core/samplefix.py` — correction des défauts audio
 
@@ -1629,6 +1716,23 @@ position absolue pour elles. Vérifié : **aucun des 46 morceaux de la carte
 n'utilise la vue arrangement**, et aucun attribut de position n'apparaît dans
 leur XML. Inventer un placement dans le temps serait une fiction.
 
+> **Correction mesurée (22 octobre 2026) — des morceaux ont un arrangement.** La
+> phrase ci-dessus valait pour les 46 morceaux d'alors, tous en 3.0.4. Sur la copie de
+> travail du 22 octobre (52 morceaux), **quatre morceaux du compositeur**, faits sur la
+> machine, ont des `clipInstances` : Calm Down (146 instances, et des clips
+> d'**arrangement seul** dans `<arrangementOnlyTracks>`), Nimp1 et Nimp1 2 (52), SONG1
+> (21) ; les morceaux écrits par l'application en ont aussi. L'export MIDI place encore
+> toutes les pistes au même départ : c'est désormais une **limite** de `song_to_midi`,
+> plus une contrainte des données.
+>
+> Une instance vaut `pos(8) length(8) code(8)`. Le code est le rang du clip **parmi les
+> clips de session**, ou, bit 31 levé, parmi les clips d'arrangement seul ;
+> `0xFFFFFFFF` = aucun clip (`Output::writeDataToFile`,
+> `Song::setupClipIndexesForSaving`, 1.3 commit `102cf9f`). Calm Down désigne ainsi les
+> siens par `80000000`, `80000002`, `80000001`. Les clips neufs de `songinsert` (§4.37)
+> vont donc **à la fin de `<sessionClips>`** : aucune référence ne bouge
+> (`test_l_arrangement_seul_ne_bouge_pas`).
+
 ### 4.27 `delugeapp/core/units.py` — grandeurs mises en forme
 
 ```python
@@ -1752,10 +1856,20 @@ tout ce qui dépasse `0x7F000000` vaut 127. Les largeurs d'impulsion
 
 **Sur une machine neuve, MIDI Follow est éteint** — canaux A, B et C non
 réglés (`resetMidiFollowSettings`) — **et son retour aussi**. Rien ne revient
-tant que l'utilisateur n'a pas réglé MIDI ▸ Follow ▸ Channel A, puis
-Feedback. Retour actif, la machine envoie chaque paramètre appris au
-changement d'instrument, puis à chaque bouton tourné. Un kit répond à partir
-de la note 36 (Follow ▸ Kit Root Note). L'interface dit d'où vient la table
+tant que l'utilisateur n'a pas réglé MIDI ▸ MIDI-Follow ▸ Channel ▸
+Channel A, puis MIDI-Follow ▸ Feedback ▸ Channel = A. Retour actif, la
+machine envoie chaque paramètre appris au changement d'instrument, puis à
+chaque bouton tourné. Un kit répond à partir de la note 36 (MIDI-Follow ▸
+Kit Root Note).
+
+> **Correction mesurée (21 octobre 2026).** Les chemins écrits jusque-là
+> (« MIDI ▸ Follow ▸ Channel A », « Feedback = Channel A », « MIDI ▸ Clock ▸
+> Out ») n'étaient pas ceux de l'écran. Lus dans `gui/ui/menus.cpp` et
+> `gui/l10n/english.json` du firmware de la machine (commit `102cf9f`), et
+> identiques en `release_1_2_1` : le sous-menu s'intitule « MIDI-Follow »,
+> Channel A est dans « Channel », le retour est « Feedback ▸ Channel », et
+> l'horloge sortante « Clock ▸ Output » (`midiOutClockEnabled = true` d'usine).
+> Corrigés dans l'interface, le manuel et le README. L'interface dit d'où vient la table
 (`load_map_with_source`) : sans `MIDIFollow.XML` lu, ce sont les valeurs
 d'usine, et l'annoncer « lue sur la carte » serait faux.
 
@@ -1790,9 +1904,11 @@ défaut écraserait sur la machine un réglage que l'application ne connaît pas
 
 ```python
 SYSEX_CABLE = 3; CLOCK_TIMEOUT = 1.0; CLOCK_WINDOW = 24; SCREEN_REFRESH = 1.0
-IDENTITY_RETRY = 2.0; IDENTITY_TRIES = 3
+IDENTITY_RETRY = 2.0; IDENTITY_TRIES = 3; SYNC_TIMEOUT = 0.2; SYNC_FALLBACK = 0.03
 def tempo_from_ticks(stamps) -> float | None   # horodatages du pilote, en ms
 def latency_text(ms) -> str                    # « 0,3 ms », « 41 ms »
+def takeover_steps(target, current=None, playing=False) -> list[int]
+                                               # de quoi rattraper un bouton
 
 class DelugeLink:
     connect(out_name="", in_name="", card=None) -> bool   # câbles 1 et 3
@@ -1806,7 +1922,7 @@ class DelugeLink:
     files: DelugeFiles | None            # la carte par USB (§4.33), créé à la
     wait_files(timeout) -> bool | None   # connexion, sondé en arrière-plan
     machine_values() -> dict[str, int]   # comme son écran : 0..50, ±25
-    send_sound(sound, keys=None) -> int  # nombre de contrôleurs envoyés
+    send_sound(sound, keys=None) -> int  # nombre de réglages envoyés, cadencés
     send_param(key, raw) -> bool         # un bouton qui tourne
     play_notes(notes, velocity, seconds, gap, sound) -> bool   # sans bloquer
     play_pattern(pattern, bpm, row_notes, repeats, clock, channel) -> bool
@@ -1822,10 +1938,46 @@ class LinkState: supported, out_name, in_name, deluge_out, deluge_in,
 
 **Les notes par le premier câble, les SysEx par le troisième.** Le firmware
 ne fait rien d'autre du troisième, et chaque réponse repart par le câble de
-la demande (`MIDIDeviceUSB::sendSysex`) : la recopie de l'écran n'encombre
-donc pas les notes. Sans troisième câble, les SysEx passent par le premier.
-`connect` n'envoie que deux SysEx de lecture — identité, ping —, jamais une
-note ni un contrôleur.
+la demande (`MIDIDeviceUSB::sendSysex`). Sans troisième câble, les SysEx
+passent par le premier. `connect` n'envoie que deux SysEx de lecture —
+identité, ping —, jamais une note ni un contrôleur. Mais les trois câbles
+partagent **un seul tuyau USB** : pendant que la machine envoie l'image de son
+écran, elle perd des contrôleurs (mesuré le 22 octobre 2026, ci-dessous).
+
+**Les réglages envoyés** (`send_sound`, l'écoute sur la machine). Mesuré le
+22 octobre 2026 sur la machine de l'utilisateur, retour MIDI Follow comparé
+réglage par réglage et « Display Param » allumé pour voir chaque réglage
+appliqué :
+
+* **Takeover.** En Pickup (son réglage) ou en Scale, une valeur reçue d'un
+  coup est ignorée tant qu'elle n'a pas croisé la position du bouton
+  (`MidiTakeover::calculateKnobPos`) : 45 contrôleurs envoyés, aucun
+  appliqué. `takeover_steps` envoie donc la position connue (retour MIDI
+  Follow) puis la valeur ; sans position, machine à l'arrêt, 0, 127 puis la
+  valeur ; machine qui joue, la valeur seule. Relative n'est pas pris en
+  charge. Les valeurs envoyées sont retenues dans `machine` : la machine ne
+  renvoie pas ce qu'elle reçoit.
+* **Pertes.** D'une salve de 135 contrôleurs en 0,2 s, la machine n'a
+  appliqué que les trois premiers ; espacés de 30 ms, recopie de l'écran
+  allumée, encore la moitié. Un ping ne revient qu'une fois lus les messages
+  partis avant lui **par le même port** : `_sync_point` en envoie un **par le
+  port des notes** entre deux réglages et attend son pong, pris dès son
+  arrivée par le robinet SysEx (`_tap`). Ainsi cadencés, sans recopie, les
+  45 réglages d'un preset sont tous passés, en 0,8 s (14 à 22 ms chacun).
+  Parti par le troisième câble, depuis l'application, le ping revenait en
+  4 ms et les réglages se perdaient : il a très probablement doublé les
+  contrôleurs — deux ports Windows sont deux files. Hypothèse, pas mesure.
+* **Recopie de l'écran.** Pendant un envoi, elle n'est plus renouvelée, et
+  l'envoi attend qu'elle expire chez la machine (`_hold_screen`, deux
+  secondes au plus).
+
+Le Deluge simulé des tests (`tests/deluge_simule.py`) applique Takeover
+(`Boutons`) et perd les contrôleurs au-delà de trois d'affilée sans SysEx
+(`salve`). **Vérifié sur la machine le 22 octobre 2026 au matin**, seul client,
+par le vrai bouton « Écouter » : 45/45 réglages appliqués, positions connues
+(position puis valeur) comme inconnues (0, 127, valeur), y compris dès la
+connexion — trois envois sur quatre ; le premier, à 11 h 19, n'a rien
+appliqué et ne s'est pas reproduit.
 
 **Le service.** Ce qui arrive s'accumule dans des files ; `service()` les
 vide, met l'état à jour, renouvelle l'abonnement à l'écran avant ses deux
@@ -1855,6 +2007,37 @@ dans `pattern.steps`, `pattern.ppq` et `pattern.ticks_per_step`. Mesuré :
 16 pas, 24 ppq, 6 ticks par pas, soit une double-croche par pas et deux
 secondes la mesure à 120 BPM. Le séquenceur vise des instants **absolus**
 depuis le départ, sinon l'erreur s'accumule : mesuré à ±11 ms sur 4 secondes.
+
+#### 4.30.1 Jouer calé sur la machine
+
+```python
+TICKS_PER_STEP = 6        # impulsions d'horloge par double-croche (24 ppq)
+SEND_LEAD = 0.002         # s : une note part un peu avant son instant
+class Transport:          # DelugeLink.transport, nourri par l'entrée MIDI
+    def feed(status, data1=0, data2=0, at=None)   # CLOCK, START, CONTINUE, STOP, SPP
+    def snapshot() -> (joue, impulsions, dernière, durée d'une impulsion)
+    def position(at=None) -> float | None         # en impulsions
+    def time_of(tick) -> float | None
+    def next_boundary(every) -> int | None        # prochain multiple de `every`
+    def tempo() -> float | None
+DelugeLink.play_synced(notes, steps, *, channel=None, loops=1, bpm=120.0,
+                       wait_start=0.0) -> bool   # sans bloquer ; loops=0 : jusqu'à l'arrêt
+```
+
+`START` remet la position à zéro : la première impulsion qui suit est l'impulsion 0.
+`SONG_POSITION` (0xF2, en doubles-croches) puis `CONTINUE` reprennent ailleurs. Sans
+horloge depuis `CLOCK_TIMEOUT`, la machine est tenue pour arrêtée. `MidiIn` passe chaque
+message de transport, horodaté par `perf_counter`, à `set_realtime_tap` — avant la file
+des messages, que l'écran recopié encombre.
+
+Machine en lecture, le clip part au prochain début de boucle **de sa longueur**, compté
+depuis le départ du morceau — là où commencent les clips de la machine —, et chaque note
+vise l'instant que donne l'horloge, sans dériver. Machine arrêtée : il joue tout de
+suite, au tempo `bpm`. Les notes vont au canal du lien, celui que suit MIDI Follow ; la
+machine en enregistrement les inscrit dans le clip ouvert. Mesuré face à une horloge
+simulée, sur cet ordinateur : **−1,7 ms** d'écart médian à l'instant visé, 1,5 ms
+d'étendue. **Non encore essayé sur la machine de l'utilisateur** : cela demande son
+accord.
 
 ### 4.31 `delugeapp/core/songwriter.py` — écrire un morceau du Deluge
 
@@ -2017,7 +2200,7 @@ machine de l'utilisateur, mise à jour pour l'occasion.
 
 ```python
 BLOCK = 1024; MAX_INCOMING = 1024; DIR_LINES = 25; MAX_PATH = 256; TIMEOUT = 5.0
-READ_RATE = 155 Kio/s; WRITE_RATE = 45 Kio/s; READ_AHEAD = 2   # mesurés, cf. plus bas
+READ_RATE = 155 Kio/s; WRITE_RATE = 60 Kio/s; READ_AHEAD = 2; WRITE_AHEAD = 2  # mesurés
 STOPPED = -2; NOT_CONNECTED = -3          # codes du client, à côté des FRESULT
 def fat_stamp(epoch) -> (date, heure)     # FAT, heure locale, 2 s
 def from_fat(date, heure) -> float
@@ -2047,12 +2230,14 @@ une réponse de lecture de 1 024 octets en occupe environ 410 : deux tiennent, t
 pourraient se perdre. Mesuré sur la machine, lecture seule : 126 à 129 Ko/s une demande
 à la fois, **154 à 160 Ko/s** avec deux, contenus identiques, aucune perte.
 
-**L'écriture, elle, reste une demande à la fois** — 45 Ko/s. Mesuré sans rien écrire (un
-ping que le firmware ne lit pas au-delà de son nom) : un SysEx de 1 000 octets met
-11 ms du PC à la machine ; un bloc d'écriture de 848 octets en prend 18 en tout. Les
-7 ms restantes (travail de la carte, réponse) se chevaucheraient avec l'envoi suivant —
-gain possible, mais qui ne se vérifie qu'en écrivant : à mesurer avec l'accord de
-l'utilisateur, dans un dossier neuf.
+**L'écriture garde deux blocs en vol** (`WRITE_AHEAD`, `_write_blocks`). Un SysEx de
+1 000 octets met 11 ms du PC à la machine, un bloc d'écriture de 848 octets 18 en tout :
+les 7 ms restantes (travail de la carte, réponse) se chevauchent avec l'envoi suivant.
+La machine range les requêtes dans une file dynamique (`SysExQ`, une `deque`) et les
+traite dans l'ordre. **Mesuré le 22 octobre 2026**, avec son accord, dans un dossier
+neuf ensuite retiré : six fichiers de 150 Ko aléatoires, modes alternés, tous relus
+identiques — **48 et 50 Ko/s un bloc à la fois, 63 et 61 avec deux, 61 et 61 avec
+trois**. Deux, donc.
 
 **S'arrêter entre deux blocs.** `stop_check` est consulté avant chaque bloc lu ou écrit
 et à chaque dossier parcouru : un fichier de 8 Mo met trois minutes à monter, et l'on
@@ -2101,7 +2286,12 @@ def is_junk(rel) -> bool              # corbeilles, Spotlight, ._*, temporaires
 def scan_local(work) -> dict[str, LocalFile]
 def load_manifest(work) / save_manifest(work, records)
 class UsbCard(files, should_stop=None) / FolderCard(root)   # par USB, ou un dossier
+    walk() / walk_folders(folders)        # toute la carte, ou ces dossiers
 def plan_sync(card, local, manifest, backup=None) -> SyncPlan
+def changed_folders(work) -> [dossier]   # créés, modifiés, supprimés ici
+def plan_folders(card, local, manifest, folders) -> SyncPlan   # scope = folders
+def merge_plans(partial, previous) -> SyncPlan   # garde ce qui attend ailleurs
+def parent_folder(rel) -> str
 def apply_plan(plan, transport, work, manifest, *, allow_card_deletes=False,
                progress=None, should_stop=None) -> SyncResult
 SyncResult: done, errors, renamed, stopped, items[(nature, chemin)], lost
@@ -2246,6 +2436,233 @@ resterait introuvable est signalé (`missing`).
 > `SYNTHS` ; « postsolarpunk Multisamples » — 1 094 fichiers, 271 Mio, **environ
 > 1 h 43** par le câble, ses 766 références toutes résolues. Lecture des en-têtes et
 > plan : 0,02 à 0,27 s.
+
+### 4.36 `delugeapp/core/variation.py` — les variations d'un clip
+
+```python
+MELODIC: dict[str, str]   # rythme, notes, plus, moins, réponse, octave, fin (N_)
+DRUMS: dict[str, str]     # ornements, remplissage, légère, cassure, doublée,
+                          # demi-temps, montée (N_)
+def vary_part(events, how, *, part="Mélodie", bars=0, chords=None, root=None,
+              scale="", seed=None, genre="", mono=False) -> list[NoteEvent]
+def vary_drums(pattern, how, *, genre="", seed=None) -> rhythm.Pattern
+def similarity(a, b) -> float        # mêmes notes aux mêmes instants (Jaccard)
+def kinship(a, b) -> float           # ½ attaques + ½ (attaque, classe de hauteur)
+def drum_similarity(a, b) -> float
+def clean_part(events, total_steps, mono=False) -> list[NoteEvent]
+```
+
+Mesuré sur les 136 morceaux de l'utilisateur : **400 pistes sur 472 n'ont qu'un clip**, la
+moitié des morceaux qu'une section. Ce qui manque pour passer de la boucle au morceau, ce
+sont les variations. Règles, toutes couvertes par `tests/test_atelier.py` :
+
+* **dans la gamme** — une note ajoutée ou déplacée en est toujours. La quinte d'une basse
+  est celle de l'accord si elle est dans la gamme, sinon la quinte diatonique (avant :
+  94 notes sur 6 225 sortaient de la gamme) ;
+* **apparentée** — `kinship` reste au-dessus d'un seuil. `similarity` valait **0,00**
+  pour toute variation « octave », qui est pourtant la même ligne : d'où `kinship`, qui
+  compare les hauteurs à l'octave près (1,00 pour ces variations). Le rythme ne déplace
+  que **40 %** des attaques (une contretemps décalée presque entière n'avait plus que
+  0,19 de parenté) ;
+* **jouable** — pas de note qui en chevauche une autre de même hauteur
+  (`NoteRow::readFromFile` l'ignorerait), une partie mono reste mono ;
+* une variation de batterie qui ne change rien (un motif sans charleys à doubler) retombe
+  sur `rhythm.variation`, les ornements ;
+* **reproductible** — même graine, même variation.
+
+### 4.37 `delugeapp/core/songinsert.py` — compléter un morceau sans le réécrire
+
+```python
+MIN_FIRMWARE = "c1.2.0"
+def read_target(sd, rel) -> SongTarget        # .ok, .reason, .max_sections, .free_sections()
+@dataclass
+class NewClip: track: int; section: int; rows: dict[int, list[Note]] = {}; length: int = 0
+               name: str = ""; new_track: int = -1; copy_of: int | None = None
+def next_version(sd, stem) -> str             # « Cool1 5 » après « Cool1 4 »
+def plan_insert(sd, target, new_tracks, clips, repeats=None, name="") -> InsertPlan
+def verify(original: bytes, plan) -> str      # "" : la preuve tient
+def write_insert(sd, plan, apply=False)       # création exclusive ("xb")
+```
+
+La règle de non-destruction interdit de réécrire un morceau ; ce module n'en réécrit
+aucun. Il écrit un **fichier neuf**, l'original **octet pour octet** plus des ajouts,
+placés par un lecteur d'octets (pas d'aller-retour XML) :
+
+* les pistes neuves à la fin de `<instruments>` ; les clips neufs à la fin de
+  `<sessionClips>`, jamais au milieu (les `clipInstances` désignent les clips par rang) ;
+* une copie d'un clip du morceau dans une section neuve : ses attributs et ses enfants
+  recopiés, son numéro de section changé, l'automation longue réduite à sa première
+  valeur ; les rangées d'un kit suivent `drumIndex`, pas leur ordre (l'utilisateur a pu
+  les déplacer) ;
+* `numRepeats` des sections **neuves** seulement — 0 vaut « Repeats: infinite » sur la
+  machine (`SessionView::drawSectionRepeatNumber`), et le plan dit « répétée sans
+  fin » ;
+* les notes au format du morceau (`note_blob_tag`, §1.6), la mesure à
+  `96 << inputTickMagnitude`.
+
+**La preuve** (`verify`) : retirer les ajouts et défaire les remplacements redonne les
+octets d'origine, et le fichier se relit avec chaque élément d'origine identique. Une
+preuve qui échoue, rien n'est écrit. Refusés, avec leur raison : un fichier qui n'est pas
+un morceau, le format 2.x, un firmware antérieur à `c1.2.0` ou officiel (3.x, 4.x), un
+morceau vide. En disposition grille (73 morceaux sur 136), une case piste × section ne
+montre qu'un clip : un clip neuf d'une piste qui y joue déjà est refusé et signalé. Le
+firmware c1.2.1 connaît 12 sections, la 1.3 en connaît 24 (`kMaxNumSections`).
+
+> **Mesuré** sur des copies de 83 morceaux c1.x réels : chaque insertion prouvée,
+> relue par `Song.load`, les seuls refus voulus
+> (anciens firmwares, presets rangés dans SONGS). Six échecs tenaient aux noms de
+> version accentués (« D dièse Major 3 ») : `next_version` translittère comme l'envoi
+> par câble (`cardimport.card_name`). Empreintes de la copie de travail inchangées.
+
+### 4.38 `delugeapp/core/atelier.py` — le projet du compositeur
+
+```python
+KINDS = {"kit": N_("Kit"), "synth": N_("Synthé"), "midi": "MIDI", "cv": "CV"}
+PARTS = ("Batterie", "Basse", "Accords", "Arpège", "Mélodie")
+@dataclass
+class Style: genre="techno"; bpm=0.0; root=57; scale="mineur"; ambiance=""; color=""
+             macros={six curseurs: 0.5}; seed=1        # tempo(), mood(), options()
+class AtelierClip: key; bars=4; events=[]; pattern=None; origin=N_("généré"); parent="";
+                   seed=0; existing: int | None       # rang du clip dans le morceau d'origine
+class AtelierTrack: uid; kind; part; name=""; channel=1; options; preset; kit; clips;
+                    existing: dict | None
+class AtelierSection: name; kind="montée"; bars=16; cells: {uid: clé}; existing: int | None
+class Project: style; progression; tracks; sections; song_rel=""; song_name="";
+               song_firmware=""
+def add_track(project, kind, part="", *, channel=1, sd=None, lib=None, seed=None,
+              clip=True) -> AtelierTrack
+def generate_clip(project, uid, bars=None, seed=None) -> AtelierClip
+def vary_clip(project, uid, key, how, seed=None) -> AtelierClip      # toujours un clip neuf
+def set_cell / add_section / remove_section / move_section / default_sections
+def new_project(style, kinds=None, *, sd=None, lib=None, structure=True) -> Project
+def sound_variations(project, uid, n=8, seed=None) -> list[synthgen.Variant]
+                                       # un son retouché les garde (§4.40)
+def clip_parts / section_parts(project, index, max_bars=8)   # pour l'écoute
+def live_notes(project, uid, key, kit_root=36) -> (notes, steps)   # pour play_synced
+def to_song_spec(project, name, sd=None, lib=None)           # morceau neuf (§4.31)
+def infer_progression(events, root, scale, bars) -> list[dict]
+def from_song(song, sd=None) -> Project
+def insertion_plan(project, sd, lib=None, name="") -> (InsertPlan, remarques)
+```
+
+* **Le style** est commun à tous les sons : les six curseurs du générateur valent pour
+  chaque synthé du morceau, c'est ce qui les fait sonner ensemble.
+* `default_sections` suit `sketch.plan` du genre ; la batterie y est légère pour une intro
+  ou une fin, cassée pour une cassure, ornée pour un sommet ; au second sommet, la
+  mélodie prend sa réponse et la basse sa version « plus ».
+* `from_song` regroupe les clips en pistes (nature, nom, dossier, canal), nomme les
+  rangées d'un kit par `drumIndex`, garde les sections du morceau (`existing`) et devine
+  chaque partie clip par clip. `infer_progression` choisit, mesure par mesure, l'accord
+  — triade ou septième — qui couvre le plus de notes ; à égalité, le plus simple (sans les
+  septièmes, Fmaj7 était lu la mineur).
+* `insertion_plan` laisse les sections du morceau telles quelles : elles reçoivent les
+  clips des **pistes neuves**, et ceux d'une piste qui n'y jouait rien ; les sections
+  neuves prennent des numéros libres, et les clips du morceau qu'elles reprennent y sont
+  recopiés (`copy_of`).
+* `songwriter` gagne `midi_track(channel, name="")` et `cv_track(channel, name="")` :
+  `<midi channel="N-1" suffix=…>` et `<cvChannel channel=…>`, le clip portant
+  `midiChannel` ou `cvChannel` et un arpégiateur sans `soundParams`, comme les écrit la
+  machine.
+
+### 4.39 `delugeapp/core/paramlaws.py` — les lois des réglages du Deluge
+
+```python
+SAMPLE_RATE = 44100
+def unit(display) -> u            # affichage 0..50 -> -1..+1 (25 = 0)
+def raw_unit(value) -> u          # entier du fichier -> -1..+1 (0x80000000 = -1)
+def exp_range(name) -> float      # octaves par unité : 5,6 coupure, 6 attaques, 4 hauteurs, 8 sinon
+def lpf_hz(octaves) / hpf_hz(octaves)     # 602 Hz / 805 Hz au réglage 25, 20 214 Hz au plus
+def lfo_hz(octaves)               # 1,25 Hz au réglage 25 (aussi le mod FX)
+def attack_seconds(octaves)       # 0 quand le firmware saute l'attaque
+def decay_seconds(units) / release_seconds(units)   # releaseRateTable64
+def glide_seconds(display)        # portamento ; 0 = coupé
+def attack_curve(x) / decay_curve(x)      # (2^(4(1-x))-1)/15, (2^(8(1-x))-1)/255
+def volume_gain(f) / linear_level(f) / sustain_level(f) / ladder_resonance(f)
+def velocity_source(v) / note_source(n) / envelope_source(level)    # bipolaires
+def to_polarity(value, source, polarity="")    # sans attribut : bipolaire
+def cable_strength(amount) / cable_octaves(v, a, destination, source) / cable_factor(v, a)
+def unison_cents(detune, voices)  # de -detune/2 à +detune/2
+PARAM_CLASS / param_class(name)   # volume, linear, hybrid, exp (param.h)
+```
+
+Chaque loi cite son origine dans le firmware (docstring du module). Les règles qui
+changent ce qu'on entend :
+
+* **un paramètre exponentiel** vaut `neutre · 2^(u·étendue + Σ câbles)` : une octave par
+  2²⁶ (`getExp`) ; un câble y ajoute `v·a·8` octaves, et `v·a·|a|·4` vers une hauteur ou
+  le temps du delay (`getModifiedPatchCableAmount`), `× 1/√2` vers la hauteur générale ;
+* **un paramètre de volume** vaut `((1 + u)·Π(1 + v·a))²` (`getFinalParameterValueVolume`) :
+  le réglage 25 sonne 12 dB sous le 50 ; **un paramètre linéaire** vaut `(1 + u)·Π(1 + v·a)` ;
+* **les sources** : enveloppe `2·niveau − 1`, vélocité et note `(x − 64)/64`, LFO ±1,
+  *random* tiré une fois par note (`voice.cpp:163`), aftertouch 0..1 ; un câble lu sans
+  `polarity` est bipolaire (`patch_cable_set.cpp:834`), `polarity="unipolar"` ramène la
+  source dans 0..1 — `PatchCable.polarity` le lit et l'écrit ;
+* **les enveloppes** : chaque étape dure `2²³ / vitesse` échantillons ; l'enveloppe 1
+  multiplie le volume, linéairement (`voice.cpp:986`) ; le glissé ne joue pas en legato.
+
+Les tables du firmware ont des formes exactes, recalculées ; seule `releaseRateTable64`
+est reprise telle quelle (65 valeurs). Vérifié contre un portage entier : moins de 0,01 %
+d'écart sur les coupures, 0 % sur decay et release (le firmware tronque les vitesses
+lentes : 3,83 devient 3 au réglage 50), moins de 0,8 % sur les attaques
+(`TestLoisDuFirmware`, `TestEcouteFidele`).
+
+### 4.40 `delugeapp/core/soundedit.py` — modifier un son à la main
+
+```python
+@dataclass(frozen=True)
+class Control: key; label (N_); section (N_); kind="knob"|"choice"; minimum=0;
+               maximum=50; bipolar=False; choices=((valeur, N_), …); tip (N_)
+SECTIONS = ("Voix", "Oscillateurs", "Filtres", "Enveloppes", "LFO", "Effets")
+CONTROLS: tuple[Control, ...]        # 56 réglages
+def value(sound, key) / set_value(sound, key, valeur)   # cran ou choix
+def describe(sound, key) -> str      # « 1,8 s », « 237 Hz », « -12,0 dB », « centre »
+def visible(sound, key) -> bool      # modulateurs en FM seulement ; formes hors FM
+CABLE_SOURCES / CABLE_DESTINATIONS
+def describe_cable(cable) -> str     # « ±4,0 octave(s) », « ±0,34 demi-ton », « ×0,00 à ×4,00 »
+def add_cable / set_cable / remove_cable
+def copy_sound(sound) / differences(avant, apres) -> list[str]
+def carry_edits(depart, retouche, variante) -> Sound   # la variante du son retouché
+```
+
+Clés : un paramètre patché sous son nom de fichier (`lpfFrequency`), un champ du modèle
+sous un nom pointé (`osc1.transpose`, `env2.decay`, `lfo1.sync`, `unison.detune`,
+`delay.sync`), ou un champ simple (`mode`, `polyphonic`, `lpf_mode`, `hpf_mode`,
+`mod_fx_type`, `clipping`). Les crans sont ceux de l'affichage de la machine ;
+`describe` passe par `paramlaws` (§4.39) — décrire et entendre suivent la même loi.
+
+Bornes des menus du firmware (`gui/menu_item`) : saturation 0 à 15
+(`fx/clipping.h`), unisson 1 à 8 voix, désaccord et étalement 0 à 50. Passer en FM éteint
+les deux filtres et en revenir les rallume (`Sound::setSynthMode`) ; un `hpfMode` absent
+vaut `HPLadder`. « Note » est déjà traduit « Rating » ailleurs : la source s'appelle
+« Note jouée ».
+
+`atelier.edit_sound(project, uid, sound)` donne le son retouché à une piste neuve de
+synthé (`AtelierTrack.edited`) ; une piste du morceau d'origine refuse — compléter le
+morceau ne réécrit rien de ce qu'il contient. `regenerate_sound` et un preset de la carte
+effacent le drapeau ; `adopt_sound` le prend de la variante (`Variant.retouched`). Vérifié
+par le fichier : une coupure à 44, un release à 30 et un câble `polarity="unipolar"` se
+relisent dans le `<soundParams>` du clip écrit (`TestLesReglagesDuSon`).
+
+**Les variantes d'un son retouché gardent les retouches** (demande du 23 octobre 2026).
+`sound_variations` refait le son de départ — `generate(options)`, arpégiateur éteint,
+identique au preset de la piste dans 114 sons sur 114 (six genres, six graines) — puis
+`carry_edits(depart, retouche, variante)` reporte sur chaque variante ce qui sépare le
+son retouché du son de départ :
+
+* un réglage tourné l'est d'autant : `variante + (retouche − depart)`, dans les bornes
+  du menu ;
+* un choix (forme, type de filtre, calage, polarité) reste le vôtre, sauf si la variante
+  change ce choix-là — « Autre filtre » change le filtre, c'est ce qu'on lui demande ;
+* les câbles, appariés par `(source, destination, rang)` : ajouté à la main, il reste ;
+  retiré à la main, il le reste ; sa profondeur retouchée l'est d'autant ; retiré par la
+  variante, il disparaît.
+
+Passer en FM éteint les filtres : quel que soit l'ordre des réglages, un filtre que la
+variante tire reste éteint (vérifié en mettant le moteur en premier, puis en dernier :
+même résultat). Une variante que les retouches rendent identique au son de la piste est
+écartée et la suivante prend sa place (douze candidates : sept aspects, cinq curseurs).
+Les variantes prennent le nom donné à la main, numéroté à partir de 2. Mesuré sur 114 sons :
+huit variantes chaque fois, aucune retouche perdue.
 
 ---
 
@@ -2490,7 +2907,7 @@ le guide de l'utilisateur), bouton « Réinitialiser l'index ».
 class MainWindow(QMainWindow):
     def __init__(self, ctx: AppContext)
 ```
-- Colonne de gauche : une rangée de `NavPad` (212 px, repliable à 64 px) avec les 9 pages ;
+- Colonne de gauche : une rangée de `NavPad` (212 px, repliable à 64 px) avec les 10 pages ;
   la page affichée s'allume à sa couleur, les autres restent en veilleuse.
 - **Une seule barre du haut** (56 px, `CHROME`) : logotype, **barre de menus intégrée**
   (`menuBar()` rend celle-ci), écran OLED de la carte (cliquable : ouvre les réglages ; reprend
@@ -2501,7 +2918,7 @@ class MainWindow(QMainWindow):
 - Barre d'état : message, barre de progression des tâches, indicateur de lecture, espace libre.
 - Menus : Fichier (Choisir la carte, Scanner, Sauvegarder, Quitter), Édition, Outils, Aide (À propos, Raccourcis).
 - Raccourcis : `Ctrl+R` scanner, `Ctrl+F` recherche, `Ctrl+G` générateur, `Espace` écouter/arrêter,
-  `Ctrl+,` réglages, `F1` aide, `Ctrl+1..9` pages.
+  `Ctrl+,` réglages, `F1` aide, `Ctrl+1..9` puis `Ctrl+0` pages.
 - Restaure la géométrie et la dernière page via `QSettings`.
 - Au démarrage : si `settings.sd_path` est vide ou invalide -> propose la détection automatique
   puis un dialogue de choix de dossier, et affiche l'`EmptyState` du tableau de bord.
@@ -2512,7 +2929,18 @@ class MainWindow(QMainWindow):
 # Lance l'application. Gère --sd <chemin>, --reset-db, --no-splash, --version.
 # Installe un hook d'exception qui affiche une QMessageBox lisible + trace dans le journal.
 # Journal : %APPDATA%/DelugeCompanion/app.log (RotatingFileHandler, 1 Mo, 3 fichiers).
+INSTANCE_NAME = "DelugeCompanion-instance"
+def _already_running(name=INSTANCE_NAME) -> bool   # et prie l'autre de se montrer
+class _Instance(name=INSTANCE_NAME): window, server, listening
 ```
+
+**Une seule fenêtre.** Un second lancement se connecte au canal local de la
+première (`QLocalServer`, un tube nommé sous Windows), qui se montre, et
+s'arrête aussitôt (216 ms mesurées). Vu le 22 octobre 2026 : sous Windows 11,
+deux programmes ouvrent les ports du Deluge en même temps, et chaque réponse
+de la machine arrive aux deux — deux fenêtres synchroniseraient chacune la
+carte. Les tests et les scripts qui bâtissent `MainWindow` directement ne
+passent pas par là.
 
 ---
 
@@ -2799,7 +3227,10 @@ le texte garde le chemin complet ; l'anneau de note est un `QLabel`.
   Ctrl+D ; Réglages ; pastille) : une fenêtre à garder à côté. L'écran de la
   machine recopié — la recopie part à l'ouverture —, « Faire signe »,
   « Vérifier », « Tout éteindre » ; le tempo et la lecture lus dans
-  l'horloge ; les notes tenues et leur accord ; le son sélectionné, d'après
+  l'horloge ; les notes tenues et leur accord — celles des **pistes MIDI**
+  seulement : un synthé ou un kit joué sur les pads n'envoie rien (code du
+  firmware), et la fenêtre le dit au lieu de « Aucune note tenue » ; le son
+  sélectionné, d'après
   le retour MIDI Follow ; les réglages à faire sur la machine, cochés à
   mesure que le lien les constate. Recopie arrêtée : un message, **jamais
   une image figée** qu'on prendrait pour la machine. Déconnectée : le
@@ -2818,7 +3249,7 @@ le texte garde le chemin complet ; l'anneau de note est un `QLabel`.
   dit d'elle (firmware, aller-retour, port SysEx), ports, canal, connexion
   automatique, écoute sur la machine, suivi du tempo, « Jouer un do »,
   « Tout éteindre », « Deluge en direct… », et les réglages à faire **sur**
-  le Deluge (Follow ▸ Channel A, Feedback).
+  le Deluge (MIDI-Follow ▸ Channel ▸ Channel A, Feedback ▸ Channel).
 * **Écoute** : `Page.audition(sound)` rend `True` quand la machine a pris le
   relais ; la page retombe sinon sur son rendu habituel. Le réglage est
   explicite (`midi_audition`), parce qu'envoyer du son dans une machine
@@ -2912,7 +3343,19 @@ section et l'état dans la barre latérale.
 * **à la connexion** d'un Deluge qui ouvre sa carte (évènement `files` du
   lien) : synchronisation, ou invitation à créer la copie de travail ;
 * **après chaque écriture** de l'application (`cardModified`,
-  `presetSaved`, `songWritten`) : envoi deux secondes après la dernière ;
+  `presetSaved`, `songWritten`) : envoi deux secondes après la dernière.
+  Seuls les dossiers où la copie a changé sont listés sur la carte
+  (`changed_folders`, `UsbCard.walk_folders`, `plan_folders`) : mesuré le
+  22 octobre 2026 sur la carte de l'utilisateur, 5 requêtes et 0,07 s pour
+  SONGS, 1 et 0,01 s pour un dossier de presets, contre 292 requêtes et
+  3,4 s pour le parcours complet (12 ms par page de 25 entrées, le temps de
+  la machine). `plan_sync` décide de chaque fichier d'après son seul
+  triplet : restreint aux mêmes dossiers des trois côtés, il rend pour eux
+  le plan complet, et rien ailleurs (test qui couvre les cinq natures). Les
+  suppressions à confirmer vues hors de ces dossiers sont gardées
+  (`merge_plans`) ; une synchronisation complète en attente l'emporte sur
+  une restreinte (`_plus_large`) ; un dossier illisible ainsi fait revenir
+  au parcours complet ;
 * **au retour dans la fenêtre** (au plus toutes les 30 s) : réception de ce
   que le Deluge a enregistré ;
 * **jamais pendant que la machine joue** : sa carte sert à jouer ; la
@@ -3078,6 +3521,155 @@ français. Chaque bouton cliqué en anglais (barre d'état, boîtes, dialogues, 
 fichiers : 2 538 textes) : aucun français ; 543 en français. Les commandes s'expliquent
 aussi en anglais : le registre d'aide désigne un bouton par son libellé français, et
 `sources()` retrouve ce libellé derrière l'anglais affiché.
+
+### 5.27 Le manuel, dans l'onglet Aide
+
+```python
+# delugeapp/docs/manuel.fr.md, manuel.en.md    le texte, un fichier par langue
+# delugeapp/ui/manuel.py
+def charger(langue) -> Manuel                   # lit et met en page
+def lire(texte, langue) -> Manuel
+class Manuel:  parties, chapitres, html, ancres, liens, figures, libelles, images,
+               larges, erreurs ; chapitre_de_page(cle), chapitre_de(ancre), texte_brut()
+class PageDeLecture(QTextBrowser)               # colonne centrée ≤ 780 px, images à sa largeur
+class FenetreManuel(QMainWindow)                # navigateRequested(str), liveRequested()
+    def set_language(code) ; aller(ancre) ; montrer_page(cle) ; exporter_pdf() -> str
+def ecrire_pdf(manuel, chemin) -> None          # A4, sans les liens vers l'application
+# delugeapp/ui/manuel_dessins.py
+FIGURES: dict[str, (dessin, nombre de libellés)]
+def ouverture(numero, titre, sous_titre, couleur) ; pad_chapitre ; puce ; filet ; figure
+# MainWindow
+def open_manual(ancre="")                       # Aide ▸ Manuel (F1), Aide ▸ Premiers pas
+```
+
+**Où.** Menu Aide : « Manuel » (F1) ouvre le chapitre **de la page affichée** ;
+« Premiers pas » ouvre le parcours guidé ; « Raccourcis clavier » perd F1. La fenêtre est
+à part, non modale, fermée avec l'application. Elle s'ouvre dans la langue de
+l'interface ; ses boutons « Français » et « English » changent la langue **du manuel
+seul** (le nom de chaque langue écrit dans la sienne, comme le menu Langue).
+
+**Le thème est celui du guide** (`build/docxkit.py`, `build/style.py`, `figs_couverture.py`)
+et non celui de l'application : page de papier `#FAF8F4`, texte en Georgia justifié,
+titres en Trebuchet sarcelle `#145F70`, surtitre « PARTIE II · CHAPITRE 7 » en capitales
+d'or espacées, filet d'or sous le titre, accroche en Trebuchet italique sarcelle, chasse
+fixe Consolas sarcelle pour les mots de la machine, tableaux à en-tête pétrole `#1C4854`
+et lignes zébrées, les cinq encadrés du guide (ASTUCE, ATTENTION, LE MOT DU PRO, À
+RETENIR, ATELIER) avec leur filet et leur fond, « Figure N » en or. Chaque partie s'ouvre
+sur le cartouche sombre du guide : treillis à sa couleur, chiffre romain, rangée de pads.
+Le sommaire, lui, est de la façade : pads de couleur, une couleur par page.
+
+**Le balisage** est décrit en tête de `manuel.py` : titres avec ancres explicites
+`{#id page=Samples}`, accroche `> `, encadrés `!!! sorte titre` au corps indenté,
+figures `[[figure nom | légende | libellé ; libellé]]`, touches `[[Ctrl+R]]`, libellés de
+boutons `[Analyser]`, renvois `[texte](#ancre)` et liens `[texte](app:Health#Manquants)`
+qui ouvrent la page — la fenêtre principale vient devant, sur l'onglet nommé. Le
+français reçoit ses espaces insécables (« : ; ? ! » et guillemets) à la mise en page.
+
+**Les deux langues partagent leurs ancres** : la bascule garde la place du lecteur. Les
+dessins n'écrivent aucune phrase : leurs libellés viennent du texte, dans sa langue.
+
+**Mesuré, et corrigé :**
+
+| défaut | mesure | correction |
+|---|---|---|
+| images remises à la largeur de la colonne par `QTextCursor.setCharFormat` | 392 blocs sur 1 038 à hauteur nulle : paragraphes invisibles | `markContentsDirty` sur tout le document après la retouche |
+| ancre posée sur l'image d'une ouverture | Qt la reportait au paragraphe suivant : le sommaire menait sous l'ouverture | ancre sur une espace insécable avant l'image |
+| couleur des entrées du sommaire | la feuille de style de l'application fixe celle des listes : les parties perdaient leur couleur | délégué qui écrit le texte dans la couleur de l'élément |
+| colonnes des tableaux | Qt les partage à parts égales : « Repère » prenait le tiers | parts tirées du plus long texte de chaque colonne |
+| légendes des figures dans une fenêtre de 980 px | 9,5 points ramenés sous 6 | corps de 12,5 et 15 points (`TEXTE_FIG`, `TITRE_FIG`) |
+| PDF | Qt ajoute 2 cm de marge à l'impression : les images de 640 px débordaient | largeur tirée de la page imprimable |
+| gras autour d'un libellé (`**[Analyser]**`) | les astérisques restaient à l'écran | gras et italique posés sur le texte réuni |
+
+**Ce que le manuel a relevé dans l'application** : trois infobulles disaient faux.
+« Enregistrer dans SYNTHS » et « Enregistrer dans KITS » annonçaient une confirmation
+qui n'existe que si le nom est déjà pris ; « Exporter le rapport » annonçait un fichier
+texte pour une page HTML. Corrigées, en français et en anglais.
+
+**Tests** (`tests/test_ui.py`) : `TestLeManuelSeLit` — les deux manuels sans erreur de
+balisage, même structure (ancres, chapitres, sections, figures, liens), un chapitre par
+page, chaque renvoi mène quelque part, chaque figure a ses libellés et se dessine,
+aucun reste de balisage à l'écran, espaces insécables du français, l'anglais en anglais
+(hors cinq citations voulues), recherche insensible aux accents ;
+`TestLeManuelDansLAide` — F1 sur trois pages, Premiers pas, la langue de l'interface, un
+lien vers `Health#Manquants`, un renvoi, un **clic** dans le sommaire, la bascule de
+langue aller-retour, la recherche tapée puis parcourue, le PDF écrit et relu (plus de 30
+pages), la fermeture avec l'application ; `TestLeManuelDecritChaqueCommande` — **chaque
+bouton et chaque case des dix pages et de leurs onglets est cité dans le manuel**, sous
+le libellé qu'il porte à l'écran, en français et en anglais. Le contrôle des textes
+français de l'interface anglaise ignore la page du manuel (`objectName` « PageManuel »),
+qui cite exprès des mots de l'autre langue.
+
+### 5.28 L'Atelier (`delugeapp/ui/pages/atelier.py`)
+
+`AtelierPage` — `TITLE = N_("Atelier")` (« Studio » en anglais), icône `atelier`, couleur
+`PAD_RED`, septième page (`Ctrl+7`) ; la dixième, Réglages, prend `Ctrl+0`.
+`NEEDS_CARD = False` : l'atelier compose sans carte, il la demande pour écrire.
+
+* En-tête : `_compose_button` [Composer], `_import_button` [Partir d'un morceau…],
+  `_write_button` [Écrire le morceau] (`Page.write_song`, §5.23), `_complete_button`
+  [Compléter le morceau] (`songexport.export_insert` : plan, question, `write_insert`,
+  indexation).
+* Quatre onglets : **Style** (genres, tonalité, tempo, ambiance, couleur, graine, six
+  curseurs, les parties et leur nature), **Sons** (pistes, son, huit variantes, ajouter ou
+  retirer une piste), **Clips** (`ClipView`, écouter, [Jouer sur le Deluge] — bouton à
+  bascule, `play_synced(loops=0)` —, [Varier] et son menu, nouveau clip, supprimer),
+  **Morceau** (`SectionMatrix` dans une zone défilante, la section choisie et ses
+  boutons).
+* `widgets/atelierviews.py` : `PART_COLORS` (batterie verte, basse bleue, accords
+  violets, arpège cyan, mélodie orange), `ClipView` (rangées d'un kit de bas en haut, ou
+  notes sur leur hauteur), `SectionMatrix` (`cellClicked(section, uid)`,
+  `sectionClicked(index)` ; un clip repris du morceau a un liseré pointillé).
+* `focus_on("SONGS/…")` ouvre un morceau dans l'atelier.
+
+> **Mesuré à 980 × 700** (rendu dans la vraie fenêtre) : l'onglet Style coupait son
+> troisième panneau et les noms de genre (« ards of Cana… »), les rangées de boutons des
+> Clips et du Morceau coupaient leurs libellés, et la grille chevauchait sa légende. Les
+> trois panneaux passent sur deux colonnes sous 1 080 px visibles (`GrilleAdaptative` ;
+> 732 px visibles à 980, 1 192 à 1 440), les pads de genre sur deux colonnes sous 470 px,
+> les boutons sur deux rangées, et l'onglet Morceau défile.
+
+**Tests** : `TestLAtelierCompose`, `TestLAtelierClips`, `TestLAtelierMorceau`,
+`TestLAtelierSurLeDeluge` (`tests/test_ui.py`), **en cliquant** : composer, refuser sans
+partie, une basse MIDI et son canal, huit variantes puis l'adoption, ajouter et retirer
+une piste CV, varier (l'original intact), une cassure sans grosse caisse, nouveau clip et
+suppression, écouter sans sortie audio, jouer sans machine, la grille (chaque clip puis
+le silence), ajouter, déplacer et retirer une section, la structure du genre, écrire sur
+la carte jetable, partir de ce morceau et le compléter (l'original identique à l'octet),
+refuser le plan, un morceau 3.0.4 refusé, et le jeu en direct face au Deluge simulé
+(notes sur le canal du lien, arrêt au second clic). Retirer le branchement de la grille
+ou de l'adoption les fait échouer (vérifié).
+
+### 5.29 L'éditeur de son (`delugeapp/ui/widgets/soundeditor.py`)
+
+`SoundEditor(sound, color)` modifie le son qu'on lui donne : sept onglets (les six de
+`soundedit.SECTIONS` et Modulations) ; chaque réglage est un `_KnobControl` — titre au-dessus
+(deux lignes réservées : le libellé dessiné par l'encodeur était coupé à 58 px), `Knob`,
+et dessous `describe()` — ou un `_ChoiceControl`. Filtres : la `FilterCurve` ; Enveloppes :
+deux `EnvelopeEditor` tirables, synchronisés avec les encodeurs. Modulations : une ligne par
+câble (source, destination, profondeur −50..+50, polarité, effet, [Retirer]) et
+[Ajouter une modulation]. Signal `changed`.
+
+`SoundEditorDialog(ctx, sound, title, color)` travaille sur une **copie** : [Écouter]
+(`render_preview` dans un fil, puis `ctx.player`), [Écouter en réglant] (rejoue 450 ms
+après un geste), [Revenir au son de départ], [Annuler], [Garder ce son] ; une ligne résume
+`differences()`. `edited_sound()`, `changes()`. Rien n'est écrit sur la carte.
+
+Ouvert par `AtelierPage._edit_sound_button` [Modifier le son…] (onglet Sons, synthé neuf
+seulement) et `GeneratorPage._edit_button` [Modifier le son…] (le son retouché rejoint
+l'historique).
+
+> **Mesuré à 720 × 540** (la plus petite fenêtre) : huit encodeurs d'enveloppe par rangée
+> débordaient et coupaient l'enveloppe 2 — quatre par rangée, enveloppe 1 puis 2 ; les lignes
+> de modulation sortaient de la fenêtre, [Retirer] compris — listes resserrées. À 980 × 700,
+> l'onglet Sons de l'Atelier coupait ses quatre boutons et écrasait la description du son :
+> deux rangées de boutons, colonne défilante.
+
+**Tests** : `TestEditeurDeSon` (encodeurs au clavier, la FM qui montre ses modulateurs et
+éteint les filtres, ajouter, régler et retirer une modulation, revenir au départ, garder ou
+annuler, écouter sans sortie) et `TestEditeurDansLesPages` (l'Atelier retouche une piste et
+le morceau écrit porte la retouche ; annuler ne touche à rien ; une piste MIDI ne se retouche
+pas ; le Générateur ajoute le son retouché à l'historique). Débrancher le bouton de l'Atelier
+ou la valeur sous l'encodeur les fait échouer (vérifié).
 
 ## 6. Contraintes de robustesse
 

@@ -53,13 +53,14 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from ..i18n import tr
+from ..i18n import decimal, tr
 from . import delugefiles, delugesysex, midifollow, midiport
 
 log = logging.getLogger(__name__)
 
-__all__ = ["DelugeLink", "LinkState", "NOTE_C3", "SYSEX_CABLE",
-           "latency_text", "tempo_from_ticks"]
+__all__ = ["DelugeLink", "LinkState", "NOTE_C3", "SYSEX_CABLE", "Transport",
+           "TICKS_PER_STEP", "latency_text", "takeover_steps",
+           "tempo_from_ticks"]
 
 #: Do central, celui que le Deluge appelle C3 et le MIDI note 60.
 NOTE_C3 = 60
@@ -67,6 +68,12 @@ NOTE_C3 = 60
 #: Au-delà, on refuse d'envoyer : un flot pareil ne vient pas d'un geste
 #: d'utilisateur mais d'une boucle qui s'emballe.
 MAX_MESSAGES = 256
+
+#: Attente du pong qui cadence un envoi (:meth:`DelugeLink._sync_point`) :
+#: 14 à 22 ms mesurés après trois contrôleurs.
+SYNC_TIMEOUT = 0.2
+#: Sans robinet SysEx pour le recevoir, une pause fixe entre deux réglages.
+SYNC_FALLBACK = 0.03
 
 #: Le port USB que le firmware réserve aux SysEx.
 SYSEX_CABLE = 3
@@ -77,6 +84,8 @@ CLOCK_TIMEOUT = 1.0
 CLOCK_WINDOW = 24
 #: Renouvellement de l'abonnement à l'écran, avant ses deux secondes.
 SCREEN_REFRESH = 1.0
+#: Au-delà de l'expiration annoncée de l'abonnement, par prudence.
+SCREEN_MARGIN = 0.1
 #: Nouvelle demande d'identité tant que la machine n'a pas répondu.
 IDENTITY_RETRY = 2.0
 IDENTITY_TRIES = 3
@@ -90,7 +99,7 @@ def latency_text(ms: float) -> str:
     """
     ms = max(0.0, float(ms))
     if ms < 10.0:
-        return ("%.1f ms" % ms).replace(".", ",")
+        return "%s ms" % decimal(ms, 1)
     return "%.0f ms" % ms
 
 
@@ -112,6 +121,145 @@ def tempo_from_ticks(stamps) -> float | None:
     if not 10.0 <= bpm <= 999.0:
         return None
     return bpm
+
+
+def takeover_steps(target: int, current: int | None = None,
+                   playing: bool = False) -> list[int]:
+    """Les valeurs à envoyer pour qu'un bouton prenne ``target``, quel que
+    soit le réglage Takeover de la machine (Jump, Pickup ou Scale).
+
+    En Pickup et en Scale, la machine ne suit une valeur reçue qu'une fois
+    le bouton « rattrapé » : la valeur reçue vaut sa position, ou la
+    franchit depuis la précédente (``MidiTakeover::calculateKnobPos``).
+
+    * position connue — le retour MIDI Follow l'a dite : elle d'abord, que
+      la machine prend d'office, puis ``target`` ;
+    * inconnue, machine à l'arrêt : 0, 127, puis ``target`` — le bouton est
+      franchi à coup sûr, et ne passe qu'un instant aux extrêmes ;
+    * inconnue, machine qui joue : ``target`` seule, comme en Jump — les
+      extrêmes s'entendraient.
+    """
+    if current is not None:
+        return [target] if current == target else [current, target]
+    if playing:
+        return [target]
+    return [0, 127, target]
+
+
+#: Impulsions d'horloge par double-croche (24 par noire).
+TICKS_PER_STEP = 6
+#: Avance prise sur l'instant visé : le temps que la note traverse le câble.
+SEND_LEAD = 0.002
+
+
+class Transport:
+    """Où en est la lecture de la machine, d'après son horloge.
+
+    La machine envoie son horloge d'usine (MIDI ▸ Clock ▸ Output), 24
+    impulsions par noire, et ses départs. START remet la position à zéro :
+    la première impulsion qui suit est le temps zéro. Pour reprendre
+    ailleurs, la machine envoie d'abord un pointeur de position (en
+    doubles-croches), puis CONTINUE (``PlaybackHandler``, firmware 1.3).
+
+    Chaque impulsion est datée **à son arrivée** (le rappel du pilote) : on
+    en déduit l'instant de toute position à venir, ce qui permet de poser
+    une note sur la mesure de la machine plutôt qu'à côté. Sûr entre fils.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.running = False
+        #: Impulsions depuis le début du morceau ; −1 avant la première.
+        self.ticks = -1
+        #: Instant (``perf_counter``) de la dernière impulsion.
+        self.last = 0.0
+        #: Durée d'une impulsion, lissée.
+        self.period: float | None = None
+        self._pending: int | None = None
+        #: Nombre de départs vus : un lecteur s'arrête si la machine repart.
+        self.starts = 0
+
+    def feed(self, status: int, data1: int = 0, data2: int = 0,
+             at: float | None = None) -> None:
+        """Un message d'horloge ou de transport, arrivé à ``at``."""
+        moment = time.perf_counter() if at is None else float(at)
+        with self._lock:
+            if status == midiport.START:
+                self._pending = 0
+                self.running = True
+                self.starts += 1
+            elif status == midiport.CONTINUE:
+                if self._pending is None:
+                    self._pending = self.ticks + 1
+                self.running = True
+                self.starts += 1
+            elif status == midiport.STOP:
+                self.running = False
+            elif status == midiport.SONG_POSITION:
+                self._pending = (((int(data2) & 0x7F) << 7)
+                                 | (int(data1) & 0x7F)) * TICKS_PER_STEP
+            elif status == midiport.CLOCK:
+                if self._pending is not None:
+                    tick, self._pending = self._pending, None
+                else:
+                    tick = self.ticks + 1
+                if self.last and tick == self.ticks + 1:
+                    ecart = moment - self.last
+                    # Une impulsion manquée ou un arrêt ne fait pas un tempo.
+                    if 0.0004 < ecart < 0.3:
+                        self.period = ecart if self.period is None \
+                            else self.period * 0.85 + ecart * 0.15
+                self.ticks = tick
+                self.last = moment
+
+    def snapshot(self) -> tuple[bool, int, float, float | None]:
+        """``(joue, impulsions, dernière, durée d'une impulsion)``.
+
+        Une horloge muette depuis plus de :data:`CLOCK_TIMEOUT` vaut un
+        arrêt, même sans STOP : câble tiré, horloge coupée dans les réglages.
+        """
+        with self._lock:
+            running = self.running and (
+                not self.last
+                or time.perf_counter() - self.last < CLOCK_TIMEOUT)
+            return running, self.ticks, self.last, self.period
+
+    def position(self, at: float | None = None) -> float | None:
+        """Position estimée, en impulsions, à l'instant ``at``."""
+        running, ticks, last, period = self.snapshot()
+        if not running or ticks < 0 or not period:
+            return None
+        moment = time.perf_counter() if at is None else float(at)
+        return ticks + max(0.0, moment - last) / period
+
+    def time_of(self, tick: float) -> float | None:
+        """Instant où la machine sera à la position ``tick``."""
+        running, ticks, last, period = self.snapshot()
+        if not running or ticks < 0 or not period:
+            return None
+        return last + (float(tick) - ticks) * period
+
+    def next_boundary(self, every: int) -> int | None:
+        """Prochaine position multiple de ``every`` impulsions — le début
+        d'une boucle de clip de la machine.
+
+        Dans la première impulsion d'un départ, c'est zéro : on y joue,
+        quelques millisecondes en retard, plutôt que d'attendre un tour.
+        """
+        now = self.position()
+        if now is None:
+            return None
+        every = max(1, int(every))
+        if now <= 1.0:
+            return 0
+        return int(-(-now // every) * every)
+
+    @property
+    def tempo(self) -> float | None:
+        period = self.period
+        if not period:
+            return None
+        return 60.0 / (period * 24.0)
 
 
 @dataclass
@@ -193,6 +341,14 @@ class DelugeLink:
         #: à la connexion ; ``files.supported`` dit si la machine répond.
         self.files: delugefiles.DelugeFiles | None = None
         self._files_known = False
+        #: La cadence des envois (:meth:`_sync_point`) : le pong attendu, et
+        #: l'évènement qui dit qu'il est arrivé.
+        self._sync = threading.Event()
+        self._sync_token: int | None = None
+        self._sync_seq = 0
+        self._sync_ready = False
+        #: Envois en cours qui ont fait taire la recopie de l'écran.
+        self._screen_hold = 0
         self._reset_live()
 
     def _reset_live(self) -> None:
@@ -222,6 +378,12 @@ class DelugeLink:
         self.machine_seen = 0.0
         #: Notes tenues sur la machine (ou sur un clavier qui la traverse).
         self.held: set[int] = set()
+        #: La position de lecture de la machine (:class:`Transport`).
+        self.transport = Transport()
+        #: Vrai quand l'entrée nourrit elle-même la position, dès l'arrivée
+        #: de l'horloge : le service ne la nourrit alors pas une seconde
+        #: fois.
+        self._transport_tap = False
 
     # -- état --------------------------------------------------------------- #
 
@@ -329,6 +491,10 @@ class DelugeLink:
             if entree is not None and not self._in.open(entree):
                 log.info("entrée MIDI %s indisponible : %s", entree.name,
                          getattr(self._in, "last_error", ""))
+            installer = getattr(self._in, "set_realtime_tap", None)
+            if installer is not None and self._in.is_open:
+                installer(self.transport.feed)
+                self._transport_tap = True
 
             if sortie.is_deluge:
                 self._open_sysex(sorties, entrees, sortie, entree)
@@ -347,8 +513,17 @@ class DelugeLink:
         installer = getattr(port, "set_sysex_tap", None)
         if installer is None:
             return
-        installer(client.feed)
         self.files = client
+        installer(self._tap)
+        # Le pong de la cadence revient par le port des notes : le robinet
+        # y est aussi.
+        if port is self._in:
+            self._sync_ready = True
+        else:
+            autre = getattr(self._in, "set_sysex_tap", None)
+            if autre is not None:
+                autre(self._tap)
+                self._sync_ready = True
 
         def sonde() -> None:
             try:
@@ -408,11 +583,87 @@ class DelugeLink:
                 return appareil
         return deluges[0] if deluges else None
 
+    def _tap(self, data: bytes, arrived: float = 0.0) -> bool:
+        """Les SysEx pris dès leur arrivée, dans le fil du pilote : le pong
+        qui cadence un envoi, puis les réponses des fichiers. Le reste suit
+        la file, que :meth:`service` vide pour la fenêtre."""
+        jeton = self._sync_token
+        if (jeton is not None and len(data) >= 8
+                and data[1:5] == delugesysex.DELUGE_ID
+                and data[5] == delugesysex.CMD_PONG and data[6] == jeton):
+            self._sync.set()
+            return True
+        client = self.files
+        return client.feed(data, arrived) if client is not None else False
+
+    def _sync_point(self, timeout: float = SYNC_TIMEOUT) -> bool:
+        """Attend que la machine ait lu tout ce qui précède.
+
+        Mesuré le 22 octobre 2026 : le Deluge **perd** les contrôleurs qui
+        arrivent pendant qu'il traite les précédents — d'une salve de 135
+        envoyés en 0,2 s, il n'a appliqué que les trois premiers ; espacés
+        de 30 ms, encore la moitié. Un ping, lui, ne revient qu'une fois
+        lus les messages partis avant lui : l'attendre entre deux réglages,
+        c'est n'en envoyer qu'au rythme où la machine les prend. Les 45
+        réglages d'un preset sont alors tous passés, en 0,8 s (14 à 22 ms
+        par réglage).
+
+        Le ping part par le **port des notes et des contrôleurs**, pas par
+        celui des SysEx : deux ports Windows sont deux files. Parti par
+        l'autre, il revenait en 4 ms au lieu de 15 à 22, et les réglages se
+        perdaient — il les a très probablement doublés. La machine répond
+        par le port qui a apporté la demande (mesuré sur le premier).
+
+        Rend ``False`` si le pong n'est pas venu à temps ; sans robinet
+        SysEx, une pause fixe en tient lieu.
+        """
+        envoi = getattr(self._out, "send_sysex", None)
+        if not self._sync_ready or envoi is None:
+            _wait(self._stop, SYNC_FALLBACK)
+            return False
+        self._sync_seq = (self._sync_seq + 1) & 0x3F
+        jeton = 0x40 | self._sync_seq
+        self._sync.clear()
+        self._sync_token = jeton
+        try:
+            try:
+                parti = bool(envoi(delugesysex.ping(jeton)))
+            except Exception as exc:   # noqa: BLE001
+                log.debug("ping de cadence non envoyé : %s", exc)
+                parti = False
+            if not parti:
+                _wait(self._stop, SYNC_FALLBACK)
+                return False
+            return self._sync.wait(timeout)
+        finally:
+            self._sync_token = None
+
+    def _hold_screen(self) -> None:
+        """Fait taire la recopie de l'écran le temps d'un envoi.
+
+        Mesuré le 22 octobre 2026 : pendant que la machine envoie les
+        images de son écran — chaque réglage appliqué en change une, avec
+        « Display Param » —, elle perd des contrôleurs, même espacés de
+        30 ms. On cesse de renouveler l'abonnement et on attend qu'il
+        expire chez elle (deux secondes au plus) ; la recopie reprend au
+        :meth:`service` suivant :meth:`_release_screen`.
+        """
+        self._screen_hold += 1
+        if self._screen_on:
+            reste = (self._screen_sent + delugesysex.STREAM_SECONDS
+                     + SCREEN_MARGIN - time.monotonic())
+            if reste > 0:
+                _wait(self._stop, reste)
+
+    def _release_screen(self) -> None:
+        self._screen_hold = max(0, self._screen_hold - 1)
+
     def _close_ports(self) -> None:
         for port in (self._in, self._sx_in):
             retirer = getattr(port, "set_sysex_tap", None)
             if retirer is not None:
                 retirer(None)
+        self._sync_ready = False
         self.files = None
         self._files_known = False
         for port in (self._out, self._in, self._sx_out, self._sx_in):
@@ -451,8 +702,9 @@ class DelugeLink:
         return self._send_sysex(delugesysex.identity_request())
 
     def ping(self) -> bool:
-        """Mesure l'aller-retour ; le résultat arrive au service."""
-        self._ping_token = (self._ping_token + 1) & 0x7F
+        """Mesure l'aller-retour ; le résultat arrive au service. Ses jetons
+        restent sous 0x40 : au-dessus, ce sont ceux de la cadence."""
+        self._ping_token = (self._ping_token + 1) & 0x3F
         self._ping_sent = time.perf_counter()
         return self._send_sysex(delugesysex.ping(self._ping_token))
 
@@ -492,7 +744,8 @@ class DelugeLink:
             except Exception as exc:   # noqa: BLE001 - un message ne casse rien
                 log.debug("message MIDI ignoré : %s", exc)
 
-        if self._screen_on and maintenant - self._screen_sent >= SCREEN_REFRESH:
+        if (self._screen_on and not self._screen_hold
+                and maintenant - self._screen_sent >= SCREEN_REFRESH):
             self._screen_sent = maintenant
             self._send_sysex(delugesysex.display_request(
                 delugesysex.DISPLAY_STREAM))
@@ -516,6 +769,12 @@ class DelugeLink:
                                getattr(message, "arrived", 0.0))
             return
         statut = int(message.status)
+        if statut in midiport.TRANSPORT and not self._transport_tap:
+            self.transport.feed(statut, int(message.data1),
+                                int(message.data2),
+                                getattr(message, "arrived", 0.0) or None)
+        if statut == midiport.SONG_POSITION:
+            return
         if statut == midiport.CLOCK:
             self._ticks.append(message.stamp or message.millis)
             self._tick_seen = maintenant
@@ -595,7 +854,24 @@ class DelugeLink:
     def send_sound(self, sound, keys: list[str] | None = None) -> int:
         """Envoie les réglages d'un son à l'instrument sélectionné.
 
-        Rend le nombre de contrôleurs réellement envoyés.
+        Ce que la machine fait d'une valeur reçue dépend de son réglage
+        **Takeover** (``MidiTakeover::calculateKnobPos``) : en Jump, elle la
+        prend ; en Pickup ou en Scale, elle l'**ignore** tant qu'elle n'a pas
+        croisé la position du bouton — un saut d'un coup ne s'applique
+        jamais. Mesuré le 22 octobre 2026 sur une machine en Pickup : 45
+        contrôleurs envoyés, aucun appliqué.
+
+        Chaque réglage part donc de quoi être rattrapé dans les trois modes
+        (:func:`takeover_steps`). Le mode Relative, fait pour les encodeurs
+        sans fin, n'est pas pris en charge.
+
+        Et la machine perd ce qui arrive trop vite, ou pendant qu'elle
+        envoie l'image de son écran : chaque réglage attend qu'elle ait lu le
+        précédent (:meth:`_sync_point`), et la recopie de l'écran se tait le
+        temps de l'envoi (:meth:`_hold_screen`). Un preset entier prend ainsi
+        près d'une seconde — jusqu'à deux de plus, recopie allumée.
+
+        Rend le nombre de réglages envoyés.
         """
         if not self._out.is_open or sound is None:
             return 0
@@ -608,11 +884,35 @@ class DelugeLink:
             log.warning("%d contrôleurs demandés : on s'arrête à %d",
                         len(messages), MAX_MESSAGES)
             messages = messages[:MAX_MESSAGES]
+        joue = self.running
         envoyes = 0
-        for cc, valeur in messages:
-            if self._out.control_change(cc, valeur, self._channel):
-                envoyes += 1
-        log.debug("%d contrôleurs envoyés", envoyes)
+        self._hold_screen()
+        try:
+            for numero, (cc, valeur) in enumerate(messages):
+                if numero:
+                    self._sync_point()
+                if self._stop.is_set():
+                    break
+                cle = self._reverse.get(int(cc))
+                actuel = self.machine.get(cle) if cle else None
+                pas = takeover_steps(
+                    valeur, None if actuel is None
+                    else midifollow.cc_value(actuel, cle), joue)
+                if all(self._out.control_change(cc, v, self._channel)
+                       for v in pas):
+                    envoyes += 1
+                    if cle and len(pas) > 1:
+                        # Rattrapé à coup sûr — et la machine ne renvoie pas
+                        # ce qu'elle reçoit : le son porte cette valeur.
+                        self.machine[cle] = midifollow.raw_from_cc(valeur,
+                                                                   cle)
+            if envoyes:
+                # La note qui suit ne doit pas arriver sur une machine
+                # occupée.
+                self._sync_point()
+        finally:
+            self._release_screen()
+        log.debug("%d réglages envoyés", envoyes)
         return envoyes
 
     def send_param(self, key: str, raw: int) -> bool:
@@ -770,6 +1070,108 @@ class DelugeLink:
 
         return self._start(travail)
 
+    def play_synced(self, notes, steps: int, *, channel: int | None = None,
+                    loops: int = 1, bpm: float = 120.0,
+                    wait_start: float = 0.0) -> bool:
+        """Joue un clip **calé sur la mesure de la machine**, sans bloquer.
+
+        ``notes`` : ``(début, durée, note, vélocité)`` — début et durée en
+        doubles-croches, vélocité de 1 à 127 ; ``steps`` : longueur du clip
+        en doubles-croches.
+
+        Si la machine joue, le clip commence au prochain début de boucle de
+        sa longueur, compté depuis le départ du morceau — là où commencent
+        les clips de la machine —, et chaque note vise l'instant que donne
+        l'horloge (:class:`Transport`) : le jeu suit la machine au lieu de
+        dériver. Les notes vont au clip que suit MIDI Follow : joué, il
+        s'entend avec le morceau ; machine en enregistrement (REC), il s'y
+        inscrit. La machine s'arrête : le jeu aussi.
+
+        Machine arrêtée : avec ``wait_start``, on attend qu'elle parte
+        (jusqu'à tant de secondes) ; sinon le clip joue tout de suite, au
+        tempo ``bpm``.
+
+        :param loops: nombre de tours ; 0 = jusqu'à l'arrêt.
+        """
+        agenda = _agenda(notes, steps)
+        if not agenda or not self._out.is_open:
+            return False
+        canal = self._channel if channel is None else int(channel)
+        loop_ticks = max(1, int(steps)) * TICKS_PER_STEP
+        transport = self.transport
+
+        def attendre(cible) -> bool:
+            """Attend l'instant ``cible()`` ; faux si le jeu doit cesser."""
+            while True:
+                if self._stop.is_set():
+                    return False
+                quand = cible()
+                if quand is None:
+                    return False
+                reste = quand - time.perf_counter() - SEND_LEAD
+                if reste <= 0:
+                    return True
+                # Par petites attentes : l'instant visé se précise à chaque
+                # impulsion reçue, et l'arrêt doit répondre tout de suite.
+                if reste > 0.03:
+                    self._stop.wait(min(reste - 0.02, 0.05))
+                else:
+                    time.sleep(min(reste, 0.005))
+
+        def joue() -> bool:
+            running, ticks, _last, period = transport.snapshot()
+            return bool(running and period and ticks >= 0)
+
+        def travail() -> None:
+            synced = joue()
+            if not synced and wait_start > 0:
+                fin = time.monotonic() + float(wait_start)
+                while not joue():
+                    if self._stop.is_set() or time.monotonic() > fin:
+                        return
+                    time.sleep(0.002)
+                synced = True
+            if synced:
+                depart = transport.next_boundary(loop_ticks)
+                if depart is None:
+                    return
+                starts = transport.starts
+
+                def instant(tick):
+                    if transport.starts != starts:
+                        return None        # repartie ailleurs
+                    return transport.time_of(tick)   # None : arrêtée
+            else:
+                depart = 0
+                origine = time.perf_counter() + 0.03
+                periode = 60.0 / (float(bpm) if bpm and bpm > 0
+                                  else 120.0) / 24.0
+
+                def instant(tick):
+                    return origine + tick * periode
+            tour = 0
+            allumees: set[int] = set()
+            try:
+                while loops <= 0 or tour < loops:
+                    base = depart + tour * loop_ticks
+                    for tick, on, note, velocity in agenda:
+                        if not attendre(lambda t=base + tick: instant(t)):
+                            return
+                        if on:
+                            if note in allumees:
+                                self._out.note_off(note, canal)
+                            self._out.note_on(note, velocity, canal)
+                            allumees.add(note)
+                        elif note in allumees:
+                            self._out.note_off(note, canal)
+                            allumees.discard(note)
+                    tour += 1
+            finally:
+                for note in allumees:
+                    self._out.note_off(note, canal)
+
+        return self._start(travail)
+
     @property
     def is_playing(self) -> bool:
         worker = self._worker
@@ -816,6 +1218,30 @@ class DelugeLink:
         méthode reste pour qui veut les messages bruts.
         """
         return self._in.poll(limit)
+
+
+def _agenda(notes, steps: int) -> list[tuple[int, bool, int, int]]:
+    """``(impulsion, allumer ?, note, vélocité)`` d'un tour de clip, trié.
+
+    Une note qui se termine à l'instant où une autre commence s'éteint
+    d'abord : sinon la machine verrait un relâchement juste après l'attaque.
+    """
+    total = max(1, int(steps)) * TICKS_PER_STEP
+    out: list[tuple[int, bool, int, int]] = []
+    for start, length, note, velocity in notes or ():
+        debut = int(round(float(start) * TICKS_PER_STEP))
+        if not 0 <= debut < total:
+            continue
+        fin = min(total, debut + max(1, int(round(float(length)
+                                                  * TICKS_PER_STEP))))
+        if fin <= debut:
+            fin = debut + 1
+        hauteur = max(0, min(127, int(note)))
+        force = max(1, min(127, int(velocity)))
+        out.append((debut, True, hauteur, force))
+        out.append((fin, False, hauteur, 0))
+    out.sort(key=lambda e: (e[0], e[1]))
+    return out
 
 
 def _as_steps(notes) -> list[list[int]]:

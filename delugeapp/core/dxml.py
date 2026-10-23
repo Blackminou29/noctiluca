@@ -47,6 +47,9 @@ __all__ = [
     "loads",
     "detect_dialect",
     "dump",
+    "dump_element",
+    "version_key",
+    "version_older",
     "save",
     "get",
     "set_",
@@ -609,6 +612,46 @@ def _write_element(out: list[str], el: ET.Element, depth: int, dialect: str) -> 
     for child in children:
         _write_element(out, child, depth + 1, dialect)
     out.append(ind + "</" + tag + ">\n")
+
+
+def dump_element(el: ET.Element, depth: int = 0, dialect: str = "attr") -> str:
+    """Un élément seul, au style Deluge, indenté de ``depth`` tabulations.
+
+    Sert à **insérer** un élément dans un fichier existant sans réécrire ce
+    qui l'entoure (``core/songinsert.py``).
+    """
+    out: list[str] = []
+    _write_element(out, el, int(depth), dialect if dialect in ("attr", "elem")
+                   else "attr")
+    return "".join(out)
+
+
+def version_key(text: str) -> tuple:
+    """Clé de comparaison d'une version, dans l'ordre du firmware.
+
+    ``FirmwareVersion`` range les versions officielles avant les
+    communautaires ; un fichier sans version compte pour l'officielle 0.0.0.
+    Une préversion (``-beta``, ``-alpha``) passe avant la version finale.
+    """
+    raw = str(text or "").strip()
+    community = raw[:1].lower() == "c"
+    if community:
+        raw = raw[1:]
+    base, _sep, suffix = raw.partition("-")
+    numbers = []
+    for part in base.split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        numbers.append(int(digits) if digits else 0)
+    while len(numbers) < 3:
+        numbers.append(0)
+    # Sans suffixe, la version finale passe après toute préversion.
+    tag = (1, "") if not suffix else (0, suffix.lower())
+    return (1 if community else 0, tuple(numbers[:3]), tag)
+
+
+def version_older(version: str, than: str) -> bool:
+    """Vrai si ``version`` précède ``than`` pour le firmware."""
+    return version_key(version) < version_key(than)
 
 
 def dump(doc: DelugeDoc) -> str:

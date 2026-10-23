@@ -355,7 +355,8 @@ class NavPad(QPushButton):
     Éteint, il garde sa couleur en veilleuse — comme les pads d'un clip sur
     la machine, qui montrent leur teinte avant même d'être joués. Choisi, il
     s'allume, rayonne, et un filet de sa couleur borde la colonne. Le
-    numéro à droite est celui du raccourci (``Ctrl+1`` … ``Ctrl+9``).
+    numéro à droite est celui du raccourci (``Ctrl+1`` … ``Ctrl+9``, puis
+    ``Ctrl+0`` pour la dixième).
 
     Reste un ``QPushButton`` cochable : les tests et la fenêtre le cliquent
     et lisent son état comme avant.

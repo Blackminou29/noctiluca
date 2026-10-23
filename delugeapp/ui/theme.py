@@ -106,6 +106,8 @@ PAGE_COLORS = {
     "Kits": PAD_GREEN,
     "Songs": PAD_BLUE,
     "Generator": PAD_MAGENTA,
+    # Le rouge du bouton d'enregistrement : on y compose le morceau.
+    "Atelier": PAD_RED,
     "Toolbox": PAD_MINT,
     "Health": PAD_ORANGE,
     "Settings": PAD_INDIGO,

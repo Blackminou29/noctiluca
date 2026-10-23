@@ -574,7 +574,7 @@ class ToolboxPage(Page):
 
     @staticmethod
     def _render_parts(parts: dict, genre: str, bpm: int, drums=None,
-                      kit=None, sd=None):
+                      kit=None, sd=None, should_stop=None):
         """Joue chaque partie avec un son généré pour le genre (fil séparé).
 
         ``drums`` : le motif de batterie, joué par ``kit`` (des échantillons
@@ -587,7 +587,10 @@ class ToolboxPage(Page):
         sounds = {name: preset.sound for name, preset in
                   songwriter_mod.part_presets(parts, genre).items()}
         log.debug("accompagnement %s : %s", genre, styles)
-        tonal = render.render_parts(parts, sounds, bpm=bpm, sr=44100)
+        tonal = render.render_parts(parts, sounds, bpm=bpm, sr=44100,
+                                    should_stop=should_stop)
+        if tonal is None:
+            return None                 # arrêt demandé
         if drums is None or not drums.tracks:
             return tonal
         beat = render.render_pattern(drums, bpm=bpm, sr=44100, kit=kit,

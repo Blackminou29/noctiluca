@@ -5,7 +5,7 @@ Chaque page respecte le contrat de la SPEC §5.5 : un signal ``status``, une
 méthode :meth:`Page.refresh` appelée quand la page devient visible, et les
 attributs de classe ``TITLE`` et ``ICON``.
 
-:class:`Page` ajoute ce que les neuf pages refont sinon à l'identique :
+:class:`Page` ajoute ce que les dix pages refont sinon à l'identique :
 
 * **un rempart autour de ``refresh``.** La SPEC §6.3 exige qu'aucune exception
   n'atteigne la boucle Qt ; les pages redéfinissent ``_refresh`` et le socle
@@ -66,6 +66,13 @@ from ..theme import (
 from ..widgets.common import EmptyState, LitPad, glow
 
 log = logging.getLogger(__name__)
+
+#: L'écoute sur le Deluge : chaque note de la phrase, puis le silence avant
+#: la suivante — le pas de l'aperçu de l'ordinateur (0,55 s).
+PHRASE_NOTE = 0.5
+PHRASE_GAP = 0.05
+#: Une note seule, ou une liste de notes imposée.
+SINGLE_NOTE = 0.8
 
 
 def _sans_accents(texte: str) -> str:
@@ -482,7 +489,8 @@ class Page(QWidget):
                 self.say(tr("Action impossible : voir le journal."))
         return wrapper
 
-    def audition(self, sound, notes=60, seconds: float = 0.8) -> bool:
+    def audition(self, sound, notes=None, seconds: float | None = None
+                 ) -> bool:
         """Fait jouer ``sound`` **par le Deluge**, s'il est branché.
 
         Rend ``True`` si la machine a pris le relais ; la page n'a alors plus
@@ -490,10 +498,12 @@ class Page(QWidget):
         demandé, machine absente, envoi refusé — et la page poursuit avec son
         moteur habituel.
 
-        Les réglages du son partent en contrôleurs juste avant la note :
+        Les réglages du son partent en contrôleurs juste avant les notes :
         c'est le mode MIDI Follow qui les applique à l'instrument
         **sélectionné sur la machine**, que l'application ne peut pas
-        choisir à distance.
+        choisir à distance. Sans ``notes``, la machine joue la phrase que
+        l'ordinateur rendrait (:func:`render.preview_notes`) : une note après
+        l'autre, au même pas — et non plus un do isolé.
         """
         try:
             if not getattr(self.ctx.settings, "midi_audition", False):
@@ -501,7 +511,21 @@ class Page(QWidget):
             lien = getattr(self.ctx, "link", None)
             if lien is None or not lien.is_connected or sound is None:
                 return False
-            if not lien.play_notes(notes, seconds=seconds, sound=sound):
+            gap = 0.0
+            if notes is None:
+                from ...core.render import preview_notes
+
+                phrase = preview_notes(sound)
+                notes = [[n] for n in phrase]
+                if seconds is None:
+                    # Le pas de l'aperçu de l'ordinateur : 0,55 s ; une
+                    # note seule (un bourdon) tient plus longtemps.
+                    seconds, gap = ((PHRASE_NOTE, PHRASE_GAP)
+                                    if len(phrase) > 1 else (SINGLE_NOTE, 0.0))
+            if seconds is None:
+                seconds = SINGLE_NOTE
+            if not lien.play_notes(notes, seconds=seconds, gap=gap,
+                                   sound=sound):
                 return False
             self.say(tr("Écouté sur le Deluge (canal %d).") % lien.channel)
             return True

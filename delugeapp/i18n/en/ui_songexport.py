@@ -20,4 +20,14 @@ TEXTS = {
     "Morceau écrit : %s. Il se charge sur le Deluge comme tout autre "
     "morceau.":
         "Song written: %s. It loads on the Deluge like any other song.",
+    "Morceau impossible à compléter : %s.": "Song cannot be completed: %s.",
+    "Morceau impossible à compléter : %s": "Song cannot be completed: %s",
+    "Compléter le morceau": "Complete the song",
+    "Écrire cette nouvelle version sur la carte ? Le morceau d'origine n'est "
+    "pas touché.":
+        "Write this new version to the card? The original song is not touched.",
+    "Nouvelle version écrite : %s. Chargez-la sur le Deluge ; l'original "
+    "reste tel quel.":
+        "New version written: %s. Load it on the Deluge; the original stays "
+        "as it is.",
 }
