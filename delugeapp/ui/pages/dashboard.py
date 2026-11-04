@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Page « Tableau de bord ».
+"""Page « Accueil ».
 
-La première chose que voit l'utilisateur : ce que contient sa carte, dans quel
-état elle est, et les quatre ou cinq gestes qu'il fait le plus souvent.
+La première chose que voit l'utilisateur, et la question qu'elle lui pose :
+**que voulez-vous faire ?** Créer un morceau, créer un son, continuer un
+morceau du Deluge, explorer ses sons — quatre portes, chacune à la couleur
+de la page où elle mène. Dessous, ce qui demande attention (« À faire
+maintenant »), le lien avec le Deluge, puis la carte : son contenu, son
+état de santé, sa dernière analyse.
+
+L'accueil marche sans carte : on peut composer et fabriquer des sons avant
+même d'en avoir choisi une. Il le dit, et montre où l'indiquer.
 
 L'analyse de la carte part d'ici, dans un fil séparé : sur la carte d'essai
 elle prend deux secondes, mais sur une carte lue par un lecteur USB lent elle
@@ -45,6 +52,7 @@ from ..theme import (
 )
 from ..widgets.common import (
     clear_layout,
+    ActionPad,
     BusyBar,
     Card,
     ElidedLabel,
@@ -58,7 +66,7 @@ from ..widgets.common import (
     human_duration,
     human_size,
 )
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -132,13 +140,17 @@ class _LigneAnomalie(QWidget):
 
 
 class DashboardPage(Page):
-    """Vue d'ensemble de la carte."""
+    """L'accueil : par où commencer, et où en sont la carte et le Deluge."""
 
-    TITLE = N_("Tableau de bord")
-    ICON = "dashboard"
+    TITLE = N_("Accueil")
+    ICON = "home"
+    #: L'accueil s'ouvre sans carte : on peut créer avant d'en avoir une.
+    NEEDS_CARD = False
 
     #: Demande d'aller sur une autre page, par son nom de classe abrégé.
     navigateRequested = pyqtSignal(str)
+    #: Ouvrir dans l'atelier un morceau de la carte, choisi dans la liste.
+    songRequested = pyqtSignal()
     #: L'analyse vient de se terminer : les autres pages doivent se rafraîchir.
     scanFinished = pyqtSignal()
     #: Envoyer des fichiers du PC au Deluge : la fenêtre ouvre le choix.
@@ -166,13 +178,13 @@ class DashboardPage(Page):
         outer.setContentsMargins(PAD, PAD, PAD, PAD)
         outer.setSpacing(PAD)
 
-        # Rien dans la barre d'actions de la page : les commandes de
-        # l'analyse descendent dans la carte « Carte », aux côtés de la date
-        # de la dernière analyse — c'est là qu'on apprend qu'elle manque. La
-        # barre d'en-tête de la fenêtre garde le « Analyser » global
-        # (Ctrl+R), un seul au lieu de deux voisins identiques.
+        # Rien dans la barre d'actions de la page : l'accueil est fait de
+        # portes d'entrée, et l'analyse de la carte vit dans le panneau
+        # « Carte », aux côtés de la date de la dernière — c'est là qu'on
+        # apprend qu'elle manque.
         header, _actions = self.header(
-            tr("Tableau de bord"), tr("Ce que contient la carte, et son état"))
+            tr("Accueil"),
+            tr("Par où commencer, et où en sont votre carte et votre Deluge"))
         outer.addWidget(header)
 
         self._progress = BusyBar()
@@ -194,18 +206,19 @@ class DashboardPage(Page):
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
 
+        column.addWidget(self._build_start(scroll))
         column.addWidget(self._build_next_step())
+        column.addWidget(self._build_no_card())
         column.addWidget(self._build_exchanges())
         column.addWidget(self._build_tiles())
-        column.addWidget(self._build_card_info())
 
         row = QHBoxLayout()
         row.setSpacing(PAD)
         row.addWidget(self._build_health(), 1)
-        row.addWidget(self._build_actions(), 1)
-        holder = QWidget()
-        holder.setLayout(row)
-        column.addWidget(holder)
+        row.addWidget(self._build_card_info(), 1)
+        self._health_row = QWidget()
+        self._health_row.setLayout(row)
+        column.addWidget(self._health_row)
 
         column.addWidget(self._build_folders())
         column.addStretch(1)
@@ -217,6 +230,99 @@ class DashboardPage(Page):
             scroll.viewport(), self._tiles_grid,
             [self._tiles[cle] for cle in self._tile_order], 3, 2, 930)
         self._rangee_sante = RangeeAdaptative(scroll.viewport(), row, 900)
+
+    # -- que voulez-vous faire ? -------------------------------------------- #
+
+    def _build_start(self, scroll) -> QWidget:
+        """Les quatre portes d'entrée, chacune à la couleur de sa page."""
+        card = Card(tr("Que voulez-vous faire ?"), color=self.color)
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        self._song_pad = ActionPad(
+            tr("Créer un morceau"),
+            tr("Choisissez un style : l'atelier compose le morceau entier, "
+               "vous l'affinez étape par étape, le Deluge le joue."),
+            "atelier", page_color("Atelier"))
+        self._song_pad.clicked.connect(self.guard(self._open_atelier))
+        self._sound_pad = ActionPad(
+            tr("Créer un son"),
+            tr("Un preset de synthé ou un kit de batterie, par genre ou au "
+               "hasard, à écouter puis garder sur la carte."),
+            "wand", page_color("Generator"))
+        self._sound_pad.clicked.connect(
+            self.guard(lambda: self.navigateRequested.emit(
+                "Generator#Preset de synthé")))
+        self._continue_pad = ActionPad(
+            tr("Continuer un morceau du Deluge"),
+            tr("Ouvrez dans l'atelier un morceau enregistré sur la machine, "
+               "et ajoutez-lui pistes, clips et sections."),
+            "song", page_color("Songs"))
+        self._continue_pad.clicked.connect(
+            self.guard(lambda: self.songRequested.emit()))
+        self._explore_pad = ActionPad(
+            tr("Explorer mes sons"),
+            tr("Échantillons, presets, kits et morceaux de la carte : "
+               "écouter, chercher, ranger."),
+            "samples", page_color("Samples"))
+        self._explore_pad.clicked.connect(
+            self.guard(lambda: self.navigateRequested.emit("Samples")))
+        pads = [self._song_pad, self._sound_pad, self._continue_pad,
+                self._explore_pad]
+        ActionPad.grouper(pads)
+        card.body().addLayout(grid)
+        # Deux par rangée ; une seule colonne quand la place manque.
+        self._grille_portes = GrilleAdaptative(scroll.viewport(), grid, pads,
+                                               2, 1, 640)
+        return card
+
+    def _open_atelier(self) -> None:
+        """« Créer un morceau » mène au style ; « Reprendre », à l'étape où
+        l'on en était."""
+        etat = getattr(self.ctx, "atelier_state", None)
+        self.navigateRequested.emit("Atelier" if etat else "Atelier#Style")
+
+    def _fill_start(self) -> None:
+        """La première porte dit s'il y a un morceau en cours."""
+        etat = getattr(self.ctx, "atelier_state", None)
+        if etat:
+            self._song_pad.setText(tr("Reprendre le morceau"))
+            self._song_pad.set_description(
+                tr("%s — l'atelier vous attend à l'étape « %s ».")
+                % (etat.get("summary", ""), tr(etat.get("step", ""))))
+        else:
+            self._song_pad.setText(tr("Créer un morceau"))
+            self._song_pad.set_description(
+                tr("Choisissez un style : l'atelier compose le morceau "
+                   "entier, vous l'affinez étape par étape, le Deluge le "
+                   "joue."))
+
+    def _build_no_card(self) -> QWidget:
+        """Sans carte : où l'indiquer — et ce qu'on peut déjà faire."""
+        card = Card(tr("Votre carte Deluge"), color=page_color("Settings"))
+        self._no_card = card
+        texte = QLabel(tr(
+            "Aucune carte n'est encore choisie. L'atelier et le générateur "
+            "marchent déjà : vous pouvez composer et écouter. Pour écrire sur "
+            "la carte et parcourir vos sons, indiquez où elle est — ou "
+            "laissez l'application la chercher."))
+        texte.setWordWrap(True)
+        card.body().addWidget(texte)
+        ligne = QHBoxLayout()
+        ligne.setSpacing(8)
+        self._card_folder_button = tool_button(
+            tr("Indiquer le dossier"), "folder", color=page_color("Settings"))
+        self._card_folder_button.clicked.connect(
+            self.guard(lambda: self.settingsRequested.emit()))
+        ligne.addWidget(self._card_folder_button)
+        self._card_detect_button = tool_button(
+            tr("Détecter la carte"), "search", color=page_color("Settings"))
+        self._card_detect_button.clicked.connect(
+            self.guard(lambda: self.detectRequested.emit()))
+        ligne.addWidget(self._card_detect_button)
+        ligne.addStretch(1)
+        card.body().addLayout(ligne)
+        card.setVisible(False)
+        return card
 
     def _build_next_step(self) -> QWidget:
         """Le bandeau « et maintenant ? », caché quand il n'a rien à dire."""
@@ -267,8 +373,12 @@ class DashboardPage(Page):
         """
         suggestion = self._next_suggestion(stats, report)
         if suggestion is None:
+            # Le texte s'efface avec le bandeau : une suggestion cachée mais
+            # périmée ressortirait telle quelle au prochain affichage.
             self._next_card.setVisible(False)
             self._next_target = ""
+            self._next_text.setText("")
+            self._next_button.setText("")
             return
 
         texte, bouton, cible, icone, teinte = suggestion
@@ -345,13 +455,9 @@ class DashboardPage(Page):
                     tr("Les ranger"), "Health#Inutilisés", "folder",
                     page_color("Health"))
 
-        # Rien ne cloche : on propose de créer, ce pour quoi la carte est
-        # faite.
-        return (tr("La carte est en ordre. De quoi fabriquer un son : le "
-                   "générateur part d'un genre et vous rend un preset prêt "
-                   "à enregistrer."),
-                tr("Générer un preset"), "Generator#Preset de synthé",
-                "wand", page_color("Generator"))
+        # Rien ne cloche : pas de bandeau. Les portes d'entrée, juste
+        # au-dessus, proposent déjà de créer.
+        return None
 
     # -- le Deluge et le PC ---------------------------------------------------- #
 
@@ -554,6 +660,7 @@ class DashboardPage(Page):
     def _build_tiles(self) -> QWidget:
         """Les six tuiles chiffrées."""
         card = Card(tr("Contenu de la carte"), color=self.color)
+        self._tiles_card = card
         grid = QGridLayout()
         grid.setSpacing(8)
 
@@ -617,9 +724,13 @@ class DashboardPage(Page):
         self._last_scan.setWordWrap(True)
         row.addWidget(self._last_scan, 1)
 
+        # Plus dans la barre du haut : l'index se tient à jour tout seul, au
+        # démarrage et après chaque échange avec le Deluge. Relire toute la
+        # carte reste possible, ici, au menu Fichier et sous Ctrl+R.
         self._scan_button = tool_button(
             tr("Analyser la carte"), "refresh",
-            tr("Relit la carte et met l'index à jour  (Ctrl+R)"), primary=True)
+            tr("Relit la carte et met l'index à jour  (Ctrl+R)"),
+            color=self.color)
         self._scan_button.clicked.connect(self.guard(self._start_scan))
         row.addWidget(self._scan_button)
 
@@ -658,52 +769,19 @@ class DashboardPage(Page):
         body.addWidget(open_health)
         return card
 
-    def _build_actions(self) -> QWidget:
-        """Six raccourcis, chacun à la couleur de sa destination.
-
-        C'étaient six boutons gris identiques, dont deux doublaient la barre
-        latérale (« Réglages ») et deux menaient au même écran sans dire où
-        (« Nettoyer la carte »). Chacun porte maintenant la teinte de sa page
-        et mène **à l'onglet exact** : trois clics économisés sur une
-        sauvegarde, et le gris ne cache plus la hiérarchie.
-        """
-        card = Card(tr("Actions rapides"), color=self.color)
-        grid = QGridLayout()
-        grid.setSpacing(6)
-        shortcuts = (
-            (tr("Générer un preset"), "wand", "Generator#Preset de synthé",
-             tr("Fabriquer un son de synthé par genre")),
-            (tr("Construire un kit"), "kit", "Generator#Kit de batterie",
-             tr("Assembler un kit de batterie à partir de la carte")),
-            (tr("Chercher les doublons"), "copy", "Health#Doublons",
-             tr("Trouver les échantillons présents plusieurs fois")),
-            (tr("Échantillons manquants"), "warning", "Health#Manquants",
-             tr("Les sons que des presets réclament sans les trouver")),
-            (tr("Sauvegarder la carte"), "backup", "Health#Sauvegardes",
-             tr("Copier la carte avant d'y toucher")),
-            (tr("Boîte à outils"), "tools", "Toolbox",
-             tr("Gammes, tempos, conversions et aide-mémoire")),
-        )
-        for index, (label, icon, target, aide) in enumerate(shortcuts):
-            button = tool_button(label, icon, aide,
-                                 color=page_color(target.split("#")[0]))
-            button.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                 QSizePolicy.Policy.Fixed)
-            button.setMinimumHeight(42)
-            button.clicked.connect(
-                self.guard(lambda _c=False, t=target:
-                           self.navigateRequested.emit(t)))
-            grid.addWidget(button, index // 2, index % 2)
-        card.body().addLayout(grid)
-        return card
-
     def _build_folders(self) -> QWidget:
-        card = Card(tr("Répartition des échantillons"),
-                    color=page_color("Samples"))
+        # Un hôte que la présence de la carte montre ou cache, et dedans le
+        # panneau, réservé au niveau avancé : deux maîtres, deux widgets.
+        self._folders_host = QWidget()
+        hote = QVBoxLayout(self._folders_host)
+        hote.setContentsMargins(0, 0, 0, 0)
+        card = avance(Card(tr("Répartition des échantillons"),
+                           color=page_color("Samples")))
         self._folders = QVBoxLayout()
         self._folders.setSpacing(4)
         card.body().addLayout(self._folders)
-        return card
+        hote.addWidget(card)
+        return self._folders_host
 
     # -- analyse ------------------------------------------------------------ #
 
@@ -810,6 +888,16 @@ class DashboardPage(Page):
     # -- rafraîchissement --------------------------------------------------- #
 
     def _refresh(self) -> None:
+        self._fill_start()
+        carte = bool(self.ctx.has_card)
+        self._no_card.setVisible(not carte)
+        for panneau in (self._exchanges_card, self._tiles_card,
+                        self._health_row, self._folders_host):
+            panneau.setVisible(carte)
+        if not carte:
+            self._next_card.setVisible(False)
+            self._next_target = ""
+            return
         stats = self._stats()
         self._fill_tiles(stats)
         self._fill_card_info(stats)
@@ -880,9 +968,6 @@ class DashboardPage(Page):
             self._card_detail.setText(tr("Espace disque indisponible."))
 
         last = stats.get("last_scan") or ""
-        # Carte déjà analysée : le « Analyser » de l'en-tête suffit, et le
-        # bouton de la page s'efface au lieu de crier.
-        self._scan_button.setVisible(not last)
         if last:
             self._last_scan.setText(
                 tr("Dernière analyse : %s") % human_datetime(last))

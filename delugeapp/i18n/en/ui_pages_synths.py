@@ -89,4 +89,5 @@ TEXTS = {
     "Créer « %s » dans %s ?": "Create “%s” in %s?",
     "Duplication impossible : %s": "Duplication failed: %s",
     "Copie créée : %s": "Copy created: %s",
+    "Utiliser dans l'atelier": "Use in the studio",
 }

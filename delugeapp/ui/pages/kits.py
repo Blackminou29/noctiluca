@@ -43,7 +43,7 @@ from ..widgets.common import (
     sorted_proxy,
 )
 from ..widgets.padgrid import StepSequencer
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,8 @@ class KitsPage(Page):
                     "le kit ou exportez le motif en MIDI.")
 
     kitChosen = pyqtSignal(str)
+    #: Le kit choisi, pour la batterie du morceau de l'atelier : ``{"kit"}``.
+    toAtelier = pyqtSignal(object)
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
@@ -94,14 +96,19 @@ class KitsPage(Page):
         stop.clicked.connect(self.guard(self._stop))
         actions.addWidget(stop)
 
-        export = tool_button(tr("Motif en MIDI"), "export",
-                             tr("Exporter le motif d'essai en fichier MIDI"))
+        # Le kit fait la batterie du morceau de l'atelier : c'est là qu'il
+        # devient un morceau du Deluge, avec la structure du genre — au lieu
+        # du morceau d'un seul motif qu'écrivait « Motif en morceau ».
+        self._use_button = tool_button(tr("Utiliser dans l'atelier"),
+                                       "atelier")
+        self._use_button.clicked.connect(self.guard(self._use_in_atelier))
+        actions.addWidget(self._use_button)
+
+        export = avance(tool_button(
+            tr("Motif en MIDI"), "export",
+            tr("Exporter le motif d'essai en fichier MIDI")))
         export.clicked.connect(self.guard(self._export_midi))
         actions.addWidget(export)
-
-        song = tool_button(tr("Motif en morceau"), "song")
-        song.clicked.connect(self.guard(self._song_from_motif))
-        actions.addWidget(song)
 
         row = QHBoxLayout()
         self._search = SearchBar(tr("Rechercher un kit…"))
@@ -490,43 +497,18 @@ class KitsPage(Page):
             return
         self.say(tr("Motif exporté : %s") % Path(chosen).name)
 
-    # -- morceau du Deluge -------------------------------------------------- #
+    # -- vers l'atelier ------------------------------------------------------ #
 
-    def _song_from_motif(self) -> None:
-        """Le motif d'essai, joué par ce kit, en morceau du Deluge.
-
-        Le kit est repris **tel qu'il est sur la carte**, et non tel que
-        l'application le comprend : les conversions que la machine ferait en
-        le chargeant (kit ancien, bornes en millisecondes…) sont appliquées
-        par :func:`delugeapp.core.songwriter.kit_track`.
-        """
-        pattern = self._sequencer.pattern()
-        if pattern is None or not any(pattern.tracks.values()):
-            self.say(tr("Composez d'abord un motif."))
-            return
+    def _use_in_atelier(self) -> None:
+        """Le kit choisi devient la batterie du morceau de l'atelier — ou du
+        prochain. Rien n'est écrit : l'original reste tel quel sur la
+        carte."""
         if self._kit is None or not self._current:
             self.say(tr("Choisissez d'abord un kit."))
             return
-        rel = self._current
-        model = self._kit
+        import copy
 
-        def build(card):
-            from ...core import dxml, songwriter
-
-            doc = dxml.load(card.abs(rel))
-            root = doc.root if doc.root.tag == "kit" else doc.root.find("kit")
-            if root is None:
-                raise ValueError(tr("ce fichier ne contient pas de kit"))
-            rows = songwriter.drum_rows(pattern.tracks, model)
-            dossier = str(Path(rel).parent).replace("\\", "/")
-            return songwriter.pattern_song(
-                pattern, root, rows, name="", bpm=128, version=doc.firmware,
-                kit_name=Path(rel).stem,
-                folder=dossier if dossier not in ("", ".") else "KITS",
-                sd=card)
-
-        self.write_song(build, tr("%s motif") % Path(rel).stem)
-
+        self.toAtelier.emit({"kit": copy.deepcopy(self._kit)})
 
     # -- rafraîchissement --------------------------------------------------- #
 

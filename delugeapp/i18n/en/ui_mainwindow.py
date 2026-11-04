@@ -5,8 +5,6 @@ TEXTS = {
     "Emplacement de la carte — cliquez pour le changer":
         "Card location — click to change it",
     "Rechercher partout…": "Search everywhere…",
-    "Analyser": "Scan",
-    "Relire la carte  (Ctrl+R)": "Read the card again  (Ctrl+R)",
     "Écouter ou arrêter  (Espace)": "Play or stop  (Space)",
     "détecté — cliquez pour connecter": "detected — click to connect",
     "absent": "not connected",
@@ -74,10 +72,6 @@ TEXTS = {
         "No card chosen. Click to say where it is.",
     "%s libres": "%s free",
     "%s libres sur le disque": "%s free on the disk",
-    "Relire la carte et mettre l'index à jour  (Ctrl+R)":
-        "Read the card again and update the index  (Ctrl+R)",
-    "Indiquez d'abord l'emplacement de la carte":
-        "Set the card's location first",
     "&Fichier": "&File",
     "Choisir la carte…": "Choose card…",
     "Analyser la carte": "Scan card",
@@ -90,7 +84,6 @@ TEXTS = {
     "Réglages…": "Settings…",
     "&Outils": "&Tools",
     "Générateur de presets": "Preset generator",
-    "Boîte à outils": "Toolbox",
     "Santé de la carte": "Card health",
     "Deluge en direct": "Deluge Live",
     "Synchroniser avec le Deluge": "Sync with the Deluge",
@@ -129,7 +122,8 @@ TEXTS = {
     "Ctrl+Maj+D": "Ctrl+Shift+D",
     "Espace": "Space",
     "Écouter / arrêter": "Play / stop",
-    "Aller à la page correspondante": "Go to the matching page",
+    "Aller à la page correspondante, de l'accueil à la santé de la carte":
+        "Go to the matching page, from home to the card's health",
     "Le manuel, au chapitre de la page affichée":
         "The manual, at the chapter of the page shown",
     "Manuel": "Manual",
@@ -153,4 +147,23 @@ TEXTS = {
     "Continuer ?":
         "%d task(s) running.\n\nQuitting now will interrupt them. Continue?",
     "Un traitement est en cours": "A task is running",
+    "Créer": "Create",
+    "Bibliothèque": "Library",
+    "La carte": "The card",
+    "Simple : l'essentiel de chaque page. Avancé : tous les réglages et "
+    "toutes les commandes  (Ctrl+E)":
+        "Simple: the essentials of each page. Advanced: every setting and "
+        "every command  (Ctrl+E)",
+    "Nouveau morceau": "New song",
+    "Ouvrir un morceau du Deluge…": "Open a Deluge song…",
+    "Mémo": "Notebook",
+    "Mode avancé": "Advanced mode",
+    "Mode avancé : tous les réglages et toutes les commandes sont visibles.":
+        "Advanced mode: every setting and every command is shown.",
+    "Mode simple : l'essentiel de chaque page ; le reste revient en mode "
+    "avancé.":
+        "Simple mode: the essentials of each page; the rest comes back in "
+        "advanced mode.",
+    "Nouveau morceau, dans l'atelier": "New song, in the studio",
+    "Mode simple ou avancé": "Simple or advanced mode",
 }

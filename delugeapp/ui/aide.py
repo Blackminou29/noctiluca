@@ -107,6 +107,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                                         "pour le muter ou en tirer des "
                                         "variantes — l'original n'est jamais "
                                         "réécrit"),
+        "@_use_button": N_("Donne ce son au morceau de l'atelier, à la piste "
+                           "de sa catégorie — une basse à la basse, une nappe "
+                           "aux accords —, ou le garde pour le prochain "
+                           "morceau. Rien n'est écrit sur la carte"),
     },
 
     # ---------------------------------------------------------------- #
@@ -121,14 +125,18 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                       "rangées que ce kit possède"),
         "Motif en MIDI": N_("Écrit le motif d'essai dans un fichier .mid, à "
                             "l'endroit que vous choisirez — hors de la carte"),
-        "Motif en morceau": N_("**Écrit sur la carte.** Crée dans SONGS un "
-                               "morceau neuf : ce kit, tel qu'il est sur la "
-                               "carte, et un clip qui joue le motif d'essai. ")
-                            + _PLAN,
+        "@_use_button": N_("Fait de ce kit la batterie du morceau de "
+                           "l'atelier, ou du prochain : il y joue les clips de "
+                           "batterie, et s'écrit avec le morceau. Rien n'est "
+                           "écrit sur la carte"),
     },
 
     # ---------------------------------------------------------------- #
     "Songs": {
+        "@_open_button": N_("Ouvre le morceau choisi dans l'atelier : ses "
+                            "pistes, ses clips et ses sections deviennent ceux "
+                            "du projet, et l'atelier le complète sans le "
+                            "réécrire. Rien n'est modifié"),
         "@_search": N_("Filtre les morceaux sur leur nom"),
         "Clip en MIDI": N_("Écrit le clip choisi dans un fichier .mid, à "
                            "l'endroit que vous choisirez"),
@@ -140,6 +148,66 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                           "perdre"),
         "Rapport HTML": N_("Écrit une page web décrivant le morceau : tempo, "
                            "clips, instruments, échantillons utilisés"),
+    },
+
+    # ---------------------------------------------------------------- #
+    "Daw": {
+        "@_reveal_button": N_("Ouvre dans l'explorateur Windows le dernier "
+                              "dossier exporté pour le DAW, ou celui du "
+                              "projet ouvert — rien n'est modifié"),
+        "@_to_search": N_("Filtre les morceaux sur leur nom"),
+        "@_live_search": N_("Filtre les morceaux sur leur nom"),
+        "@_fmt_als": N_("Un set Ableton Live : une piste MIDI par piste du "
+                        "morceau, une scène par section, l'arrangement "
+                        "entier, les repères, le tempo, et les pistes audio. "
+                        "Bâti avec les fichiers du Live installé sur ce PC ; "
+                        "grisé s'il n'est pas trouvé"),
+        "@_fmt_midi": N_("Un fichier .mid : tempo, repères de section, une "
+                         "piste par piste du morceau, la batterie sur le "
+                         "canal 10. Tous les DAW l'ouvrent"),
+        "@_fmt_dawproject": N_("Un projet .dawproject : pistes, clips en "
+                               "boucles, arrangement, scènes, repères, et les "
+                               "pistes audio. Bitwig Studio l'ouvre, Studio "
+                               "One et Cubase l'importent"),
+        "@_fmt_rpp": N_("Un projet Reaper .rpp : pistes, objets MIDI en "
+                        "boucles, repères, et les pistes audio"),
+        "@_stems_machine": N_("Copie dans le dossier les pistes que le Deluge "
+                              "a exportées lui-même (Export Tracks), le rendu "
+                              "le plus fidèle ; grisé s'il n'y en a pas pour "
+                              "ce morceau"),
+        "@_stems_pc": N_("Calcule sur l'ordinateur une piste audio par "
+                         "synthé et par kit, avec l'écoute fidèle au Deluge, "
+                         "toutes calées au début du morceau — plusieurs "
+                         "minutes pour un long morceau"),
+        "@_export_button": N_("Demande un dossier du PC, puis y écrit un "
+                              "dossier **neuf** pour le DAW, avec un "
+                              "lisez-moi ; le morceau et la carte ne changent "
+                              "pas"),
+        "@_open_project_button": N_("Lit un fichier MIDI, un set Ableton "
+                                    "Live, un DAWproject ou un projet Reaper, "
+                                    "et propose ce que devient chaque piste "
+                                    "— rien n'est encore écrit"),
+        "@_import_source": N_("Les sections du nouveau morceau suivent "
+                              "l'arrangement du projet (coupé à ses repères) "
+                              "ou ses scènes ; grisé si le projet n'a que "
+                              "l'un des deux"),
+        "@_import_bars": N_("Une longue section de l'arrangement est coupée "
+                            "en tranches de cette taille, pour des clips à "
+                            "la mesure de la machine ; le déroulé ne change "
+                            "pas"),
+        "@_import_genre": N_("Le style des sons générés pour les pistes "
+                             "devenues synthés et kits"),
+        "@_import_button": N_("**Écrit sur la carte.** Crée dans SONGS un "
+                              "morceau neuf : une piste par piste retenue, "
+                              "un clip par section où elle joue. ")
+                           + _PLAN,
+        "@_keep_existing": N_("Une piste qui écoute déjà un canal le garde ; "
+                              "décochée, chacune reçoit un canal libre"),
+        "@_daw_choice": N_("Le DAW dont les réglages s'affichent pas à pas "
+                           "ci-dessous"),
+        "@_live_button": N_("**Écrit sur la carte.** Une copie du morceau où "
+                            "chaque piste écoute son canal ; le plan est "
+                            "montré avant, l'original n'est pas touché"),
     },
 
     # ---------------------------------------------------------------- #
@@ -164,15 +232,19 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                                "machine et en clair. Le son retouché rejoint "
                                "l'historique  (rien n'est écrit sur la "
                                "carte)"),
-        "Essayer en morceau": N_("**Écrit sur la carte.** Crée dans SONGS un "
-                                 "morceau neuf où le son joue une phrase "
-                                 "faite pour son rôle (basse, accords, "
-                                 "arpège, mélodie), sur une progression et la "
-                                 "batterie du genre : de quoi l'essayer en "
-                                 "situation sur la machine. ") + _PLAN,
-        "Kit en morceau": N_("**Écrit sur la carte.** Crée dans SONGS un "
-                             "morceau neuf : ce kit et un clip qui joue le "
-                             "rythme de son genre. ") + _PLAN,
+        "@_try_preset_button": N_("Le son rejoint le morceau de l'atelier, à "
+                                  "la piste de son rôle — la basse pour une "
+                                  "basse, les accords pour une nappe —, ou "
+                                  "le prochain morceau s'il n'y en a pas : "
+                                  "vous l'entendez en situation, et ses "
+                                  "variantes restent dans le style. Rien "
+                                  "n'est écrit sur la carte"),
+        "@_try_kit_button": N_("Le kit devient la batterie du morceau de "
+                               "l'atelier, ou du prochain : vous l'entendez "
+                               "jouer les clips du morceau. Rien n'est écrit "
+                               "sur la carte"),
+        "Écouter le kit": N_("Joue chaque rangée du kit construit, l'une "
+                             "après l'autre — rien n'est écrit"),
         "@_role": N_("Ce que le son doit faire dans un morceau : une basse ne "
                      "se règle pas comme une nappe"),
         "@_mode": N_("Moteur de synthèse. « Choisi par le genre » laisse le "
@@ -216,16 +288,88 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
 
     # ---------------------------------------------------------------- #
     "Atelier": {
-        "@_compose_button": N_("Fabrique un morceau neuf dans le style de "
-                               "l'onglet Style : une piste par partie cochée, "
-                               "un premier clip chacune, et la structure du "
-                               "genre avec les variations qu'elle appelle  "
-                               "(rien n'est encore écrit sur la carte)"),
+        "@_compose_button": N_("Fabrique un morceau neuf dans le style "
+                               "choisi : une piste par partie cochée, un "
+                               "premier clip chacune, et la structure du "
+                               "genre avec les variations qu'elle appelle. "
+                               "Un morceau en cours est remplacé, après une "
+                               "question  (rien n'est encore écrit sur la "
+                               "carte)"),
         "@_import_button": N_("Ouvre dans l'atelier un morceau de la carte — "
                               "les derniers reçus du Deluge en tête : ses "
                               "pistes, ses clips, son tempo et sa gamme "
                               "deviennent ceux du projet, sa progression est "
                               "lue dans ses notes. Rien n'est modifié"),
+        "Ouvrir un morceau du Deluge…": N_("Ouvre dans l'atelier un morceau "
+                                           "de la carte : ses pistes, ses "
+                                           "clips et ses sections deviennent "
+                                           "ceux du projet. Rien n'est "
+                                           "modifié"),
+        "Composer un morceau": N_("Mène à la première étape : choisir un "
+                                  "style, puis composer"),
+        "@_listen_song_button": N_("Joue huit mesures du passage le plus "
+                                   "plein du morceau, toutes pistes "
+                                   "ensemble — rien n'est écrit"),
+        "@_prev_button": N_("Revient à l'étape d'avant ; rien de ce que vous "
+                            "avez fait ne se perd"),
+        "@_next_button": N_("Passe à l'étape suivante du morceau ; toutes "
+                            "restent ouvertes, dans l'ordre que vous "
+                            "voulez"),
+        "@_listen_chords_button": N_("Joue les accords du morceau, tenus, "
+                                     "sur un son de nappe du style"),
+        "@_other_chords_button": N_("Tire une autre suite d'accords dans la "
+                                    "même ambiance ; elle servira à la "
+                                    "prochaine composition"),
+        "@_other_chord_button": N_("Remplace l'accord choisi dans la liste "
+                                   "par un autre de même fonction (tonique, "
+                                   "sous-dominante, dominante) — le reste de "
+                                   "la suite ne bouge pas"),
+        "@_kit_row_button": N_("Remplace le son de la rangée choisie par un "
+                               "autre du même rôle — de la même machine "
+                               "d'abord, puis d'une voisine — sans toucher "
+                               "au reste du kit  (rien n'est écrit sur la "
+                               "carte)"),
+        "@_clip_midi_button": N_("Écrit le clip choisi dans un fichier .mid, "
+                                 "à l'endroit que vous choisirez — hors de "
+                                 "la carte ; une batterie part sur le canal "
+                                 "10"),
+        "@_groove": N_("Swing d'échantillonneur en pourcentage (58 % léger, "
+                       "66 % ternaire), ou jeu derrière / devant le temps. Le "
+                       "même pourcentage se règle dans le swing du Deluge"),
+        "@_swing": N_("Swing libre ajouté au groove, de droit à ternaire"),
+        "@_groove_button": N_("Pose le groove sur le clip de batterie choisi, "
+                              "toujours depuis le motif droit : un second "
+                              "clic remplace le premier groove au lieu de "
+                              "s'y ajouter"),
+        "@_pulses": N_("Nombre de coups à répartir dans la rangée"),
+        "@_steps": N_("Longueur du motif euclidien, en pas : 16 pas = une "
+                      "mesure en double-croches ; il se répète sur tout le "
+                      "clip"),
+        "@_rotation": N_("Décale le motif d'un ou plusieurs pas, sans changer "
+                         "ses coups"),
+        "@_euclid_button": N_("Ajoute au clip de batterie une rangée dont les "
+                              "coups sont répartis au mieux — sur la carte, "
+                              "elle reçoit une percussion de votre "
+                              "bibliothèque"),
+        "@_feel": N_("Façon de poser les accords ou la basse dans la mesure "
+                     "— tenus, en blanches, sur les contretemps, en stabs ; "
+                     "fondamentale, croches, roulante… Choisir une façon "
+                     "fait un clip neuf, joué ainsi"),
+        "@_song_name": N_("Nom du morceau dans SONGS : il est assaini pour la "
+                          "carte, et numéroté s'il est déjà pris"),
+        "@_show_song_button": N_("Ouvre la page Morceaux sur le morceau qui "
+                                 "vient d'être écrit"),
+        "@_live_window_button": N_("Ouvre une fenêtre à garder à côté : "
+                                   "l'écran du Deluge recopié, son tempo, le "
+                                   "son sélectionné — rien n'est écrit sur la "
+                                   "machine"),
+        "@_sync_button": N_("Échange tout de suite avec le Deluge branché : ce "
+                            "qu'il a enregistré descend, le morceau écrit "
+                            "ici monte  (Ctrl+Maj+D)"),
+        "@_midi_button": N_("Écrit le morceau entier dans un fichier .mid, "
+                            "à l'endroit que vous choisirez — hors de la "
+                            "carte : une piste par piste, la batterie en "
+                            "piste 10, le nom des sections en repères"),
         "@_write_button": N_("**Écrit sur la carte.** Crée dans SONGS un "
                              "morceau neuf : une section du Deluge par "
                              "section du projet, leurs clips, leurs "
@@ -326,104 +470,6 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                       "accords ci-dessous"),
         "Copier": N_("Copie la liste de notes dans le presse-papier, au "
                      "format que le Deluge écrit dans ses fichiers"),
-        "@_progression_kind": N_("Ambiance de la suite d'accords proposée"),
-        "@_progression_bars": N_("Nombre de mesures de la progression"),
-        "Proposer": N_("Tire une suite d'accords dans la gamme choisie"),
-        "En MIDI": N_("Écrit un fichier .mid à l'endroit que vous choisirez"),
-        "@_export_prog_button": N_("Écrit la progression et son "
-                                   "accompagnement dans un fichier .mid : une "
-                                   "piste par partie (accords, basse, arpège, "
-                                   "mélodie), chacune sur son canal"),
-        "@_export_beat_button": N_("Écrit le motif affiché dans un fichier "
-                                   ".mid, percussions sur le canal 10"),
-        "@_listen_prog_button": N_("Joue la progression avec son "
-                                   "accompagnement, sur des sons générés pour "
-                                   "le genre choisi — rien n'est écrit"),
-        "@_acc_genre": N_("Choisit le rythme des accords, le style de basse, "
-                          "l'arpège et le tempo — ainsi que les sons de "
-                          "l'écoute"),
-        "@_acc_chords": N_("Façon de poser les accords dans la mesure : "
-                           "tenus, en blanches, sur les contretemps, en stabs "
-                           "syncopés, ou en « charleston »"),
-        "@_acc_bass": N_("Style de la ligne de basse tirée des accords : "
-                         "fondamentale, croches, contretemps, roulante, "
-                         "octaves, syncopée ou marche"),
-        "@_acc_arp": N_("Ajoute un arpège des accords, joué au-dessus d'eux"),
-        "@_acc_melody": N_("Ajoute une mélodie : un motif repris puis varié, "
-                           "les notes de l'accord sur les temps forts, une "
-                           "fin sur la fondamentale ; son allure suit le "
-                           "genre"),
-        "@_melody_button": N_("Tire une autre mélodie sur les mêmes accords "
-                              "et la fait écouter — rien n'est écrit"),
-        "@_prog_color": N_("Ce qu'on empile sur chaque degré : triades, "
-                           "septièmes, neuvièmes (jouées sans fondamentale, "
-                           "que tient la basse) ou accords suspendus ; « "
-                           "selon l'ambiance » met des septièmes au jazz et à "
-                           "la house, des neuvièmes à la deep et à l'ambient"),
-        "@_acc_bpm": N_("Tempo de l'écoute et du fichier MIDI ; il suit le "
-                        "genre choisi"),
-        "@_acc_drums": N_("Ajoute la batterie : le rythme de l'onglet Rythme, "
-                          "ou à défaut celui du genre, joué par des sons de "
-                          "la carte — et en piste 10 dans le fichier MIDI"),
-        "@_chord_button": N_("Remplace l'accord choisi dans la liste par un "
-                             "autre de même fonction (tonique, "
-                             "sous-dominante, dominante) — le reste de la "
-                             "progression ne bouge pas"),
-        "@_variation_button": N_("Varie le motif sans toucher à son ossature "
-                                 ": grosse caisse, caisse claire et clap "
-                                 "restent ; notes fantômes, charleys, "
-                                 "percussion ou charleston ouvert changent"),
-        "@_listen_beat_button": N_("Joue le motif deux fois, avec les "
-                                   "échantillons de la carte quand elle en a, "
-                                   "sinon une batterie synthétisée — rien "
-                                   "n'est écrit"),
-        "@_beat_bpm": N_("Tempo de l'écoute et du fichier MIDI du motif ; il "
-                         "suit le genre choisi"),
-        "@_listen_section_button": N_("Joue le début de la section choisie "
-                                      "dans le tableau (huit mesures au "
-                                      "plus), avec les seules parties de son "
-                                      "rôle"),
-        "@_export_sketch_button": N_("Écrit le morceau entier dans un fichier "
-                                     ".mid : une piste par partie, la "
-                                     "batterie en piste 10, le nom des "
-                                     "sections en repères"),
-        "@_song_prog_button": N_("**Écrit sur la carte.** Crée dans SONGS un "
-                                 "morceau neuf : un instrument et un clip par "
-                                 "partie (accords, basse, arpège, mélodie, "
-                                 "batterie), avec les sons de l'écoute ; les "
-                                 "clips bouclent ensemble dès qu'on appuie "
-                                 "sur PLAY. ") + _PLAN,
-        "@_song_beat_button": N_("**Écrit sur la carte.** Crée dans SONGS un "
-                                 "morceau neuf : un kit de la carte et un "
-                                 "clip qui joue le motif affiché ; une piste "
-                                 "sans son, comme une piste euclidienne, "
-                                 "reçoit une percussion de la "
-                                 "bibliothèque. ") + _PLAN,
-        "@_song_sketch_button": N_("**Écrit sur la carte.** Crée dans SONGS "
-                                   "un morceau à sections : chaque section du "
-                                   "modèle devient une section du Deluge, "
-                                   "avec ses clips et son nombre de "
-                                   "répétitions. PLAY joue la première en "
-                                   "boucle ; lancez la suivante et le reste "
-                                   "s'enchaîne jusqu'à la fin. L'arrangement "
-                                   "(touche SONG) joue tout le morceau d'un "
-                                   "trait. ") + _PLAN,
-        "@_beat_genre": N_("Style du motif rythmique engendré"),
-        "@_beat_bars": N_("Longueur du motif, en mesures"),
-        "Motif du genre": N_("Engendre un rythme typique du genre choisi"),
-        "@_pulses": N_("Nombre de coups à répartir dans le motif"),
-        "@_steps": N_("Nombre de pas du motif : 16 pas = une mesure en "
-                      "double-croches"),
-        "@_rotation": N_("Décale le motif d'un ou plusieurs pas, sans changer "
-                         "ses coups"),
-        "Ajouter la piste": N_("Ajoute ce motif euclidien au rythme en cours, "
-                               "sur une nouvelle piste"),
-        "@_groove": N_("Swing d'échantillonneur en pourcentage (58 % léger, "
-                       "66 % ternaire), ou jeu derrière / devant le temps. Le "
-                       "même pourcentage se règle dans le swing du Deluge"),
-        "@_swing": N_("Swing libre ajouté au groove, de droit à ternaire"),
-        "Appliquer": N_("Applique le groove au motif affiché, toujours depuis "
-                        "le motif droit : un second clic ne cumule pas"),
         "@_bpm": N_("Tempo servant à tous les calculs de cette page"),
         "@_mem_rate": N_("Fréquence d'échantillonnage supposée pour le calcul "
                          "de place"),
@@ -437,9 +483,6 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                            "voisines sur la roue"),
         "Chercher": N_("Montre les échantillons de la carte dans cette "
                        "tonalité et dans les tonalités compatibles"),
-        "@_arr_genre": N_("Style du modèle de structure proposé"),
-        "@_arr_bpm": N_("Tempo utilisé pour convertir les sections en minutes "
-                        "et en secondes"),
     },
 
     # ---------------------------------------------------------------- #
@@ -538,6 +581,11 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                           "Deluge recopié, son tempo, les notes de ses pistes "
                           "MIDI et les réglages du son sélectionné — rien "
                           "n'est écrit sur la machine"),
+        "@_level_simple": N_("Chaque page ne montre que l'essentiel : de quoi "
+                             "créer sans se perdre"),
+        "@_level_advanced": N_("Chaque page montre tous ses réglages et "
+                               "toutes ses commandes : graines, moteurs, "
+                               "exports, retouches de fichiers"),
         "Connecter": N_("Ouvre les ports du Deluge : notes et contrôleurs par "
                         "le premier, SysEx par le troisième ; la machine dit "
                         "alors sa version"),
@@ -548,6 +596,19 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
 
     # ---------------------------------------------------------------- #
     "Dashboard": {
+        "@_song_pad": N_("Ouvre l'atelier sur un morceau neuf — ou sur celui "
+                         "en cours, à l'étape où vous en étiez : style, "
+                         "sons, clips, structure, puis le Deluge"),
+        "@_sound_pad": N_("Ouvre le générateur : un preset de synthé ou un "
+                          "kit, par genre ou au hasard, à écouter puis "
+                          "enregistrer sur la carte"),
+        "@_continue_pad": N_("Choisit un morceau de la carte — les derniers "
+                             "reçus du Deluge en tête — et l'ouvre dans "
+                             "l'atelier pour le compléter. Rien n'est "
+                             "modifié"),
+        "@_explore_pad": N_("Ouvre la bibliothèque : échantillons, presets, "
+                            "kits et morceaux de la carte, à écouter et "
+                            "ranger"),
         "Voir le détail": N_("Ouvre le diagnostic complet de la carte"),
         "@_next_button": N_("Fait la chose proposée ci-contre, ou vous mène "
                             "directement à l'endroit où elle se fait"),

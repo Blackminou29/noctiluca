@@ -83,15 +83,8 @@ TEXTS = {
     "la lecture.":
         "The machine runs at 44.1 kHz. Other rates are converted on "
         "playback.",
-    "Outils": "Tools",
-    "Boîte à outils": "Toolbox",
-    "Théorie, rythme, calculs et aide-mémoire":
-        "Theory, rhythm, calculations and cheat sheet",
-    "Théorie": "Theory",
-    "Rythme": "Rhythm",
     "Calculatrice": "Calculator",
     "Mixage harmonique": "Harmonic mixing",
-    "Arrangement": "Arrangement",
     "Aide-mémoire": "Cheat sheet",
     "Gamme": "Scale",
     "Tonique": "Root",
@@ -102,26 +95,6 @@ TEXTS = {
     "Degré": "Degree",
     "Accord": "Chord",
     "Notes": "Notes",
-    "Progression": "Progression",
-    "Ambiance": "Mood",
-    "Couleur": "Colour",
-    "selon l'ambiance": "according to the mood",
-    "Mesures": "Bars",
-    "Proposer": "Suggest",
-    "Genre": "Genre",
-    "Accords": "Chords",
-    "selon le genre": "according to the genre",
-    "Basse": "Bass",
-    "Ajouter": "Add",
-    "Arpège": "Arpeggio",
-    "Mélodie": "Melody",
-    "Batterie": "Drums",
-    "Écouter": "Listen",
-    "Arrêter": "Stop",
-    "En MIDI": "As MIDI",
-    "En morceau": "As a song",
-    "Autre mélodie": "Another melody",
-    "Autre accord": "Another chord",
     "%s %s :  %s": "%s %s:  %s",
     "Sur le Deluge : gamme utilisateur (USER), à saisir note par note — ou "
     "en recopiant <modeNotes>.":
@@ -131,58 +104,6 @@ TEXTS = {
     "Firmware officiel (sept notes exactement) : %s.":
         "Official firmware (exactly seven notes): %s.",
     "Valeurs de <modeNotes> copiées.": "<modeNotes> values copied.",
-    "%d accords proposés : %s.": "%d chords suggested: %s.",
-    "Proposez d'abord une progression.": "Suggest a progression first.",
-    "Choisissez d'abord un accord dans la liste.":
-        "Choose a chord in the list first.",
-    "%s remplacé par %s, même fonction (%s) : %s.":
-        "%s replaced by %s, same function (%s): %s.",
-    "libre": "free",
-    "Rendu de l'accompagnement…": "Rendering the accompaniment…",
-    "Rendu impossible : %s": "Rendering failed: %s",
-    "Rendu de l'accompagnement": "Rendering the accompaniment",
-    "Aucune sortie audio disponible.": "No audio output available.",
-    "Lecture de l'accompagnement…": "Playing the accompaniment…",
-    "Lecture impossible : %s": "Playback failed: %s",
-    "Exporter l'accompagnement": "Export the accompaniment",
-    "progression.mid": "progression.mid",
-    "Fichier MIDI (*.mid)": "MIDI file (*.mid)",
-    "Export impossible : %s": "Export failed: %s",
-    "Accompagnement exporté : %s (%d pistes — %s)":
-        "Accompaniment exported: %s (%d tracks — %s)",
-    "Progression %s %s": "Progression %s %s",
-    "Créez d'abord un motif.": "Create a pattern first.",
-    "aucun échantillon de batterie dans la bibliothèque — lancez une analyse "
-    "de la carte":
-        "no drum sample in the library — run a card scan",
-    "Rythme %s": "Rhythm %s",
-    "Esquisse %s": "Sketch %s",
-    "Motif": "Pattern",
-    "Motif du genre": "Genre pattern",
-    "Euclidien": "Euclidean",
-    "coups": "hits",
-    "pas": "steps",
-    "rotation": "rotation",
-    "Ajouter la piste": "Add the track",
-    "Groove": "Groove",
-    "Swing": "Swing",
-    "Appliquer": "Apply",
-    "Variation": "Variation",
-    "Représentation texte, à recopier dans un carnet":
-        "Text version, to copy into a notebook",
-    "Variation : %s. Grosse caisse, caisse claire et clap n'ont pas bougé.":
-        "Variation: %s. Kick, snare and clap did not move.",
-    "Rendu du rythme…": "Rendering the rhythm…",
-    "Rendu du rythme… (batterie synthétisée)":
-        "Rendering the rhythm… (synthesised drums)",
-    "Rendu du rythme": "Rendering the rhythm",
-    "Piste %s ajoutée.": "Track %s added.",
-    "Groove appliqué. Sur le Deluge : swing %s.":
-        "Groove applied. On the Deluge: swing %s.",
-    "Groove appliqué.": "Groove applied.",
-    "Exporter le motif": "Export the pattern",
-    "motif.mid": "pattern.mid",
-    "Motif exporté : %s": "Pattern exported: %s",
     "Tempo": "Tempo",
     "Division": "Division",
     "Droit (ms)": "Straight (ms)",
@@ -224,38 +145,24 @@ TEXTS = {
         "No sample: run the acoustic analysis from the settings to detect "
         "keys.",
     "%d échantillon(s) compatible(s).": "%d compatible sample(s).",
-    "Modèle de structure": "Structure template",
-    "Section": "Section",
-    "Durée": "Length",
-    "Position": "Position",
-    "Parties": "Parts",
-    "Écouter la section": "Play the section",
-    "Esquisse en MIDI": "Sketch as MIDI",
-    "Esquisse en morceau": "Sketch as a song",
-    "une progression « %s » en la mineur": "a “%s” progression in A minor",
-    "celui de l'onglet Rythme": "the one from the Rhythm tab",
-    "le motif du genre": "the genre's pattern",
-    "L'esquisse déroule %s sur toute la structure ; rythme : %s. Chaque "
-    "section ne garde que les parties de son rôle.":
-        "The sketch runs %s across the whole structure; rhythm: %s. Each "
-        "section keeps only the parts of its role.",
-    "Choisissez d'abord une section dans le tableau.":
-        "Choose a section in the table first.",
-    "Cette section ne joue rien.": "This section plays nothing.",
-    "Rendu de « %s » (%d mesures)…": "Rendering “%s” (%d bars)…",
-    "Rendu de la section": "Rendering the section",
-    "Exporter l'esquisse": "Export the sketch",
-    "esquisse.mid": "sketch.mid",
-    "Esquisse exportée : %s — %d pistes (%s), %d sections, %d mesures, %d "
-    "min %02d s.":
-        "Sketch exported: %s — %d tracks (%s), %d sections, %d bars, %d min "
-        "%02d s.",
-    "mesure %d — %d:%02d": "bar %d — %d:%02d",
-    "%d mesures au total, soit %d min %02d s à %.0f BPM. Les sections du "
-    "Deluge se règlent dans la vue Morceau.":
-        "%d bars in total, i.e. %d min %02d s at %.0f BPM. Deluge sections "
-        "are set in the Song view.",
     "Valeurs et limites du Deluge": "Deluge values and limits",
     "Mesuré sur une carte réelle, ou documenté par le firmware.":
         "Measured on a real card, or documented by the firmware.",
+    "Notes en firmware 1.3": "Notes in firmware 1.3",
+    "Un morceau enregistré en 1.3 n'écrit plus que "
+    "noteDataWithSplitProb, 28 caractères par note : pos(8) "
+    "longueur(8) vélocité(2) lift(2) probabilité(2) itération(4) "
+    "remplissage(2).":
+        "A song saved in 1.3 only writes noteDataWithSplitProb, 28 "
+        "characters per note: pos(8) length(8) velocity(2) lift(2) "
+        "probability(2) iterance(4) fill(2).",
+    "Mémo": "Notebook",
+    "Gammes, tempos, roue de Camelot et valeurs du Deluge":
+        "Scales, tempos, Camelot wheel and Deluge values",
+    "Gammes et accords": "Scales and chords",
+    "Choisissez un accord : ses notes s'allument sur le clavier. Les "
+    "accords d'un morceau se choisissent dans l'atelier, à l'étape "
+    "Style.":
+        "Choose a chord: its notes light up on the keyboard. A song's "
+        "chords are chosen in the studio, at the Style step.",
 }

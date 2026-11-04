@@ -539,6 +539,36 @@ def upgrade_sound(sound: ET.Element, version: str, sd: SDCard | None = None,
     return left
 
 
+def current_kit(kit, sd: SDCard | None = None):
+    """Un kit lu sur la carte, mis au niveau d'un morceau c1.2.1.
+
+    Ce que la machine convertit en chargeant un kit ancien — bornes en
+    millisecondes, résonance, polyphonie en chiffres — l'est ici, **avant**
+    qu'on lui ajoute des rangées neuves : appliquée au kit complété, la
+    conversion d'un kit ancien abîmerait ces rangées. Un kit sans fichier
+    d'origine, ou déjà au niveau, est rendu tel quel ; ``kit`` n'est jamais
+    modifié.
+    """
+    from .model import Kit
+
+    doc = getattr(kit, "doc", None)
+    if doc is None or doc.root is None or getattr(kit, "path", None) is None:
+        return kit
+    if not _older(doc.firmware or "", FIRMWARE):
+        return kit
+    element, _found = _source_element(kit, "kit")
+    upgrade_kit(element, doc.firmware or "", sd)
+    upgraded = Kit.from_xml(element, doc.dialect)
+    upgraded.name = kit.name
+    upgraded.path = kit.path
+    # Au niveau c1.2.1, le kit s'écrit en attributs, comme la machine les
+    # écrit : réécrit dans le dialecte d'un fichier 2.x, il rendrait ses
+    # bornes converties en sous-éléments.
+    upgraded.doc = dxml.DelugeDoc(path=doc.path, root=element,
+                                  dialect="attr", firmware=FIRMWARE)
+    return upgraded
+
+
 def upgrade_kit(kit: ET.Element, version: str, sd: SDCard | None = None,
                 ) -> list[str]:
     """Met un ``<kit>`` et ses rangées au niveau d'un morceau c1.2.1."""

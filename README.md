@@ -80,19 +80,25 @@ vous indiquez le dossier, soit vous la laissez **chercher toute seule** sur
 les lecteurs branchés. Ensuite, **Analyser la carte** (`Ctrl+R`) remplit
 l'index, et tout le reste s'allume.
 
-À partir de là, le tableau de bord ouvre sur un bandeau **« À faire
-maintenant »** : une suggestion, la plus utile sur le moment, avec le bouton
-qui l'exécute. Pas de sauvegarde ? Il le dit avant de proposer autre chose.
-Des sons manquent à des presets ? Il mène directement à l'écran qui les
-retrouve.
+À partir de là, l'**accueil** demande « Que voulez-vous faire ? » : créer un
+morceau, créer un son, continuer un morceau du Deluge, explorer vos sons.
+Dessous, un bandeau **« À faire maintenant »** donne une suggestion, la plus
+utile sur le moment, avec le bouton qui l'exécute. Pas de sauvegarde ? Il le
+dit avant de proposer autre chose. Des sons manquent à des presets ? Il mène
+directement à l'écran qui les retrouve.
+
+**Simple ou avancé.** Au premier démarrage, chaque page ne montre que
+l'essentiel, de quoi créer sans se perdre. L'interrupteur « Simple | Avancé »
+de la barre du haut (`Ctrl+E`) montre tout : graines, moteurs, accords un à
+un, groove, rythmes euclidiens, exports MIDI, traitements de fichiers.
 
 **Chaque commande s'explique** : laissez la souris dessus une seconde. Les
 actions qui écrivent sur la carte le disent avant d'être cliquées.
 
 **Le manuel** est dans le menu *Aide* : `F1` l'ouvre au chapitre de la page
 affichée, *Premiers pas* sur un parcours guidé de dix minutes. Vingt-cinq
-chapitres en quatre parties — prise en main, les dix pages, le Deluge branché,
-référence —, mis en page comme le *Guide du Deluge* : papier, Georgia,
+chapitres en six parties — prise en main, créer, la bibliothèque, la carte,
+le Deluge branché, référence —, mis en page comme le *Guide du Deluge* : papier, Georgia,
 encadrés, figures et ouvertures de partie au treillis. Il se lit en français
 ou en anglais, se parcourt par son sommaire ou sa recherche (accents et
 majuscules ignorés), ouvre d'un clic la page dont il parle, et s'enregistre en
@@ -107,17 +113,21 @@ ses pads lumineux, son écran, et le treillis de circuits des ouvertures de
 partie.
 
 - **Chaque page a sa couleur**, prise dans les pads de la machine : ambre
-  pour le tableau de bord, cyan pour les échantillons, violet pour les
-  presets, vert pour les kits, bleu pour les morceaux, magenta pour le
-  générateur, rouge pour l'atelier, menthe pour la boîte à outils, orange pour la santé, indigo
-  pour les réglages. Comme chaque partie du guide a la sienne, la page la
+  pour l'accueil, rouge pour l'atelier, magenta pour le générateur, menthe
+  pour le mémo, cyan pour les échantillons, violet pour les presets, vert
+  pour les kits, bleu pour les morceaux, orange pour la santé, indigo pour
+  les réglages. Comme chaque partie du guide a la sienne, la page la
   porte partout : son pad allumé dans la colonne de gauche, le filet
   lumineux sous la barre du haut, l'en-tête et son treillis, le bouton
   principal, les sélections, les onglets, les cases et les curseurs.
-- **La colonne de gauche est une rangée de pads.** Éteints, ils montrent leur
-  couleur en veilleuse ; celui de la page affichée s'allume. Le chiffre à
-  droite est son raccourci (`Ctrl+1` à `Ctrl+9`, puis `Ctrl+0`), et `Ctrl+B` réduit la
-  colonne à ses pads.
+- **La colonne de gauche est une rangée de pads**, dans l'ordre du travail :
+  l'accueil, puis *Créer* (atelier, générateur, mémo), *Bibliothèque*
+  (échantillons, presets, kits, morceaux, et le pont vers le DAW) et
+  *La carte* (santé, réglages).
+  Éteints, les pads montrent leur couleur en veilleuse ; celui de la page
+  affichée s'allume. Le chiffre à droite est son raccourci (`Ctrl+1` à
+  `Ctrl+9`, puis `Ctrl+0` pour la santé ; les réglages ont `Ctrl+,`), et
+  `Ctrl+B` réduit la colonne à ses pads.
 - **L'écran en haut** est celui du Deluge : la carte ouverte et ce qu'elle
   contient. Chaque message de l'application y passe quelques secondes, et
   défile s'il est trop long, comme sur la machine. Un clic mène aux réglages
@@ -125,9 +135,10 @@ partie.
 - **La pastille « Deluge »** s'allume en or quand la machine est branchée, en
   vert quand elle est connectée ; verte, un clic ouvre *Deluge en direct*.
 
-Un raccourci montre la couleur de **sa destination** — le bouton
-« Sauvegarder la carte » du tableau de bord est orange parce qu'il mène à la
-page *Santé*, et il y mène **directement sur l'onglet des sauvegardes**.
+Un raccourci montre la couleur de **sa destination** — sur l'accueil, la
+porte « Créer un son » est magenta parce qu'elle mène au générateur, et le
+bouton « Sauvegarder » du bandeau est orange parce qu'il mène à la page
+*Santé*, **directement sur l'onglet des sauvegardes**.
 
 Un bouton éteint attend quelque chose de vous : la plupart du temps, une
 ligne choisie dans la liste. Sur une fenêtre étroite, les boutons d'une page
@@ -197,7 +208,7 @@ combien attendent (« 3 À ENVOYER »).
 * **pendant que le Deluge joue, rien ne passe** : un transfert s'arrête entre
   deux blocs et reprend à l'arrêt.
 
-Dans l'autre sens, le panneau **Le Deluge et le PC** du tableau de bord
+Dans l'autre sens, le panneau **Le Deluge et le PC** de l'accueil
 liste ce qui est arrivé de la machine — un clic l'ouvre sur sa page —, et
 un son de la page *Échantillons* **se glisse vers l'Explorateur ou votre
 logiciel de MAO**. Quand la carte a reçu ce que votre sauvegarde n'a pas
@@ -207,7 +218,7 @@ s'écrit au journal, fichier par fichier.
 | | |
 |---|---|
 | **Voir la machine** | *Deluge en direct* (Ctrl+D, ou un clic sur la pastille verte) recopie son écran au moment où il change |
-| **Suivre son tempo** | l'horloge qu'elle envoie en jouant donne son tempo aux outils de composition |
+| **Suivre son tempo** | l'horloge qu'elle envoie en jouant donne son tempo à l'atelier et à la calculatrice du mémo |
 | **Lire le son sélectionné** | avec le retour MIDI Follow, ses réglages s'affichent quand vous changez d'instrument ou tournez un bouton |
 | **Écouter pour de vrai** | les presets sonnent sur le Deluge, avec son moteur, au lieu de l'approximation calculée par l'ordinateur |
 | **Régler à distance** | les paramètres de l'instrument sélectionné — 52 d'usine, 79 avec la table du firmware 1.3 —, par le mode MIDI Follow du firmware communautaire |
@@ -247,24 +258,26 @@ de « Faire signe » reste dessous. Seul un geste sur la machine le réveille
 
 ---
 
-## Les dix pages
+## Les onze pages
 
 | Page | Raccourci | À quoi elle sert |
 | --- | --- | --- |
-| **Tableau de bord** | `Ctrl+1` | l'état de la carte en un écran : contenu, espace, note de santé, ce qui demande attention |
-| **Échantillons** | `Ctrl+2` | parcourir, écouter, filtrer les 1700+ échantillons ; tempo, tonalité et catégorie détectés ; étiquettes et notes ; **traitement par lot** (mono, normalisation, rééchantillonnage, fondus) |
-| **Presets** | `Ctrl+3` | inspecter les presets de synthé : oscillateurs, filtre, enveloppes, modulations, échantillons employés |
-| **Kits** | `Ctrl+4` | voir les kits pad par pad, repérer les pads muets ou cassés |
-| **Morceaux** | `Ctrl+5` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; export MIDI et rassemblement des dépendances |
-| **Générateur** | `Ctrl+6` | créer des presets de synthé et des kits : par **genre musical** ou au hasard, avec écoute avant d'écrire |
-| **Atelier** | `Ctrl+7` | composer un morceau dans un style — sons et leurs variantes, clips et leurs variations, sections — puis l'écrire, le jouer sur le Deluge, ou compléter un des vôtres |
-| **Outils** | `Ctrl+8` | gammes et accords, progressions, mixage harmonique, rythmes euclidiens, grooves, export MIDI |
-| **Santé** | `Ctrl+9` | diagnostic complet, réparation guidée, rangement, sauvegarde |
-| **Réglages** | `Ctrl+0` | carte SD, audio, analyse, apparence, sauvegardes |
+| **Accueil** | `Ctrl+1` | par où commencer — créer un morceau, un son, continuer un morceau du Deluge, explorer — et l'état de la carte et de la machine |
+| **Atelier** | `Ctrl+2` | composer un morceau en cinq étapes — style, sons, clips, structure, Deluge — puis l'écrire, le jouer sur le Deluge, ou compléter un des vôtres |
+| **Générateur** | `Ctrl+3` | créer des presets de synthé et des kits : par **genre musical** ou au hasard, avec écoute avant d'écrire, et les essayer aussitôt dans le morceau |
+| **Mémo** | `Ctrl+4` | gammes et accords, calculatrice de tempo et de mémoire, mixage harmonique, aide-mémoire du Deluge |
+| **Échantillons** | `Ctrl+5` | parcourir, écouter, filtrer les 1700+ échantillons ; tempo, tonalité et catégorie détectés ; étiquettes et notes ; **traitement par lot** (mono, normalisation, rééchantillonnage, fondus) |
+| **Presets** | `Ctrl+6` | inspecter les presets de synthé : oscillateurs, filtre, enveloppes, modulations, échantillons employés ; les utiliser dans l'atelier |
+| **Kits** | `Ctrl+7` | voir les kits pad par pad, repérer les pads muets ou cassés ; les utiliser dans l'atelier |
+| **Morceaux** | `Ctrl+8` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; l'ouvrir dans l'atelier ; export MIDI et rassemblement des dépendances |
+| **DAW** | `Ctrl+9` | le pont avec votre logiciel de musique, au choix : un morceau **vers le DAW** (set Ableton Live, MIDI, DAWproject, Reaper, pistes audio), un projet **depuis le DAW** (MIDI, set Ableton Live, DAWproject, Reaper) en nouveau morceau, ou **jouer ensemble** — le DAW joue les sons du Deluge, chaque piste sur son canal |
+| **Santé** | `Ctrl+0` | diagnostic complet, réparation guidée, rangement, sauvegarde |
+| **Réglages** | `Ctrl+,` | carte SD, audio, analyse, niveau de l'interface, apparence, sauvegardes |
 
-Autres raccourcis : `Ctrl+R` analyser, `Ctrl+F` rechercher, `Ctrl+G`
-générateur, `Ctrl+O` choisir la carte, `Ctrl+B` replier la barre latérale,
-`Ctrl+,` réglages, `Espace` écouter, `F1` le manuel, `Ctrl+Q` quitter. La
+Autres raccourcis : `Ctrl+N` nouveau morceau, `Ctrl+E` mode avancé, `Ctrl+R`
+analyser, `Ctrl+F` rechercher, `Ctrl+G` générateur, `Ctrl+O` choisir la
+carte, `Ctrl+B` replier la barre latérale, `Ctrl+,` réglages, `Espace`
+écouter, `F1` le manuel, `Ctrl+Q` quitter. La
 liste complète est dans *Aide › Raccourcis clavier*.
 
 ---
@@ -401,26 +414,24 @@ manquerait est signalé.
 
 ## Écrire un morceau pour le Deluge
 
-Chaque outil de création sait écrire ce qu'il a produit en **morceau du
-Deluge** : un fichier neuf dans `SONGS`, que la machine charge comme les
-autres, avec ses instruments, ses clips et, pour une esquisse, ses sections.
+L'atelier écrit les **morceaux du Deluge** : un fichier neuf dans `SONGS`,
+que la machine charge comme les autres, avec ses instruments, ses clips, ses
+sections et l'arrangement. Les autres pages y mènent : le générateur
+(*Essayer dans l'atelier*), les presets et les kits (*Utiliser dans
+l'atelier*) donnent leur son au morceau en cours — ou au prochain —, et la
+page *Morceaux* ouvre un morceau dans l'atelier.
 
 | Où | Bouton | Ce que contient le morceau |
 |---|---|---|
-| Outils › Théorie | **En morceau** | un clip par partie — accords, basse, arpège, mélodie, batterie — avec les sons entendus à l'écoute ; tout boucle ensemble dès PLAY |
-| Outils › Rythme | **En morceau** | le motif affiché, joué par un kit de vos échantillons |
-| Outils › Arrangement | **Esquisse en morceau** | une section du Deluge par section du modèle, chacune avec ses clips et son nombre de répétitions |
-| Kits | **Motif en morceau** | le kit choisi, tel qu'il est sur la carte, et le motif d'essai |
-| Générateur | **Essayer en morceau** | le son en situation : une phrase faite pour son rôle et la batterie du genre |
-| Générateur › Kit | **Kit en morceau** | le kit construit et le rythme de son genre |
+| Atelier › Deluge | **Écrire le morceau** | le morceau composé : une section du Deluge par section, leurs clips, leurs répétitions et l'arrangement |
+| Atelier › Deluge | **Compléter le morceau** | votre morceau octet pour octet, plus les pistes, clips et sections ajoutés — dans une nouvelle version |
 | Échantillons › Découper | **Écrire en morceau** | le kit des tranches et un clip qui rejoue la boucle |
-| Atelier | **Écrire le morceau** | le morceau composé : une section du Deluge par section, leurs clips, leurs répétitions et l'arrangement |
 
 Le nom est demandé, puis le plan s'affiche — fichier, instruments, clips,
 échantillons absents — avant toute écriture. **Aucun fichier existant n'est
 remplacé** : un nom déjà pris est numéroté.
 
-Une esquisse se joue de deux façons : **PLAY** fait tourner l'intro en
+Un morceau à sections se joue de deux façons : **PLAY** fait tourner l'intro en
 boucle, et lancer la section suivante déroule toute la suite jusqu'à la fin ;
 la vue arrangement joue le morceau entier d'un trait. Les parties qui se
 répètent tiennent dans des clips courts — quatre mesures d'accords, une
@@ -437,13 +448,15 @@ le kit TR-808, envoyés par le câble, se chargent et jouent.
 
 ## Composer dans l'atelier
 
-La page **Atelier** tient ensemble ce que les outils savent faire chacun de
-leur côté, autour d'**un morceau** et d'**un style** — du choix des sons à
-l'arrangement :
+La page **Atelier** tient ensemble, autour d'**un morceau** et d'**un
+style**, tout ce qui crée — du choix des sons à l'arrangement —, en **cinq
+étapes** qu'une barre montre en haut de la page et que *Étape précédente* et
+*Étape suivante* parcourent :
 
-1. **Style** — un genre, une tonalité, un tempo, l'ambiance des accords, et
-   les six curseurs du générateur, communs à tous les synthés du morceau :
-   c'est ce qui les fait sonner ensemble. Chaque partie — batterie, basse,
+1. **Style** — un genre, une tonalité, un tempo, l'ambiance des accords (et,
+   en mode avancé, les accords un à un et les six curseurs du générateur,
+   communs à tous les synthés du morceau : c'est ce qui les fait sonner
+   ensemble). *Composer le morceau* le fabrique en une seconde. Chaque partie — batterie, basse,
    accords, arpège, mélodie — joue sur un kit, un synthé du Deluge, une
    **piste MIDI** vers un appareil extérieur ou une **piste CV** vers un
    modulaire.
@@ -457,14 +470,17 @@ l'arrangement :
 3. **Clips** — un premier clip par piste, puis ses **variations** : rythme
    décalé, autres notes, plus ou moins de notes, réponse, octave, fin de
    phrase ; pour la batterie, ornements, roulement, cassure, demi-temps,
-   montée. Toujours dans la gamme, toujours parentes de l'original.
-4. **Morceau** — une grille pistes × sections, la structure du genre en un
-   clic, puis **Écrire le morceau** : un morceau neuf, sections et
-   arrangement compris.
+   montée. Toujours dans la gamme, toujours parentes de l'original. La
+   batterie **se dessine au clic** ; en mode avancé, groove, rythmes
+   euclidiens et style de jeu des accords et de la basse.
+4. **Structure** — une grille pistes × sections, la structure du genre en un
+   clic.
+5. **Deluge** — **Écrire le morceau** : un morceau neuf, sections et
+   arrangement compris, qui part sur la machine par le câble.
 
 **Travailler en même temps que la machine.** *Jouer sur le Deluge* envoie un
 clip à la machine, dans le clip que suit MIDI Follow, calé sur sa mesure —
-en enregistrement, il s'y inscrit. *Partir d'un morceau…* ouvre un de vos
+en enregistrement, il s'y inscrit. *Ouvrir un morceau du Deluge…* ouvre un de vos
 morceaux (les derniers reçus du Deluge en tête) ; *Compléter le morceau* en
 écrit une **nouvelle version** (« Cool1 5 » après « Cool1 4 ») qui le
 contient **octet pour octet**, plus vos pistes, vos clips et vos sections :
@@ -488,10 +504,12 @@ Deux garanties utiles :
   une enveloppe sans attaque ni tenue sont rattrapés avant l'écriture ;
 * l'**écoute est hors-ligne** : le preset est rendu par le moteur interne
   (`core/render.py`) et joué sur l'ordinateur, sans passer par le Deluge —
-  aux **lois de réglage du firmware** de la machine (`core/paramlaws.py`) :
-  durées d'enveloppe, coupures, vitesses, volumes, glissé, et la manière
-  dont chaque modulation s'ajoute. Le timbre exact du filtre et des effets
-  reste approché.
+  en **refaisant les calculs du firmware** de la machine : les lois des
+  réglages (`core/paramlaws.py`) et le traitement du signal (`core/dsp.py`),
+  formes d'onde, filtres en échelle, saturation, FM, effets et
+  réverbération, vérifiés contre des transcriptions entières de son code.
+  Restent approchés la lecture des échantillons et le LFO 1, qui repart à
+  chaque note.
 
 La même mécanique produit des kits de batterie complets, en choisissant parmi
 les échantillons de la carte ceux qui correspondent aux rôles du genre.
@@ -527,6 +545,7 @@ delugeapp/
     cardimport.py        envoyer au Deluge : du PC vers la carte
     render.py audio_out.py            moteur d'écoute et sortie audio
     paramlaws.py         les lois des réglages du Deluge, lues dans son firmware
+    dsp.py               son traitement du signal, porté (tables : data/)
     soundedit.py         les réglages d'un son, modifiables à la main
   ui/
     mainwindow.py        assemblage des dix pages
@@ -563,7 +582,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-1 176 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+1 184 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

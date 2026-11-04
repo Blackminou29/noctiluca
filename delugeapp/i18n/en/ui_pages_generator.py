@@ -22,8 +22,6 @@ TEXTS = {
     "dessus.":
         "Set your card's location in the settings. The generator will then "
         "build presets and kits ready to be saved to it.",
-    "Fabriquer un son par genre, ou au hasard":
-        "Make a sound by genre, or at random",
     "Générer": "Generate",
     "Au hasard": "Random",
     "Genre, rôle et réglages tirés au sort":
@@ -32,11 +30,9 @@ TEXTS = {
     "Variante légère du son courant": "Slight variation of the current sound",
     "Écouter": "Listen",
     "Enregistrer dans SYNTHS": "Save to SYNTHS",
-    "Essayer en morceau": "Try in a song",
     "Preset de synthé": "Synth preset",
     "Kit de batterie": "Drum kit",
     "Genre": "Genre",
-    "Rôle et moteur": "Role and engine",
     "Rôle": "Role",
     "Moteur": "Engine",
     "Choisi par le genre": "Chosen by the genre",
@@ -100,7 +96,6 @@ TEXTS = {
     "Construire le kit": "Build the kit",
     "Autre son": "Another sound",
     "Enregistrer dans KITS": "Save to KITS",
-    "Kit en morceau": "Kit as a song",
     "Preset généré : %s": "Preset generated: %s",
     "Son au hasard : %s": "Random sound: %s",
     "Générez d'abord un son.": "Generate a sound first.",
@@ -155,10 +150,14 @@ TEXTS = {
     "Rendu du kit…": "Rendering the kit…",
     "Rendu du kit": "Rendering the kit",
     "Kit enregistré : %s": "Kit saved: %s",
-    "Essai": "Try-out",
     "%s : %s (%s).": "%s: %s (%s).",
     "Modifier le son…": "Edit the sound…",
     "Modifier le son — %s": "Edit the sound — %s",
     "Son retouché : %s.": "Sound edited: %s.",
     "Le son n'a pas changé.": "The sound has not changed.",
+    "Un son ou un kit pour votre carte, par genre ou au hasard":
+        "A sound or a kit for your card, by genre or at random",
+    "Essayer dans l'atelier": "Try in the studio",
+    "Écouter le kit": "Play the kit",
+    "Rôle du son": "Role of the sound",
 }

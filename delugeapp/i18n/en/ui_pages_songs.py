@@ -96,4 +96,6 @@ TEXTS = {
     "Échantillons manquants (%d)": "Missing samples (%d)",
     "Chiffres": "Figures",
     "%s notes par mesure": "%s notes per bar",
+    "Ouvrir dans l'atelier": "Open in the studio",
+    "Choisissez d'abord un morceau.": "Choose a song first.",
 }

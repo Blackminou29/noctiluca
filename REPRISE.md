@@ -1,6 +1,6 @@
 # Point d'étape — Deluge Companion
 
-**Dernière mise à jour :** 23 octobre 2026 (modifier un son à la main, §3 novotricies)
+**Dernière mise à jour :** 4 novembre 2026 (le pont vers les DAW, §3 triquadragies)
 **État :** **application terminée et fonctionnelle.** Les cinq phases sont écrites,
 `python main.py` démarre, **la suite complète passe** (le nombre exact est dans le dernier
 § daté). Deux audits de bugs (§3 duovicies) puis trois passes sur les générateurs et la
@@ -23,8 +23,13 @@ ou anglais**, au choix dans le menu « Langue » — voir §3 duotricies. **Le m
 deux langues et la typographie du guide, s'ouvre par Aide ▸ Manuel (F1) — voir §3 tritricies.
 **L'atelier** compose un morceau du premier son à l'arrangement, joue ses clips sur le Deluge
 calés sur sa mesure, et complète un morceau de la machine sans le réécrire — voir §3 septtricies.
-**L'écoute sur l'ordinateur suit les lois du firmware** (durées, coupures, modulations) — voir §3 octotricies.
+**L'écoute sur l'ordinateur suit les lois du firmware** (durées, coupures, modulations) — voir §3 octotricies —
+**et refait ses calculs** : oscillateurs, filtres, saturation, effets, réverbération — voir §3 unquadragies —,
+**vérifiés contre trois exports de pistes de la machine** : niveaux à 0,1 dB près, réverbération et sortie comprises — voir §3 duoquadragies.
 **Un son se modifie à la main**, réglage par réglage, au cran de la machine et en clair — voir §3 novotricies.
+**L'interface suit le parcours de création** — accueil, atelier en cinq étapes, sons qui rejoignent le
+morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quadragies.
+**Le pont vers les DAW** : un morceau part vers tout DAW (MIDI, DAWproject, Reaper, pistes audio), un projet (MIDI, set Ableton Live, DAWproject, Reaper) revient en morceau, et le DAW joue les sons du Deluge, chaque piste sur son canal — voir §3 triquadragies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -244,6 +249,11 @@ comportement, en complétant par le mode parent.
 
 ## 3 quinquies. Moteur d'écoute
 
+> **Remplacé le 23 octobre 2026** : le moteur refait désormais les calculs du firmware de
+> la machine (`core/dsp.py`), voir §3 unquadragies. Les mesures et les trois choix
+> techniques ci-dessous sont ceux de l'ancien moteur, approché ; le dernier avertissement
+> (la courbe en U) reste vrai.
+
 `core/render.py` permet d'entendre un preset avant de l'écrire sur la carte. Objectif de la
 SPEC §4.21 : « plausible, pas exact », **2,5 s en moins de 400 ms**.
 
@@ -312,6 +322,487 @@ signaux, et `Page.run()` pour les travaux longs.
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
 
 ---
+
+## 3 triquadragies. Le pont vers les DAW (4 novembre 2026)
+
+**La demande** : « Je souhaites que le logiciel puisse faire le pont entre le déluge et un
+DAW sur mon PC. Le logiciel doit prendre en charge les principals DAW présents sur le
+marché. » Précisé ensuite : il doit **tout faire, au choix de l'utilisateur** — vers le DAW,
+depuis le DAW, et ensemble en direct ; son DAW est **Ableton Live**.
+
+### Ce qui a été fait
+
+* `core/daw.py` : le modèle commun en noires, la lecture d'un morceau du Deluge
+  (`clipInstances`, sinon arrangement déduit des sections), le MIDI de type 1, le
+  DAWproject 1.0 (Bitwig, Studio One, Cubase), le projet Reaper, le rendu des pistes audio
+  sur le PC, les pistes **exportées par la machine** (`machine_stems` :
+  `SAMPLES/EXPORTS/<morceau>/TRACKS`, `TRACKS-00`…), et le dossier « … — pour le DAW »
+  avec son lisez-moi, DAW par DAW.
+* `core/dawimport.py` : lecture d'un fichier MIDI, d'un DAWproject, d'un **set Ableton
+  Live** (`.als`, Live 8 à 12) et d'un projet Reaper ; choix piste par piste (synthé d'un
+  rôle deviné, kit d'après les notes General MIDI, piste MIDI, laisser de côté) ;
+  `build_song` en fait un `SongSpec` écrit par `songwriter` — un fichier neuf.
+* `core/dawlive.py` : la copie « *morceau* DAW » où chaque synthé écoute son canal et
+  chaque son de kit sa note General MIDI, prouvée à l'octet ; le mode d'emploi pas à pas
+  (horloge, Ableton Live, autre DAW).
+* `core/dawals.py` : le set Ableton Live, bâti avec les fichiers du Live installé
+  (trouvé par son journal) ; voir « Dans Live » ci-dessous.
+* `ui/pages/daw.py` : la onzième page, trois onglets ; raccourcis décalés (DAW `Ctrl+9`,
+  Santé `Ctrl+0`, Réglages `Ctrl+,`) ; le « 0 » du dixième pad s'affiche enfin.
+* Manuel (chapitre « DAW », fr et en), explications de chaque commande, catalogue anglais
+  (`core_daw`, `core_dawimport`, `core_dawlive`, `core_dawals`, `ui_pages_daw`), SPEC
+  §4.42 et §5.31. Tests : 16 dans `TestPontDaw` (noyau), 8 dans `TestDawPage` (en
+  cliquant) ; suite complète : **1 236 tests au vert**, sous unittest et sous pytest (dont 5 sur le set Ableton).
+
+### Mesuré
+
+* Aller-retour des 53 morceaux à notes par MIDI, DAWproject et Reaper : chaque note
+  déroulée identique ; DAWproject valide contre le schéma officiel.
+* Reaper : positions en secondes à six décimales, 32 noires à 129 BPM relues 32,00000015
+  → un tour de boucle de durée nulle en plus (« Calm Down ») ; recalage sur 1/960 de noire.
+  Le test ne mordait pas avec 144 noires (l'arrondi tombait du bon côté) : refait avec
+  32, il échoue sans le recalage.
+* Sets Live de référence (`dawtool`) : 324 notes sur 1 975 hors de la boucle de leur clip,
+  que Live ne joue pas — l'import non plus.
+* Import écrit sur une carte factice puis relu : synthés note pour note, sauf les notes qui
+  chevauchent la suivante sur la même hauteur (raccourcies : le firmware ignorerait la
+  seconde).
+* Batteries reconnues : 126 pistes sur 128 (les deux autres, des synthés nommés « KICK »).
+* Copies « DAW » simulées sur les 54 morceaux de la carte : toutes prouvées.
+
+### Faits de la carte, mesurés en chemin
+
+* **42 synthés** des morceaux de l'utilisateur (SONG001 à SONG050, Cool1…) écoutent déjà
+  le canal 1 (`inputMidiChannel="0"`), le même que son **MIDI Follow A** (racine des kits
+  36). Le plan le signale ; les canaux proposés évitent ceux de MIDI Follow.
+* `midiOutput` est un réglage de chaque son, pas un son de kit : aucun kit mixte.
+
+### Pièges rencontrés
+
+* Heredoc et `sed` ont encore abîmé des « \ » et des « \n » (trois fois) : correctifs
+  écrits avec l'outil d'écriture, comme le dit la mémoire.
+* Un script de rendu qui sous-classe les tests d'interface doit reprendre leur
+  `setUpModule` : sans lui, ni application Qt (arrêt brutal, code 0xC0000409) ni remparts
+  (ports MIDI masqués, modales refusées).
+* Rendu à 980 × 640 : listes déroulantes débordant de leurs lignes, colonne « Canal »
+  trop étroite pour montrer son chiffre, mode d'emploi coupé à l'étape 3 sur 5 — corrigés
+  (hauteur de ligne, largeur fixe, colonnes qui défilent).
+
+### Dans Live (4 novembre 2026, « je t'autorise à en prendre le contrôle »)
+
+* Live 12.4.16 **Lite**, installé le jour même dans `D:\Ableton` ; son journal cite ses
+  `Resources`, d'où `dawals` tire ses modèles (format `12.0_12402`, 375 fichiers sur 376).
+* « Cool1 4 » ouvert dans Live par la ligne de commande : aucun avertissement ; pistes,
+  couleurs, scènes, clips, arrangement, repères, pistes audio en place, 108 BPM.
+* Le set « Sans titre* » ouvert auparavant a été abandonné, à sa demande.
+* **Live n'est pas autorisé** : « Sauvegarde et exportation sont désactivées ». D'où :
+  pas de mesure possible de « MIDI To : Deluge » par un set enregistré.
+* Réglage fait : sortie « Deluge » en « Piste » (journal : `Track=true, Sync=false`).
+* **Les éditions de Live** (« Le logiciel doit s'adapter à la version d'Ableton Live de
+  l'utilisateur ») : tableau d'Ableton (https://www.ableton.com/en/upgrade-live/) — Lite
+  8 pistes et 16 scènes, Intro 16 et 16, Standard et Suite sans limite ; l'édition se lit
+  dans le nom de l'exécutable. J'avais écrit 16 pistes et 8 scènes de mémoire — faux. Mesuré
+  sur Live 12 Lite : « 9 pistes ; (limité à 8) » à l'ouverture, douze scènes sans
+  avertissement ; Live charge quand même tout après « Continuer ». La page dit l'édition
+  trouvée et ses limites.
+* Pilotage : `scratchpad/live_fenetre.ps1` (capture de la seule fenêtre de Live, clics et
+  touches **refusés si Live n'est pas devant**). Pièges : une touche Tab est partie vers
+  l'éditeur quand Live avait perdu le premier plan (aucun dégât, vérifié) ; à 125 %
+  d'affichage, il faut `SetProcessDPIAware`, sinon un clic vise 1,25 fois trop loin.
+
+### Reste à faire
+
+* **Essai sur la machine**, avec l'accord de l'utilisateur : écrire et charger une copie
+  « DAW », la jouer depuis Live, horloge dans les deux sens.
+* **Router d'avance « MIDI To » dans le `.als`** : à mesurer sur un set enregistré par
+  Live, une fois Live autorisé.
+* Les ports MIDI virtuels (Windows MIDI Services) ne sont pas installés : le direct passe
+  par le port USB du Deluge, que Live et l'application peuvent ouvrir ensemble.
+
+## 3 duoquadragies. L'écoute vérifiée sur la machine (23 octobre – 4 novembre 2026)
+
+**La demande** : « vérification sur la machine elle-même, tu as mon autorisation. »
+
+### Le protocole
+
+* **Un morceau d'essai** écrit par le câble, `SONGS/ESSAI ECOUTE.XML` (63 Ko) : douze clips
+  d'une mesure à 120 BPM, un point du traitement chacun — sinus, dent de scie en échelle
+  24 dB résonante, carré à largeur 25, FM à rétroaction, unisson de 4, bruit filtré,
+  échelle « drive » saturée, pincement et delay ping-pong, chorus, piano échantillonné
+  (44,1 kHz stéréo) à sa hauteur puis à l'octave, kit (grosse caisse et caisse claire
+  48 kHz stéréo, charleston 44,1 kHz mono), enveloppe 2 vers la coupure. Oscillateurs à
+  phase redémarrée à zéro (`retrigPhase` 0), pour comparer échantillon par échantillon.
+  Une seule écriture, sous un nom neuf (temporaire puis renommage), garde refusant tout
+  le reste, aucune note ni contrôleur, échantillons cités vérifiés présents, relu
+  identique.
+* **L'export de pistes**, lancé par l'utilisateur : vue morceau, lecture arrêtée, SAVE
+  maintenu + RECORD. La machine écrit `SAMPLES/EXPORTS/ESSAI ECOUTE/CLIPS/` (12 WAV,
+  47 Mo). **Pendant l'export hors ligne, elle ne lit pas le MIDI USB**
+  (`PlaybackHandler::midiRoutine` rend la main) : un ping sans réponse veut dire « export
+  en cours » — c'est ainsi que la fin s'attend sans toucher à la carte.
+* **Ce que contient le WAV** (`stem_export.cpp`, `Song::renderAudio`) : le canal **MIX**,
+  somme des sons **avant** la réverbération et le volume du morceau, ×32 saturé
+  (`feedAudio`, décalage de 5), 24 bits, **sans normalisation** pour un clip — un niveau
+  absolu, le signal sec du moteur divisé par 2²⁶. La note y commence 32 échantillons
+  après le début du fichier, sur les douze clips.
+
+### Résultats, après correction
+
+| son d'essai | niveau Deluge − PC | écart pendant la note |
+|---|---|---|
+| sinus, impulsion (4 notes), unisson de 4 | 0,00 à −0,01 dB | −80 dB |
+| FM à rétroaction | −0,01 dB | −75 dB |
+| piano (à sa hauteur, à l'octave), kit | 0,00 dB | −69 à −81 dB |
+| dent de scie filtrée, drive saturée, enveloppe de filtre | 0,00 à −0,02 dB | −11 à −32 dB, autant que deux rendus du PC entre eux |
+| bruit filtré | +0,04 dB | spectre dans la dispersion du hasard |
+| delay ping-pong, retour 25 | 0,00 dB (blocs de 32) | −44 dB, échos calés à l'échantillon sur 6 s |
+| chorus | +0,97 dB, voir plus bas | phase du LFO différente |
+
+Les spectres des sons filtrés concordent harmonique par harmonique (±0,1 dB pour la dent
+de scie, ±0,5 dB pour la saturation). Leur forme d'onde diffère parce que l'échelle du
+firmware fait trembler sa coupure au hasard (`getNoise`, ±0,5 %) : rendus par le PC avec
+deux graines différentes, ils s'écartent l'un de l'autre exactement autant que de la
+machine (−16,5 contre −16,5 dB, −22,2 contre −22,3…).
+
+### Ce qui a été corrigé (quatre écarts, retestés contre les mêmes fichiers)
+
+* **Un échantillon stéréo était rendu en mono.** La machine joue chaque canal au gain d'un
+  mono (0,20022 × l'échantillon, à −101 dB près) ; la moyenne des deux faisait perdre 5 dB
+  et toute la largeur au piano d'essai, dont les canaux s'opposent en partie (corrélation
+  −0,38). Les sources mono d'une voix stéréo sont recopiées sur les deux canaux, comme dans
+  `Voice::render`.
+* **Un échantillon transposé était interpolé linéairement.** La machine le relit par sinus
+  cardinal fenêtré à 16 points (`Interpolator::interpolate`, réglage « smooth » par
+  défaut), sur 16 bits, avec un noyau choisi selon la transposition (`getWhichKernel`,
+  sept noyaux, ajoutés aux tables) ; la sortie `t` lit la position `(t + 1)·r − 1`. Piano
+  à l'octave : −19 → −81 dB ; caisse claire à 48 kHz : −33 → −69 dB.
+* **Le delay revenait un échantillon trop tard à chaque tour.** Le tampon a 20 cases de
+  plus que sa taille et l'écriture se fait 20 cases derrière la lecture : l'écho revient à
+  `taille − 1`, sauf au premier tour, écrit dans un tampon secondaire une case plus loin
+  (16 384, puis 16 383). Les échos dérivaient de 13 échantillons en 5,5 s ; le résidu
+  passe de −10 à −36 dB.
+* **La hauteur était calculée en flottants.** La machine passe les cents de
+  l'oscillateur, le réglage fin du son et le désaccord d'unisson par `centAdjustTableSmall`
+  (257 points de 16 bits, ajoutée aux tables), tronque chaque produit, et arrondit les
+  réglages de hauteur à 2⁸ près (`Voice::adjustPitch`) ; un échantillon part de
+  `noteIntervalTable` et de son incrément neutre. Un dixième de cent d'écart suffisait à
+  faire dériver l'unisson de −60 à −28 dB en une demi-seconde ; en entiers, −80 dB d'un
+  bout à l'autre, et les quatre notes de l'impulsion aussi.
+
+Les tables passent à 85 (271 Ko). Nouveaux tests : `test_un_echantillon_stereo_reste_stereo`,
+`test_lecture_d_echantillon_comme_la_machine`, `test_noyau_de_lecture_selon_la_vitesse`,
+`test_reglages_fins_en_entiers` ; `test_delay_temps_et_ping_pong` suit la mesure. Les deux
+premiers **échouent quand on retire le correctif** (vérifié : la moyenne de deux canaux
+opposés est muette ; la lecture linéaire s'écarte de 2·10⁻³ à 10⁻² au lieu de moins de
+2·10⁻⁴). **La suite complète passe : 1 207 tests**, sous unittest et sous pytest
+(4 novembre 2026).
+
+### Ce qui n'est pas un écart de calcul
+
+* **La gigue de l'échelle**, tirée au hasard sur la machine comme sur le PC (ci-dessus).
+* **La phase du LFO du chorus.** Vitesse (1,25 Hz), profondeur (96 à 159 échantillons de
+  retard), centre et inversion gauche-droite sont ceux de la machine, relus dans sa sortie ;
+  seule la phase au début de la note diffère. Ce LFO tourne librement d'une note à l'autre :
+  sa phase dépend de ce que la machine a joué avant.
+* **La taille des fenêtres de rendu.** L'export hors ligne rend par fenêtres de **32**
+  échantillons (`AudioEngine::routine`) ; le jeu direct prend l'espace libéré dans le tampon
+  de sortie, doublé, de 12 à 128. Le moteur garde 128 ; comparé avec 32, le pincement du
+  delay passe de −0,08 à 0,00 dB et l'enveloppe de filtre de −12 à −22 dB. La fin d'une
+  note (le release le plus court, 3 ms) diffère aussi de forme : inaudible.
+
+### Pièges rencontrés
+
+* **Une fausse traîne de chorus.** Le WAV du chorus durait 29 s et gardait une traîne de
+  5 s : c'était un do 4 — la note du clip de delay, exporté juste avant. Au retour 25, la
+  machine n'abandonne jamais un delay (`repeatsUntilAbandon` = 255) ; muter le clip
+  n'arrête pas la queue des effets de son son, qui déborde sur l'export suivant. D'où le
+  +0,97 dB du chorus : la queue s'y ajoute.
+* **Le dossier temporaire de session a été vidé par Windows** en douze jours : scripts de
+  mesure, WAV relus, dépôt du firmware. Les WAV et le morceau étaient revenus dans la copie
+  de travail par la synchronisation de l'application : la vérification s'y relit, en
+  lecture seule. Le script de comparaison vit hors du dépôt : il se réécrit d'après le
+  protocole ci-dessus (morceau relu instrument + paramètres du clip, `_render_voice` puis
+  `_sound_chain`, ×32/2³¹, calage de 32 échantillons). Le firmware se reclone.
+
+### Second export (4 novembre 2026, « tu peux faire les tests »)
+
+`SONGS/ESSAI ECOUTE 2.XML` (36 Ko, huit clips : sinus sec, pincement et nappe avec envoi
+de réverbération, flanger, phaser, LFO 2 vers la hauteur, égaliseur, réduction
+d'échantillonnage et de résolution), écrit par le câble comme le premier. L'export devait
+se faire avec **Song FX** allumé (SELECT en vue morceau ▸ Export Audio ▸ Configure Export ▸
+Song FX) : la machine enregistre alors après la réverbération, les filtres du morceau et le
+compresseur maître (canal `OFFLINE_OUTPUT`), ×32 — le quart de ce qui part au convertisseur
+(×128 dans `doSomeOutputting`) ; le PC s'y compare en `(sec + réverbération) ·
+OUTPUT_GAIN / 4`.
+
+* Un premier essai a exporté le morceau resté chargé (`SAMPLES/EXPORTS/UNSAVED/CLIPS/`,
+  un clip « TB01 ») : ESSAI ECOUTE 2 n'avait pas été chargé.
+* Le second a donné huit WAV **sans réverbération**, tous 6,3 dB au-dessus de la
+  prévision — exactement le rapport entre le canal MIX et la sortie (1/0,4827) : Song FX
+  était éteint (seul un redémarrage le remet à zéro ; charger un morceau n'y touche pas).
+  Comparé au canal MIX, l'export reste utile : **égaliseur identique (−80 dB)** ; **phaser
+  et flanger exacts** (−62 et −54 dB, niveau 0,00 dB) une fois retrouvée la phase de départ
+  de leur LFO, libre sur la machine (0,51 et 0,94 tour ici) — le +1 dB apparent du phaser
+  n'était que cette phase ; **LFO 2** : hauteur à 0,01 Hz près sur tout le cycle du
+  vibrato ; **réduction d'échantillonnage et de résolution** : spectre identique, −33 dB au
+  point de départ retrouvé (elle garde aussi son état d'une note à l'autre), le reste étant
+  la quantification grossière, où un arrondi infime bascule un pas entier.
+* **Troisième export, Song FX allumé** (`SAMPLES/EXPORTS/ESSAI ECOUTE 2/CLIPS-00/`, huit
+  WAV ; les queues de réverbération sont là). Tout sortait **4,4 dB sous** la prévision, et
+  l'extrême aigu un peu plus bas encore (−1,3 dB vers 8 kHz, −6,3 dB vers 16 kHz). Les deux
+  viennent du compresseur maître : un morceau règle son gain de base à **0,85**
+  (`Song::Song`, `setBaseGain(0.85)`, « pour retrouver 1,0 ») et non 1,35, la valeur par
+  défaut de la classe que j'avais prise — exp(−0,5) = −4,34 dB ; et sa saturation adoucie
+  (`getTanHAntialiased`, 3) moyenne, aux niveaux d'écoute, deux échantillons successifs
+  (−1,6 dB à 8 kHz, −7,6 dB à 16 kHz). Corrigé (`dsp.output_stage`, appliqué une fois en
+  bout de chaîne ; `OUTPUT_GAIN` = 0,2928/2²⁴) : sons secs à 0,00 dB, sinus à −75 dB, bandes
+  aiguës à 0,0 dB ; **réverbération** à −0,2 et +0,1 dB, ses queues à ±1 dB par
+  demi-seconde jusqu'à −125 dB (en dessous, le plancher de bruit de la machine). **L'écoute
+  du PC était donc 4,4 dB trop forte et un peu trop brillante dans l'extrême aigu depuis le
+  portage du 23 octobre.** `test_sortie_au_niveau_du_deluge` suit la mesure ;
+  `test_le_bruit_vaut_deux_dents_de_scie` mesure désormais la loi du bruit dans la voix
+  (à la sortie, la moyenne de deux échantillons ôte la moitié de la puissance d'un bruit
+  blanc : 2 × √½). **La suite complète passe : 1 207 tests**, sous unittest et sous pytest
+  (4 novembre 2026).
+* Restent non mesurés : l'arpégiateur, la réverbération Freeverb (morceaux sans modèle), le
+  compresseur maître au travail.
+
+### Sur la carte
+
+**Retirés à sa demande le 4 novembre 2026** (« retirer les fichiers de test ») : les deux
+morceaux d'essai, vérifiés identiques à ce qui avait été écrit, et les 29 WAV des trois
+dossiers d'export (`ESSAI ECOUTE`, `ESSAI ECOUTE 2`, `UNSAVED`), puis leurs dossiers et
+`SAMPLES/EXPORTS`, vide — 31 fichiers, garde refusant tout autre chemin. Dans la copie de
+travail, les 13 qui y étaient arrivés sont passés par le chemin de la synchronisation après
+accord (`delete_local`) : dans l'historique (`.deluge-companion/historique/2026-11-04_…`,
+48 Mo), manifeste à jour, échange noté. Les dossiers vides `SAMPLES/STEMS` et
+`SAMPLES/CLIPS` de la carte, d'origine inconnue, n'ont pas été touchés.
+
+### Reste approché
+
+L'étirement temporel des échantillons, le glissé (en demi-tons), le LFO 1 global (il repart
+à chaque note), le SVF, le « tape warble », la compression par son et le sidechain, la
+taille des fenêtres de rendu, l'abandon d'un delay après quelques répétitions sans son (sous
+−45 dB). **Non vérifiés sur la machine** : la réverbération et l'étage de sortie (le canal
+MIX est pris avant eux ; voir le second export ci-dessus) et l'arpégiateur.
+
+---
+
+## 3 unquadragies. L'écoute du PC refait les calculs du firmware (23 octobre 2026, soir)
+
+**La demande** : « c'est presque parfait, je voudrais encore que tu améliore la similarité
+entre l'écoute sur le pc et sur le déluge. »
+
+### Ce qui a été fait
+
+Le 22 octobre, les **lois des réglages** étaient passées au firmware (§3 octotricies) ; le
+**traitement du signal** restait approché. Il est désormais porté, étage par étage, du code
+du firmware de la machine (communautaire 1.3, commit `102cf9f`), dans un module neuf,
+`core/dsp.py` (SPEC §4.41) : tables de formes d'onde et leur choix selon la hauteur,
+ondes « crues » des notes graves, largeur d'impulsion (produit de deux carrés, ou
+synchronisation interne pour les autres formes), FM à deux modulateurs additionnés et
+rétroaction écrêtée, échelles 12/24 dB et drive et passe-haut en échelle échantillon par
+échantillon, saturation adoucie, enveloppes et LFO par blocs de 128, réduction
+d'échantillonnage et de résolution, chorus, flanger, phaser, égaliseur, delay numérique ou
+analogique en ping-pong, réverbérations « Mutable » et Freeverb, étage de sortie.
+`core/render.py` orchestre : la voix par blocs (paramètres repatchés à chaque bloc,
+amplitudes en rampe), les effets du son, une réverbération partagée par le morceau.
+
+Les tables qui ne se recalculent pas (formes « analog » relevées par Synthstrom, tanh,
+courbes d'enveloppe…) sont copiées dans `delugeapp/data/deluge_tables.npz` (83 tables,
+267 Ko), extraites de `src/deluge/util/lookuptables/`. **Le firmware est sous GPL 3 :
+distribuer l'application avec ces tables obligerait à la publier sous la même licence.**
+
+### Ce que l'ancien moteur faisait autrement — mesuré contre le code
+
+| Étage | Avant | Le firmware |
+|---|---|---|
+| Panoramique au centre | −3 dB par côté | plein niveau des deux côtés |
+| Unisson | `÷ n`, après le filtre | `÷ √n`, avant le filtre |
+| Bruit | gaussien, 7 dB trop bas | uniforme, 2 dents de scie au même réglage |
+| Formes d'onde | toutes à la même crête | carré 5 dB au-dessus de la scie ; tables « analog » |
+| Échantillon plein | comme une onde | 18 dB au-dessus d'une dent de scie |
+| FM | chaque modulateur sur une porteuse, 1,5 rad | modulateurs additionnés sur les deux porteuses, ±2π |
+| Filtre | deux pôles par blocs FFT, fuites | échelle à transistors, échantillon par échantillon |
+| `volume` d'un preset | volume de la voix | volume **post-effets** du son |
+| Delay au réglage neutre | 0,134 s, retour 0,5 | 0,37 s, retour 1,0 (0,94 hors morceau) |
+| Réverbération | réponse impulsionnelle inventée | « Mutable » d'un morceau neuf |
+| Vieux son FM (avant c1.2.0) | filtré | filtres éteints, comme la machine |
+
+### Vérifié
+
+* Contre des transcriptions **entières** du C (`multiply_32x32_rshift32` compris) :
+  l'échelle passe-bas à 6·10⁻⁵ près de la crête, le passe-haut à 2·10⁻⁵, les formes d'onde
+  à 6·10⁻⁸, les impulsions à 4·10⁻⁵ ; la FM à rétroaction garde ses harmoniques à 0,01 dB
+  (sa boucle en flottants laisse dériver la phase de quelques pour cent).
+* La réponse de l'échelle linéarisée, calculée en z, égale la réponse impulsionnelle à
+  0,01 dB : la courbe de filtre de l'interface la trace (`render.filter_response`), pointe
+  de résonance comprise, même en auto-oscillation.
+* Les 911 presets de synthé de la carte, rendus par les deux moteurs : aucun muet ; niveau
+  médian −19,3 dBFS (−19,2 avant) ; 137 dépassent la pleine échelle au niveau de la machine
+  et sont ramenés sous 0,99 ; centroïde médian des soustractifs 853 Hz (2 060 avant : la
+  fuite du filtre), des FM 448 Hz (196 avant : l'indice). Durée : 1,5 s de son en 0,1 s
+  (médiane de 200 presets), 0,2 s pour 90 %, 0,54 s au pire (FM à rétroaction).
+* `TestTraitementDuFirmware` (13 tests, dont une échelle 24 dB entière), et dans
+  `TestEcouteFidele` : le volume du preset agit après la saturation (×4 exact de 15 à 30),
+  l'unisson compensé, le bruit à deux dents de scie (2,007), les vieux FM sans filtre, la
+  queue de réverbération, les effets appliqués à part (`sound_effects`, identiques au
+  rendu complet à 44,1 kHz). **La suite complète passe : 1 203 tests**, sous unittest et
+  sous pytest.
+
+### À l'atelier
+
+Les parties de synthé reçoivent désormais la carte (un son à échantillon y jouait une dent
+de scie) ; parties et batterie sortent au niveau de la machine et seul le mélange est
+ramené sous la pleine échelle (chacun ramené de son côté puis dosé à 0,85 perdait
+l'équilibre). Un kit passe par l'étage de son volume (`render.kit_gain` : 1,00 au volume
+qu'écrit l'atelier).
+
+### Pièges rencontrés
+
+* **Les nombres sous-normaux.** En flottants, les mémoires d'un filtre qui s'éteint dans le
+  silence descendent jusqu'aux sous-normaux, que le processeur calcule cent fois plus
+  lentement : un passe-bas s'éteignant coûtait le double. Le firmware, en entiers, ne
+  connaît pas ce défaut. Une garde de 10⁻³ à l'entrée des boucles (`DENORMAL_GUARD`, mille
+  fois sous son bit de poids faible) l'a réglé.
+* **Deux coûts cachés.** Le passe-haut très résonant appelait numpy à chaque échantillon
+  pour sa saturation adoucie : 1,4 s pour 1,5 s de son (46 ms après, en Python pur). Un
+  carré à largeur modulée changeait de valeur à chaque bloc, et mon regroupement bâtissait
+  un masque de toute la longueur par bloc : 461 ms au lieu de 120.
+* **Le budget de la SPEC.** 400 ms pour 2,5 s tenait à l'ancien moteur. Le pire cas mesuré
+  prend 0,19 à 0,33 s au calme ; après une dizaine de rendus d'affilée, le portable
+  ralentit et le même son prend 0,47 s (0,63 s sous la charge de la suite). Le plafond
+  passe à 600 ms, sur le plus rapide de trois passages.
+* **Ma première sortie oubliait les filtres du morceau** : même ouverts, ils retirent 20 %
+  au volume maître (`1720000000 << 1`). Le mélange de 2²⁴ sort à 0,48 de pleine échelle,
+  pas à 0,60. *(Mesuré sur la machine le 4 novembre : 0,29 — le compresseur d'un morceau
+  a un gain de base de 0,85 et non 1,35 ; voir §3 duoquadragies.)*
+* **Un « \ » de continuation mangé** par un correctif passé en heredoc : la ligne est restée
+  valide mais d'un seul tenant. Repris à l'outil d'édition (cf. ma note sur les heredocs).
+* **Mes tests se sont trompés deux fois** : un decay trop long pour la fenêtre simulée, et
+  un rééchantillonnage vers 22 kHz (réservé aux tests) qui coupait à 4,8 kHz et faisait
+  paraître le bruit à 0,86 dent de scie au lieu de 2.
+
+### Ce qui reste approché
+
+La lecture des échantillons (interpolation linéaire, sans étirement), le glissé (en
+demi-tons, le firmware travaille en fréquence), le LFO 1 global (il repart à chaque note),
+le SVF (rendu par l'échelle 12 dB : aucun son de la carte ne s'en sert), le « tape warble »
+(rendu en chorus), la compression par son, le sidechain et la limitation du compresseur
+maître.
+
+### À voir avec l'utilisateur
+
+* La GPL des tables, si l'application devait être distribuée un jour.
+* ~~Une vérification sur la machine elle-même~~ : faite avec son accord, voir
+  §3 duoquadragies.
+
+---
+
+## 3 quadragies. Un parcours de création, deux niveaux (23 octobre 2026)
+
+**La demande** : « Revoir entièrement l'interface utilisateur du logiciel. Le logiciel doit
+être simple à utiliser et à comprendre et doit respecter un workflow logique de création
+musicale. Le logiciel s'adresse autant à un novice qu'à un producteur confirmé. » Puis
+« continuer ».
+
+### Le constat, d'abord
+
+Rendue page par page avant de toucher à rien (`png_avant/`), l'interface montrait dix pages
+d'égale importance, rangées par type de fichier ; **sept boutons « en morceau »** dispersés
+(Théorie, Rythme, Arrangement, Kits, Générateur ×2, Découpage) qui écrivaient chacun un
+morceau à part ; un tableau de bord tourné vers la santé de la carte ; une boîte à outils
+dont la moitié refaisait ce que l'atelier fait mieux ; et, sur chaque page, graines, moteurs
+et exports au même rang que l'essentiel. Le novice ne savait pas par où commencer ; le
+producteur ne retrouvait pas son morceau d'un outil à l'autre.
+
+### Ce qui a été construit (SPEC §5.30)
+
+* **L'ordre du travail** : Accueil, puis Créer (Atelier, Générateur, Mémo), Bibliothèque
+  (Échantillons, Presets, Kits, Morceaux), La carte (Santé, Réglages) — titres de groupe
+  dans la colonne, raccourcis `Ctrl+1` à `Ctrl+0` dans cet ordre.
+* **L'accueil** : quatre portes — Créer un morceau (ou Reprendre le morceau), Créer un son,
+  Continuer un morceau du Deluge, Explorer mes sons —, le bandeau « À faire maintenant »
+  caché quand rien ne cloche, et, sans carte, où l'indiquer.
+* **L'atelier en cinq étapes** — Style, Sons, Clips, Structure, Deluge — avec sa barre
+  d'étapes et [Étape précédente] / [Étape suivante]. Il reprend ce qui était éparpillé : les
+  accords un à un, le groove et l'euclidien (sur le clip), le style de jeu des accords et de
+  la basse, les exports MIDI ; la batterie **se dessine au clic** ; une rangée de kit se
+  change seule ; un extrait du morceau s'écoute depuis l'en-tête ; l'étape Deluge écrit,
+  montre la machine et mène à Morceaux.
+* **Un seul morceau** : le générateur, les presets et les kits donnent leur son à l'atelier
+  ([Essayer dans l'atelier], [Utiliser dans l'atelier]), retenu pour le prochain morceau s'il
+  n'y en a pas ; Morceaux ouvre dans l'atelier. Les boutons « en morceau » ont disparu,
+  sauf celui du découpage.
+* **Le Mémo** remplace la boîte à outils : gammes et accords, calculatrice, mixage
+  harmonique, aide-mémoire.
+* **Deux niveaux** : l'interrupteur « Simple | Avancé » de la barre du haut (à la place
+  d'« Analyser », passé sur l'accueil), `Ctrl+E`, et Réglages ▸ Niveau de l'interface. Au
+  niveau simple, chaque page ne montre que l'essentiel ; rien n'est désactivé.
+* Le manuel, en français et en anglais : nouvelles parties (Créer, La bibliothèque, La
+  carte), chapitres Accueil, Atelier (cinq étapes, sons venus d'autres pages), Mémo,
+  « Simple ou avancé » ; chaque commande du mode avancé dite telle ; figures redessinées
+  (repère 6, groupes de la colonne, pages, atelier en cinq étapes).
+
+### Ce que les tests ont trouvé en route
+
+* **Un kit 2.x passé à l'atelier gardait ses bornes en millisecondes** dans le morceau
+  écrit — la machine les ignore et joue chaque échantillon en entier. Seul l'ancien « Motif
+  en morceau » convertissait ; le chemin de l'atelier (et son [Choisir sur la carte…], déjà
+  avant la refonte) ne le faisait pas. `songwriter.current_kit` convertit le kit **avant**
+  de le compléter, et l'écrit en attributs.
+* **Recliquer le genre allumé** remettait à zéro le tempo, l'arpège et les accords
+  retouchés : il ne défait plus rien.
+* Le bandeau de l'accueil, caché, gardait sa dernière phrase : elle s'efface avec lui.
+* En mode avancé, choisir « CV » pour une piste de batterie donnait un kit : la nature
+  choisie fait de nouveau foi.
+
+### Ce que les images ont montré
+
+* À 980 px, le séparateur du Générateur ne laissait à la colonne des genres que 153 px pour
+  les 284 que demandent ses réglages en mode avancé : la seconde colonne de pads sortait du
+  cadre (« Aci », « Boards of »). Le défaut précédait la refonte — elle était alors entièrement
+  cachée. Les colonnes ne se laissent plus comprimer sous leur contenu
+  (`generator._ColonneDeReglages`), les pads de genre passent sur une colonne et les
+  encodeurs du centre sur deux quand la place manque, et la carte « Rôle du son » se
+  resserre (274 → 221 px). Mesuré ensuite : aucune barre horizontale, en simple comme en
+  avancé, en français comme en anglais.
+* En anglais à 980 px, la troisième ligne des portes de l'accueil sortait du cadre : elles
+  prennent la hauteur de leur phrase, alignées par rangée (`ActionPad.grouper`).
+* En mode avancé, [Autres accords] et [Autre accord] restaient grisés une fois le morceau
+  composé : ils restent ouverts, et la suite retouchée vaut pour la prochaine composition,
+  comme tout réglage du style.
+
+### Vérifié
+
+* **1 184 tests**, tous passent, sous unittest et sous pytest. Les tests des outils retirés sont réécrits sur leurs
+  remplaçants, dans la vraie fenêtre et **en cliquant** (générateur → atelier → morceau
+  écrit, kit 2.x converti, morceau ouvert depuis Morceaux, portes de l'accueil, niveau
+  retenu dans `settings.json`) ; `TestLeManuelDecritChaqueCommande` tourne en mode avancé,
+  un morceau composé.
+* Rendu en PNG, dans la vraie fenêtre, en français et en anglais, à 1 440 et 980 px, au
+  niveau simple et avancé, avec et sans carte (copie fantôme en liens physiques) ; les
+  réglages et l'index réels sont restés identiques à l'octet.
+
+### Mes erreurs, relevées
+
+* Un `git checkout --` sans chemin s'est glissé dans une commande : sans chemin, il ne
+  touche à rien, mais c'était une commande de trop sur un dépôt aux modifications non
+  validées.
+* Une première réécriture de figure lancée avec un texte de remplacement provisoire : l'outil
+  l'a refusée faute de correspondance ; je l'ai refaite sur le texte exact.
+* J'avais fixé à 330 px, sans mesurer, le seuil des deux colonnes de genres : à 1 440 px la
+  colonne n'en a que 278, et les genres y passaient sur une seule colonne. Mesuré, puis 270.
+* Mes tests nouveaux se sont trompés trois fois avant le code : une coordonnée `QPointF`
+  pour `QTest`, les repères MIDI attendus avec leurs accents (le fichier les écrit en
+  ASCII), et un genre recliqué par mon aide de test — qui a révélé le vrai défaut ci-dessus.
+
+### À voir avec l'utilisateur
+
+* Le niveau par défaut est **simple** : à son prochain démarrage, l'utilisateur verra ses
+  pages allégées. `Ctrl+E` rend tout.
+* « Mémo » se dit « Notebook » en anglais : « Reference » se confondait avec la partie
+  « Reference » du manuel.
 
 ## 3 novotricies. Modifier un son à la main (23 octobre 2026)
 

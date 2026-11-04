@@ -158,23 +158,16 @@ class FilterCurve(_LogAxis):
     def _response_db(self, freqs: np.ndarray) -> np.ndarray:
         """Réponse combinée des deux filtres, en décibels.
 
-        Reprend ``render._response``, ``render._cutoff_hz`` et
-        ``render._hpf_hz`` pour que la courbe affichée soit exactement celle
-        que le rendu applique — aux lois du firmware (:mod:`paramlaws`).
+        C'est celle des filtres que le rendu applique
+        (:func:`delugeapp.core.render.filter_response`) : l'échelle à
+        transistors du firmware, mesurée sur une impulsion, avec la
+        compensation de niveau de la voix — la bosse de résonance et la
+        perte de grave qui l'accompagne sont donc celles de la machine.
         """
-        from ...core.render import _cutoff_hz, _hpf_hz, _resonance_q, _response
+        from ...core.render import filter_response
 
-        poles = 2 if self._mode == "12dB" else 4
-        cutoff = _cutoff_hz(self._cutoff / 50.0)
-        q = _resonance_q(self._resonance / 50.0)
-        response = _response(freqs, cutoff, q, poles)
-
-        if self._hpf_cutoff is not None:
-            hp_cut = _hpf_hz(self._hpf_cutoff / 50.0)
-            response = response * _response(freqs, hp_cut, 0.707, 2,
-                                            high_pass=True)
-        magnitude = np.abs(response)
-        return 20.0 * np.log10(np.maximum(magnitude, 1e-6))
+        return filter_response(freqs, self._cutoff, self._resonance,
+                               self._mode, self._hpf_cutoff)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
         try:

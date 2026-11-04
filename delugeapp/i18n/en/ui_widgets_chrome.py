@@ -7,4 +7,6 @@ TEXTS = {
     "Déposez pour envoyer au Deluge": "Drop to send to the Deluge",
     "Le plan de l'envoi est montré avant toute copie.":
         "The plan is shown before anything is copied.",
+    "Simple": "Simple",
+    "Avancé": "Advanced",
 }

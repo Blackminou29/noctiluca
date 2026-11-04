@@ -67,7 +67,7 @@ from ..widgets.common import (
     sorted_proxy,
 )
 from ..widgets.waveform import WaveformView
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -607,16 +607,19 @@ class SamplesPage(Page):
         stop.clicked.connect(self.guard(self._stop))
         actions.addWidget(stop)
 
-        self._reveal_button = tool_button(
+        # Ouvrir le dossier et retoucher les fichiers : des gestes de
+        # rangement, au niveau avancé. Écouter, découper une boucle, trouver
+        # un son proche et envoyer au Deluge restent sous la main.
+        self._reveal_button = avance(tool_button(
             tr("Dans l'explorateur"), "folder",
-            tr("Ouvrir le dossier contenant le fichier"))
+            tr("Ouvrir le dossier contenant le fichier")))
         self._reveal_button.clicked.connect(self.guard(self._reveal))
         actions.addWidget(self._reveal_button)
 
-        self._process_button = tool_button(
+        self._process_button = avance(tool_button(
             tr("Traiter…"), "tools",
             tr("Mono, normalisation, rééchantillonnage, fondus… sur la "
-               "sélection"))
+               "sélection")))
         self._process_button.clicked.connect(self.guard(self._process))
         actions.addWidget(self._process_button)
 

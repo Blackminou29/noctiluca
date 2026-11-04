@@ -49,6 +49,7 @@ import numpy as np
 
 __all__ = [
     "SAMPLE_RATE", "unit", "raw_unit", "exp_range", "exp_octaves", "lpf_hz", "hpf_hz", "lfo_hz",
+    "attack_rate", "decay_rate", "release_rate",
     "attack_seconds", "decay_seconds", "release_seconds", "glide_seconds",
     "volume_gain", "linear_level", "sustain_level", "ladder_resonance",
     "velocity_source", "note_source", "envelope_source", "to_polarity",
@@ -200,13 +201,19 @@ def lfo_hz(octaves) -> np.ndarray:
 # Enveloppes et glissé
 # --------------------------------------------------------------------------- #
 
+def attack_rate(octaves) -> np.ndarray:
+    """Vitesse d'attaque du firmware (pas d'enveloppe par échantillon) :
+    ``getExp(4096, −octaves)``. Au-delà de 245 632, l'attaque est sautée."""
+    return 4096.0 * np.power(2.0, -np.asarray(octaves, dtype=np.float64))
+
+
 def attack_seconds(octaves) -> np.ndarray:
     """Durée de l'attaque ; 0 quand le firmware la saute.
 
     ``octaves`` : réglage (×6) et câbles additionnés, **avant** la négation
     que le firmware applique aux attaques.
     """
-    rate = 4096.0 * np.power(2.0, -np.asarray(octaves, dtype=np.float64))
+    rate = attack_rate(octaves)
     seconds = _ENV_STEPS / np.maximum(rate, 1e-9) / SAMPLE_RATE
     return np.where(rate > _ATTACK_SKIP, 0.0, seconds)
 
@@ -223,21 +230,29 @@ def _rate_index(units) -> np.ndarray:
     return 32.0 + 32.0 * np.asarray(units, dtype=np.float64)
 
 
+def decay_rate(units) -> np.ndarray:
+    """Vitesse du decay (``70 << 9`` × ``lookupReleaseRate``) ; ``units`` :
+    réglage −1..+1 plus les câbles, en unités de réglage."""
+    # ``multiply_32x32_rshift32`` tronque : au réglage 50, 3,83 devient 3.
+    return np.floor((70 << 9) * _release_rate(_rate_index(units))
+                    / float(1 << 32))
+
+
+def release_rate(units) -> np.ndarray:
+    """Vitesse du release (``140 << 9`` × ``lookupReleaseRate``)."""
+    return np.floor((140 << 9) * _release_rate(_rate_index(units))
+                    / float(1 << 32))
+
+
 def decay_seconds(units) -> np.ndarray:
     """Durée complète du decay (``70 << 9`` × table) ; ``units`` : réglage
     −1..+1 plus les câbles, en unités de réglage."""
-    # ``multiply_32x32_rshift32`` tronque : au réglage 50, 3,83 devient 3.
-    rate = np.floor((70 << 9) * _release_rate(_rate_index(units))
-                    / float(1 << 32))
-    return _ENV_STEPS / np.maximum(rate, 1e-9) / SAMPLE_RATE
+    return _ENV_STEPS / np.maximum(decay_rate(units), 1e-9) / SAMPLE_RATE
 
 
 def release_seconds(units) -> np.ndarray:
     """Durée complète du release (``140 << 9`` × table)."""
-    # ``multiply_32x32_rshift32`` tronque : au réglage 50, 3,83 devient 3.
-    rate = np.floor((140 << 9) * _release_rate(_rate_index(units))
-                    / float(1 << 32))
-    return _ENV_STEPS / np.maximum(rate, 1e-9) / SAMPLE_RATE
+    return _ENV_STEPS / np.maximum(release_rate(units), 1e-9) / SAMPLE_RATE
 
 
 def glide_seconds(display) -> float:

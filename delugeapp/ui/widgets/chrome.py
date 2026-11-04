@@ -14,7 +14,10 @@
 * :class:`LedStrip` — le filet lumineux sous la barre du haut, à la couleur
   de la page affichée ;
 * :class:`DropVeil` — le voile qui couvre la fenêtre quand on y glisse des
-  fichiers à envoyer au Deluge.
+  fichiers à envoyer au Deluge ;
+* :class:`LevelSwitch` — la bascule « SIMPLE | AVANCÉ » de la barre du haut ;
+* :class:`RailGroup` — le titre d'un groupe de la colonne : CRÉER,
+  BIBLIOTHÈQUE, LA CARTE.
 
 Tout est tracé au :class:`QPainter` : ces pièces n'ont pas d'équivalent
 dans les styles de Qt, et le QSS ne sait dessiner ni halo ni dégradé radial
@@ -34,7 +37,8 @@ from PyQt6.QtCore import (
     QTimer,
     QVariantAnimation,
 )
-from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPen
+from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetricsF,
+                         QLinearGradient, QPainter, QPen)
 from PyQt6.QtWidgets import QPushButton, QSizePolicy, QWidget
 
 from ...i18n import tr
@@ -356,16 +360,20 @@ class NavPad(QPushButton):
     la machine, qui montrent leur teinte avant même d'être joués. Choisi, il
     s'allume, rayonne, et un filet de sa couleur borde la colonne. Le
     numéro à droite est celui du raccourci (``Ctrl+1`` … ``Ctrl+9``, puis
-    ``Ctrl+0`` pour la dixième).
+    ``Ctrl+0`` pour la dixième) ; ``None`` : pas de chiffre. Le 0 de la
+    dixième page ne s'affichait pas, pris pour « aucun chiffre ».
 
     Reste un ``QPushButton`` cochable : les tests et la fenêtre le cliquent
     et lisent son état comme avant.
     """
 
-    HAUTEUR = 44
+    #: 40 et non 44 : avec les trois titres de groupe, la colonne doit tenir
+    #: dans les 557 pixels qu'une fenêtre de 640 lui laisse.
+    HAUTEUR = 40
 
     def __init__(self, title: str, icon_name: str, color: str,
-                 number: int = 0, parent: QWidget | None = None) -> None:
+                 number: int | None = None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(f"  {title}", parent)
         self.setObjectName("NavButton")
         self.setCheckable(True)
@@ -375,7 +383,7 @@ class NavPad(QPushButton):
                            QSizePolicy.Policy.Fixed)
         self._icone = icon_name
         self._couleur = color
-        self._numero = int(number or 0)
+        self._numero = None if number is None else int(number)
         self._lumiere = 0.0
         self._survol = False
         self._libelle = _police(FONT_UI, 10, 500)
@@ -496,7 +504,8 @@ class NavPad(QPushButton):
                 p.setPen(QColor(PAD_WHITE if (actif or self._survol)
                                 else TEXT_SOFT))
                 gauche = pad.right() + 12
-                droite = self.width() - (26 if self._numero else 10)
+                droite = self.width() - (26 if self._numero is not None
+                                         else 10)
                 zone = QRectF(gauche, 0, max(10.0, droite - gauche),
                               self.height())
                 texte = QFontMetricsF(p.font()).elidedText(
@@ -504,7 +513,7 @@ class NavPad(QPushButton):
                     zone.width())
                 p.drawText(zone, int(Qt.AlignmentFlag.AlignVCenter
                                      | Qt.AlignmentFlag.AlignLeft), texte)
-                if self._numero:
+                if self._numero is not None:
                     p.setFont(self._chiffre)
                     chiffre = QColor(readable(couleur, CHROME) if actif
                                      else (GREY if self._survol
@@ -627,6 +636,180 @@ class LedButton(QPushButton):
             p.end()
         except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
             log.debug("bouton de façade non tracé : %s", exc)
+
+
+class LevelSwitch(QPushButton):
+    """La bascule du niveau de l'interface : « SIMPLE | AVANCÉ ».
+
+    Une pilule en deux moitiés ; celle qui est choisie s'allume à la couleur
+    de la façade, comme un pad. Reste un ``QPushButton`` cochable — coché :
+    avancé —, que la fenêtre, le menu et les tests actionnent comme un
+    autre. Son texte est le nom du niveau qu'il allume.
+    """
+
+    HAUTEUR = 30
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setFlat(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._couleur = PAD_AMBER
+        self._survol = False
+        self._compact = False
+        self._gauche = tr("Simple")
+        self._droite = tr("Avancé")
+        self.setText(self._droite)
+        self._ajuster()
+
+    def _ajuster(self) -> None:
+        """Largeur des deux moitiés : le plus long libellé, et sa marge.
+
+        Serrée sous 1 180 px de fenêtre : la bascule y prend la place de
+        l'ancien « Analyser », plus étroit, et les menus ne doivent pas
+        passer dans le débordement.
+        """
+        if self._compact:
+            self._police = _police(FONT_UI, 6.6, 700, 0.8, capitales=True)
+            marge = 7
+        else:
+            self._police = _police(FONT_UI, 7.2, 700, 1.8, capitales=True)
+            marge = 20
+        largeur = max(QFontMetricsF(self._police).horizontalAdvance(t.upper())
+                      for t in (self._gauche, self._droite))
+        self._largeur = int(2 * (largeur + marge)) + 6
+        self.setFixedSize(self._largeur, self.HAUTEUR)
+        self.update()
+
+    def set_compact(self, compact: bool) -> None:
+        if bool(compact) != self._compact:
+            self._compact = bool(compact)
+            self._ajuster()
+
+    def is_compact(self) -> bool:
+        return self._compact
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        # La taille fixe, et non celle que Qt tirerait du texte : la barre
+        # du haut compte avec elle pour savoir ce qui tient.
+        return QSize(self._largeur, self.HAUTEUR)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        return self.sizeHint()
+
+    def color(self) -> str:
+        return self._couleur
+
+    def set_accent(self, color: str) -> None:
+        """La couleur de la moitié allumée : celle de la façade."""
+        if color:
+            self._couleur = color
+            self.update()
+
+    def labels(self) -> tuple[str, str]:
+        return self._gauche, self._droite
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._survol = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._survol = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            cadre = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            rayon = cadre.height() / 2.0
+            p.setPen(QPen(QColor(BORDER_HI if self._survol else BORDER), 1))
+            p.setBrush(QColor(mix(CHROME, PANEL_HI, 0.45)))
+            p.drawRoundedRect(cadre, rayon, rayon)
+            moitie = (cadre.width() - 6) / 2.0
+            gauche = QRectF(cadre.left() + 3, cadre.top() + 3, moitie,
+                            cadre.height() - 6)
+            droite = QRectF(gauche.right(), gauche.top(), moitie,
+                            gauche.height())
+            allumee = droite if self.isChecked() else gauche
+            art.paint_pad(p, allumee, self._couleur, glow=0.0,
+                          radius=allumee.height() / 2.0)
+            p.setFont(self._police)
+            for zone, texte in ((gauche, self._gauche), (droite, self._droite)):
+                choisie = zone is allumee
+                p.setPen(QColor(text_on(self._couleur) if choisie
+                                else (PAD_WHITE if self._survol
+                                      else TEXT_SOFT)))
+                p.drawText(zone, int(Qt.AlignmentFlag.AlignCenter),
+                           texte.upper())
+            p.end()
+        except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
+            log.debug("bascule de niveau non tracée : %s", exc)
+
+
+class RailGroup(QWidget):
+    """Le titre d'un groupe de la colonne de navigation.
+
+    Capitales espacées et filet, comme les titres de section ; replié, il
+    ne reste qu'un court filet entre deux groupes de pads.
+    """
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._titre = str(title or "")
+        self._compact = False
+        self._police = _police(FONT_UI, 6.8, 700, 2.2, capitales=True)
+        self.setFixedHeight(20)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                          True)
+
+    def title(self) -> str:
+        return self._titre
+
+    def set_compact(self, compact: bool) -> None:
+        self._compact = bool(compact)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            milieu = self.height() / 2.0 + 3.0
+            trait = QColor(BORDER)
+            if self._compact:
+                p.setPen(QPen(trait, 1))
+                p.drawLine(QPointF(14, milieu), QPointF(self.width() - 14,
+                                                        milieu))
+                p.end()
+                return
+            p.setFont(self._police)
+            p.setPen(QColor(TEXT_MUTED))
+            metrique = QFontMetricsF(self._police)
+            x = 16.0
+            ligne = milieu + (metrique.ascent() - metrique.descent()) / 2.0
+            texte = self._titre.upper()
+            p.drawText(QPointF(x, ligne), texte)
+            fin = x + metrique.horizontalAdvance(texte) + 8
+            if fin < self.width() - 10:
+                degrade = QLinearGradient(QPointF(fin, 0),
+                                          QPointF(self.width() - 10, 0))
+                degrade.setColorAt(0.0, trait)
+                transparent = QColor(trait)
+                transparent.setAlphaF(0.0)
+                degrade.setColorAt(1.0, transparent)
+                p.setPen(QPen(QBrush(degrade), 1))
+                p.drawLine(QPointF(fin, milieu), QPointF(self.width() - 10,
+                                                         milieu))
+            p.end()
+        except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
+            log.debug("titre de groupe non tracé : %s", exc)
 
 
 class LedStrip(QWidget):

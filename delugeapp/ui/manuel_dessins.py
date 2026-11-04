@@ -62,6 +62,7 @@ from .theme import (
     PAD_MINT,
     PAD_ORANGE,
     PAD_PURPLE,
+    PAD_RED,
     PAD_WHITE,
     PAGE_COLORS,
     PANEL,
@@ -82,15 +83,24 @@ PAPIER = "#FAF8F4"
 FOND_OUVERTURE = "#1C1F26"
 CARTOUCHE = "#101319"
 
-#: Les dix pages, dans l'ordre de la colonne de gauche.
-ORDRE_PAGES = ("Dashboard", "Samples", "Synths", "Kits", "Songs",
-               "Generator", "Atelier", "Toolbox", "Health", "Settings")
+#: Les onze pages, dans l'ordre de la colonne de gauche : l'accueil, ce qui
+#: crée, la bibliothèque et le pont vers le DAW, puis la carte.
+ORDRE_PAGES = ("Dashboard", "Atelier", "Generator", "Toolbox", "Samples",
+               "Synths", "Kits", "Songs", "Daw", "Health", "Settings")
+
+#: Les pages qui ouvrent un groupe de la colonne : Créer, Bibliothèque, La
+#: carte.
+GROUPES_PAGES = ("Atelier", "Samples", "Health")
 
 #: L'icône de chaque page, celle de son pad dans la colonne de gauche.
-ICONES_PAGES = {"Dashboard": "dashboard", "Samples": "samples",
+ICONES_PAGES = {"Dashboard": "home", "Samples": "samples",
                 "Synths": "synth", "Kits": "kit", "Songs": "song",
-                "Generator": "wand", "Atelier": "atelier", "Toolbox": "tools",
+                "Daw": "link",
+                "Generator": "wand", "Atelier": "atelier", "Toolbox": "memo",
                 "Health": "health", "Settings": "settings"}
+
+#: Les couleurs des cinq étapes de l'atelier, celles de sa barre d'étapes.
+COULEURS_ETAPES = (PAD_RED, PAD_PURPLE, PAD_GREEN, PAD_BLUE, PAD_AMBER)
 
 #: Échelle de rendu : les images sont dessinées deux fois plus grandes que
 #: leur taille logique.
@@ -476,12 +486,21 @@ def _fenetre(libelles: list[str]) -> QImage:
                       PAD_GREEN, glow=0.5)
         _boite(p, QRectF(barre.left() + 612, barre.top() + 10, 120, 26),
                "#151A22", "#333B48", rayon=13)
+        # L'interrupteur Simple / Avancé : la moitié du niveau choisi est
+        # allumée à la couleur de la façade.
         bouton = QRectF(barre.left() + 742, barre.top() + 10, 66, 26)
+        _boite(p, bouton, "#151A22", "#333B48", rayon=13)
+        moitie = QRectF(bouton.left() + 2, bouton.top() + 2,
+                        bouton.width() / 2.0 - 2, bouton.height() - 4)
         p.save()
         p.setClipRect(cadre)
-        art.paint_glow(p, bouton, GOLD, 0.30, spread=0.4)
+        art.paint_glow(p, moitie, GOLD, 0.30, spread=0.4)
         p.restore()
-        _boite(p, bouton, GOLD, rayon=7)
+        _boite(p, moitie, GOLD, rayon=11)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#4A515E"))
+        p.drawRoundedRect(QRectF(bouton.center().x() + 7,
+                                 bouton.center().y() - 2, 18, 4), 2, 2)
         lecture = QRectF(barre.left() + 820, barre.top() + 9, 28, 28)
         _boite(p, lecture, "#1B212B", "#3A414D", rayon=14)
         p.setBrush(QColor(PAD_WHITE))
@@ -503,8 +522,20 @@ def _fenetre(libelles: list[str]) -> QImage:
                          cadre.bottom() - barre.bottom() - 3 - 26)
         p.setBrush(QColor("#0E1218"))
         p.drawRect(colonne)
+        groupes = 0
         for rang, cle in enumerate(ORDRE_PAGES):
-            y = colonne.top() + 14 + rang * 40
+            if cle in GROUPES_PAGES:
+                # Le titre du groupe, en petites capitales, et son filet.
+                groupes += 1
+                y_titre = colonne.top() + 8 + rang * 36 + (groupes - 1) * 16
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#5A6270"))
+                p.drawRoundedRect(QRectF(colonne.left() + 12, y_titre + 2,
+                                         38, 4), 2, 2)
+                p.setPen(_crayon(GOLD, 1.0, 0.45))
+                p.drawLine(QPointF(colonne.left() + 56, y_titre + 4),
+                           QPointF(colonne.right() - 10, y_titre + 4))
+            y = colonne.top() + 10 + rang * 36 + groupes * 16
             cellule = QRectF(colonne.left() + 12, y, 26, 26)
             couleur = PAGE_COLORS[cle]
             if cle == "Samples":
@@ -519,8 +550,9 @@ def _fenetre(libelles: list[str]) -> QImage:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#C8CDD5" if cle == "Samples" else "#4A515E"))
             p.drawRoundedRect(QRectF(colonne.left() + 48, y + 9, 64, 8), 3, 3)
-            _texte(p, colonne.left() + 136, y + 5, str(rang + 1),
-                   _police(8, 700), "#5A6270", "droite")
+            if rang < 10:
+                _texte(p, colonne.left() + 136, y + 5, str((rang + 1) % 10),
+                       _police(8, 700), "#5A6270", "droite")
 
         # L'en-tête de la page : son treillis, son pad, son titre.
         zone = QRectF(colonne.right() + 16, barre.bottom() + 16,
@@ -609,18 +641,19 @@ def _fenetre(libelles: list[str]) -> QImage:
 
 
 def _pages(libelles: list[str]) -> QImage:
-    """Les dix pages, chacune à la couleur de son pad."""
+    """Les onze pages, chacune à la couleur de son pad, et leur raccourci :
+    ``Ctrl+1`` à ``Ctrl+0``, puis ``Ctrl+,`` pour les Réglages."""
     largeur, hauteur = 1000.0, 200.0
     with _Toile(largeur, hauteur) as (p, _t):
         pas = largeur / float(len(ORDRE_PAGES))
         for rang, cle in enumerate(ORDRE_PAGES):
             cx = pas * rang + pas / 2.0
-            cellule = QRectF(cx - 30, 22, 60, 60)
+            cellule = QRectF(cx - 28, 22, 56, 56)
             _pad_icone(p, cellule, PAGE_COLORS[cle], ICONES_PAGES[cle], 0.42)
-            _texte(p, cx, 98, _libelle(libelles, rang), _police(13, 700),
-                   ENCRE, "centre", pas - 6, 2)
-            _texte(p, cx, 158, "Ctrl+%d" % ((rang + 1) % 10),
-                   _police(11.5, 600), ENCRE_DOUCE, "centre")
+            _texte(p, cx, 94, _libelle(libelles, rang), _police(13, 700),
+                   ENCRE, "centre", pas - 4, 2)
+            _texte(p, cx, 158, "Ctrl+%d" % ((rang + 1) % 10) if rang < 10
+                   else "Ctrl+,", _police(11.5, 600), ENCRE_DOUCE, "centre")
     return _t.image
 
 
@@ -924,35 +957,36 @@ def _generateur(libelles: list[str]) -> QImage:
 
 
 def _atelier(libelles: list[str]) -> QImage:
-    """L'atelier : quatre onglets en chaîne, la grille des sections, et les
-    trois chemins vers le Deluge."""
-    largeur, hauteur = 1000.0, 470.0
-    etapes = ((PAGE_COLORS["Atelier"], "dice"), (PAD_PURPLE, "synth"),
-              (PAD_GREEN, "grid"), (PAD_ORANGE, "song"))
+    """L'atelier : les cinq étapes en chaîne, la grille des sections, et
+    les trois chemins vers le Deluge."""
+    largeur, hauteur = 1000.0, 500.0
+    icones = ("dice", "synth", "grid", "song", "save")
     # Les couleurs des parties, celles de la page : batterie, basse,
     # accords, mélodie.
     parties = (PAD_GREEN, PAD_BLUE, PAD_PURPLE, PAD_ORANGE)
     grille = ("BAACB", " AAAB", "AAAAA", "  AA ")
     sorties = ((PAD_CYAN, "midi"), (PAD_AMBER, "save"), (PAD_MINT, "plus"))
+    nombre = len(COULEURS_ETAPES)
     with _Toile(largeur, hauteur) as (p, _t):
-        pas = largeur / 4.0
-        for rang, (couleur, icone) in enumerate(etapes):
+        pas = largeur / float(nombre)
+        for rang, (couleur, icone) in enumerate(zip(COULEURS_ETAPES,
+                                                    icones)):
             cx = pas * rang + pas / 2.0
-            _pad_icone(p, QRectF(cx - 28, 18, 56, 56), couleur, icone, 0.4)
-            _numero(p, cx - 30, 20, rang + 1, 10)
-            _texte(p, cx, 88, _libelle(libelles, rang * 2),
-                   _police(TITRE_FIG, 800), ENCRE, "centre", pas - 20, 1)
-            _texte(p, cx, 116, _libelle(libelles, rang * 2 + 1),
-                   _police(TEXTE_FIG), ENCRE_DOUCE, "centre", pas - 24, 3)
-            if rang < 3:
-                _fleche(p, cx + 40, 46, cx + pas - 40, 46, GREY, 1.8)
+            _pad_icone(p, QRectF(cx - 26, 18, 52, 52), couleur, icone, 0.4)
+            _numero(p, cx - 28, 20, rang + 1, 10)
+            _texte(p, cx, 84, _libelle(libelles, rang * 2),
+                   _police(TITRE_FIG, 800), ENCRE, "centre", pas - 16, 1)
+            _texte(p, cx, 110, _libelle(libelles, rang * 2 + 1),
+                   _police(TEXTE_FIG), ENCRE_DOUCE, "centre", pas - 18, 4)
+            if rang < nombre - 1:
+                _fleche(p, cx + 36, 44, cx + pas - 36, 44, GREY, 1.8)
         p.setPen(_crayon("#DDD8CF", 1.0))
-        p.drawLine(QPointF(30, 196), QPointF(largeur - 30, 196))
+        p.drawLine(QPointF(30, 226), QPointF(largeur - 30, 226))
 
         # La grille : une rangée par piste, une colonne par section.
-        _texte(p, 40, 210, _libelle(libelles, 8), _police(TITRE_FIG, 800),
+        _texte(p, 40, 240, _libelle(libelles, 10), _police(TITRE_FIG, 800),
                ENCRE, largeur=480)
-        gauche, haut, case_l, case_h, ecart = 70.0, 246.0, 80.0, 26.0, 6.0
+        gauche, haut, case_l, case_h, ecart = 70.0, 276.0, 80.0, 26.0, 6.0
         for colonne in range(5):
             entete = QRectF(gauche + colonne * (case_l + ecart), haut,
                             case_l, 20)
@@ -977,18 +1011,18 @@ def _atelier(libelles: list[str]) -> QImage:
                               sheen=False)
                 _texte(p, case.center().x(), case.top() + 4, lettre,
                        _police(12.0, 800), lit_fill(couleur)[2], "centre")
-        _texte(p, 40, 412, _libelle(libelles, 9), _police(TEXTE_FIG),
+        _texte(p, 40, 442, _libelle(libelles, 11), _police(TEXTE_FIG),
                ENCRE_DOUCE, largeur=480, lignes=2)
 
         # Les trois chemins vers la machine.
         droite = gauche + 5 * (case_l + ecart)
         for rang, (couleur, icone) in enumerate(sorties):
-            y = 214 + rang * 84
+            y = 244 + rang * 84
             _pad_icone(p, QRectF(620, y, 44, 44), couleur, icone, 0.3)
-            _fleche(p, droite + 6, 330, 612, y + 22, GREY, 1.4)
-            _texte(p, 678, y, _libelle(libelles, 10 + rang * 2),
+            _fleche(p, droite + 6, 360, 612, y + 22, GREY, 1.4)
+            _texte(p, 678, y, _libelle(libelles, 12 + rang * 2),
                    _police(TITRE_FIG, 800), ENCRE, largeur=300)
-            _texte(p, 678, y + 24, _libelle(libelles, 11 + rang * 2),
+            _texte(p, 678, y + 24, _libelle(libelles, 13 + rang * 2),
                    _police(TEXTE_FIG), ENCRE_DOUCE, largeur=300, lignes=2)
     return _t.image
 
@@ -1073,14 +1107,14 @@ def _boucle(libelles: list[str]) -> QImage:
 #: Les figures, et combien de libellés chacune attend.
 FIGURES: dict[str, tuple[Callable[[list[str]], QImage], int]] = {
     "fenetre": (_fenetre, 0),
-    "pages": (_pages, 10),
+    "pages": (_pages, 11),
     "flux": (_flux, 10),
     "plan": (_plan, 8),
     "pastille": (_pastille, 6),
     "sante": (_sante, 8),
     "echantillons": (_echantillons, 10),
     "generateur": (_generateur, 8),
-    "atelier": (_atelier, 16),
+    "atelier": (_atelier, 18),
     "ecrans": (_ecrans, 9),
     "boucle": (_boucle, 3),
 }

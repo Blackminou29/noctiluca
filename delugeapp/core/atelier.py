@@ -51,7 +51,9 @@ __all__ = [
     "to_song_spec", "section_parts", "clip_parts", "infer_progression",
     "from_song", "track_label", "next_key", "parts_for_kind", "drum_rows",
     "live_notes", "listen_sounds", "insertion_plan", "clone_project",
-    "edit_sound",
+    "edit_sound", "FEELS", "feels_for", "toggle_hit", "groove_clip",
+    "add_euclid", "fullest_section", "arrangement_parts", "export_midi",
+    "part_for", "use_preset", "use_kit",
 ]
 
 #: Natures de piste, comme sur le Deluge.
@@ -184,6 +186,9 @@ class AtelierTrack:
     #: plus ce que donnent ``options``, et les variantes dans le style
     #: reportent ces retouches (:func:`sound_variations`).
     edited: bool = False
+    #: Le jeu des clips neufs d'une piste d'accords ou de basse — « stabs »,
+    #: « contretemps »… (:data:`FEELS`) ; vide : celui du genre.
+    feel: str = ""
 
     def clip(self, key: str) -> AtelierClip | None:
         for clip in self.clips:
@@ -361,16 +366,31 @@ def remove_track(project: Project, uid: int) -> None:
         section.cells.pop(uid, None)
 
 
+#: Les jeux qu'une piste d'accords ou de basse peut prendre — ceux de la
+#: Boîte à outils d'autrefois, rangés par partie.
+FEELS: dict[str, tuple[str, ...]] = {
+    "Accords": tuple(accomp.CHORD_STYLES),
+    "Basse": tuple(accomp.BASS_STYLES),
+}
+
+
+def feels_for(part: str) -> tuple[str, ...]:
+    """Les jeux possibles d'une partie ; aucun pour l'arpège ou la mélodie,
+    dont l'allure suit le genre."""
+    return FEELS.get(str(part or ""), ())
+
+
 def _make_events(project: Project, track: AtelierTrack, bars: int,
                  seed: int) -> list[NoteEvent]:
     style = project.style
     chords = [variation.chord_at(project.progression, b) for b in range(bars)]
     styles = accomp.genre_styles(style.genre)
     part = track.part
+    feel = track.feel if track.feel in feels_for(part) else ""
     if part == "Basse":
-        events = accomp.bass_part(chords, styles[1])
+        events = accomp.bass_part(chords, feel or styles[1])
     elif part == "Accords":
-        events = accomp.chord_part(chords, styles[0])
+        events = accomp.chord_part(chords, feel or styles[0])
     elif part == "Arpège":
         events = accomp.arp_part(chords, rate=1 if track.mono else 2,
                                  octaves=2, seed=seed)
@@ -483,6 +503,84 @@ def move_section(project: Project, index: int, offset: int) -> int:
         section = project.sections.pop(index)
         project.sections.insert(target, section)
     return target
+
+
+# --------------------------------------------------------------------------- #
+# La batterie, à la main
+# --------------------------------------------------------------------------- #
+
+def _drum_clip(project: Project, uid: int, key: str) -> AtelierClip:
+    track = project.track(uid)
+    clip = track.clip(key) if track is not None else None
+    if clip is None or not track.is_drums:
+        raise ValueError(tr("clip inconnu"))
+    if clip.pattern is None:
+        clip.pattern = rhythm.Pattern(name="", steps=clip.steps)
+    return clip
+
+
+def toggle_hit(project: Project, uid: int, key: str, row: str, step: int,
+               velocity: int = 100) -> bool:
+    """Ajoute ou retire un coup dans un clip de batterie, à la case ``step``
+    de la rangée ``row``. Rend vrai si le coup y est désormais.
+
+    Un coup décalé par un groove compte pour la case d'où il vient : le
+    retirer se fait en cliquant là où la grille le montre.
+    """
+    clip = _drum_clip(project, uid, key)
+    step = int(step)
+    if not 0 <= step < clip.steps:
+        raise ValueError(tr("case hors du clip"))
+    hits = clip.pattern.tracks.setdefault(str(row), [])
+    present = [s for s in hits if rhythm.cell(s) == step]
+    for hit in present:
+        hits.remove(hit)
+    if not present:
+        hits.append(rhythm.Step(pos=step, velocity=max(1, min(100,
+                                                              int(velocity)))))
+        hits.sort(key=lambda s: float(s.pos))
+    return not present
+
+
+def groove_clip(project: Project, uid: int, key: str, groove: str,
+                swing: float = 0.0) -> AtelierClip:
+    """Pose un groove — et un swing de 0 à 1 — sur un clip de batterie.
+
+    Toujours depuis le motif droit : un second groove remplace le premier
+    au lieu de s'y ajouter. Les coups ajoutés à la main restent.
+    """
+    clip = _drum_clip(project, uid, key)
+    pattern = rhythm.apply_groove(rhythm.straighten(clip.pattern),
+                                  groove or "droit", 1.0)
+    if swing and float(swing) > 0:
+        pattern = rhythm.swing(pattern, float(swing))
+    pattern.name = clip.pattern.name
+    clip.pattern = pattern
+    return clip
+
+
+def add_euclid(project: Project, uid: int, key: str, pulses: int,
+               steps: int = 16, rotation: int = 0, row: str = "") -> str:
+    """Ajoute à un clip de batterie une rangée euclidienne : ``pulses`` coups
+    répartis au mieux sur ``steps`` pas, répétés sur toute la longueur du
+    clip. Rend le nom de la rangée — « E(5,16) » à défaut d'un autre.
+
+    Sur la carte, une rangée que le kit n'a pas reçoit une percussion de la
+    bibliothèque (:func:`songwriter.drum_kit_for`).
+    """
+    clip = _drum_clip(project, uid, key)
+    steps = max(1, int(steps))
+    cells = rhythm.euclid(max(0, int(pulses)), steps, int(rotation) % steps)
+    name = row or ("E(%d,%d)" % (int(pulses), steps)
+                   + ("+%d" % (int(rotation) % steps) if int(rotation) % steps
+                      else ""))
+    hits = []
+    for offset in range(0, clip.steps, steps):
+        for index, on in enumerate(cells):
+            if on and offset + index < clip.steps:
+                hits.append(rhythm.Step(pos=offset + index, velocity=100))
+    clip.pattern.tracks[name] = hits
+    return name
 
 
 # --------------------------------------------------------------------------- #
@@ -729,6 +827,20 @@ def section_parts(project: Project, index: int, max_bars: int = 8
     return parts, drums, bars
 
 
+def fullest_section(project: Project) -> int:
+    """La section où jouent le plus de pistes — la plus longue à égalité :
+    celle qui donne le mieux l'idée du morceau. -1 sans section."""
+    best, best_key = -1, None
+    for index, section in enumerate(project.sections):
+        playing = sum(1 for track in project.tracks
+                      if section.cells.get(track.uid)
+                      and track.clip(section.cells[track.uid]) is not None)
+        key = (playing, int(section.bars), -index)
+        if playing and (best_key is None or key > best_key):
+            best, best_key = index, key
+    return best
+
+
 #: Ordre des rangées d'un kit quand rien d'autre ne le dit : celui des
 #: rôles de la machine, de la grosse caisse aux percussions.
 _DRUM_ORDER = ("Kick", "Snare", "Clap", "HatC", "HatO", "Rim", "TomL",
@@ -853,8 +965,12 @@ def to_song_spec(project: Project, name: str, sd=None, lib=None):
                             for n in c.pattern.tracks})
             kit, mapping, lost = (None, {}, names)
             if sd is not None:
+                # Un kit ancien de la carte est converti avant d'être
+                # complété : ses bornes en millisecondes deviennent des
+                # trames, que la machine lit dans un morceau c1.2.1.
                 kit, mapping, lost = songwriter.drum_kit_for(
-                    sd, lib, project.style.genre, names, base=track.kit)
+                    sd, lib, project.style.genre, names,
+                    base=songwriter.current_kit(track.kit, sd))
             if kit is None:
                 raise ValueError(tr("la batterie n'a pas de kit : branchez "
                                     "la carte, ou choisissez un kit"))
@@ -912,6 +1028,133 @@ def to_song_spec(project: Project, name: str, sd=None, lib=None):
         tracks=tracks, clips=clips, summary=summary,
         sections=[songwriter.SectionSpec(s.name, int(s.bars) * songwriter.BAR)
                   for s in project.sections])
+
+
+# --------------------------------------------------------------------------- #
+# Exporter en MIDI
+# --------------------------------------------------------------------------- #
+
+def arrangement_parts(project: Project) -> tuple[dict, list[tuple[float, str]]]:
+    """Le morceau entier, piste par piste, en notes — de quoi écrire un
+    fichier MIDI : ``({partie: [NoteEvent]}, [(pas, section)])``.
+
+    Chaque section, dans l'ordre, fait boucler le clip de chaque piste sur
+    toute sa durée ; la batterie passe en notes General MIDI, sur le canal
+    des percussions. Deux pistes de même partie prennent deux noms.
+    """
+    names: dict[int, str] = {}
+    for track in project.tracks:
+        name, number = track.part, 2
+        while name in names.values():
+            name = "%s %d" % (track.part, number)
+            number += 1
+        names[track.uid] = name
+    parts: dict[str, list[NoteEvent]] = {}
+    markers: list[tuple[float, str]] = []
+    offset = 0
+    for section in project.sections:
+        steps = int(section.bars) * STEPS_PER_BAR
+        markers.append((float(offset), tr(section.name)))
+        for track in project.tracks:
+            key = section.cells.get(track.uid)
+            clip = track.clip(key) if key else None
+            if clip is None:
+                continue
+            events = parts.setdefault(names[track.uid], [])
+            if track.is_drums:
+                if clip.pattern is None:
+                    continue
+                for event in accomp.drum_part(clip.pattern, int(section.bars)):
+                    if event.start < steps:
+                        events.append(NoteEvent(offset + event.start,
+                                                event.length, event.note,
+                                                event.velocity))
+                continue
+            for start in range(0, steps, max(1, clip.steps)):
+                for event in clip.events:
+                    if start + event.start < steps:
+                        events.append(NoteEvent(offset + start + event.start,
+                                                event.length, event.note,
+                                                event.velocity))
+        offset += steps
+    return {k: sorted(v, key=lambda e: (e.start, e.note))
+            for k, v in parts.items() if v}, markers
+
+
+def export_midi(project: Project, path) -> int:
+    """Écrit le morceau entier dans un fichier MIDI : une piste par piste du
+    projet, le nom des sections en repères. Rend le nombre de pistes."""
+    from pathlib import Path
+
+    from . import midifile
+
+    parts, markers = arrangement_parts(project)
+    if not parts:
+        raise ValueError(tr("aucune section ne joue de clip"))
+    return midifile.parts_to_midi(Path(path), parts, project.style.tempo(),
+                                  markers=markers)
+
+
+# --------------------------------------------------------------------------- #
+# Les sons de la bibliothèque et du générateur
+# --------------------------------------------------------------------------- #
+
+#: La partie que joue un son, d'après son rôle dans le générateur ou sa
+#: catégorie dans la bibliothèque.
+_ROLE_PARTS = {"bass": "Basse", "sub": "Basse", "lead": "Mélodie",
+               "pad": "Accords", "keys": "Accords", "stab": "Accords",
+               "drone": "Accords", "pluck": "Arpège", "arp": "Arpège",
+               "fx": "Mélodie", "bell": "Mélodie"}
+
+
+def part_for(role: str) -> str:
+    """« Basse » pour une basse, « Accords » pour une nappe… ; « Mélodie »
+    pour ce qui n'est pas reconnu."""
+    return _ROLE_PARTS.get(str(role or "").strip().casefold(), "Mélodie")
+
+
+def use_preset(project: Project, preset, part: str = "",
+               uid: int | None = None, options=None,
+               edited: bool = False) -> AtelierTrack:
+    """Un son venu d'ailleurs — un preset de la carte, un son du générateur —
+    prend place dans le projet.
+
+    Il va à la piste ``uid`` si c'est un synthé neuf ; à défaut, au premier
+    synthé neuf qui joue ``part`` ; à défaut, à une piste neuve, avec son
+    premier clip. ``options`` — les réglages du générateur qui l'ont fait —
+    permettent ensuite d'en tirer des variantes dans le style.
+    """
+    part = part if part in parts_for_kind("synth") else "Mélodie"
+    track = project.track(uid) if uid is not None else None
+    if track is None or track.kind != "synth" or track.existing is not None:
+        track = next((t for t in project.tracks
+                      if t.kind == "synth" and t.part == part
+                      and t.existing is None), None)
+    if track is None:
+        track = add_track(project, "synth", part)
+    preset = copy.deepcopy(preset)
+    if options is not None:
+        # L'arpège s'écrit note par note : l'arpégiateur d'un son du
+        # générateur jouerait par-dessus (cf. :func:`_generate`).
+        _arp_off(preset.sound)
+    track.preset = preset
+    track.options = copy.deepcopy(options) if options is not None else None
+    track.edited = bool(edited)
+    return track
+
+
+def use_kit(project: Project, kit, uid: int | None = None) -> AtelierTrack:
+    """Un kit — de la carte ou du générateur — devient la batterie : celle de
+    la piste ``uid``, à défaut la première batterie neuve, à défaut une
+    piste neuve avec son premier clip."""
+    track = project.track(uid) if uid is not None else None
+    if track is None or not track.is_drums or track.existing is not None:
+        track = next((t for t in project.tracks
+                      if t.is_drums and t.existing is None), None)
+    if track is None:
+        track = add_track(project, "kit", "Batterie")
+    track.kit = copy.deepcopy(kit)
+    return track
 
 
 # --------------------------------------------------------------------------- #
@@ -1295,7 +1538,8 @@ def insertion_plan(project: Project, sd, lib=None, name: str = ""):
             names = sorted({n for c in track.clips if c.pattern is not None
                             for n in c.pattern.tracks})
             kit, mapping, _lost = songwriter.drum_kit_for(
-                sd, lib, project.style.genre, names, base=track.kit)
+                sd, lib, project.style.genre, names,
+                base=songwriter.current_kit(track.kit, sd))
             if kit is None:
                 raise ValueError(tr("la batterie ajoutée n'a pas de kit"))
             built = songwriter.kit_track(kit, sd=sd)

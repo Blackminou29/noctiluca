@@ -216,6 +216,144 @@ def write_midi(path: Path, tracks: list[MidiTrack], bpm: float = 120.0,
              len(blocks) - 1, bpm)
 
 
+# --------------------------------------------------------------------------- #
+# Lecture
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class MidiFileData:
+    """Ce qu'un fichier MIDI contient, notes appariées.
+
+    ``tracks`` : ``(nom, [(tick, note, vélocité, durée, canal)])`` dans
+    l'ordre du fichier ; ``tempo`` est le premier tempo lu (120 sans lui) ;
+    ``markers`` : ``(tick, texte)``.
+    """
+
+    ppq: int = DEFAULT_PPQ
+    tempo: float = 120.0
+    numerator: int = 4
+    denominator: int = 4
+    tracks: list[tuple[str, list[tuple[int, int, int, int, int]]]] = field(
+        default_factory=list)
+    markers: list[tuple[int, str]] = field(default_factory=list)
+    #: Tous les changements de tempo : ``(tick, BPM)``.
+    tempos: list[tuple[int, float]] = field(default_factory=list)
+
+
+def _read_varlen(data: bytes, pos: int) -> tuple[int, int]:
+    value = 0
+    for _ in range(4):
+        if pos >= len(data):
+            raise ValueError(tr("fichier MIDI tronqué"))
+        byte = data[pos]
+        pos += 1
+        value = (value << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            return value, pos
+    raise ValueError(tr("longueur variable invalide dans le fichier MIDI"))
+
+
+def _read_track(body: bytes, data: MidiFileData
+                ) -> tuple[str, list[tuple[int, int, int, int, int]]]:
+    """Une piste ``MTrk`` : les notes appariées (une activation de vélocité
+    nulle vaut extinction), le nom, et ce qui concerne tout le morceau."""
+    pos = 0
+    tick = 0
+    status = 0
+    nom = ""
+    ouvertes: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    notes: list[tuple[int, int, int, int, int]] = []
+    while pos < len(body):
+        delta, pos = _read_varlen(body, pos)
+        tick += delta
+        if pos >= len(body):
+            break
+        octet = body[pos]
+        if octet == 0xFF:
+            kind = body[pos + 1]
+            longueur, pos = _read_varlen(body, pos + 2)
+            payload = body[pos:pos + longueur]
+            pos += longueur
+            if kind == 0x03 and not nom:
+                nom = payload.decode("latin-1", "replace").strip()
+            elif kind == 0x51 and len(payload) == 3:
+                micros = int.from_bytes(payload, "big")
+                if micros > 0:
+                    bpm = 60_000_000.0 / micros
+                    data.tempos.append((tick, bpm))
+            elif kind == 0x58 and len(payload) >= 2 and tick == 0:
+                data.numerator = max(1, payload[0])
+                data.denominator = 2 ** min(6, payload[1])
+            elif kind == 0x06:
+                data.markers.append((tick, payload.decode("latin-1",
+                                                          "replace")))
+            elif kind == 0x2F:
+                break
+            continue
+        if octet in (0xF0, 0xF7):
+            longueur, pos = _read_varlen(body, pos + 1)
+            pos += longueur
+            continue
+        if octet & 0x80:
+            status = octet
+            pos += 1
+        elif not status:
+            raise ValueError(tr("fichier MIDI invalide : statut manquant"))
+        kind = status & 0xF0
+        canal = status & 0x0F
+        taille = 1 if kind in (0xC0, 0xD0) else 2
+        args = body[pos:pos + taille]
+        pos += taille
+        if len(args) < taille:
+            break
+        if kind == 0x90 and args[1] > 0:
+            ouvertes.setdefault((canal, args[0]), []).append((tick, args[1]))
+        elif kind == 0x80 or (kind == 0x90 and args[1] == 0):
+            pile = ouvertes.get((canal, args[0]))
+            if pile:
+                debut, velocite = pile.pop(0)
+                notes.append((debut, args[0], velocite,
+                              max(1, tick - debut), canal))
+    for (canal, note), pile in ouvertes.items():
+        for debut, velocite in pile:
+            notes.append((debut, note, velocite, max(1, tick - debut), canal))
+    notes.sort(key=lambda n: (n[0], n[1]))
+    return nom, notes
+
+
+def read_midi(path: Path) -> MidiFileData:
+    """Lit un fichier MIDI standard (types 0 et 1).
+
+    Lève ``ValueError`` si le fichier n'en est pas un, ``OSError`` s'il ne
+    se lit pas. Une piste sans note est gardée (son nom peut servir).
+    """
+    raw = Path(path).read_bytes()
+    if raw[:4] != b"MThd" or len(raw) < 14:
+        raise ValueError(tr("ce fichier n'est pas un fichier MIDI"))
+    longueur = struct.unpack(">I", raw[4:8])[0]
+    _format, nombre, division = struct.unpack(">HHH", raw[8:14])
+    if division & 0x8000:
+        raise ValueError(tr("fichier MIDI en temps SMPTE : non pris en "
+                            "charge"))
+    data = MidiFileData(ppq=max(1, division))
+    pos = 8 + longueur
+    for _ in range(nombre):
+        if pos + 8 > len(raw):
+            break
+        tag = raw[pos:pos + 4]
+        taille = struct.unpack(">I", raw[pos + 4:pos + 8])[0]
+        corps = raw[pos + 8:pos + 8 + taille]
+        pos += 8 + taille
+        if tag != b"MTrk":
+            continue
+        data.tracks.append(_read_track(corps, data))
+    data.tempos.sort()
+    if data.tempos:
+        data.tempo = data.tempos[0][1]
+    data.markers.sort()
+    return data
+
+
 def pattern_to_midi(path: Path, pattern, row_map: dict[str, int] | None,
                     bpm: float) -> None:
     """Exporte un motif rythmique.

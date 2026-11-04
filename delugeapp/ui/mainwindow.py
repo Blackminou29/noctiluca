@@ -5,6 +5,12 @@ Barre latérale à gauche, en-tête en haut, pages au centre, barre d'état en
 bas. Les pages sont **créées au premier affichage** : en construire dix au
 démarrage allongerait le lancement sans que l'utilisateur en voie plus d'une.
 
+La colonne range les pages **par intention**, et non par sorte de fichier :
+l'accueil, puis *créer* (l'atelier, le générateur, le mémo), puis la
+*bibliothèque* (échantillons, presets, kits, morceaux), enfin *la carte*
+(santé, réglages). La barre du haut porte la bascule « Simple | Avancé » :
+l'essentiel de chaque page, ou tout.
+
 Deux points qui ne sont pas de simples détails d'assemblage :
 
 * **la fermeture arrête les fils de travail.** Un ``QThread`` encore en cours
@@ -49,12 +55,11 @@ from .theme import (
     GREY,
     PAD_GREEN,
     apply_theme,
-    lit_fill,
     page_color,
 )
-from .widgets.chrome import (DropVeil, LedButton, LedStrip, NavPad,
-                             OledDisplay, Wordmark)
-from .widgets.common import BusyBar, SearchBar, glow, human_size
+from .widgets.chrome import (DropVeil, LedButton, LedStrip, LevelSwitch,
+                             NavPad, OledDisplay, RailGroup, Wordmark)
+from .widgets.common import BusyBar, SearchBar, human_size
 
 log = logging.getLogger(__name__)
 
@@ -89,17 +94,22 @@ _RAIL_KEY = "window/rail"
 
 
 def _page_classes():
-    """Les dix pages, dans l'ordre de la barre latérale.
+    """Les onze pages, dans l'ordre de la barre latérale.
 
     Importées ici et non au niveau du module : chaque page tire ses propres
     dépendances, et les charger toutes à l'import ralentirait le démarrage
     sans raison.
 
-    L'Atelier vient après le Générateur : on y assemble en morceau les sons
-    que l'on y fabrique.
+    L'ordre suit l'intention, pas la sorte de fichier : on part de
+    l'accueil ; on crée (un morceau dans l'atelier, un son dans le
+    générateur, le mémo sous la main) ; on puise dans sa bibliothèque ; on
+    prend soin de la carte. Les clés internes ne changent pas : l'aide, le
+    manuel et les adresses ``Page#Partie`` les citent. Le pont vers le DAW
+    suit les morceaux, qu'il emporte et rapporte.
     """
     from .pages.atelier import AtelierPage
     from .pages.dashboard import DashboardPage
+    from .pages.daw import DawPage
     from .pages.generator import GeneratorPage
     from .pages.health import HealthPage
     from .pages.kits import KitsPage
@@ -109,8 +119,24 @@ def _page_classes():
     from .pages.synths import SynthsPage
     from .pages.toolbox import ToolboxPage
 
-    return (DashboardPage, SamplesPage, SynthsPage, KitsPage, SongsPage,
-            GeneratorPage, AtelierPage, ToolboxPage, HealthPage, SettingsPage)
+    return (DashboardPage, AtelierPage, GeneratorPage, ToolboxPage,
+            SamplesPage, SynthsPage, KitsPage, SongsPage, DawPage, HealthPage,
+            SettingsPage)
+
+
+def _page_digit(index: int) -> int | None:
+    """Le chiffre du raccourci de la page de rang ``index`` (depuis 1) :
+    ``Ctrl+1`` à ``Ctrl+9``, puis ``Ctrl+0`` pour la dixième ; la onzième,
+    les Réglages, n'en a pas — elle garde ``Ctrl+,``."""
+    return index % 10 if index <= 10 else None
+
+
+#: Le titre de chaque groupe de la colonne, posé avant sa première page.
+RAIL_GROUPS: dict[str, str] = {
+    "Atelier": N_("Créer"),
+    "Samples": N_("Bibliothèque"),
+    "Health": N_("La carte"),
+}
 
 
 #: La question du redémarrage, par (langue choisie, langue de la phrase).
@@ -227,7 +253,9 @@ class MainWindow(QMainWindow):
         host.setFixedHeight(TOPBAR_HEIGHT)
         row = QHBoxLayout(host)
         row.setContentsMargins(12, 0, 12, 0)
-        row.setSpacing(8)
+        # 6 et non 8 : seize pixels gagnés à 980 px, où la bascule du niveau
+        # « ADVANCED », en anglais, poussait le menu Aide dans le débordement.
+        row.setSpacing(6)
         self._header_row = row
 
         self._wordmark = Wordmark(host)
@@ -257,13 +285,22 @@ class MainWindow(QMainWindow):
         self._search.searchChanged.connect(self._global_search)
         row.addWidget(self._search)
 
-        self._scan_button = QPushButton(tr("Analyser"), host)
-        self._scan_button.setObjectName("Primary")
-        self._scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._scan_button.setToolTip(tr("Relire la carte  (Ctrl+R)"))
-        self._scan_button.clicked.connect(self.scan_card)
-        row.addWidget(self._scan_button)
-        self._light_scan_button(self.ctx.settings.theme_accent or GOLD)
+        # « Analyser » était le bouton le plus visible de l'application, et
+        # le moins utile depuis que l'index se tient à jour tout seul (au
+        # démarrage, après chaque échange avec le Deluge). Il vit désormais
+        # sur l'accueil, dans le menu Fichier et sous Ctrl+R ; sa place va à
+        # la bascule du niveau : l'essentiel de chaque page, ou tout.
+        self._level_switch = LevelSwitch(host)
+        self._level_switch.setChecked(self.ctx.settings.advanced)
+        self._level_switch.setToolTip(
+            tr("Simple : l'essentiel de chaque page. Avancé : tous les "
+               "réglages et toutes les commandes  (Ctrl+E)"))
+        self._level_switch.set_accent(self.ctx.settings.theme_accent or GOLD)
+        self._level_switch.clicked.connect(
+            lambda checked=False: self._safely(
+                lambda: self.set_interface_level(
+                    "avance" if checked else "simple")))
+        row.addWidget(self._level_switch)
 
         # La touche PLAY de la machine : ronde, verte et rayonnante pendant
         # une lecture.
@@ -283,12 +320,6 @@ class MainWindow(QMainWindow):
         self._accent_strip = LedStrip(conteneur)
         colonne.addWidget(self._accent_strip)
         return conteneur
-
-    def _light_scan_button(self, accent: str) -> None:
-        """« Analyser » est le pad allumé de la façade, à sa couleur."""
-        encre = lit_fill(accent)[2]
-        self._scan_button.setIcon(icons.icon("refresh", encre, 16))
-        glow(self._scan_button, accent, 22, 0.45)
 
     def _fit_header(self, largeur: int) -> None:
         """Resserre la barre du haut quand la fenêtre rétrécit.
@@ -312,6 +343,7 @@ class MainWindow(QMainWindow):
                 ecran, recherche, compact, legende = 196, 150, True, False
             self._wordmark.set_compact(compact)
             self._deluge_chip.set_caption_visible(legende)
+            self._level_switch.set_compact(compact)
             manque = self._header_demand(ecran, recherche) - int(largeur)
             if manque > 0:
                 # Moitié chacun, dans la limite de ce qui reste lisible.
@@ -659,20 +691,30 @@ class MainWindow(QMainWindow):
         self._rail.setFixedWidth(RAIL_WIDE)
 
         column = QVBoxLayout(self._rail)
-        column.setContentsMargins(4, 12, 8, 10)
+        column.setContentsMargins(4, 10, 8, 8)
         column.setSpacing(2)
+        #: Les titres de groupe, que le repli réduit à un filet.
+        self._rail_groups: list[RailGroup] = []
 
         for index, (key, cls) in enumerate(self._classes.items(), 1):
+            groupe = RAIL_GROUPS.get(key)
+            if groupe:
+                titre = RailGroup(tr(groupe), self._rail)
+                column.addSpacing(4)
+                column.addWidget(titre)
+                self._rail_groups.append(titre)
             # Chaque page est un pad de sa couleur : éteint, il la montre
             # en veilleuse ; choisi, il s'allume. La colonne devient une
             # rangée de pads de la machine, et l'on repère une destination à
             # la teinte avant même d'avoir lu l'étiquette. Le chiffre est
             # celui du raccourci.
-            # Dix pages : la dixième prend le 0, comme sur un clavier.
-            chiffre = index % 10
+            # La dixième prend le 0, comme sur un clavier ; la onzième, les
+            # Réglages, garde Ctrl+,.
+            chiffre = _page_digit(index)
             button = NavPad(tr(cls.TITLE), cls.ICON, page_color(key), chiffre,
                             self._rail)
-            button.setToolTip(f"{tr(cls.TITLE)}  (Ctrl+{chiffre})")
+            button.setToolTip("%s  (Ctrl+%s)" % (
+                tr(cls.TITLE), chiffre if chiffre is not None else ","))
             button.setProperty("navColor", page_color(key))
             button.clicked.connect(
                 lambda _c=False, k=key: self.go_to(k))
@@ -700,6 +742,8 @@ class MainWindow(QMainWindow):
         for key, button in self._buttons.items():
             cls = self._classes[key]
             button.setText("  " + tr(cls.TITLE) if self._rail_wide else "")
+        for titre in self._rail_groups:
+            titre.set_compact(not self._rail_wide)
         self._fold_button.setText("  " + tr("Replier") if self._rail_wide
                                   else "")
         self._fold_button.setIcon(
@@ -870,15 +914,6 @@ class MainWindow(QMainWindow):
             self._space.setText(tr("%s libres sur le disque")
                                 % human_size(free))
 
-        # Ne pas proposer ce qui ne peut pas marcher : sans carte, « Analyser »
-        # ne pouvait que répondre par un avertissement. Un bouton éteint qui
-        # dit pourquoi vaut mieux qu'un bouton vif qui refuse.
-        prete = bool(self.ctx.has_card)
-        self._scan_button.setEnabled(prete)
-        self._scan_button.setToolTip(
-            tr("Relire la carte et mettre l'index à jour  (Ctrl+R)") if prete
-            else tr("Indiquez d'abord l'emplacement de la carte"))
-
     # -- menus et raccourcis ------------------------------------------------ #
 
     def _build_menus(self) -> None:
@@ -906,17 +941,26 @@ class MainWindow(QMainWindow):
                          lambda: self.go_to("Settings"), "Ctrl+,")
 
         tools_menu = bar.addMenu(tr("&Outils"))
+        self._add_action(tools_menu, tr("Nouveau morceau"), self.new_song,
+                         "Ctrl+N")
+        self._add_action(tools_menu, tr("Ouvrir un morceau du Deluge…"),
+                         self.open_song_in_atelier)
         self._add_action(tools_menu, tr("Générateur de presets"),
                          lambda: self.go_to("Generator"), "Ctrl+G")
-        self._add_action(tools_menu, tr("Boîte à outils"),
+        self._add_action(tools_menu, tr("Mémo"),
                          lambda: self.go_to("Toolbox"))
         self._add_action(tools_menu, tr("Santé de la carte"),
                          lambda: self.go_to("Health"))
+        tools_menu.addSeparator()
         self._add_action(tools_menu, tr("Deluge en direct"),
                          self.open_live_window, "Ctrl+D")
         self._add_action(tools_menu, tr("Synchroniser avec le Deluge"),
                          self.sync_deluge, "Ctrl+Shift+D")
         tools_menu.addSeparator()
+        self._level_action = self._add_action(
+            tools_menu, tr("Mode avancé"), self.toggle_level, "Ctrl+E")
+        self._level_action.setCheckable(True)
+        self._level_action.setChecked(self.ctx.settings.advanced)
         self._add_action(tools_menu, tr("Replier la barre latérale"),
                          self.toggle_rail, "Ctrl+B")
 
@@ -976,8 +1020,11 @@ class MainWindow(QMainWindow):
     def _build_shortcuts(self) -> None:
         """``Ctrl+1`` à ``Ctrl+0`` pour les pages, ``Espace`` pour l'écoute."""
         for index, key in enumerate(self._classes, 1):
+            chiffre = _page_digit(index)
+            if chiffre is None:
+                continue
             action = QAction(self)
-            action.setShortcut(QKeySequence(f"Ctrl+{index % 10}"))
+            action.setShortcut(QKeySequence(f"Ctrl+{chiffre}"))
             action.triggered.connect(
                 lambda _c=False, k=key: self.go_to(k))
             self.addAction(action)
@@ -1086,6 +1133,11 @@ class MainWindow(QMainWindow):
             "sendRequested": self.send_to_deluge,
             "syncRequested": self.sync_deluge,
             "backupRequested": lambda: self.card_work.update_backup(self),
+            "toAtelier": lambda offre: self._safely(
+                lambda: self._to_atelier(offre)),
+            "levelChanged": lambda niveau: self._safely(
+                lambda: self.set_interface_level(niveau)),
+            "songRequested": lambda: self._safely(self.open_song_in_atelier),
         }
         for name, slot in connections.items():
             signal = getattr(page, name, None)
@@ -1129,6 +1181,81 @@ class MainWindow(QMainWindow):
                 current.refresh()
             except Exception:  # noqa: BLE001
                 log.exception("rafraîchissement en échec")
+
+    # -- le niveau de l'interface ------------------------------------------ #
+
+    def set_interface_level(self, level: str) -> None:
+        """« simple » ou « avance » : retenu, puis appliqué à toutes les pages.
+
+        La bascule de la barre du haut, le menu et les réglages disent tous
+        trois le même état ; seules les pages déjà bâties se réarrangent, les
+        autres liront le niveau à leur premier affichage.
+        """
+        from ..config import normalize_level
+
+        level = normalize_level(level)
+        self.ctx.settings.interface_level = level
+        try:
+            self.ctx.save()
+        except Exception:  # noqa: BLE001
+            log.exception("enregistrement du niveau impossible")
+        avance = level == "avance"
+        for temoin in (self._level_switch, getattr(self, "_level_action",
+                                                   None)):
+            if temoin is not None and temoin.isChecked() != avance:
+                temoin.blockSignals(True)
+                temoin.setChecked(avance)
+                temoin.blockSignals(False)
+        for page in self._pages.values():
+            appliquer = getattr(page, "apply_level", None)
+            if callable(appliquer):
+                try:
+                    appliquer()
+                except Exception:  # noqa: BLE001
+                    log.exception("niveau non appliqué à une page")
+        self._fit_header(self.width())
+        self.statusBar().showMessage(
+            tr("Mode avancé : tous les réglages et toutes les commandes sont "
+               "visibles.") if avance else
+            tr("Mode simple : l'essentiel de chaque page ; le reste revient "
+               "en mode avancé."), 6000)
+
+    def toggle_level(self) -> None:
+        """Passe d'un niveau à l'autre  (Ctrl+E)."""
+        self.set_interface_level(
+            "simple" if self.ctx.settings.advanced else "avance")
+
+    # -- l'atelier ------------------------------------------------------------ #
+
+    def new_song(self) -> None:
+        """Un morceau neuf : l'atelier, à sa première étape."""
+        self.go_to("Atelier#Style")
+
+    def open_song_in_atelier(self) -> None:
+        """Ouvre dans l'atelier un morceau de la carte, choisi dans la liste."""
+        self.go_to("Atelier")
+        page = self._pages.get("Atelier")
+        choisir = getattr(page, "_import_song", None)
+        if callable(choisir):
+            choisir()
+
+    def _to_atelier(self, offre) -> None:
+        """Un son ou un kit d'une autre page rejoint le morceau de l'atelier.
+
+        ``offre`` : ``{"preset", "part", "options", "edited"}`` ou
+        ``{"kit"}``. L'atelier vient devant, sur l'étape où l'on écoute.
+        """
+        offre = dict(offre or {})
+        self.go_to("Atelier")
+        page = self._pages.get("Atelier")
+        if page is None:
+            return
+        if offre.get("kit") is not None:
+            page.offer_kit(offre["kit"])
+        elif offre.get("preset") is not None:
+            page.offer_preset(offre["preset"], offre.get("part", ""),
+                              options=offre.get("options"),
+                              edited=bool(offre.get("edited")))
 
     # -- actions ------------------------------------------------------------ #
 
@@ -1302,9 +1429,9 @@ class MainWindow(QMainWindow):
             return
         try:
             apply_theme(app, colour)
-            # Le bouton « Analyser » est le pad allumé de la façade : son
-            # icône et son halo suivent la nouvelle couleur.
-            self._light_scan_button(colour)
+            # La bascule du niveau est le pad allumé de la façade : elle
+            # suit la nouvelle couleur.
+            self._level_switch.set_accent(colour)
             self.statusBar().showMessage(
                 tr("Couleur d'accent appliquée à la façade."), 4000)
         except Exception:  # noqa: BLE001
@@ -1410,6 +1537,8 @@ class MainWindow(QMainWindow):
 
     def _show_shortcuts(self) -> None:
         rows = [
+            ("Ctrl+N", tr("Nouveau morceau, dans l'atelier")),
+            ("Ctrl+E", tr("Mode simple ou avancé")),
             ("Ctrl+R", tr("Analyser la carte")),
             ("Ctrl+F", tr("Recherche globale")),
             ("Ctrl+G", tr("Générateur")),
@@ -1421,7 +1550,8 @@ class MainWindow(QMainWindow):
             ("Ctrl+D", tr("Deluge en direct")),
             ("Ctrl+B", tr("Replier la barre latérale")),
             (tr("Espace"), tr("Écouter / arrêter")),
-            ("Ctrl+1 … Ctrl+0", tr("Aller à la page correspondante")),
+            ("Ctrl+1 … Ctrl+0", tr("Aller à la page correspondante, de "
+                                   "l'accueil à la santé de la carte")),
             ("F1", tr("Le manuel, au chapitre de la page affichée")),
             ("Ctrl+Q", tr("Quitter")),
         ]

@@ -14,16 +14,18 @@ Deluge Companion is the workshop that was missing next to the machine. It reads 
 
 ## What the application does {#ce-que-fait}
 
+- **Compose** in the studio, in five steps — a style, sounds, clips, a structure, then the Deluge: a whole song, played live on the machine, written as a new song, or added to one of yours in a new version.
+- **Create sounds**: synth presets by musical genre, drum kits drawn from your library, to try at once in the song in progress.
 - **Browse the card**: samples with their waveform, tempo and key; synth presets with their oscillators, filters and modulation; kits row by row; songs clip by clip.
 - **Listen** to every sound with one click — computed by the computer, or played by the Deluge itself when it is connected.
 - **Look after the card**: twenty-one checks, a score out of 100, guided repairs (missing samples, duplicates, forbidden names, junk files, audio defects) and backups.
-- **Create**: synth presets by musical genre, drum kits drawn from your library, chord progressions, rhythms, song structures — and write them **as Deluge songs**, ready to load on the machine.
-- **Compose** in the studio: a whole song in a style — sounds, clips and their variations, sections —, played live on the Deluge, written as a new song, or added to one of yours in a new version.
-- **Work with the Deluge connected**: its card stays inside and opens over the USB cable, its screen is mirrored on the computer, its tempo drives the tools.
+- **Work with the Deluge connected**: its card stays inside and opens over the USB cable, its screen is mirrored on the computer, its tempo drives the studio.
+
+The application is meant as much for someone discovering the Deluge as for the seasoned producer. At first start, its interface is **simple**: each page shows only the essentials. **Advanced** mode shows everything — see [Simple or advanced](#niveau).
 
 ## What it does not do {#ce-quelle-ne-fait-pas}
 
-- It **does not replace the Deluge's sequencer**: you don't compose a song note by note in the application.
+- It **does not replace the Deluge's sequencer**: the studio composes, you choose, vary and draw the drums; playing note by note remains the machine's job.
 - It **never rewrites an existing song**: the format is too rich for a read-and-rewrite to be safe. It creates new ones alongside.
 - It **cannot load a preset on the machine remotely**: no MIDI message allows it. The Deluge always plays the instrument selected on it.
 - It needs **neither the Internet nor an account**: everything happens on your computer.
@@ -39,7 +41,7 @@ The manual follows the conventions of the *Deluge Guide*.
 
 | Notation | Meaning |
 |---|---|
-| [Scan] | a button, check box or tab of the application, exactly as written on screen |
+| [Scan card] | a button, check box or tab of the application, exactly as written on screen |
 | [[Ctrl+R]] | a key or key combination |
 | `SAMPLES/DRUMS` | a folder, a file, or a Deluge word |
 | Settings ▸ Deluge card | a path: the page, then the part of the page |
@@ -104,7 +106,7 @@ A splash screen in the guide's colours shows while loading, then the main window
 
 The application opens **even without a card**: that is the normal case the first time. If it finds a Deluge card on a connected drive, it offers to use it. Otherwise it opens the Settings page, and the screen in the top bar reads “NO CARD — CLICK TO CHOOSE”.
 
-Every page then shows the same welcome: “Where is your Deluge card?”, and two buttons — [Choose the folder], which leads to the settings, and [Detect the card], which searches the connected drives by itself.
+The home page says so in its “Your Deluge card” panel, with two buttons — [Choose the folder], which leads to the settings, and [Detect the card], which searches the connected drives by itself. The library pages and card health show the same message. The studio, the generator and the notebook, on the other hand, already work: you can compose and listen without a card.
 
 The next chapter presents the window; the chapter [The card and the index](#carte-et-index) explains how to designate your card and have it read.
 
@@ -116,12 +118,12 @@ The next chapter presents the window; the chapter [The card and the index](#cart
 
 | Marker | Element | Role |
 |---|---|---|
-| 1 | The column of pads | the ten pages; the pad of the page shown lights up |
+| 1 | The column of pads | the ten pages, in the order of the work; the pad of the page shown lights up |
 | 2 | The menus | File, Edit, Tools, Language, Help |
 | 3 | The screen | the open card, and every message from the application |
 | 4 | The “Deluge” chip | the state of the connected machine; a click acts on it |
 | 5 | The search | finds a sample by name, from any page |
-| 6 | [Scan] | rereads the card and updates the index |
+| 6 | The Simple / Advanced switch | the interface level: the essentials, or everything |
 | 7 | The play key | plays or stops, like [[Space]] |
 | 8 | The glowing strip | the colour of the page shown |
 | 9 | The page header | its circuit lattice, its title, its actions |
@@ -131,13 +133,15 @@ The next chapter presents the window; the chapter [The card and the index](#cart
 
 Just as each part of the guide has its own, each page of the application wears a colour taken from the machine's pads. You find it everywhere: the pad in the column, the strip under the top bar, the header, the main button, selections, tabs, check boxes and sliders.
 
-[[figure pages | The ten pages and their keyboard shortcut. | Dashboard ; Samples ; Presets ; Kits ; Songs ; Generator ; Studio ; Tools ; Health ; Settings]]
+[[figure pages | The eleven pages and their keyboard shortcut. | Home ; Studio ; Generator ; Notebook ; Samples ; Presets ; Kits ; Songs ; DAW ; Health ; Settings]]
 
-The colour also tells **where a shortcut leads**: on the dashboard, the [Back up card] button is orange because it leads to the Health page — and it opens it right on the backups tab.
+The colour also tells **where a shortcut leads**: on the home page, the [Create a sound] door is magenta because it leads to the generator, and the [Back up] button of the “Do this now” banner is orange because it leads to the Health page — right on the backups tab.
 
 ## The column of pads {#colonne}
 
-A click on a pad opens its page; the number on the right is its shortcut, from [[Ctrl+1]] to [[Ctrl+9]], then [[Ctrl+0]] for the tenth. The [Collapse] button at the bottom shrinks the column to its pads alone, making room for the lists; [[Ctrl+B]] does the same. The same gesture unfolds it again.
+A click on a pad opens its page. The pads follow the order of the work: **Home** first, then three groups, each under its title — **Create** (Studio, Generator, Notebook), **Library** (Samples, Presets, Kits, Songs, and the [bridge to the DAW](#daw)) and **The card** (Health, Settings). The number on the right is the page's shortcut, from [[Ctrl+1]] to [[Ctrl+9]], then [[Ctrl+0]] for the tenth, Health; Settings has [[Ctrl+,]].
+
+The [Collapse] button at the bottom shrinks the column to its pads alone, making room for the lists; the group titles become a plain line. [[Ctrl+B]] does the same, and the same gesture unfolds the column again.
 
 ## The top bar {#barre-du-haut}
 
@@ -147,7 +151,7 @@ A click on a pad opens its page; the number on the right is its shortcut, from [
 |---|---|
 | File | choose the card [[Ctrl+O]], scan it [[Ctrl+R]], back it up, send files [[Ctrl+I]] or a folder [[Ctrl+Shift+I]] to the Deluge, quit [[Ctrl+Q]] |
 | Edit | search [[Ctrl+F]], the settings [[Ctrl+,]] |
-| Tools | the generator [[Ctrl+G]], the toolbox, card health, Deluge Live [[Ctrl+D]], sync with the Deluge [[Ctrl+Shift+D]], collapse the column [[Ctrl+B]] |
+| Tools | a new song [[Ctrl+N]], open a Deluge song, the generator [[Ctrl+G]], the notebook, card health, Deluge Live [[Ctrl+D]], sync with the Deluge [[Ctrl+Shift+D]], advanced mode [[Ctrl+E]], collapse the column [[Ctrl+B]] |
 | Language | Français or English |
 | Help | this manual [[F1]], the first steps, keyboard shortcuts, about |
 
@@ -161,7 +165,7 @@ A click on a pad opens its page; the number on the right is its shortcut, from [
 
 **The search** — “Search everywhere…” — looks for a **sample** by name: it opens the Samples page and filters its list. [[Ctrl+F]] puts the cursor there.
 
-**[Scan]** rereads the card (see [Scanning and the index](#analyse)). It stays off while no card is set. Its colour is the front panel's, adjustable in Settings ▸ Appearance.
+**The Simple / Advanced switch** chooses the interface level (see [Simple or advanced](#niveau)). The lit half shows the current level; its colour is the front panel's, adjustable in Settings ▸ Appearance. Scanning the card is started from the home page — [Scan card] — or with File ▸ Scan card [[Ctrl+R]] (see [Scanning and the index](#analyse)).
 
 **The play key**, the round one, stops the current sound or starts the page's listening again. It glows green during playback. [[Space]] does the same.
 
@@ -173,6 +177,20 @@ Each page opens on a header in its colour: a lit pad, the title in capitals, a s
     Most of the time, a row picked in the list. [Slice…], for instance, only lights up when a single sample is selected, since slicing works on one loop at a time.
 
 In a narrow window, the bar's buttons fold down to their icon rather than cutting their name. Leave the mouse over one: the tooltip gives its name.
+
+## Simple or advanced {#niveau}
+
+The application serves someone discovering the Deluge as well as the seasoned producer. It therefore has two levels, and the switch in the top bar moves from one to the other — so do Tools ▸ Advanced mode [[Ctrl+E]] and Settings ▸ Interface level. The choice is remembered.
+
+| Level | What each page shows |
+|---|---|
+| **Simple** — at first start | the essentials, enough to create without getting lost: choose, listen, compose, keep |
+| **Advanced** | every setting and every command: seeds, engines, character sliders, chords one by one, groove and Euclidean rhythms, MIDI exports, file treatments, MIDI ports |
+
+Nothing changes in what the application does: a hidden command is not disabled, it is waiting. This manual describes them all, and points out those of advanced mode.
+
+!!! astuce A button from the manual is not on screen?
+    It most likely belongs to advanced mode: [[Ctrl+E]] shows it, [[Ctrl+E]] hides it again.
 
 ## Every command explains itself {#infobulles}
 
@@ -215,14 +233,14 @@ In Settings ▸ Other card location, type the path to the card's **root** — th
 
 ## Scanning and the index {#analyse}
 
-Once a card is set, it has to be **read**: [Scan] in the top bar, or [[Ctrl+R]]. The scan goes through the card and fills the **index** — a small database kept on the computer, not on the card — with what it finds: every sample, preset, kit and song, and what links them together.
+Once a card is set, it has to be **read**: [Scan card] on the home page, or File ▸ Scan card [[Ctrl+R]]. The scan goes through the card and fills the **index** — a small database kept on the computer, not on the card — with what it finds: every sample, preset, kit and song, and what links them together.
 
 - The scan **changes nothing** on the card: it only reads.
 - It is **incremental**: the second time, only changed files are reread. A card of 1,700 samples takes a few minutes the first time, then a few seconds.
-- It **stops** without harm: [Stop], on the dashboard, keeps what has already been read.
+- It **stops** without harm: [Stop], on the home page, keeps what has already been read.
 - At start-up, the application rereads by itself what has changed since last time (a fraction of a second): the [Update the index at start-up] box in the settings.
 
-Two options, in Settings ▸ Card scanning, decide what the scan measures:
+Two options, in Settings ▸ Card scanning — in advanced mode —, decide what the scan measures:
 
 | Option | By default | What it brings | Its cost |
 |---|---|---|---|
@@ -236,39 +254,59 @@ Two options, in Settings ▸ Card scanning, decide what the scan measures:
 
 The application's own writes update the index by themselves, as do files received from the Deluge. Scan again when the card has changed **outside the application**: files copied by hand onto a card in the PC's reader, for instance. When in doubt it costs nothing: what hasn't changed is not reread.
 
-[Reset the index], in the settings, empties the index so it is rebuilt at the next scan. The card is not touched, and your ratings, favourites and tags are kept.
+[Reset the index], in the settings in advanced mode, empties the index so it is rebuilt at the next scan. The card is not touched, and your ratings, favourites and tags are kept.
 
 # First steps in ten minutes {#premiers-pas icone=play}
 
-> A guided tour, from setting the card to the first song written for the Deluge.
+> A guided tour, from setting the card to the first song played by the Deluge.
 
 !!! atelier Your first session
     Keep this manual open next to the application and follow the steps in order. Nothing below changes your card without asking you.
 
-1. **Set the card.** If the application offered a detected card, accept. Otherwise open [Settings](app:Settings) and designate the card's root — or, if your Deluge has firmware 1.3, connect it and create the working copy (see [Creating the working copy](#creer-copie)).
-2. **Read it.** Click [Scan], at the top. The status bar shows the progress; the first reading takes a few minutes on a big card.
-3. **Look at the dashboard.** The tiles say what the card holds; the ring, its health score. The “Do this now” banner suggests the most useful thing at this moment, with the button that does it.
-4. **Back up.** If the banner suggests it, follow it: [Back up] leads to the backups tab of the Health page, where [Back up now] copies your songs, presets and kits in under a second.
-5. **Listen to a sound.** Open [Samples](app:Samples), pick a folder in the tree, then a sound in the list: one click plays it. [[Space]] stops.
-6. **Make a preset.** Open the [Generator](app:Generator), pick a genre — Techno, for instance — and a role, Bass. [Generate], then [Listen]. Not convinced? [Mutate] varies it, [Make 8 variations] offers eight cousins.
-7. **Keep it.** [Save to SYNTHS] asks for a name and a folder, then writes it to the card.
-8. **Try it in context.** [Try in a song] writes a new song into `SONGS` where your sound plays a phrase made for its role, over the genre's drums. Load it on the Deluge and press PLAY.
+1. **Set the card.** If the application offered a detected card, accept. Otherwise, on the home page, [Choose the folder] leads to the settings: designate the card's root — or, if your Deluge has firmware 1.3, connect it and create the working copy (see [Creating the working copy](#creer-copie)).
+2. **Read it.** On the home page, [Scan card]. The status bar shows the progress; the first reading takes a few minutes on a big card.
+3. **Back up.** If the “Do this now” banner suggests it, follow it: [Back up] leads to the backups tab of the Health page, where [Back up now] copies your songs, presets and kits in under a second.
+4. **Compose a song.** On the home page, [Create a song] opens the studio at its first step. Pick a genre — Techno, for instance —, then [Compose the song]: drums, bass, chords and melody are ready, with the genre's structure.
+5. **Listen to it.** [Play an excerpt], at the top of the studio, plays its fullest passage. [[Space]] stops.
+6. **Refine it, step by step.** [Next step] leads to the sounds — [Play the sound], [Another sound] —, then to the clips — a click in the drum grid adds a hit —, then to the structure.
+7. **Change a sound.** Open the [Generator](app:Generator), pick a genre and a role — Bass —, [Generate], then [Try in the studio]: the sound takes the bass of your song.
+8. **Write it for the Deluge.** Last step, [Deluge]: [Write the song]. It goes to the card; load it on the machine and press PLAY.
 9. **Connect the Deluge.** USB cable, and the “Deluge” chip in the top bar turns gold, then green. The chapter [Connecting the Deluge](#brancher) gives the two settings to make once on the machine.
 
 !!! astuce F1, everywhere
     On any page, [[F1]] opens this manual at the chapter describing it.
 
-@partie pages PAD_YELLOW | The ten pages | One page per area, each in the colour of its pad
+!!! pro When the essentials are no longer enough
+    Seeds, chords one by one, groove, Euclidean rhythms, MIDI exports: [[Ctrl+E]] switches to advanced mode (see [Simple or advanced](#niveau)).
 
-# Dashboard {#tableau-de-bord page=Dashboard}
+@partie creer Atelier | Create | Home, then everything that creates: the song, its sounds, and the musician's notebook
 
-> The state of the card on one screen: what it holds, its health, and the next thing to do.
+# Home {#tableau-de-bord page=Dashboard}
 
-The dashboard is the home page. It reads from top to bottom: first what needs your attention, then the contents, then the details.
+> Where to start, and where your card and your Deluge stand.
+
+The home page is the first page. It reads from top to bottom: what you want to do, what needs your attention, then the state of the card and of the machine.
+
+## What would you like to do? {#portes}
+
+Four doors, each in the colour of the page it leads to:
+
+| Door | Where it leads |
+|---|---|
+| [Create a song] | the [studio](#atelier), at its first step: a style, then the whole song, composed in a second |
+| [Create a sound] | the [generator](#generateur), on its synth preset tab |
+| [Continue a Deluge song] | a choice of songs from the card — the latest received from the Deluge first —, which opens in the studio |
+| [Explore my sounds] | the library, starting with the samples |
+
+When a song is in progress in the studio, the first door becomes [Resume the song]: it names that song, and leads back to the step where you were.
+
+## Your Deluge card {#accueil-sans-carte}
+
+Without a card, this panel takes the place of the figures: [Choose the folder] leads to the settings, [Detect the card] searches the connected drives. The doors stay open: the studio composes without a card, and only asks for it to write.
 
 ## Do this now {#a-faire}
 
-The top banner gives **only one** suggestion — the most useful at this moment — and the button that carries it out or leads to the exact place. Its pad takes the colour of the page it leads to. The order follows the risk, not the features:
+The banner gives **only one** suggestion — the most useful at this moment — and the button that carries it out or leads to the exact place. Its pad takes the colour of the page it leads to. The order follows the risk, not the features:
 
 | Situation | Suggestion | Button |
 |---|---|---|
@@ -278,7 +316,8 @@ The top banner gives **only one** suggestion — the most useful at this moment 
 | presets ask for missing samples | find them | [Find them] |
 | duplicate files | see them | [See the duplicates] |
 | more than 200 unused samples | tidy them up | [Tidy them up] |
-| nothing to report | make a sound | [Generate a preset] |
+
+When nothing is wrong, the banner disappears: the doors, above it, already offer to create.
 
 ## The Deluge and the PC {#deluge-et-pc}
 
@@ -302,19 +341,296 @@ Six tiles: **Samples**, **Synth presets**, **Kits**, **Songs** — a click opens
 
 ## Card {#carte}
 
-The card's path, a fill gauge, the space used including the samples' share, and the date of the last scan. While the card has never been read, the [Scan card] button shows here; during a scan, [Stop] interrupts it without losing what has been read.
+The card's path, a fill gauge, the space used including the samples' share, the date of the last scan, and [Scan card] [[Ctrl+R]], which rereads what has changed. During a scan, [Stop] interrupts it without losing what has been read.
 
 ## Health {#etat-sante}
 
 The health score in its ring, the overall verdict, and the three most serious problems. **Each problem is a link**: a click leads to the Health tab that repairs it. [See the details] opens the full diagnosis. While the card hasn't been scanned, no score is shown: announcing a card in good shape without having read it would be a lie.
 
-## Quick actions {#actions-rapides}
-
-Six shortcuts, each in the colour of its destination, leading **to the exact tab**: [Generate a preset], [Build a kit], [Find duplicates], [Missing samples], [Back up card] and [Toolbox].
-
 ## Where the samples are {#repartition}
 
-The ten folders holding the most samples, grouped at the second level (`SAMPLES/DRUMS` rather than each of its subfolders), each with a row of pads that reads like a level meter on the machine.
+In advanced mode, the ten folders holding the most samples, grouped at the second level (`SAMPLES/DRUMS` rather than each of its subfolders), each with a row of pads that reads like a level meter on the machine.
+
+# Studio {#atelier page=Atelier}
+
+> Composing a song in five steps — a style, sounds, clips, a structure, then the Deluge —, or completing a song started on the machine.
+
+[[figure atelier | The five steps of the studio, the section grid, and the three routes to the Deluge. | Style ; the genre, the tempo, the key and the parts: one click composes the whole song ; Sounds ; one sound per track, to listen to, change and refine ; Clips ; what each track plays, its variations, the drums drawn with a click ; Structure ; the sections, and the clip each track plays in them ; Deluge ; the song written to the card, or yours completed ; The section grid ; one row per track, one column per section, one letter per clip — an unlit cell is silent ; Play on the Deluge ; live, in the clip MIDI Follow is following, locked to its bar ; Write the song ; a new song in SONGS, sections and arrangement included ; Complete the song ; a new version of yours, the original intact]]
+
+## The five steps {#atelier-etapes}
+
+The page follows the order of the work. At the top, the **step bar**: [Style], [Sounds], [Clips], [Structure] and [Deluge], each a numbered pad in its colour. A click opens a step; the ones you have been through stay lit. At the bottom, [Previous step] and [Next step] travel the same path one step at a time, and a line says what you do at the step shown.
+
+Nothing forces you to follow the order: every step stays open, and you can come back to a sound after working on the structure. As long as no song is composed, steps 2 to 5 say so — “No song yet” — and offer the two ways to begin: [Compose a song], which leads back to the style, and [Open a Deluge song…].
+
+The header carries three commands, valid at every step:
+
+- [Open a Deluge song…] opens a song from the card in the studio (see [Opening a Deluge song, and completing it](#atelier-completer));
+- [Play an excerpt] plays eight bars of the song's fullest passage, all tracks together;
+- [Stop] cuts the listening. [[Space]] does the same, and starts listening again to what the step shows: the sound, the clip, the section — at the other two, an excerpt of the song, or its chords while it is not composed yet.
+
+Its subtitle names the song in progress: its genre, its key, its length and its duration. Until it is written, **nothing is written to the card**: the studio composes even without a card, and only asks for it to write, or to build a kit from your samples.
+
+!!! astuce Picking up where you left off
+    The home page remembers: its [Create a song] door becomes [Resume the song], which leads back to the step where you were.
+
+## 1. The style {#atelier-style}
+
+On the left, the generator's twenty-two **genres**, one pad each; the tooltip describes the genre's character and its tempo range. Choosing one puts the tempo in the middle of that range, and ticks the arpeggio when the genre usually has one. Clicking the current genre again undoes nothing.
+
+**Tempo and key**:
+
+- **Tempo**, in BPM. A song in progress takes it at once.
+- **Root** and **Scale** — chords, bass and melody stay in the scale, which the keyboard shows; the written song gives it to the Deluge's scale mode.
+- **Mood** — the mood of the chord progression: melancholic, house, jazz… By default, the genre's.
+- In advanced mode, **Colour** — triads, sevenths, ninths or suspended chords; by default, what the mood calls for — and **Seed**: same seed and same settings, same song; the die draws a new one.
+
+**The chords**, in advanced mode, shows the chord sequence that will be used, each chord with its notes; a click highlights one on the keyboard. [Play the chords] plays them held, on a pad sound of the style. [Other chords] draws another sequence in the same mood; [Another chord] replaces the chosen chord with another of the same function — tonic, subdominant, dominant —, and the rest of the sequence does not move.
+
+**The parts** says what the song contains: [Drums], [Bass], [Chords], [Arpeggio], [Melody]. In advanced mode, the list beside each one says where it plays:
+
+| Kind | Where the part plays |
+|---|---|
+| Kit | a Deluge kit, built from your samples — these are the drums |
+| Synth | a Deluge synth, whose sound is generated in the style |
+| MIDI | an external device, which the Deluge drives on the chosen channel (1 to 16) |
+| CV | a modular synth, through the chosen CV output (1 or 2) — one note at a time |
+
+**Character of the sounds**, in advanced mode, takes up the generator's six sliders — Brightness, Movement, Space, Dirt, Width, Complexity —, but for **every** synth of the song at once: that is what makes them sound together.
+
+[Compose the song] then makes the project: one track per ticked part, a sound in the style for each, a first clip, and the **genre's structure** — intro, build-up, theme, breakdown… — with the variations it calls for: lighter drums for the intro, no kick for the breakdown, ornamented for the peak; at the second peak, the melody answers the first one and the bass grows richer. The studio then moves on to the sounds.
+
+Once the song is composed, the button becomes [Recompose the song]: it replaces the song in progress, after a question. A style setting changed afterwards does not touch the song — except the tempo —: it applies to the next composition, and a line says so.
+
+## 2. The sounds {#atelier-sons}
+
+On the left, the **Tracks** column, shared by the sounds and the clips, each track in the colour of its part. On the right, the sound of the chosen track, its name and its description.
+
+- [Play the sound] plays it — on the Deluge if listening is set to it, otherwise computed by the computer the way the Deluge computes it; drums play their first clip.
+- [Another sound] draws another one in the same style for a synth; for drums, another kit built from your library.
+- [Choose on the card…] takes a preset or a kit from the card for the track, chosen in the index.
+- [Edit the sound…], in advanced mode, opens the sound editor (see [Editing a sound by hand](#atelier-modifier-son)).
+- A MIDI or CV track shows its **channel**, which can be changed here.
+
+For drums, **The kit** lists its rows and the sound of each one. Don't like a row? Pick it, then [Another sound for the row]: another sound of the same role replaces it — from the same machine first, then from a neighbouring one —, without touching the rest of the kit.
+
+**Variations in the style**: [Suggest 8 variations] offers eight of the track's sound. Each one touches **a single** facet: either a facet drawn again — the timbre, the filter, the envelopes, the movement, the space, the width, the modulations —, or a slider pushed — brighter, darker, dirtier, wider, more space… The rest of the sound does not move, and nothing leaves the genre. A click plays a variation; a double-click, or [Adopt], gives it to the track.
+
+!!! retenir Dirtier means the same sound, dirtier
+    Each decision of the sound — the cutoff, the drive, the shape of the LFOs — has its own random draw. Pushing the dirt therefore only changes what depends on it: you get the same sound, dirtier, and not another sound.
+
+Under the list of tracks, a menu and two buttons add or remove a track: the **part** it will play, then [Add] — with a sound in the style and a first clip — or [Remove], which also removes it from every section. At the simple level, the kind follows the part: a kit for the drums, a Deluge synth for the rest; in advanced mode, a second menu chooses it — kit, synth, MIDI or CV.
+
+## Editing a sound by hand {#atelier-modifier-son}
+
+[Edit the sound…], in advanced mode, opens the editor of the chosen track's sound, a new synth; the sound of a track of the original song belongs to it and is not edited here. The same editor opens from the [Generator](#generer).
+
+Its seven tabs follow the Deluge's menus: **Voice** (engine, play mode, transpose, glide, volume, pan, unison), **Oscillators** (shapes, tuning, levels, pulse width, noise; the modulators in FM), **Filters** (low-pass and high-pass, with their curve), **Envelopes**, **LFO**, **Effects** (reverb, delay, mod FX, saturation, reductions, equaliser) and **Modulation**. Switching to FM turns the filters off, as on the machine.
+
+Each encoder shows the step you would read on the machine, from 0 to 50, and below it **what it is worth on the Deluge**, computed with its firmware's laws: “1.8 s” for a decay of 13, “237 Hz” for a cutoff of 19. An encoder is set by dragging up or down, with the wheel or with the arrow keys; Shift makes the gesture finer, a double-click brings it back to the middle. The envelopes can also be dragged with the mouse, on their curve.
+
+In **Modulation**, each line links a source to a setting, with a depth from −50 to +50 and a polarity; beside it, what the modulation does: “±4.0 octave(s)”, “±0.34 semitone”. [Add a modulation] creates one, [Remove] takes it away.
+
+!!! retenir At rest, an envelope pulls the setting down
+    Without polarity, a source goes from −1 to +1: an envelope is worth −1 at rest and pulls the cutoff below its step. Unipolar, it goes from 0 to 1 and only opens.
+
+[Listen] plays the sound as it is set; with [Listen while adjusting], it plays again a moment after each gesture. Under the tabs, a line sums up what has changed. [Back to the original sound] forgets everything, [Cancel] closes without changing anything, [Keep this sound] gives the sound to the track. Nothing is written to the card: the sound will be, with the song. The track is then marked as edited by hand, and its **variations in the style keep your edits**: each one changes in the edited sound what it would have changed in the generated sound. A setting you turned stays turned by as much; a waveform or a filter type you chose stays, unless the variation is meant to change it (“Another timbre”, “Another filter”); a modulation you added stays, a modulation you removed stays removed. A variation that would no longer change anything — the cutoff already at its maximum for “Brighter” — gives its place to the next one.
+
+## 3. The clips {#atelier-clips}
+
+A track has its clips, named A, B, C…: the list says where each one comes from — generated, a variation of another, or taken from the original song — and its length. Below, the clip itself: the rows of a drum kit, from bottom to top, or a synth's notes at their pitch. A line says how many notes it has and in which sections it plays.
+
+**The drums are drawn with the mouse**: a click in the grid lights a hit, a second click turns it off. The grid always shows the kick, the snare, the clap and both hi-hats, even with no hit: enough to add a clap where one is missing. A clip taken from the original song cannot be drawn: vary it, the variation is a new clip.
+
+- [Play the clip] plays it on the computer, with its track's sound.
+- [Vary] opens the menu of variations; the chosen variation is **added** to the track as a new clip, and the original stays.
+- [New clip] makes another one, of the length chosen beside it (one, two, four or eight bars), on the song's progression.
+- [Delete the clip] removes it; the sections that played it fall silent for that track.
+- [Clip to MIDI…], in advanced mode, writes the clip to a `.mid` file, off the card; drums go on channel 10.
+
+| For a synth | For drums |
+|---|---|
+| **rhythm** — the same shape, shifted: anticipations, repeated notes | **ornaments** — ghost notes, hi-hats, percussion; the backbone intact |
+| **notes** — the same rhythm, other notes: neighbours, fifth, inversions | **fill** — a roll over the end of the last bar |
+| **more** — passing notes, pickups, fills | **light** — no snare and no clap, for an intro or an ending |
+| **less** — the strong beats alone, held | **breakdown** — no kick: the tension drops |
+| **answer** — the first half kept, the second answers it | **doubled** — hi-hats twice as tight |
+| **octave** — octave leaps, or the register moved | **half-time** — the snare on the third beat |
+| **ending** — the last bar leads back to the start | **build-up** — a roll that speeds up to the end |
+
+A variation keeps the key and the progression: a note that moves stays in the scale, and a bass's fifth is the one of the chord of the moment.
+
+### Fine settings, in advanced mode
+
+For drums:
+
+- **Groove**: sampler swing in percent (MPC 54 % to 71 %), “laid-back” playing behind the beat or “ahead” of it; the **Swing** slider adds more freely. [Apply the groove] always starts from the straight pattern: a second click replaces the first groove instead of adding to it. When possible, the status bar gives the equivalent swing setting on the Deluge.
+- **Euclidean**: a number of **hits** spread as evenly as possible over a number of **steps**, shifted by the **rotation**; [Add the row] adds it to the clip, repeated over its whole length. On the card, the row gets a percussion sound from your library.
+
+For the chords and the bass, **Playing style** chooses how they fill the bar: chords held, in half notes, off-beat, as stabs, charleston; bass on the root, pulsing, off-beat, rolling, in octaves, syncopated, walking, acid. Choosing a style makes a new clip, played that way: compare it with the old one, then place it in a section.
+
+## Playing on the Deluge {#atelier-direct}
+
+At the clips step, [Play on the Deluge] sends the clip to the machine, looping, on the channel set for the Deluge — the one [MIDI Follow](#midi-follow) follows. The Deluge therefore plays it **in the clip open** on the machine. If it is playing, the clip starts at the beginning of its next loop, locked to its clock; when it is stopped, the clip plays at the song's tempo. Another click on the button stops it.
+
+!!! attention When recording, the clip is written in
+    With the machine recording (REC), the notes go into the open clip, as if you were playing them: on the Deluge, first open the clip that should receive them. Nothing else is sent — no setting, no file.
+
+The Deluge must be plugged in and connected ([Connecting](#se-connecter)), and MIDI Follow set up on the machine ([Two settings on the machine](#reglages-machine)).
+
+## 4. The structure {#atelier-morceau}
+
+The grid shows the whole song: **one row per track, one column per section**, and in each cell the letter of the clip the track plays there. A click on a cell makes the track play its next clip, then silence, then the first one again. A click on a section's header chooses it. Clips taken from a song on the card have a dotted outline.
+
+**The chosen section** is set below: its **name** — which its clips carry on the Deluge — and its **length** in bars, over which its clips loop.
+
+- [Play the section] plays its beginning — eight bars at most —, all tracks together; [Stop] cuts the listening.
+- [Add a section] adds one after the chosen one, with the same clips; [Remove the section] removes it.
+- The two arrows move it one step in the song.
+- [Genre structure] replaces the sections with the genre's, with their variations. Starting from one of your songs, its sections stay, and the genre's are added after them.
+
+A line sums it all up: the number of sections, of bars, the duration and the tempo.
+
+## 5. The Deluge {#atelier-ecrire}
+
+The last step writes the song. **Song name** suggests a name — the genre's, or the original song's —, which you change as you like; it is cleaned up for the card, and numbered if already taken.
+
+[Write the song] turns it into a Deluge song, in `SONGS`: one Deluge section per project section, each with its clips and its number of repeats, and the complete arrangement for the SONG view. The synths carry their sound; the drums, a kit built from your samples, or the one you chose; the MIDI and CV tracks, their channel. The route is that of any [written song](#parcours-morceau): the name, the plan, then the writing of a new file. A line then says what was written, and [Show in Songs] opens it on the Songs page.
+
+**The Deluge** panel says where the song will go: on the working copy, it goes up to the machine by itself, a few seconds after the write. [Deluge Live…] opens the machine's window; [Sync] exchanges with it right away.
+
+In advanced mode, [Song to MIDI…] writes the whole song to a `.mid` file, off the card: one track per track, the drums on track 10, the section names as markers.
+
+## Opening a Deluge song, and completing it {#atelier-completer}
+
+[Open a Deluge song…] opens a song from the card in the studio — the latest received from the Deluge at the top of the list; [Open in the studio], on the Songs page, and the [Continue a Deluge song] door of the home page lead there too. The studio opens it at the Structure step. Its tracks, its clips, its tempo and its scale become the project's; its chord progression is read from its notes, so that the new clips fit it. Its clips can be varied like the others — a variation is always a new clip —, and tracks, clips and sections can be added.
+
+[Complete the song], at the Deluge step, then writes a **new version**: “Cool1 5” after “Cool1 4”. It contains the original song **byte for byte**, plus what you added: the new tracks, their clips, and the new sections with theirs. The plan details every addition before writing. The written file is read back at once: if the original song is not intact in it, nothing is written.
+
+!!! retenir The original song is never rewritten
+    The new version is a file next to the old one; load it on the Deluge like any song. The existing sections keep their length and their clips; they receive those of the new tracks, and of a track that played nothing in them. A track that already has its clip there keeps it: in grid layout, the Deluge shows only one per track and per section. Put the new one in a new section — the plan flags each case.
+
+The song must come from firmware 1.2 or later. An older song, or one in the 2.x format, is refused: save it once on the Deluge, which converts it, then try again. The new notes are written in the song's format; the Deluge knows 24 sections at most in firmware 1.3, 12 before.
+
+## Sounds from other pages {#atelier-venus}
+
+The generator, and the card's presets and kits, join the song with one click:
+
+| Page | Button | What joins the song |
+|---|---|---|
+| Generator | [Try in the studio] | the generated sound, on the track of its role — a bass to the bass, a pad to the chords —; or the built kit, as the drums |
+| Presets | [Use in the studio] | the selected preset, on the track of its category |
+| Kits | [Use in the studio] | the selected kit, as the drums |
+
+The studio then comes to the front, at the sounds step, with the track concerned selected: listen to it in the song. Without a song, the sound is **kept for the next one**: the Style step says so, and the composition gives it to its part. Nothing is written to the card: the sound will be, with the song.
+
+!!! retenir An old kit is brought to the song's format
+    A kit from 2.x firmware sets its sample bounds in milliseconds; the machine ignores those bounds in a song. When writing, the studio converts them into frames, as the Deluge does when loading the kit — before adding the rows it lacks. The kit on the card is not touched.
+
+## Working alongside the machine {#atelier-simultane}
+
+The studio and the Deluge work on the same song in two ways, which complement each other:
+
+1. **Live** — a clip made in the studio goes to the machine with [Play on the Deluge], locked to its bar; when recording, it goes into the open clip. The song grows on the machine itself.
+2. **Through the file** — save the song on the Deluge; it reaches the application through [synchronisation](#carte-dans-le-deluge). Open it with [Open a Deluge song…], compose, then [Complete the song]: the new version goes back to the card, and loads on the machine.
+
+# Generator {#generateur page=Generator}
+
+> Make synth presets and drum kits, by musical genre or at random, listen to them, then keep the ones you like.
+
+[[figure generateur | The layout of the “Synth preset” tab. | Actions ; generate, random, listen, save, try in the studio ; Settings ; genre, role of the sound — in advanced mode, engine, seed, six sliders ; The sound ; description, waveform, spectrum, settings ; Variations ; eight variations, the history, the morph]]
+
+The page has two tabs: [Synth preset] and [Drum kit]. The header buttons follow the tab: the preset's, or the kit's.
+
+## Choosing a genre and a role {#genre-role}
+
+On the left, **twenty-two genres**, each a pad in its colour: Acid, Ambient, Berlin school, Boards of Canada, Deep house, Detroit, Downtempo, Drum and bass, Dubstep, Electro, Funk, Hardcore, House, IDM, Industrial, Jungle, Lo-fi, Minimal, Psytrance, Synthwave, Techno, Trance. Each one's tooltip describes its character and tempo range.
+
+Below:
+
+- **Role of the sound** — what the sound must do in a song: Bass, Lead, Pad, Pluck, Keys, Stab, FX, Drone, Arpeggio, Bell. A bass isn't set up like a pad.
+- In advanced mode, **Engine** — [Chosen by the genre], which gives the most characteristic sounds, or Subtractive, FM, Ring mod.
+- In advanced mode too, **Seed** — the number that makes a sound reproducible: two generations with the same seed and the same settings give **exactly** the same sound. The die draws a new one.
+
+In advanced mode, **six sliders** steer the result: **Brightness** (the filter), **Movement** (LFOs and modulation envelope), **Space** (reverb and delay), **Dirt** (distortion, resonance, bit reduction), **Width** (unison, detune, chorus) and **Complexity** (the number of modulations).
+
+## Generating and listening {#generer}
+
+- [Generate] makes a complete preset from the genre, role, sliders and seed. Nothing is written to the card yet.
+- [Random] draws a genre, a role and a seed, then generates.
+- [Mutate], in advanced mode, starts from the current sound and changes a few settings: a way to explore around an idea you like.
+- [Listen] plays the sound — computed by the computer, or by the Deluge if it is connected and listening is set to it.
+- [Edit the sound…], in advanced mode, opens the editor of the current sound: each setting by hand, at the machine's step and in plain terms (see [Editing a sound by hand](#atelier-modifier-son)). The edited sound joins the history.
+
+In the middle, the resulting sound: its name and description, its waveform and spectrum; in advanced mode, its **resulting settings** as knobs, its amplitude envelope and filter curve.
+
+!!! retenir A generated preset makes a sound
+    A silent oscillator, a closed filter, an envelope with neither attack nor sustain are caught before writing.
+
+!!! retenir Listening on the computer redoes the Deluge's computations
+    Waveforms, filters, saturation, FM, effects, reverb and levels: the computer repeats, stage by stage, what the machine's firmware (1.3) computes. A decay of 13 lasts 1.8 seconds here as on the Deluge, a bass with a closed filter stays dark, a pushed sound saturates at the same point. Sample playback, which is simpler, and LFO 1, which restarts with every note, remain approximate; to hear it exactly, have the machine play it: [Try in the studio], then write the song.
+
+## Variations, history, morph {#variations}
+
+On the right:
+
+- [Make 8 variations] creates eight cousins of the current sound. **One click** on a variation plays it, **a double-click** adopts it.
+- **History**: every generated sound piles up there; a double-click brings it back.
+- In advanced mode, **Morph**: pick a sound in the history, set the slider — the current sound on the left, the chosen sound on the right — then click [Morph]. Continuous settings blend according to the amount; clear-cut choices, like waveforms, switch over halfway.
+- In advanced mode, [Generate a batch into a folder…] makes up to 64 presets of the chosen genre at once and writes them into a subfolder of `SYNTHS`.
+
+## Keeping a sound {#enregistrer-preset}
+
+[Save to SYNTHS] asks for a **name** — cleaned up for the card — then a **subfolder** of `SYNTHS` (“Generated” by default; empty for the root of `SYNTHS`). If a file already has that name, the application asks before replacing it — and, with the settings' safeguard, keeps a `.bak` copy of the old one.
+
+[Try in the studio] gives the sound to the studio's song, on the track of its role — the bass for a bass, the chords for a pad —, or to the next song if there is none: you hear it **in context**, and its variations stay in the style (see [Sounds from other pages](#atelier-venus)).
+
+## Building a kit {#construire-kit}
+
+The [Drum kit] tab assembles a kit **from your samples**. The kit is built around a machine or a bank from your library — a 909, a Linndrum, an artist kit —, chosen according to the genre; roles it lacks are filled in from elsewhere. Each row is set up the way the Deluge creates one: the sample played to the end and velocity-sensitive; volume and pan follow the kits on the card, toms fanned out.
+
+- **Genre** steers the choice of sounds: a techno kick doesn't sound like a funk kick.
+- **Kit name** is the name of the file written into `KITS`.
+- In advanced mode, **Seed**: same seed, same kit.
+- In advanced mode, **Preferred folder**, optional, limits the search to one folder of the card, for instance `SAMPLES/Artists/…`.
+
+[Build the kit] assembles it — nothing is written yet. [Play the kit] plays its rows one after the other. Don't like a row? Pick it in the list, then [Another sound]: another sound of the same role replaces it, from the same machine first, then from a neighbouring one. [Save to KITS] writes it into `KITS` under the kit's name; if the name is already taken, the application asks before replacing the file. [Try in the studio] makes it the drums of the studio's song, or of the next one.
+
+!!! attention The kit draws on the index
+    Without a scan of the card, the kit builder finds no samples. Run [Scan card], on the home page, first.
+
+# Notebook {#memo page=Toolbox}
+
+> The questions you ask yourself mid-song, usually answered with a notebook: scales, tempos, compatible keys, Deluge values.
+
+Four tabs: [Scales and chords], [Calculator], [Harmonic mixing] and [Cheat sheet]. None needs the card, except the search by key. What is used to compose — progressions, rhythms, grooves, structures — has moved to the [studio](#atelier), where it is written as a song.
+
+## Scales and chords {#theorie}
+
+**Scale.** Pick a **Root** and a **Scale** among twenty-seven — from the classic modes to scales from around the world (hijaz, hirajoshi, in sen…). The keyboard highlights its notes, the list names them, and the `<modeNotes>` line gives the scale as the Deluge writes it in its songs; [Copy] puts it on the clipboard.
+
+**Chords of the scale.** The table gives each degree, its chord and its notes; a click on a row highlights the chord on the keyboard.
+
+## Calculator {#calculatrice}
+
+- **Tempo**: for the chosen BPM, the length of a bar, and a table of divisions — straight, dotted, triplet — in milliseconds, with the frequency of an LFO locked to it. Enough to set a delay or an LFO by hand.
+- **Deluge syncLevel**: how the value written in files maps to the rhythmic division (7 = sixteenth note).
+- **Memory and length**: the weight of a recording according to its length, rate, resolution and channels — and how many minutes the space left on the card allows you to record in that format.
+
+## Harmonic mixing {#mixage-harmonique}
+
+The **Camelot wheel**: each major key, its relative minor, their codes and the compatible keys. Two tracks blend without a wrong note if their codes are identical, one step apart, or if they swap major and relative minor.
+
+**Search the library**: type a key (Am, C, F#m), then [Search] — the list shows the card's samples in that key or a compatible one, with their tempo. Acoustic analysis is required.
+
+## Cheat sheet {#aide-memoire}
+
+The Deluge values you always forget: rhythmic resolution, the scale of parameters and patch cables, the note format, probability conditions, scales, `syncLevel`, the arpeggiator, kit rows, file name rules, firmware, notes on firmware 1.3, expected folders, sample rate.
+
+!!! astuce The Deluge's tempo
+    When the connected Deluge plays, its clock can set the tempo of the calculator and of the studio: the [The tools follow the Deluge's tempo] box in the settings, ticked by default.
+
+@partie bibliotheque Samples | The library | The card's samples, presets, kits and songs, to listen to and understand
 
 # Samples {#echantillons page=Samples}
 
@@ -368,11 +684,11 @@ At the bottom: the sound's name and path, its **waveform**, and a sheet — leng
 
 [Listen] plays the selected sound; [Stop] cuts it. By default, **a single click in the list** is enough to listen: the [Play the selected sample automatically] box, in Settings ▸ Listening, decides. [[Space]] stops or restarts listening from anywhere, and a click on the waveform plays the sound again from the start. The listening volume is set in the settings; it has no effect on the Deluge.
 
-[Show in Explorer] opens the sound's folder in Windows Explorer, changing nothing.
+In advanced mode, [Show in Explorer] opens the sound's folder in Windows Explorer, changing nothing.
 
 ## Process… {#traiter}
 
-[Process…] applies one or more treatments to **every selected sound**. A window offers:
+[Process…], in advanced mode, applies one or more treatments to **every selected sound**. A window offers:
 
 | Treatment | Effect |
 |---|---|
@@ -449,18 +765,21 @@ The first tab of the right-hand panel describes the selected preset:
 
 ## Parameters and Modulation {#parametres}
 
-[Parameters] shows the main settings as knobs, from 0 to 50 as on the Deluge's screen (pan from −25 to +25): volume, filter cutoff and resonance, the two oscillator levels, reverb, delay, modulation effect. Below, the two **envelopes** and the **filter curve**. These knobs are for reading; they don't turn.
+In advanced mode, two more tabs. [Parameters] shows the main settings as knobs, from 0 to 50 as on the Deluge's screen (pan from −25 to +25): volume, filter cutoff and resonance, the two oscillator levels, reverb, delay, modulation effect. Below, the two **envelopes** and the **filter curve**. These knobs are for reading; they don't turn.
 
 [Modulation] lists the **patch cables** — source, destination, depth — and the preset's **assigned knobs** (its `modKnobs`).
 
 ## Listening to a preset {#ecouter-preset}
 
-[Listen] plays the preset. The computer computes an **approximation** of the sound with its own engine: faithful in spirit, not in every detail. If the Deluge is connected and the “Play presets on the Deluge” box is ticked in the settings, **the machine** plays: the instrument selected on it takes the preset's filters, envelopes and effects, with its own oscillators (see [Listening on the machine](#ecouter-sur-la-machine)). [Stop] cuts it.
+[Listen] plays the preset. The computer **redoes the Deluge's computations** (firmware 1.3): the same waveforms, the same filters, the same effects, at the machine's output level — a sound that would clip there is only brought back under full scale. If the Deluge is connected and the “Play presets on the Deluge” box is ticked in the settings, **the machine** plays: the instrument selected on it takes the preset's filters, envelopes and effects, with its own oscillators (see [Listening on the machine](#ecouter-sur-la-machine)). [Stop] cuts it.
 
-## Duplicating, varying {#dupliquer}
+## Using it, varying it {#dupliquer}
 
-- [Duplicate] saves a copy of the preset **next to the original**, under the name “… copy”, after confirmation. The original is not touched.
-- [Vary in the generator] opens the preset in the [Generator](app:Generator) as a starting point: [Mutate] or [Make 8 variations] draw cousins from it. The original is never rewritten.
+- [Use in the studio] gives the preset to the studio's song, on the track of its category — a bass to the bass, a pad to the chords —, or keeps it for the next song (see [Sounds from other pages](#atelier-venus)).
+- [Vary in the generator] opens the preset in the [Generator](app:Generator) as a starting point: [Mutate] or [Make 8 variations] draw cousins from it.
+- In advanced mode, [Duplicate] saves a copy of the preset **next to the original**, under the name “… copy”, after confirmation.
+
+The original is never rewritten.
 
 # Kits {#kits page=Kits}
 
@@ -485,12 +804,12 @@ The **Rows** table gives, for each row: its name, its sample, whether it is **pr
 
 Under the table, a step grid: one line per row, sixteen steps per bar. [Starting pattern] loads a genre's typical rhythm into it, **limited to the rows the kit has** (KICK, SNARE, HAT…). Click the pads to add or remove hits. A melodic kit, with no drum names, starts from an empty grid on its first rows: the page says so.
 
-- [Pattern as MIDI] writes the pattern to a `.mid` file, wherever you choose, off the card.
-- [Pattern as a song] writes a new song into `SONGS`: this kit, as it is on the card, and a clip playing the pattern (see [Writing songs for the Deluge](#morceaux-pour-le-deluge)).
+- [Use in the studio] makes this kit the drums of the studio's song, or of the next one: it plays the drum clips there, and is written with the song (see [Sounds from other pages](#atelier-venus)).
+- In advanced mode, [Pattern as MIDI] writes the pattern to a `.mid` file, wherever you choose, off the card.
 
 # Songs {#morceaux page=Songs}
 
-> What each song holds, what it depends on, and what it is missing — read-only.
+> What each song holds, what it depends on, and what it is missing — read-only, and ready to continue in the studio.
 
 !!! retenir A page that never changes a song
     A preset can be regenerated, a sample downloaded again; a song is work. Nothing on this page writes to a song file. Its exports write **elsewhere**, wherever you choose.
@@ -509,7 +828,13 @@ On the left, the songs: name, tempo, number of clips, notes, bars; the “Search
 
 A preset or sample marked “MISSING” will leave the song silent in places on the machine.
 
+## Open in the studio {#morceau-atelier}
+
+[Open in the studio] opens the selected song in the [studio](#atelier-completer): its tracks, its clips and its sections become the project's, which you complete with new tracks, clips and sections. The studio then writes a new version, alongside: the selected song stays as it is.
+
 ## Exporting {#exporter-morceau}
+
+These exports belong to advanced mode.
 
 - [Clip as MIDI] writes the clip selected in the Clips tab to a `.mid` file.
 - [Song as MIDI] writes the whole song to a single MIDI file, **one track per clip**, drums on the percussion channel. All tracks start at the beginning: the Deluge's clips are loops of the session grid, and the file can't know when each one is launched.
@@ -520,259 +845,59 @@ A preset or sample marked “MISSING” will leave the song silent in places on 
 !!! pro Archiving a finished song
     [Collect…] is the right way to put a song in a safe place or to give it away: nothing is forgotten, not even the sample filed elsewhere that a preset asks for.
 
-# Generator {#generateur page=Generator}
+# DAW {#daw page=Daw}
 
-> Make synth presets and drum kits, by musical genre or at random, listen to them, then keep the ones you like.
+> The bridge between the Deluge and your music software: a song goes to the DAW, a DAW project comes back as a song, and the DAW plays the Deluge's sounds live.
 
-[[figure generateur | The layout of the “Synth preset” tab. | Actions ; generate, random, mutate, listen, save ; Settings ; genre, role, engine, seed, six sliders ; The sound ; description, waveform, spectrum, settings ; Variations ; eight variations, the history, the morph]]
+!!! retenir Nothing is replaced
+    The export writes a **new** folder on the PC. The import and the copy for playing live write **new** files in SONGS, after the plan and your consent. An existing song is never modified.
 
-The page has two tabs: [Synth preset] and [Drum kit].
+## To the DAW {#daw-vers}
 
-## Choosing a genre and a role {#genre-role}
+Choose a song on the left: the sheet says what the DAW will receive — tempo, tracks, clips, notes, sections, and whether the arrangement is **the song's own** or **derived from the sections**, played in order and repeated as many times as the song says.
 
-On the left, **twenty-two genres**, each a pad in its colour: Acid, Ambient, Berlin school, Boards of Canada, Deep house, Detroit, Downtempo, Drum and bass, Dubstep, Electro, Funk, Hardcore, House, IDM, Industrial, Jungle, Lo-fi, Minimal, Psytrance, Synthwave, Techno, Trance. Each one's tooltip describes its character and tempo range.
-
-Below:
-
-- **Role** — what the sound must do in a song: Bass, Lead, Pad, Pluck, Keys, Stab, FX, Drone, Arpeggio, Bell. A bass isn't set up like a pad.
-- **Engine** — [Chosen by the genre], which gives the most characteristic sounds, or Subtractive, FM, Ring mod.
-- **Seed** — the number that makes a sound reproducible: two generations with the same seed and the same settings give **exactly** the same sound. The die draws a new one.
-
-**Six sliders** steer the result: **Brightness** (the filter), **Movement** (LFOs and modulation envelope), **Space** (reverb and delay), **Dirt** (distortion, resonance, bit reduction), **Width** (unison, detune, chorus) and **Complexity** (the number of modulations).
-
-## Generating and listening {#generer}
-
-- [Generate] makes a complete preset from the genre, role, sliders and seed. Nothing is written to the card yet.
-- [Random] draws a genre, a role and a seed, then generates.
-- [Mutate] starts from the current sound and changes a few settings: a way to explore around an idea you like.
-- [Listen] plays the sound — computed by the computer, or by the Deluge if it is connected and listening is set to it.
-- [Edit the sound…] opens the editor of the current sound: each setting by hand, at the machine's step and in plain terms (see [Editing a sound by hand](#atelier-modifier-son)). The edited sound joins the history.
-
-In the middle, the resulting sound: its name and description, its waveform and spectrum, its **resulting settings** as knobs, its amplitude envelope and filter curve.
-
-!!! retenir A generated preset makes a sound
-    A silent oscillator, a closed filter, an envelope with neither attack nor sustain are caught before writing.
-
-!!! retenir Listening on the computer follows the Deluge's laws
-    Envelope times, filter cutoffs, LFO rates, levels, glide and modulations are computed as in the machine's firmware: a decay of 13 lasts 1.8 seconds here as on the Deluge. The exact timbre of the filter and the effects remains approximate; to hear it exactly, try the sound on the machine with [Try in a song].
-
-## Variations, history, morph {#variations}
-
-On the right:
-
-- [Make 8 variations] creates eight cousins of the current sound. **One click** on a variation plays it, **a double-click** adopts it.
-- **History**: every generated sound piles up there; a double-click brings it back.
-- **Morph**: pick a sound in the history, set the slider — the current sound on the left, the chosen sound on the right — then click [Morph]. Continuous settings blend according to the amount; clear-cut choices, like waveforms, switch over halfway.
-- [Generate a batch into a folder…] makes up to 64 presets of the chosen genre at once and writes them into a subfolder of `SYNTHS`.
-
-## Keeping a sound {#enregistrer-preset}
-
-[Save to SYNTHS] asks for a **name** — cleaned up for the card — then a **subfolder** of `SYNTHS` (“Generated” by default; empty for the root of `SYNTHS`). If a file already has that name, the application asks before replacing it — and, with the settings' safeguard, keeps a `.bak` copy of the old one.
-
-[Try in a song] writes a new song into `SONGS` where the sound plays a phrase made for its role — bass, chords, arpeggio, melody — over a progression and the genre's drums: a way to hear it **in context** on the machine.
-
-## Building a kit {#construire-kit}
-
-The [Drum kit] tab assembles a kit **from your samples**. The kit is built around a machine or a bank from your library — a 909, a Linndrum, an artist kit —, chosen according to the genre; roles it lacks are filled in from elsewhere. Each row is set up the way the Deluge creates one: the sample played to the end and velocity-sensitive; volume and pan follow the kits on the card, toms fanned out.
-
-- **Genre** steers the choice of sounds: a techno kick doesn't sound like a funk kick.
-- **Kit name** is the name of the file written into `KITS`.
-- **Seed**: same seed, same kit.
-- **Preferred folder**, optional, limits the search to one folder of the card, for instance `SAMPLES/Artists/…`.
-
-[Build the kit] assembles it — nothing is written yet. [Listen] plays it. Don't like a row? Pick it in the list, then [Another sound]: another sound of the same role replaces it, from the same machine first, then from a neighbouring one. [Save to KITS] writes it into `KITS` under the kit's name; if the name is already taken, the application asks before replacing the file. [Kit as a song] writes a new song: this kit and a clip playing its genre's rhythm.
-
-!!! attention The kit draws on the index
-    Without a scan of the card, the kit builder finds no samples. Run [Scan] first.
-
-# Studio {#atelier page=Atelier}
-
-> Composing a song from the first sound to the arrangement: a style, sounds, clips and their variations, sections — then writing it for the Deluge, or completing a song started on the machine.
-
-[[figure atelier | The four tabs of the studio, the section grid, and the three routes to the Deluge. | Style ; the genre, the key, the tempo, the character of the sounds and the parts ; Sounds ; one sound per track, and eight variations in the style ; Clips ; clips and their variations, on the song's progression ; Song ; the sections, and the clip each track plays in them ; The section grid ; one row per track, one column per section, one letter per clip — an unlit cell is silent ; Play on the Deluge ; live, in the clip MIDI Follow is following, locked to its bar ; Write the song ; a new song in SONGS, sections and arrangement included ; Complete the song ; a new version of yours, the original intact]]
-
-The page follows the order of the work, in four tabs: Style, Sounds, Clips and Song. The four buttons of the header drive it: [Compose] makes a new song, [Start from a song…] opens one of yours, [Write the song] and [Complete the song] write it to the card. Until then, **nothing is written**: the studio composes even without a card, and only asks for it to write, or to build a kit from your samples.
-
-## The style {#atelier-style}
-
-On the left, the generator's twenty-two **genres**, one pad each; the tooltip describes the genre's character and its tempo range. Choosing one puts the tempo in the middle of that range.
-
-- **Root** and **Scale** — chords, bass and melody stay in the scale; the written song gives it to the Deluge's scale mode.
-- **Tempo**, in BPM.
-- **Mood** — the mood of the chord progression: melancholic, house, jazz… By default, the genre's.
-- **Colour** — triads, sevenths, ninths or suspended chords. By default, what the mood calls for.
-- **Seed** — same seed and same settings, same song; the die draws a new one.
-
-**Character of the sounds** takes up the generator's six sliders — Brightness, Movement, Space, Dirt, Width, Complexity —, but for **every** synth of the song at once: that is what makes them sound together.
-
-**The tracks** says which parts the song contains: [Drums], [Bass], [Chords], [Arpeggio], [Melody]. For each one, the list beside it says where it plays:
-
-| Kind | Where the part plays |
+| Box | What it writes |
 |---|---|
-| Kit | a Deluge kit, built from your samples — these are the drums |
-| Synth | a Deluge synth, whose sound is generated in the style |
-| MIDI | an external device, which the Deluge drives on the chosen channel (1 to 16) |
-| CV | a modular synth, through the chosen CV output (1 or 2) — one note at a time |
+| [Ableton Live — an .als set ready to open] | a Live set: one MIDI track per track of the song, one scene per section, the whole arrangement, the markers, the tempo and the audio tracks. It is built from the files of **your** Live (found automatically); without Live on the PC, the box is greyed out. the set follows the **edition** of your Live, which the page shows under the boxes: Lite 8 tracks and 16 scenes, Intro 16 and 16, Standard and Suite without limit (Ableton's table). Beyond that, note tracks come first, audio tracks take the free places, the others stay in the folder — this is reported |
+| [MIDI — every DAW] | a `.mid` file: tempo, section markers, one track per track of the song, the drums on channel 10, each kit sound on its General MIDI note (kick 36, snare 38…) |
+| [DAWproject — Bitwig Studio, Studio One, Cubase] | a `.dawproject` project: tracks, looping clips, arrangement, scenes, markers, audio tracks |
+| [Reaper] | an `.rpp` project: tracks, looping MIDI items, markers, audio tracks |
+| [Include the Deluge's track export] | the WAVs the machine wrote itself (SELECT ▸ Export Audio ▸ Export Tracks), in “Deluge tracks”: the most faithful rendering there is |
+| [Render each track on the computer] | advanced mode: one audio track per synth and per kit, computed by the listening that is faithful to the Deluge, all aligned to the start of the song |
 
-[Compose] then makes the project: one track per ticked part, a sound in the style for each, a first clip, and the **genre's structure** — intro, build-up, theme, breakdown… — with the variations it calls for: lighter drums for the intro, no kick for the breakdown, ornamented for the peak; at the second peak, the melody answers the first one and the bass grows richer.
+[Export for the DAW…] asks for a folder on the PC and writes “*song* — for the DAW” in it, with a `README.txt` that says how to open it in each DAW. [Show in Explorer] opens that folder.
 
-## The sounds {#atelier-sons}
+!!! pro In Ableton Live
+    Open the `.als` set: the tracks carry the song's names and colours, the scenes its sections, the arrangement its running order. The tracks have no instrument: put yours on them, or play them on the Deluge (see [Play together](#daw-ensemble)). Live does not publish the format: the application does not invent it, it starts from the files your Live installed, and each set is checked by reading it back.
 
-On the left, the project's tracks, each in the colour of its part; on the right, the sound of the chosen track, its name and its description.
+## From the DAW {#daw-depuis}
 
-- [Play the sound] plays it — on the Deluge if listening is set to it, otherwise as an approximate render; drums play their first clip.
-- [Another sound] draws another one in the same style for a synth; for drums, another kit built from your library.
-- [Choose on the card…] takes a preset or a kit from the card for the track, chosen in the index.
-- A MIDI or CV track shows its **channel**, which can be changed here.
+[Open a project…] reads a MIDI file (`.mid`), an Ableton Live set (`.als`, from Live 8 to Live 12), a DAWproject or a Reaper project (`.rpp`). The table suggests what each track becomes; change it row by row:
 
-**Variations in the style**: [Suggest 8 variations] offers eight of the track's sound. Each one touches **a single** facet: either a facet drawn again — the timbre, the filter, the envelopes, the movement, the space, the width, the modulations —, or a slider pushed — brighter, darker, dirtier, wider, more space… The rest of the sound does not move, and nothing leaves the genre. A click plays a variation; a double-click, or [Adopt], gives it to the track.
+- **Synth — a role**: a synth with a sound generated for that role (bass, lead, pad…), guessed from the track's name, its range and its chords;
+- **Drum kit**: a kit built in your library from the General MIDI notes played — suggested for channel 10, a drum name, or a drum-like part;
+- **MIDI track**: a Deluge track that will play an external device on that channel;
+- **Leave out**.
 
-!!! retenir Dirtier means the same sound, dirtier
-    Each decision of the sound — the cutoff, the drive, the shape of the LFOs — has its own random draw. Pushing the dirt therefore only changes what depends on it: you get the same sound, dirtier, and not another sound.
+The new song's **sections** follow the project's arrangement, cut at its markers — or its scenes, if you choose so. A long section is cut into slices of 8 bars (adjustable in advanced mode, with the style of the generated sounds): the clips keep the machine's size, and since the written song chains its sections in its arrangement, the running order does not change. Each clip is folded to its shortest loop; twelve sections at most.
 
-Under the list, two menus and two buttons add or remove a track: the **kind** of track (kit, synth, MIDI, CV), the **part** it will play, then [Add the track] — with a sound in the style and a first clip — or [Remove], which also removes it from every section.
+[Write the song…] asks for a name, shows the plan, then writes a **new** song in SONGS.
 
-## Editing a sound by hand {#atelier-modifier-son}
+!!! attention Two overlapping notes
+    On a given row, the machine ignores a note that starts before the previous one ends: the import shortens the first rather than lose the second. A note outside the loop of a Live clip is not taken — Live does not play it either.
 
-[Edit the sound…] opens the editor of the chosen track's sound, a new synth; the sound of a track of the original song belongs to it and is not edited here. The same editor opens from the [Generator](#generer).
+## Play together {#daw-ensemble}
 
-Its seven tabs follow the Deluge's menus: **Voice** (engine, play mode, transpose, glide, volume, pan, unison), **Oscillators** (shapes, tuning, levels, pulse width, noise; the modulators in FM), **Filters** (low-pass and high-pass, with their curve), **Envelopes**, **LFO**, **Effects** (reverb, delay, mod FX, saturation, reductions, equaliser) and **Modulation**. Switching to FM turns the filters off, as on the machine.
+Each Deluge track can **listen** to a MIDI channel: what the DAW sends there, it plays with its own sound. Choose a song: the table suggests one channel per synth and per kit — 10 for the drums, each kit sound on its General MIDI note, the same as the export. The MIDI Follow channels set on your machine are avoided. Change a channel in the list; unticked, [Keep the channels already set] gives each track a free one.
 
-Each encoder shows the step you would read on the machine, from 0 to 50, and below it **what it is worth on the Deluge**, computed with its firmware's laws: “1.8 s” for a decay of 13, “237 Hz” for a cutoff of 19. An encoder is set by dragging up or down, with the wheel or with the arrow keys; Shift makes the gesture finer, a double-click brings it back to the middle. The envelopes can also be dragged with the mouse, on their curve.
+[Write the copy…] shows the plan, then writes “*song* DAW” in SONGS: the original song, byte for byte, plus these listening settings. Load it on the Deluge.
 
-In **Modulation**, each line links a source to a setting, with a depth from −50 to +50 and a polarity; beside it, what the modulation does: “±4.0 octave(s)”, “±0.34 semitone”. [Add a modulation] creates one, [Remove] takes it away.
+The list at the bottom says the rest, step by step, for Ableton Live or another DAW: the clock — on the Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Input to follow the DAW, Output to lead it — then, in the DAW, one MIDI track per track of the table, going out to the Deluge on the channel shown.
 
-!!! retenir At rest, an envelope pulls the setting down
-    Without polarity, a source goes from −1 to +1: an envelope is worth −1 at rest and pulls the cutoff below its step. Unipolar, it goes from 0 to 1 and only opens.
+!!! astuce There and back
+    A clip exported to the DAW and sent back on its channel plays the right kit sounds again: the notes are the same both ways.
 
-[Listen] plays the sound as it is set; with [Listen while adjusting], it plays again a moment after each gesture. Under the tabs, a line sums up what has changed. [Back to the original sound] forgets everything, [Cancel] closes without changing anything, [Keep this sound] gives the sound to the track. Nothing is written to the card: the sound will be, with the song. The track is then marked as edited by hand, and its **variations in the style keep your edits**: each one changes in the edited sound what it would have changed in the generated sound. A setting you turned stays turned by as much; a waveform or a filter type you chose stays, unless the variation is meant to change it (“Another timbre”, “Another filter”); a modulation you added stays, a modulation you removed stays removed. A variation that would no longer change anything — the cutoff already at its maximum for “Brighter” — gives its place to the next one.
-
-## The clips {#atelier-clips}
-
-A track has its clips, named A, B, C…: the list says where each one comes from — generated, a variation of another, or taken from the original song — and its length. Below, the clip itself: the rows of a drum kit, from bottom to top, or a synth's notes at their pitch. A line says how many notes it has and in which sections it plays.
-
-- [Play the clip] plays it on the computer, with its track's sound.
-- [Vary] opens the menu of variations; the chosen variation is **added** to the track as a new clip, and the original stays.
-- [New clip] makes another one, of the length chosen beside it (one, two, four or eight bars), on the song's progression.
-- [Delete the clip] removes it; the sections that played it fall silent for that track.
-
-| For a synth | For drums |
-|---|---|
-| **rhythm** — the same shape, shifted: anticipations, repeated notes | **ornaments** — ghost notes, hi-hats, percussion; the backbone intact |
-| **notes** — the same rhythm, other notes: neighbours, fifth, inversions | **fill** — a roll over the end of the last bar |
-| **more** — passing notes, pickups, fills | **light** — no snare and no clap, for an intro or an ending |
-| **less** — the strong beats alone, held | **breakdown** — no kick: the tension drops |
-| **answer** — the first half kept, the second answers it | **doubled** — hi-hats twice as tight |
-| **octave** — octave leaps, or the register moved | **half-time** — the snare on the third beat |
-| **ending** — the last bar leads back to the start | **build-up** — a roll that speeds up to the end |
-
-A variation keeps the key and the progression: a note that moves stays in the scale, and a bass's fifth is the one of the chord of the moment.
-
-## Playing on the Deluge {#atelier-direct}
-
-[Play on the Deluge] sends the clip to the machine, looping, on the channel set for the Deluge — the one [MIDI Follow](#midi-follow) follows. The Deluge therefore plays it **in the clip open** on the machine. If it is playing, the clip starts at the beginning of its next loop, locked to its clock; when it is stopped, the clip plays at the song's tempo. Another click on the button stops it.
-
-!!! attention When recording, the clip is written in
-    With the machine recording (REC), the notes go into the open clip, as if you were playing them: on the Deluge, first open the clip that should receive them. Nothing else is sent — no setting, no file.
-
-The Deluge must be plugged in and connected ([Connecting](#se-connecter)), and MIDI Follow set up on the machine ([Two settings on the machine](#reglages-machine)).
-
-## The song {#atelier-morceau}
-
-The grid shows the whole song: **one row per track, one column per section**, and in each cell the letter of the clip the track plays there. A click on a cell makes the track play its next clip, then silence, then the first one again. A click on a section's header chooses it. Clips taken from a song on the card have a dotted outline.
-
-**The chosen section** is set below: its **name** — which its clips carry on the Deluge — and its **length** in bars, over which its clips loop.
-
-- [Play the section] plays its beginning — eight bars at most —, all tracks together; [Stop] cuts the listening.
-- [Add a section] adds one after the chosen one, with the same clips; [Remove the section] removes it.
-- The two arrows move it one step in the song.
-- [Genre structure] replaces the sections with the genre's, with their variations. Starting from one of your songs, its sections stay, and the genre's are added after them.
-
-A line sums it all up: the number of sections, of bars, the duration and the tempo.
-
-## Writing the song {#atelier-ecrire}
-
-[Write the song] turns it into a Deluge song, in `SONGS`: one Deluge section per project section, each with its clips and its number of repeats, and the complete arrangement for the SONG view. The synths carry their sound; the drums, a kit built from your samples, or the one you chose on the card; the MIDI and CV tracks, their channel. The route is that of any [written song](#parcours-morceau): a name, the plan, then the writing of a new file.
-
-## Starting from a song, and completing it {#atelier-completer}
-
-[Start from a song…] opens a song from the card in the studio — the latest received from the Deluge at the top of the list. Its tracks, its clips, its tempo and its scale become the project's; its chord progression is read from its notes, so that the new clips fit it. Its clips can be varied like the others — a variation is always a new clip —, and tracks, clips and sections can be added.
-
-[Complete the song] then writes a **new version**: “Cool1 5” after “Cool1 4”. It contains the original song **byte for byte**, plus what you added: the new tracks, their clips, and the new sections with theirs. The plan details every addition before writing. The written file is read back at once: if the original song is not intact in it, nothing is written.
-
-!!! retenir The original song is never rewritten
-    The new version is a file next to the old one; load it on the Deluge like any song. The existing sections keep their length and their clips; they receive those of the new tracks, and of a track that played nothing in them. A track that already has its clip there keeps it: in grid layout, the Deluge shows only one per track and per section. Put the new one in a new section — the plan flags each case.
-
-The song must come from firmware 1.2 or later. An older song, or one in the 2.x format, is refused: save it once on the Deluge, which converts it, then try again. The new notes are written in the song's format; the Deluge knows 24 sections at most in firmware 1.3, 12 before.
-
-## Working alongside the machine {#atelier-simultane}
-
-The studio and the Deluge work on the same song in two ways, which complement each other:
-
-1. **Live** — a clip made in the studio goes to the machine with [Play on the Deluge], locked to its bar; when recording, it goes into the open clip. The song grows on the machine itself.
-2. **Through the file** — save the song on the Deluge; it reaches the application through [synchronisation](#carte-dans-le-deluge). Open it with [Start from a song…], compose, then [Complete the song]: the new version goes back to the card, and loads on the machine.
-
-# Toolbox {#boite-a-outils page=Toolbox}
-
-> The questions you ask yourself mid-song, usually answered with a calculator and a notebook.
-
-The page is called “Tools” in the left column. Six tabs; none needs the card, except the search by key and the drum sounds used for listening.
-
-## Theory {#theorie}
-
-**Scale.** Pick a **Root** and a **Scale** among twenty-seven — from the classic modes to scales from around the world (hijaz, hirajoshi, in sen…). The keyboard highlights its notes, the list names them, and the `<modeNotes>` line gives the scale as the Deluge writes it in its songs; [Copy] puts it on the clipboard.
-
-**Chords of the scale.** The table gives each degree, its chord and its notes; a click on a row highlights the chord on the keyboard.
-
-**Progression.** Pick a **Mood** (pop, melancholy, house, deep, techno, trance, ambient, jazz, blues, epic, tense, bright), a **Colour** — triads, sevenths, ninths, suspended chords, or “according to the mood” — and a number of **Bars** (2 to 16), then [Suggest]. The chord sequence appears in the list.
-
-**The accompaniment** lays this progression out in time. **Genre** sets the chord rhythm, the bass style, the arpeggio, the tempo and the sounds used for listening; **Chords** and **Bass** can force a style (chords held, in half notes, off-beat, as stabs, charleston; bass on the root, pulsing, off-beat, rolling, in octaves, syncopated, walking, acid). The **Add** line ticks the optional parts: [Arpeggio], [Melody], [Drums].
-
-- [Listen] plays the progression and its accompaniment, on sounds generated for the genre; [Stop] cuts it. Nothing is written.
-- [Another chord] replaces the chord selected in the list with another of the same function; the rest doesn't move.
-- [Another melody] draws another melody over the same chords, and plays it.
-- [As MIDI] writes a `.mid` file: one track per part, each on its own channel, drums on track 10.
-- [As a song] writes a new song into `SONGS`: one instrument and one clip per part, with the sounds heard while listening; the clips loop together as soon as you press PLAY.
-
-## Rhythm {#rythme}
-
-- **Genre** and **Bars** (1 to 4), then [Genre pattern]: a typical rhythm appears in the grid.
-- **Euclidean**: a number of **hits** spread as evenly as possible over a number of **steps**, shifted by the **rotation**; [Add the track] adds it to the current pattern.
-- **Groove**: sampler swing in percent (MPC 54 % to 71 %), “laid-back” playing behind the beat or “ahead” of it; the **Swing** slider adds more freely. [Apply] always starts from the straight pattern: a second click doesn't stack up. When possible, the status bar gives the equivalent swing setting on the Deluge.
-- [Variation] varies the pattern without touching its backbone: kick, snare and clap stay.
-- [Listen] plays the pattern twice, with the card's samples when it has some, otherwise a synthesised kit; **BPM** sets the tempo. [Stop] cuts it.
-- [As MIDI] writes the pattern, percussion on channel 10; [As a song] writes a new song: a kit of your samples and a clip playing the pattern.
-
-The grid can be edited by clicking. Below it, the pattern as text, to copy into a notebook.
-
-## Calculator {#calculatrice}
-
-- **Tempo**: for the chosen BPM, the length of a bar, and a table of divisions — straight, dotted, triplet — in milliseconds, with the frequency of an LFO locked to it. Enough to set a delay or an LFO by hand.
-- **Deluge syncLevel**: how the value written in files maps to the rhythmic division (7 = sixteenth note).
-- **Memory and length**: the weight of a recording according to its length, rate, resolution and channels — and how many minutes the space left on the card allows you to record in that format.
-
-## Harmonic mixing {#mixage-harmonique}
-
-The **Camelot wheel**: each major key, its relative minor, their codes and the compatible keys. Two tracks blend without a wrong note if their codes are identical, one step apart, or if they swap major and relative minor.
-
-**Search the library**: type a key (Am, C, F#m), then [Search] — the list shows the card's samples in that key or a compatible one, with their tempo. Acoustic analysis is required.
-
-## Arrangement {#arrangement}
-
-A **structure template** per genre: intro, build-up, theme, breakdown, finale… The table gives each section, its length in bars, its duration, its position, and the **parts** it plays; the total shows in minutes at the chosen tempo.
-
-The sketch reuses the Theory tab's progression if there is one, and the Rhythm tab's rhythm if it is of the same genre; otherwise the genre's own. A sentence under the table says what it uses.
-
-- [Play the section] plays the start of the selected section — eight bars at most —, with only the parts of its role.
-- [Sketch as MIDI] writes the whole song to a MIDI file, one track per part, with section names as markers.
-- [Sketch as a song] writes a **sectioned** song into `SONGS`: each section of the template becomes a Deluge section, with its clips and its number of repeats.
-
-## Cheat sheet {#aide-memoire}
-
-The Deluge values you always forget: rhythmic resolution, the scale of parameters and patch cables, the note format, probability conditions, scales, `syncLevel`, the arpeggiator, kit rows, file name rules, firmware, expected folders, sample rate.
-
-!!! astuce The Deluge's tempo
-    When the connected Deluge plays, its clock can set the tempo of this page's listening, MIDI files and songs: the [The tools follow the Deluge's tempo] box in the settings, ticked by default.
+@partie entretien Health | The card | Its health, its backups, and the application's settings
 
 # Card health {#sante page=Health}
 
@@ -784,7 +909,7 @@ The Deluge values you always forget: rhythmic resolution, the scale of parameter
 
 The result shows in the [Report] tab: the **score out of 100**, a verdict, the list of **problems** sorted by severity, and the **details** of the one you select — what it means, the files concerned, and how to fix it.
 
-[[figure sante | The health score, and what its colour says on the dashboard. | 90 and above ; card in very good shape ; 70 to 89 ; a few things to keep an eye on ; 40 to 69 ; a card that needs a clean-up ; under 40 ; needs a serious tidy-up]]
+[[figure sante | The health score, and what its colour says on the home page. | 90 and above ; card in very good shape ; 70 to 89 ; a few things to keep an eye on ; 40 to 69 ; a card that needs a clean-up ; under 40 ; needs a serious tidy-up]]
 
 The score starts at 100 and loses **5 points per kind of error** and **2 per kind of warning**: it counts categories of defects, not files. Three hundred junk files are a single problem to solve, not three hundred.
 
@@ -822,7 +947,7 @@ In the report, **tick** the problems to fix — only those that can be fixed hav
 
 The order of operations is dictated by caution: broken references are repaired **before** any archiving, because a sample looks unused precisely when the reference pointing to it is broken.
 
-[Export the report] saves the diagnosis as an HTML page, wherever you choose.
+In advanced mode, [Export the report] saves the diagnosis as an HTML page, wherever you choose.
 
 ## Duplicates {#doublons}
 
@@ -862,7 +987,7 @@ A backup copies the card into the **backups folder** (Settings ▸ Write safety)
 
 # Settings {#reglages page=Settings}
 
-> The card's location, the connected Deluge, listening, scanning, write safety and appearance.
+> The card's location, the connected Deluge, listening, scanning, write safety, the interface level and appearance.
 
 It is the only page that works without a card: it is where you designate one. [Detect cards], in the header, looks for a Deluge card on the connected drives. The sections, from top to bottom:
 
@@ -876,7 +1001,7 @@ For a card in a reader on the PC, or a folder: the path field, checked as you ty
 
 ## Connected Deluge {#reglages-deluge}
 
-The state of the MIDI link and what the machine said about itself (firmware, round-trip time); the **MIDI output** and **MIDI input** — “Find the Deluge automatically” almost always does; the **Channel** (1 by default); three boxes: [Connect as soon as the Deluge appears] (ticked), [Play presets on the Deluge rather than on the computer] (unticked) and [The tools follow the Deluge's tempo] (ticked); the [Connect], [Play a C], [All notes off] and [Deluge Live…] buttons; and finally the settings to make **on the machine**. See [Connecting the Deluge](#brancher).
+The state of the MIDI link and what the machine said about itself (firmware, round-trip time); in advanced mode, the **MIDI output**, the **MIDI input** — “Find the Deluge automatically” almost always does — and the **Channel** (1 by default); three boxes: [Connect as soon as the Deluge appears] (ticked), [Play presets on the Deluge rather than on the computer] (unticked) and [The tools follow the Deluge's tempo] (ticked); the [Connect], [Play a C], [All notes off] and [Deluge Live…] buttons; and finally the settings to make **on the machine**. See [Connecting the Deluge](#brancher).
 
 ## Listening {#reglages-ecoute}
 
@@ -884,7 +1009,7 @@ The **Audio output** for listening (the default device, or another), the audio e
 
 ## Card scanning {#reglages-analyse}
 
-The [Compute fingerprints (duplicate detection)], [Acoustic analysis (tempo, key, levels)] and [Update the index at start-up] boxes, the [Reset the index] button, and the state of the index: how many samples, presets, kits and songs, its size, the date of the last scan. See [Scanning and the index](#analyse).
+In advanced mode, the [Compute fingerprints (duplicate detection)], [Acoustic analysis (tempo, key, levels)] and [Update the index at start-up] boxes, the [Reset the index] button, and the state of the index: how many samples, presets, kits and songs, its size, the date of the last scan. See [Scanning and the index](#analyse).
 
 ## Write safety {#reglages-surete}
 
@@ -894,6 +1019,10 @@ Two safeguards, ticked by default — **leave them on**:
 - [Create a .bak copy before rewriting an XML]: every rewritten preset or kit leaves a dated copy next to it.
 
 Below, the **backups folder** for backups made from the Health page; when empty, they go into the application's configuration folder.
+
+## Interface level {#reglages-niveau}
+
+[Simple] or [Advanced]: the same choice as the switch in the top bar, and as [[Ctrl+E]] (see [Simple or advanced](#niveau)).
 
 ## Appearance and About {#reglages-apparence}
 
@@ -936,7 +1065,7 @@ With firmware 1.3, the machine writes these settings to its card, in `SETTINGS/M
 
 ## Listening on the machine {#ecouter-sur-la-machine}
 
-Tick [Play presets on the Deluge rather than on the computer]: [Listen], on the Presets and Generator pages, then plays **the machine's engine** instead of the computer's approximation; [Play the kit] sends the test pattern to the Deluge. This listening never switches on by itself: sending sound into a machine plugged into an amplifier must not come as a surprise.
+Tick [Play presets on the Deluge rather than on the computer]: [Listen], on the Presets and Generator pages, then plays **the machine's engine** instead of the computer's computation; [Play the kit] sends the test pattern to the Deluge. This listening never switches on by itself: sending sound into a machine plugged into an amplifier must not come as a surprise.
 
 What goes out: the preset's settings **that a knob controls** — filters, envelopes, effects, levels, some fifty of them —, then **the short phrase the computer would play**, chosen from the preset's category: four low notes for a bass, a spread chord for a pad, a rise for a lead. One note every 0.55 seconds, each held for half a second. What does not: the oscillators' waveform, a sample, the arpeggiator mode — no controller carries them. So you hear **the oscillators of the selected instrument, set like the preset**. A preset with a very slow attack may be barely audible in half a second.
 
@@ -950,7 +1079,7 @@ The Deluge **loses** controllers that arrive while it is handling the previous o
 
 ## The Deluge's tempo {#tempo}
 
-When the machine plays, its MIDI clock gives its tempo. With the [The tools follow the Deluge's tempo] box (ticked by default), the toolbox tempos take it as soon as its rounded value changes; a page opened while the machine plays takes it once, on its first visit — after that, you decide.
+When the machine plays, its MIDI clock gives its tempo. With the [The tools follow the Deluge's tempo] box (ticked by default), the studio's tempo and the notebook calculator's take it as soon as its rounded value changes; a page opened while the machine plays takes it once, on its first visit — after that, you decide.
 
 ## The controller table {#midi-follow}
 
@@ -984,7 +1113,7 @@ With the [Sync automatically when the Deluge is plugged in] box, the application
 - **on returning to the window**, at most every thirty seconds, to receive what you have recorded on the machine;
 - and **never while the machine plays**: its card is busy playing. A transfer in progress stops between two blocks, and resumes when playback stops.
 
-At any time: [Sync] on the dashboard, [Sync now] in the settings, or Tools ▸ Sync with the Deluge [[Ctrl+Shift+D]]. The screen says what is waiting: “WORKING COPY · 3 TO SEND”, or “WORKING COPY · SYNCING…”.
+At any time: [Sync] on the home page or at the studio's Deluge step, [Sync now] in the settings, or Tools ▸ Sync with the Deluge [[Ctrl+Shift+D]]. The screen says what is waiting: “WORKING COPY · 3 TO SEND”, or “WORKING COPY · SYNCING…”.
 
 ## The rules of exchange {#regles-echanges}
 
@@ -1020,7 +1149,7 @@ With the card staying in the machine, Explorer can no longer reach it: the appli
 - **drag files or a folder anywhere onto the window** — a downloaded pack, a bounce from your music software. A green veil announces “Drop to send to the Deluge” and where the files will go;
 - File ▸ Send files to the Deluge… [[Ctrl+I]];
 - File ▸ Send a folder to the Deluge… [[Ctrl+Shift+I]];
-- [Send to the Deluge…] on the Samples page, which sends into the folder chosen in its tree, or [Send files…] on the dashboard.
+- [Send to the Deluge…] on the Samples page, which sends into the folder chosen in its tree, or [Send files…] on the home page.
 
 ## The plan before sending {#plan-envoi}
 
@@ -1041,7 +1170,7 @@ The files then go to the Deluge in the background, or at its next connection. Th
 
 ## From the Deluge to the PC {#vers-le-pc}
 
-- The **The Deluge and the PC** panel on the dashboard lists what has arrived from the machine; a click opens each file on its page.
+- The **The Deluge and the PC** panel on the home page lists what has arrived from the machine; a click opens each file on its page.
 - On the Samples page, **drag a sound** to Explorer or your music software: it receives a copy, as it is in the working copy. A recording made on the Deluge can be reworked on the PC this way.
 - The exports — [Song as MIDI], [Collect…], [Pattern as MIDI] — write on the computer, wherever you choose.
 
@@ -1049,7 +1178,7 @@ The files then go to the Deluge in the background, or at its next connection. Th
 
 > A window to keep next to the application: the machine's screen, its tempo, the notes of its MIDI tracks, and the selected sound.
 
-It opens from Tools ▸ Deluge Live [[Ctrl+D]], from [Deluge Live…] in the settings, or with a click on the green chip. It only **reads**: nothing is written to the machine.
+It opens from Tools ▸ Deluge Live [[Ctrl+D]], from [Deluge Live…] in the settings or at the studio's Deluge step, or with a click on the green chip. It only **reads**: nothing is written to the machine.
 
 ## Its four panels {#panneaux-direct}
 
@@ -1075,21 +1204,17 @@ Closing the window stops the screen mirroring.
 
 # Writing songs for the Deluge {#morceaux-pour-le-deluge icone=song}
 
-> Every creative tool can write what it has produced as a Deluge song: a new file in SONGS, which the machine loads like any other.
+> The studio writes the Deluge's songs: a new file in SONGS, which the machine loads like any other. The other pages lead to it.
 
-## The nine buttons {#boutons-morceau}
+## The buttons that write a song {#boutons-morceau}
 
 | Where | Button | What the song contains |
 |---|---|---|
-| Tools ▸ Theory | [As a song] | one clip per part — chords, bass, arpeggio, melody, drums —, with the sounds heard while listening; everything loops together from PLAY |
-| Tools ▸ Rhythm | [As a song] | the pattern shown, played by a kit of your samples |
-| Tools ▸ Arrangement | [Sketch as a song] | one Deluge section per template section, each with its clips and number of repeats |
-| Kits | [Pattern as a song] | the selected kit, as it is on the card, and the test pattern |
-| Generator | [Try in a song] | the sound in context: a phrase made for its role, and the genre's drums |
-| Generator ▸ Drum kit | [Kit as a song] | the kit built and its genre's rhythm |
+| Studio ▸ Deluge | [Write the song] | the composed song: one Deluge section per section, their clips, their repeats and the complete arrangement |
+| Studio ▸ Deluge | [Complete the song] | your song byte for byte, plus the tracks, clips and sections added — in a new version |
 | Samples ▸ Slice… | [Write as a song] | the slices' kit, and a clip replaying the loop |
-| Studio | [Write the song] | the composed song: one Deluge section per section, their clips, their repeats and the complete arrangement |
-| Studio | [Complete the song] | your song byte for byte, plus the tracks, clips and sections added — in a new version |
+
+A sound from the generator, or a preset or kit from the card, goes through the studio: [Try in the studio] and [Use in the studio] give them to the song in progress, which writes them with it (see [Sounds from other pages](#atelier-venus)).
 
 ## The route {#parcours-morceau}
 
@@ -1101,9 +1226,9 @@ Closing the window stops the screen mirroring.
 
 **No existing file is replaced**: a name already taken is numbered.
 
-## Playing a sketch {#jouer-esquisse}
+## Playing a sectioned song {#jouer-esquisse}
 
-A sectioned sketch plays in two ways on the machine. **PLAY** loops the first section; launch the next one, and the rest follows on to the end. The **arrangement** view (SONG key) plays the whole song in one go. Repeating parts fit in short clips — four bars of chords, one bar of drums —, the way you build them on the machine.
+A sectioned song plays in two ways on the machine. **PLAY** loops the first section; launch the next one, and the rest follows on to the end. The **arrangement** view (SONG key) plays the whole song in one go. Repeating parts fit in short clips — four bars of chords, one bar of drums —, the way you build them on the machine.
 
 !!! retenir Tried on the machine
     On 22 October 2026, three songs written by the application — a progression with its drums, a six-section sketch, a pattern on the TR-808 kit — were sent over the cable, loaded and played on a Deluge running firmware 1.3. The format written is the one of community firmware 1.2.1, which 1.3 also reads, and the conversions of older presets have been compared with songs recorded on the machine. Each song is a new file: it touches nothing the card already holds.
@@ -1134,14 +1259,12 @@ Here, all together, are the commands that write to the card. Each one shows its 
 |---|---|
 | Samples | [Process…], [Write the kit], [Export as files…], [Write as a song], [Send to the Deluge…] |
 | Presets | [Duplicate] |
-| Kits | [Pattern as a song] |
-| Generator | [Save to SYNTHS], [Generate a batch into a folder…], [Try in a song], [Save to KITS], [Kit as a song] |
+| Generator | [Save to SYNTHS], [Generate a batch into a folder…], [Save to KITS] |
 | Studio | [Write the song], [Complete the song] |
-| Tools | the three “as a song” buttons |
 | Health | [Fix automatically], [Delete duplicates], [Relink automatically], [Archive into _UNUSED], [Restore] |
 | Settings | [Create the working copy], [Sync now], [Deletions to confirm…], [Update the backup] — the last one writes to your backup |
 
-The Songs page, for its part, never writes to the card.
+The Kits, Songs and Notebook pages, for their part, never write to the card; nor do [Try in the studio] and [Use in the studio].
 
 # Keyboard shortcuts {#raccourcis icone=list}
 
@@ -1149,7 +1272,9 @@ The Songs page, for its part, never writes to the card.
 
 | Shortcut | Action |
 |---|---|
-| [[Ctrl+1]] to [[Ctrl+9]], [[Ctrl+0]] | go to the matching page, in the column's order; [[Ctrl+0]] for the tenth, Settings |
+| [[Ctrl+1]] to [[Ctrl+9]], [[Ctrl+0]] | go to the matching page, in the column's order: [[Ctrl+1]] the home page, [[Ctrl+2]] the studio… [[Ctrl+9]] the DAW, [[Ctrl+0]] Health |
+| [[Ctrl+N]] | a new song, in the studio |
+| [[Ctrl+E]] | advanced mode, or back to the simple level |
 | [[Ctrl+R]] | scan the card |
 | [[Ctrl+F]] | search for a sample, from any page |
 | [[Ctrl+O]] | choose the card |
@@ -1181,7 +1306,7 @@ Help ▸ Keyboard shortcuts recalls the first list in a small window.
 
 ## The pages are empty {#pages-vides}
 
-No card is set, or it hasn't been read yet. Set it ([Designating the card](#designer)), then [Scan]. The screen in the top bar tells you where things stand: “NO CARD”, or “CARD · not scanned yet”.
+No card is set, or it hasn't been read yet. Set it ([Designating the card](#designer)), then [Scan card], on the home page. The screen in the top bar tells you where things stand: “NO CARD”, or “CARD · not scanned yet”.
 
 ## “… does not contain a Deluge folder tree” {#pas-une-carte}
 
@@ -1195,7 +1320,11 @@ You designated a folder that doesn't contain at least two of the `SONGS`, `SYNTH
 
 ## A button stays grey {#bouton-gris}
 
-It is waiting for a selection: a sound, a preset, a row. Its tooltip says what it will do. [Slice…] and [Similar sounds] want a single sound; [Scan] wants a card.
+It is waiting for a selection: a sound, a preset, a row. Its tooltip says what it will do. [Slice…] and [Similar sounds] want a single sound; [Scan card] wants a card.
+
+## A button from the manual is not on screen {#bouton-absent}
+
+It most likely belongs to advanced mode: the Simple / Advanced switch in the top bar, or [[Ctrl+E]], shows it. This manual points out the commands of that mode (see [Simple or advanced](#niveau)).
 
 ## The “Deluge” chip stays grey {#pastille-grise}
 
@@ -1231,7 +1360,7 @@ That is intended: the card is busy playing, and the application waits for playba
 
 ## The application's view of the card is out of date {#index-ancien}
 
-Files were copied onto the card outside the application. [Scan] rereads what has changed. If the index really seems inconsistent, [Reset the index] rebuilds it, without touching the card or your ratings.
+Files were copied onto the card outside the application. [Scan card] rereads what has changed. If the index really seems inconsistent, [Reset the index] rebuilds it, without touching the card or your ratings.
 
 ## Where is the log? {#journal}
 
@@ -1259,11 +1388,13 @@ Nothing half-written stays on the card: an interrupted backup is deleted so it c
 | Duplicate | a file strictly identical to another, byte by byte |
 | Clipping | a saturated sound whose peaks were cut off at recording |
 | Fingerprint | a summary of a file's content, which recognises duplicates |
+| Step | one of the five parts of the studio: style, sounds, clips, structure, Deluge |
 | Community firmware | the Deluge's open firmware (c1.x versions); it answers the application's messages |
 | Seed | the number that makes a generation reproducible |
 | Index | the application's database about the card; it lives on the computer |
 | Kit | a drum instrument: one row per sound |
 | MIDI Follow | the community firmware mode where incoming controllers drive the selected instrument |
+| Advanced mode | the interface level that shows every command; the simple level keeps only the essentials |
 | Orphan | a sample no preset, kit or song refers to |
 | Plan | the exact list of operations, shown before any write |
 | Preset | a synth sound saved in `SYNTHS` |

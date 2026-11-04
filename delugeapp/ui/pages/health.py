@@ -48,7 +48,7 @@ from ..widgets.common import (
     human_size,
 )
 from ...core import samplefix
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -83,9 +83,9 @@ class HealthPage(Page):
             tr("Santé de la carte"), tr("Ce qui va mal, et comment le réparer"))
         outer.addWidget(header)
 
-        # Pas « Analyser » : la barre d'en-tête a déjà ce mot, pour relire
-        # la carte. Ici on ne relit rien, on cherche ce qui va mal dans ce
-        # que l'index contient déjà.
+        # Pas « Analyser » : ce mot désigne la relecture de la carte (accueil,
+        # menu Fichier). Ici on ne relit rien, on cherche ce qui va mal dans
+        # ce que l'index contient déjà.
         analyse = tool_button(
             tr("Diagnostiquer"), "health",
             tr("Cherche les anomalies dans l'index — sans relire la carte"),
@@ -100,7 +100,7 @@ class HealthPage(Page):
         self._fix_button.setEnabled(False)
         actions.addWidget(self._fix_button)
 
-        export = tool_button(tr("Exporter le rapport"), "export")
+        export = avance(tool_button(tr("Exporter le rapport"), "export"))
         export.clicked.connect(self.guard(self._export))
         actions.addWidget(export)
 

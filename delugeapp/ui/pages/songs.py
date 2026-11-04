@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -46,7 +46,7 @@ from ..widgets.common import (
     sorted_proxy,
 )
 from ..widgets.padgrid import SongPreview
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 #: Saut de ligne, nommé pour que les messages en format % restent lisibles.
 _NL = chr(10)
@@ -91,6 +91,9 @@ class SongsPage(Page):
                       "son tempo et tout ce dont il dépend.")
     ICON = "song"
 
+    #: Aller sur une autre page : le morceau choisi, dans l'atelier.
+    navigateRequested = pyqtSignal(str)
+
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
         self._model: RowTableModel | None = None
@@ -109,28 +112,36 @@ class SongsPage(Page):
             tr("Morceaux"), tr("Contenu, dépendances et ce qui manque"))
         outer.addWidget(header)
 
-        export = tool_button(tr("Clip en MIDI"), "export",
-                             tr("Exporter le clip sélectionné en fichier "
-                                "MIDI"))
+        # Un morceau de la carte se continue dans l'atelier : ses pistes et
+        # ses clips y deviennent ceux du projet, et l'atelier le complète
+        # sans rien en réécrire. C'est le geste qu'on fait le plus souvent
+        # d'ici ; les exports viennent au niveau avancé.
+        self._open_button = tool_button(tr("Ouvrir dans l'atelier"),
+                                        "atelier", primary=True)
+        self._open_button.clicked.connect(self.guard(self._open_in_atelier))
+        actions.addWidget(self._open_button)
+
+        export = avance(tool_button(tr("Clip en MIDI"), "export",
+                                    tr("Exporter le clip sélectionné en "
+                                       "fichier MIDI")))
         export.clicked.connect(self.guard(self._export_clip))
         actions.addWidget(export)
 
-        self._song_midi = tool_button(
+        self._song_midi = avance(tool_button(
             tr("Morceau en MIDI"), "midi",
-            tr("Exporter tout le morceau : une piste MIDI par clip"),
-            primary=True)
+            tr("Exporter tout le morceau : une piste MIDI par clip")))
         self._song_midi.clicked.connect(self.guard(self._export_song_midi))
         actions.addWidget(self._song_midi)
 
-        self._pack = tool_button(
+        self._pack = avance(tool_button(
             tr("Rassembler…"), "save",
             tr("Copier le morceau, ses presets et ses échantillons dans un "
-               "dossier"))
+               "dossier")))
         self._pack.clicked.connect(self.guard(self._export_pack))
         actions.addWidget(self._pack)
 
-        report = tool_button(tr("Rapport HTML"), "info",
-                             tr("Enregistrer une fiche du morceau"))
+        report = avance(tool_button(tr("Rapport HTML"), "info",
+                                    tr("Enregistrer une fiche du morceau")))
         report.clicked.connect(self.guard(self._export_report))
         actions.addWidget(report)
 
@@ -672,6 +683,14 @@ firmware {esc(song.firmware or '—')}</p>
         from PyQt6.QtGui import QDesktopServices
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+    def _open_in_atelier(self) -> None:
+        """Le morceau choisi part dans l'atelier : ses pistes, ses clips et
+        ses sections y deviennent ceux du projet — rien n'est modifié."""
+        if not self._current:
+            self.say(tr("Choisissez d'abord un morceau."))
+            return
+        self.navigateRequested.emit("Atelier#%s" % self._current)
 
     # -- rafraîchissement --------------------------------------------------- #
 

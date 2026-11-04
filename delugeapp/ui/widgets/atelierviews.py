@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Les deux vues de l'atelier, tracées comme la façade du Deluge.
+"""Les vues de l'atelier, tracées comme la façade du Deluge.
 
+* :class:`StepBar` — les cinq étapes du morceau, une rangée de pads
+  numérotés reliés par une piste : où l'on est, et ce qui vient ensuite ;
 * :class:`ClipView` — un clip : ses notes en pads sur un rouleau de piano,
-  ou, pour une batterie, une rangée par son et un pad par double-croche ;
+  ou, pour une batterie, une rangée par son et un pad par double-croche —
+  qu'un clic allume ou éteint ;
 * :class:`SectionMatrix` — le morceau : une rangée par piste, une colonne
   par section, et dans chaque case le pad allumé du clip qu'elle joue, à la
   lettre de ce clip — la grille de la machine en disposition « grille ».
@@ -15,15 +18,191 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
-from PyQt6.QtWidgets import QSizePolicy, QWidget
+from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
+from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QWidget
 
 from ...i18n import tr
 from .. import art
-from ..theme import (BORDER, GOLD, GREY, PAD_OFF, PAD_WHITE, PANEL_LO,
-                     TEXT_SOFT, mix, text_on)
+from ..theme import (BORDER, BORDER_HI, GOLD, GREY, PAD_AMBER, PAD_BLUE,
+                     PAD_GREEN, PAD_OFF, PAD_PURPLE, PAD_RED, PAD_WHITE,
+                     PANEL_LO, TEXT_SOFT, mix, readable, text_on)
 
 log = logging.getLogger(__name__)
+
+#: La couleur de chaque étape : le rouge de l'atelier pour le départ, puis
+#: celle de ce qu'on y fait — les sons au violet des presets, les clips au
+#: vert des kits, la structure au bleu des morceaux, le Deluge à l'ambre.
+STEP_COLORS = (PAD_RED, PAD_PURPLE, PAD_GREEN, PAD_BLUE, PAD_AMBER)
+
+
+class StepButton(QPushButton):
+    """Une étape : un pad numéroté et son nom en capitales.
+
+    Choisie, elle s'allume ; franchie, son pad reste éclairé en veilleuse ;
+    à venir, il est éteint. Reste un ``QPushButton`` cochable, que la page
+    et les tests cliquent comme un autre.
+    """
+
+    HAUTEUR = 40
+
+    def __init__(self, number: int, title: str, color: str,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(title, parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(self.HAUTEUR)
+        self._numero = int(number)
+        self._couleur = color
+        self._franchie = False
+        self._survol = False
+        self._police = QFont(self.font())
+        self._police.setPointSizeF(max(7.5, self._police.pointSizeF() * 0.92))
+        self._police.setBold(True)
+        self._police.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        self._police.setCapitalization(QFont.Capitalization.AllUppercase)
+        self._chiffre = QFont(self._police)
+        self._chiffre.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
+
+    def color(self) -> str:
+        return self._couleur
+
+    def set_done(self, done: bool) -> None:
+        """Étape déjà franchie : son pad garde une lueur."""
+        if bool(done) != self._franchie:
+            self._franchie = bool(done)
+            self.update()
+
+    def is_done(self) -> bool:
+        return self._franchie
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        largeur = QFontMetricsF(self._police).horizontalAdvance(
+            self.text().upper())
+        return QSize(int(largeur) + 64, self.HAUTEUR)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        return QSize(44, self.HAUTEUR)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._survol = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._survol = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            actif = self.isChecked()
+            cote = 28.0
+            pad = QRectF(8.0, (self.height() - cote) / 2.0, cote, cote)
+            if actif:
+                bande = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+                teinte = QColor(self._couleur)
+                teinte.setAlphaF(0.14)
+                p.setPen(QPen(QColor(mix(self._couleur, PANEL_LO, 0.35)), 1))
+                p.setBrush(teinte)
+                p.drawRoundedRect(bande, 12, 12)
+                art.paint_pad(p, pad, self._couleur, glow=0.45, radius=7.5)
+            elif self._franchie:
+                art.paint_pad(p, pad, mix(PANEL_LO, self._couleur, 0.55),
+                              glow=0.0, radius=7.5)
+            else:
+                art.paint_off_pad(p, pad, diode=False, radius=7.5)
+                cadre = QColor(self._couleur)
+                cadre.setAlphaF(0.75 if self._survol else 0.45)
+                p.setPen(QPen(cadre, 1.2))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(pad.adjusted(0.6, 0.6, -0.6, -0.6), 7, 7)
+            p.setFont(self._chiffre)
+            p.setPen(QColor(text_on(self._couleur) if (actif or self._franchie)
+                            else readable(self._couleur, PANEL_LO)))
+            p.drawText(pad, int(Qt.AlignmentFlag.AlignCenter),
+                       str(self._numero))
+            if self.width() >= 70:
+                p.setFont(self._police)
+                p.setPen(QColor(PAD_WHITE if (actif or self._survol)
+                                else TEXT_SOFT))
+                zone = QRectF(pad.right() + 10, 0,
+                              self.width() - pad.right() - 14, self.height())
+                texte = QFontMetricsF(self._police).elidedText(
+                    self.text().upper(), Qt.TextElideMode.ElideRight,
+                    zone.width())
+                p.drawText(zone, int(Qt.AlignmentFlag.AlignVCenter
+                                     | Qt.AlignmentFlag.AlignLeft), texte)
+            p.end()
+        except Exception as exc:     # noqa: BLE001 - un tracé ne casse rien
+            log.debug("étape non tracée : %s", exc)
+
+
+class StepBar(QWidget):
+    """Les étapes du morceau, de gauche à droite, reliées par une piste.
+
+    Un clic sur une étape émet :attr:`stepClicked` ; la page dit laquelle
+    est affichée (:meth:`set_current`) et jusqu'où l'on est allé
+    (:meth:`set_reached`).
+    """
+
+    stepClicked = pyqtSignal(int)
+
+    def __init__(self, titles, colors=STEP_COLORS,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        rangee = QHBoxLayout(self)
+        rangee.setContentsMargins(0, 0, 0, 0)
+        rangee.setSpacing(18)
+        self.buttons: list[StepButton] = []
+        for index, titre in enumerate(titles):
+            bouton = StepButton(index + 1, titre,
+                                colors[index % len(colors)], self)
+            bouton.clicked.connect(
+                lambda _c=False, i=index: self.stepClicked.emit(i))
+            rangee.addWidget(bouton)
+            self.buttons.append(bouton)
+        self._courante = 0
+        self.set_current(0)
+
+    def current(self) -> int:
+        return self._courante
+
+    def set_current(self, index: int) -> None:
+        self._courante = int(index)
+        for rang, bouton in enumerate(self.buttons):
+            bouton.setChecked(rang == self._courante)
+        self.update()
+
+    def set_reached(self, last: int) -> None:
+        """Les étapes jusqu'à ``last`` comprise sont franchies."""
+        for rang, bouton in enumerate(self.buttons):
+            bouton.set_done(rang <= int(last))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        """La piste qui relie les pads, comme les pistes du treillis."""
+        try:
+            if len(self.buttons) < 2:
+                return
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            for gauche, droite in zip(self.buttons, self.buttons[1:]):
+                y = gauche.geometry().center().y()
+                x1 = gauche.geometry().right() - 2
+                x2 = droite.geometry().left() + 4
+                franchie = droite.is_done() or droite.isChecked()
+                stylo = QPen(QColor(mix(PANEL_LO, droite.color(), 0.6)
+                                    if franchie else BORDER_HI), 1.6)
+                p.setPen(stylo)
+                p.drawLine(QPointF(x1, y), QPointF(x2, y))
+            p.end()
+        except Exception as exc:     # noqa: BLE001
+            log.debug("piste des étapes non tracée : %s", exc)
 
 #: Couleur de chaque partie : la même dans toutes les vues de l'atelier.
 PART_COLORS = {
@@ -40,7 +219,16 @@ def part_color(part: str) -> str:
 
 
 class ClipView(QWidget):
-    """Un clip, lu comme sur la machine en vue clip."""
+    """Un clip, lu comme sur la machine en vue clip.
+
+    Une batterie se dessine à la souris quand la vue est modifiable
+    (:meth:`set_clip` avec ``editable``) : un clic sur une case émet
+    :attr:`hitToggled` avec la rangée et le pas, et la page allume ou éteint
+    le coup.
+    """
+
+    #: Un clic dans la grille d'une batterie : (rangée, pas).
+    hitToggled = pyqtSignal(str, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -49,10 +237,13 @@ class ClipView(QWidget):
         self._rows: list[str] = []
         self._steps = 16
         self._color = GOLD
+        self._editable = False
+        self._hover: tuple[str, int] | None = None
         self._empty = (tr("Aucun clip choisi"),
                        tr("Choisissez une piste et un de ses clips"))
         self._playhead: float | None = None
         self.setMinimumHeight(150)
+        self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
                            QSizePolicy.Policy.Expanding)
 
@@ -63,11 +254,16 @@ class ClipView(QWidget):
         self._empty = (title, detail)
         self.update()
 
-    def set_clip(self, clip, color: str = GOLD, rows=None) -> None:
+    def set_clip(self, clip, color: str = GOLD, rows=None,
+                 editable: bool = False) -> None:
         """Montre ``clip`` (:class:`atelier.AtelierClip`) ; ``None`` vide la
         vue. ``rows`` donne l'ordre des rangées d'une batterie, du bas vers
-        le haut."""
+        le haut ; une vue modifiable les montre toutes, même sans coup, pour
+        qu'on puisse en ajouter."""
         self._color = color or GOLD
+        self._editable = bool(editable) and clip is not None \
+            and clip.pattern is not None
+        self._hover = None
         if clip is None:
             self._events, self._pattern, self._rows = [], None, []
             self._steps = 16
@@ -76,13 +272,72 @@ class ClipView(QWidget):
             self._pattern = clip.pattern
             self._events = list(clip.events or [])
             if clip.pattern is not None:
-                names = [r for r in (rows or []) if r and r
-                         in clip.pattern.tracks]
+                names = [r for r in (rows or []) if r and (
+                    self._editable or r in clip.pattern.tracks)]
                 names += [n for n in clip.pattern.tracks if n not in names]
                 self._rows = names
             else:
                 self._rows = []
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self._editable
+                       else Qt.CursorShape.ArrowCursor)
         self.update()
+
+    def is_editable(self) -> bool:
+        return self._editable
+
+    def rows(self) -> list[str]:
+        """Les rangées d'une batterie, du bas vers le haut."""
+        return list(self._rows)
+
+    def _drum_geometry(self) -> tuple[QRectF, QRectF, float, float]:
+        """``(zone, grille, largeur d'une case, hauteur d'une rangée)``."""
+        area = QRectF(self.rect()).adjusted(11, 11, -11, -11)
+        label_w = min(86.0, area.width() * 0.16)
+        grid = area.adjusted(label_w, 0, 0, 0)
+        rows = max(1, len(self._rows))
+        return (area, grid, grid.width() / float(self._steps),
+                grid.height() / float(rows))
+
+    def cell_at(self, x: float, y: float) -> tuple[str, int] | None:
+        """La case d'une batterie sous un point : ``(rangée, pas)``."""
+        if self._pattern is None or not self._rows:
+            return None
+        _area, grid, cell_w, cell_h = self._drum_geometry()
+        if not grid.contains(QPointF(x, y)) or cell_w <= 0 or cell_h <= 0:
+            return None
+        col = int((x - grid.left()) // cell_w)
+        index = int((grid.bottom() - y) // cell_h)
+        if not (0 <= col < self._steps and 0 <= index < len(self._rows)):
+            return None
+        return self._rows[index], col
+
+    def cell_center(self, row: str, step: int) -> QPointF:
+        """Le centre de la case ``(row, step)`` — pour viser un clic."""
+        _area, grid, cell_w, cell_h = self._drum_geometry()
+        index = self._rows.index(row)
+        return QPointF(grid.left() + (int(step) + 0.5) * cell_w,
+                       grid.bottom() - (index + 0.5) * cell_h)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if not self._editable:
+            return
+        case = self.cell_at(event.position().x(), event.position().y())
+        if case != self._hover:
+            self._hover = case
+            self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if self._hover is not None:
+            self._hover = None
+            self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
+        if self._editable and event.button() == Qt.MouseButton.LeftButton:
+            case = self.cell_at(event.position().x(), event.position().y())
+            if case is not None:
+                self.hitToggled.emit(case[0], case[1])
+        super().mouseReleaseEvent(event)
 
     def set_playhead(self, step: float | None) -> None:
         self._playhead = step
@@ -101,7 +356,7 @@ class ClipView(QWidget):
             p.setPen(QPen(QColor(BORDER), 1))
             p.setBrush(QColor(PANEL_LO))
             p.drawRoundedRect(area, 12, 12)
-            if self.is_empty():
+            if self.is_empty() and not (self._editable and self._rows):
                 self._paint_empty(p, area)
             elif self._pattern is not None:
                 self._paint_drums(p, area.adjusted(10, 10, -10, -10))
@@ -171,6 +426,10 @@ class ClipView(QWidget):
                                 / 100.0)
                     art.paint_pad(p, rect, shade, glow=0.0,
                                   radius=pad * 0.22, sheen=pad >= 8)
+                if self._hover == (name, col):
+                    p.setPen(QPen(QColor(GOLD), 1.6))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawRoundedRect(rect, pad * 0.22, pad * 0.22)
         self._paint_playhead(p, grid, cell_w)
 
     def _paint_notes(self, p: QPainter, area: QRectF) -> None:

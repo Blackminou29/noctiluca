@@ -279,4 +279,15 @@ TEXTS = {
         "from the Deluge OLED Guide.",
     "Dossier de configuration :": "Configuration folder:",
     "Ouvrir": "Open",
+    "Niveau de l'interface": "Interface level",
+    "Simple : chaque page montre l'essentiel, de quoi créer sans se "
+    "perdre. Avancé : tous les réglages et toutes les commandes — "
+    "graines, moteurs, exports, retouches de fichiers. La bascule « "
+    "Simple | Avancé » de la barre du haut fait de même  (Ctrl+E).":
+        "Simple: each page shows the essentials, enough to create without "
+        "getting lost. Advanced: every setting and every command — seeds, "
+        "engines, exports, file edits. The “Simple | Advanced” switch in "
+        "the top bar does the same  (Ctrl+E).",
+    "Simple": "Simple",
+    "Avancé": "Advanced",
 }

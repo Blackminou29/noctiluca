@@ -96,10 +96,6 @@ TEXTS = {
     "choisirez — hors de la carte":
         "Writes the test pattern to a .mid file, wherever you choose — "
         "outside the card",
-    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf : ce kit, tel "
-    "qu'il est sur la carte, et un clip qui joue le motif d'essai. ":
-        "**Writes to the card.** Creates a new song in SONGS: this kit, as it "
-        "is on the card, and a clip that plays the test pattern. ",
 
     # -- Morceaux ------------------------------------------------------------
     "Filtre les morceaux sur leur nom": "Filters the songs by name",
@@ -142,18 +138,6 @@ TEXTS = {
         "**Writes to the card.** Asks for a name and a SYNTHS subfolder, then "
         "writes the preset there; a file with the same name is only replaced "
         "after a question",
-    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf où le son joue "
-    "une phrase faite pour son rôle (basse, accords, arpège, mélodie), sur "
-    "une progression et la batterie du genre : de quoi l'essayer en situation "
-    "sur la machine. ":
-        "**Writes to the card.** Creates a new song in SONGS where the sound "
-        "plays a phrase made for its role (bass, chords, arpeggio, melody), "
-        "over a progression and the genre's drums: a way to try it in context "
-        "on the machine. ",
-    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf : ce kit et un "
-    "clip qui joue le rythme de son genre. ":
-        "**Writes to the card.** Creates a new song in SONGS: this kit and a "
-        "clip that plays its genre's rhythm. ",
     "Ce que le son doit faire dans un morceau : une basse ne se règle pas "
     "comme une nappe":
         "What the sound has to do in a song: a bass is not set up like a pad",
@@ -221,127 +205,8 @@ TEXTS = {
     "écrit dans ses fichiers":
         "Copies the list of notes to the clipboard, in the format the Deluge "
         "writes in its files",
-    "Ambiance de la suite d'accords proposée":
-        "Mood of the suggested chord sequence",
-    "Nombre de mesures de la progression": "Number of bars in the progression",
-    "Tire une suite d'accords dans la gamme choisie":
-        "Draws a chord sequence in the chosen scale",
-    "Écrit un fichier .mid à l'endroit que vous choisirez":
-        "Writes a .mid file wherever you choose",
-    "Écrit la progression et son accompagnement dans un fichier .mid : une "
-    "piste par partie (accords, basse, arpège, mélodie), chacune sur son "
-    "canal":
-        "Writes the progression and its accompaniment to a .mid file: one "
-        "track per part (chords, bass, arpeggio, melody), each on its own "
-        "channel",
-    "Écrit le motif affiché dans un fichier .mid, percussions sur le canal 10":
-        "Writes the displayed pattern to a .mid file, drums on channel 10",
-    "Joue la progression avec son accompagnement, sur des sons générés pour "
-    "le genre choisi — rien n'est écrit":
-        "Plays the progression with its accompaniment, on sounds generated "
-        "for the chosen genre — nothing is written",
-    "Choisit le rythme des accords, le style de basse, l'arpège et le tempo "
-    "— ainsi que les sons de l'écoute":
-        "Chooses the chord rhythm, the bass style, the arpeggio and the tempo "
-        "— as well as the sounds used for playback",
-    "Façon de poser les accords dans la mesure : tenus, en blanches, sur les "
-    "contretemps, en stabs syncopés, ou en « charleston »":
-        "How the chords sit in the bar: held, in half notes, on the "
-        "off-beats, as syncopated stabs, or as a “charleston”",
-    "Style de la ligne de basse tirée des accords : fondamentale, croches, "
-    "contretemps, roulante, octaves, syncopée ou marche":
-        "Style of the bass line drawn from the chords: root, eighth notes, "
-        "off-beat, rolling, octaves, syncopated or walking",
-    "Ajoute un arpège des accords, joué au-dessus d'eux":
-        "Adds an arpeggio of the chords, played above them",
-    "Ajoute une mélodie : un motif repris puis varié, les notes de l'accord "
-    "sur les temps forts, une fin sur la fondamentale ; son allure suit le "
-    "genre":
-        "Adds a melody: a motif repeated then varied, chord notes on the "
-        "strong beats, an ending on the root; its feel follows the genre",
-    "Tire une autre mélodie sur les mêmes accords et la fait écouter — rien "
-    "n'est écrit":
-        "Draws another melody over the same chords and plays it — nothing is "
-        "written",
-    "Ce qu'on empile sur chaque degré : triades, septièmes, neuvièmes "
-    "(jouées sans fondamentale, que tient la basse) ou accords suspendus ; "
-    "« selon l'ambiance » met des septièmes au jazz et à la house, des "
-    "neuvièmes à la deep et à l'ambient":
-        "What is stacked on each degree: triads, sevenths, ninths (played "
-        "without the root, which the bass holds) or suspended chords; "
-        "“according to the mood” gives sevenths to jazz and house, ninths to "
-        "deep house and ambient",
-    "Tempo de l'écoute et du fichier MIDI ; il suit le genre choisi":
-        "Tempo of the playback and of the MIDI file; it follows the chosen "
-        "genre",
-    "Ajoute la batterie : le rythme de l'onglet Rythme, ou à défaut celui du "
-    "genre, joué par des sons de la carte — et en piste 10 dans le fichier "
-    "MIDI":
-        "Adds drums: the rhythm from the Rhythm tab, or else the genre's, "
-        "played with sounds from the card — and on track 10 in the MIDI file",
-    "Remplace l'accord choisi dans la liste par un autre de même fonction "
-    "(tonique, sous-dominante, dominante) — le reste de la progression ne "
-    "bouge pas":
-        "Replaces the chord chosen in the list with another one of the same "
-        "function (tonic, subdominant, dominant) — the rest of the "
-        "progression stays as it is",
-    "Varie le motif sans toucher à son ossature : grosse caisse, caisse "
-    "claire et clap restent ; notes fantômes, charleys, percussion ou "
-    "charleston ouvert changent":
-        "Varies the pattern without touching its backbone: kick, snare and "
-        "clap stay; ghost notes, hi-hats, percussion or open hi-hat change",
-    "Joue le motif deux fois, avec les échantillons de la carte quand elle "
-    "en a, sinon une batterie synthétisée — rien n'est écrit":
-        "Plays the pattern twice, with the card's samples when it has some, "
-        "otherwise with synthesised drums — nothing is written",
-    "Tempo de l'écoute et du fichier MIDI du motif ; il suit le genre choisi":
-        "Tempo of the pattern's playback and MIDI file; it follows the chosen "
-        "genre",
-    "Joue le début de la section choisie dans le tableau (huit mesures au "
-    "plus), avec les seules parties de son rôle":
-        "Plays the beginning of the section chosen in the table (eight bars "
-        "at most), with only the parts of its role",
-    "Écrit le morceau entier dans un fichier .mid : une piste par partie, la "
-    "batterie en piste 10, le nom des sections en repères":
-        "Writes the whole song to a .mid file: one track per part, drums on "
-        "track 10, section names as markers",
-    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf : un instrument "
-    "et un clip par partie (accords, basse, arpège, mélodie, batterie), avec "
-    "les sons de l'écoute ; les clips bouclent ensemble dès qu'on appuie sur "
-    "PLAY. ":
-        "**Writes to the card.** Creates a new song in SONGS: one instrument "
-        "and one clip per part (chords, bass, arpeggio, melody, drums), with "
-        "the playback sounds; the clips loop together as soon as you press "
-        "PLAY. ",
-    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf : un kit de la "
-    "carte et un clip qui joue le motif affiché ; une piste sans son, comme "
-    "une piste euclidienne, reçoit une percussion de la bibliothèque. ":
-        "**Writes to the card.** Creates a new song in SONGS: a kit from the "
-        "card and a clip that plays the displayed pattern; a track without a "
-        "sound, such as a Euclidean track, gets a percussion sound from the "
-        "library. ",
-    "**Écrit sur la carte.** Crée dans SONGS un morceau à sections : chaque "
-    "section du modèle devient une section du Deluge, avec ses clips et son "
-    "nombre de répétitions. PLAY joue la première en boucle ; lancez la "
-    "suivante et le reste s'enchaîne jusqu'à la fin. L'arrangement (touche "
-    "SONG) joue tout le morceau d'un trait. ":
-        "**Writes to the card.** Creates a song with sections: each section "
-        "of the template becomes a Deluge section, with its clips and its "
-        "number of repeats. PLAY loops the first one; launch the next one and "
-        "the rest follows through to the end. The arrangement (SONG button) "
-        "plays the whole song in one go. ",
-    "Style du motif rythmique engendré": "Style of the generated rhythm pattern",
-    "Longueur du motif, en mesures": "Length of the pattern, in bars",
-    "Engendre un rythme typique du genre choisi":
-        "Generates a rhythm typical of the chosen genre",
-    "Nombre de coups à répartir dans le motif":
-        "Number of hits to spread across the pattern",
-    "Nombre de pas du motif : 16 pas = une mesure en double-croches":
-        "Number of steps in the pattern: 16 steps = one bar of sixteenth notes",
     "Décale le motif d'un ou plusieurs pas, sans changer ses coups":
         "Shifts the pattern by one or more steps, without changing its hits",
-    "Ajoute ce motif euclidien au rythme en cours, sur une nouvelle piste":
-        "Adds this Euclidean pattern to the current rhythm, on a new track",
     "Swing d'échantillonneur en pourcentage (58 % léger, 66 % ternaire), ou "
     "jeu derrière / devant le temps. Le même pourcentage se règle dans le "
     "swing du Deluge":
@@ -350,10 +215,6 @@ TEXTS = {
         "in the Deluge's swing",
     "Swing libre ajouté au groove, de droit à ternaire":
         "Free swing added to the groove, from straight to triplet",
-    "Applique le groove au motif affiché, toujours depuis le motif droit : "
-    "un second clic ne cumule pas":
-        "Applies the groove to the displayed pattern, always from the "
-        "straight pattern: a second click does not add up",
     "Tempo servant à tous les calculs de cette page":
         "Tempo used for all the calculations on this page",
     "Fréquence d'échantillonnage supposée pour le calcul de place":
@@ -369,10 +230,6 @@ TEXTS = {
     "Montre les échantillons de la carte dans cette tonalité et dans les "
     "tonalités compatibles":
         "Shows the card's samples in this key and in the compatible keys",
-    "Style du modèle de structure proposé":
-        "Style of the suggested structure template",
-    "Tempo utilisé pour convertir les sections en minutes et en secondes":
-        "Tempo used to convert the sections into minutes and seconds",
 
     # -- Santé ---------------------------------------------------------------
     "Relit l'index déjà constitué et cherche les anomalies : ne touche pas à "
@@ -542,12 +399,6 @@ TEXTS = {
         "changed, keeping the old version alongside; nothing in it is "
         "deleted. The plan is shown first",
     "(%s sans nom)": "(unnamed %s)",
-    "Fabrique un morceau neuf dans le style de l'onglet Style : une piste par "
-    "partie cochée, un premier clip chacune, et la structure du genre avec "
-    "les variations qu'elle appelle  (rien n'est encore écrit sur la carte)":
-        "Makes a new song in the style of the Style tab: one track per ticked "
-        "part, a first clip each, and the genre's structure with the "
-        "variations it calls for  (nothing is written to the card yet)",
     "Ouvre dans l'atelier un morceau de la carte — les derniers reçus du "
     "Deluge en tête : ses pistes, ses clips, son tempo et sa gamme deviennent "
     "ceux du projet, sa progression est lue dans ses notes. Rien n'est modifié":
@@ -681,4 +532,239 @@ TEXTS = {
         "Opens the editor of the track's sound: each setting at the machine's "
         "step, and what it is worth on the Deluge (1.8 s, 237 Hz…). “Keep "
         "this sound” gives it to the track  (nothing is written to the card)",
+    "Donne ce son au morceau de l'atelier, à la piste de sa catégorie "
+    "— une basse à la basse, une nappe aux accords —, ou le garde pour "
+    "le prochain morceau. Rien n'est écrit sur la carte":
+        "Gives this sound to the studio's song, on the track of its "
+        "category — a bass to the bass, a pad to the chords —, or keeps it "
+        "for the next song. Nothing is written to the card",
+    "Fait de ce kit la batterie du morceau de l'atelier, ou du "
+    "prochain : il y joue les clips de batterie, et s'écrit avec le "
+    "morceau. Rien n'est écrit sur la carte":
+        "Makes this kit the drums of the studio's song, or of the next "
+        "one: it plays the drum clips there, and is written with the song. "
+        "Nothing is written to the card",
+    "Ouvre le morceau choisi dans l'atelier : ses pistes, ses clips et "
+    "ses sections deviennent ceux du projet, et l'atelier le complète "
+    "sans le réécrire. Rien n'est modifié":
+        "Opens the chosen song in the studio: its tracks, clips and "
+        "sections become the project's, and the studio completes it "
+        "without rewriting it. Nothing is changed",
+    "Le son rejoint le morceau de l'atelier, à la piste de son rôle — "
+    "la basse pour une basse, les accords pour une nappe —, ou le "
+    "prochain morceau s'il n'y en a pas : vous l'entendez en "
+    "situation, et ses variantes restent dans le style. Rien n'est "
+    "écrit sur la carte":
+        "The sound joins the studio's song, on the track of its role — the "
+        "bass for a bass, the chords for a pad —, or the next song if "
+        "there is none: you hear it in context, and its variants stay in "
+        "the style. Nothing is written to the card",
+    "Le kit devient la batterie du morceau de l'atelier, ou du "
+    "prochain : vous l'entendez jouer les clips du morceau. Rien n'est "
+    "écrit sur la carte":
+        "The kit becomes the drums of the studio's song, or of the next "
+        "one: you hear it play the song's clips. Nothing is written to the "
+        "card",
+    "Joue chaque rangée du kit construit, l'une après l'autre — rien "
+    "n'est écrit":
+        "Plays each row of the built kit, one after the other — nothing is "
+        "written",
+    "Fabrique un morceau neuf dans le style choisi : une piste par "
+    "partie cochée, un premier clip chacune, et la structure du genre "
+    "avec les variations qu'elle appelle. Un morceau en cours est "
+    "remplacé, après une question  (rien n'est encore écrit sur la "
+    "carte)":
+        "Makes a new song in the chosen style: one track per ticked part, "
+        "a first clip for each, and the genre's structure with the "
+        "variations it calls for. A song in progress is replaced, after a "
+        "question  (nothing is written to the card yet)",
+    "Ouvre dans l'atelier un morceau de la carte : ses pistes, ses "
+    "clips et ses sections deviennent ceux du projet. Rien n'est "
+    "modifié":
+        "Opens a song from the card in the studio: its tracks, clips and "
+        "sections become the project's. Nothing is changed",
+    "Mène à la première étape : choisir un style, puis composer":
+        "Leads to the first step: choose a style, then compose",
+    "Joue huit mesures du passage le plus plein du morceau, toutes "
+    "pistes ensemble — rien n'est écrit":
+        "Plays eight bars of the song's fullest passage, all tracks "
+        "together — nothing is written",
+    "Revient à l'étape d'avant ; rien de ce que vous avez fait ne se perd":
+        "Goes back to the previous step; nothing you have done is lost",
+    "Passe à l'étape suivante du morceau ; toutes restent ouvertes, "
+    "dans l'ordre que vous voulez":
+        "Moves on to the song's next step; all of them stay open, in the "
+        "order you like",
+    "Joue les accords du morceau, tenus, sur un son de nappe du style":
+        "Plays the song's chords, held, on a pad sound of the style",
+    "Tire une autre suite d'accords dans la même ambiance ; elle "
+    "servira à la prochaine composition":
+        "Draws another chord sequence in the same mood; it will be used "
+        "for the next composition",
+    "Remplace l'accord choisi dans la liste par un autre de même "
+    "fonction (tonique, sous-dominante, dominante) — le reste de la "
+    "suite ne bouge pas":
+        "Replaces the chord chosen in the list with another of the same "
+        "function (tonic, subdominant, dominant) — the rest of the "
+        "sequence stays",
+    "Remplace le son de la rangée choisie par un autre du même rôle — "
+    "de la même machine d'abord, puis d'une voisine — sans toucher au "
+    "reste du kit  (rien n'est écrit sur la carte)":
+        "Replaces the sound of the chosen row with another of the same "
+        "role — from the same machine first, then a neighbouring one — "
+        "without touching the rest of the kit  (nothing is written to the "
+        "card)",
+    "Écrit le clip choisi dans un fichier .mid, à l'endroit que vous "
+    "choisirez — hors de la carte ; une batterie part sur le canal 10":
+        "Writes the chosen clip to a .mid file, wherever you choose — off "
+        "the card; drums go on channel 10",
+    "Pose le groove sur le clip de batterie choisi, toujours depuis le "
+    "motif droit : un second clic remplace le premier groove au lieu "
+    "de s'y ajouter":
+        "Applies the groove to the chosen drum clip, always from the "
+        "straight pattern: a second click replaces the first groove "
+        "instead of adding to it",
+    "Nombre de coups à répartir dans la rangée":
+        "Number of hits to spread across the row",
+    "Longueur du motif euclidien, en pas : 16 pas = une mesure en "
+    "double-croches ; il se répète sur tout le clip":
+        "Length of the Euclidean pattern, in steps: 16 steps = one bar of "
+        "sixteenths; it repeats over the whole clip",
+    "Ajoute au clip de batterie une rangée dont les coups sont "
+    "répartis au mieux — sur la carte, elle reçoit une percussion de "
+    "votre bibliothèque":
+        "Adds to the drum clip a row whose hits are spread as evenly as "
+        "possible — on the card, it gets a percussion sound from your "
+        "library",
+    "Façon de poser les accords ou la basse dans la mesure — tenus, en "
+    "blanches, sur les contretemps, en stabs ; fondamentale, croches, "
+    "roulante… Choisir une façon fait un clip neuf, joué ainsi":
+        "How the chords or the bass sit in the bar — held, in half notes, "
+        "on the offbeats, as stabs; root, eighths, rolling… Choosing one "
+        "makes a new clip, played that way",
+    "Nom du morceau dans SONGS : il est assaini pour la carte, et "
+    "numéroté s'il est déjà pris":
+        "Name of the song in SONGS: it is cleaned up for the card, and "
+        "numbered if already taken",
+    "Ouvre la page Morceaux sur le morceau qui vient d'être écrit":
+        "Opens the Songs page on the song just written",
+    "Ouvre une fenêtre à garder à côté : l'écran du Deluge recopié, "
+    "son tempo, le son sélectionné — rien n'est écrit sur la machine":
+        "Opens a window to keep alongside: the Deluge's screen mirrored, "
+        "its tempo, the selected sound — nothing is written to the machine",
+    "Échange tout de suite avec le Deluge branché : ce qu'il a "
+    "enregistré descend, le morceau écrit ici monte  (Ctrl+Maj+D)":
+        "Exchanges with the plugged-in Deluge right away: what it saved "
+        "comes down, the song written here goes up  (Ctrl+Shift+D)",
+    "Écrit le morceau entier dans un fichier .mid, à l'endroit que "
+    "vous choisirez — hors de la carte : une piste par piste, la "
+    "batterie en piste 10, le nom des sections en repères":
+        "Writes the whole song to a .mid file, wherever you choose — off "
+        "the card: one track per track, the drums on track 10, the section "
+        "names as markers",
+    "Chaque page ne montre que l'essentiel : de quoi créer sans se perdre":
+        "Each page shows only the essentials: enough to create without "
+        "getting lost",
+    "Chaque page montre tous ses réglages et toutes ses commandes : "
+    "graines, moteurs, exports, retouches de fichiers":
+        "Each page shows all its settings and all its commands: seeds, "
+        "engines, exports, file edits",
+    "Ouvre l'atelier sur un morceau neuf — ou sur celui en cours, à "
+    "l'étape où vous en étiez : style, sons, clips, structure, puis le "
+    "Deluge":
+        "Opens the studio on a new song — or on the current one, at the "
+        "step where you were: style, sounds, clips, structure, then the "
+        "Deluge",
+    "Ouvre le générateur : un preset de synthé ou un kit, par genre ou "
+    "au hasard, à écouter puis enregistrer sur la carte":
+        "Opens the generator: a synth preset or a kit, by genre or at "
+        "random, to listen to and then save on the card",
+    "Choisit un morceau de la carte — les derniers reçus du Deluge en "
+    "tête — et l'ouvre dans l'atelier pour le compléter. Rien n'est "
+    "modifié":
+        "Picks a song from the card — the latest received from the Deluge "
+        "first — and opens it in the studio to complete it. Nothing is "
+        "changed",
+    "Ouvre la bibliothèque : échantillons, presets, kits et morceaux "
+    "de la carte, à écouter et ranger":
+        "Opens the library: the card's samples, presets, kits and songs, "
+        "to listen to and organise",
+    # La page DAW.
+    "**Écrit sur la carte.** Crée dans SONGS un morceau neuf : une piste par "
+    "piste retenue, un clip par section où elle joue. ":
+        "**Writes to the card.** Creates a new song in SONGS: one track per "
+        "track kept, one clip per section where it plays. ",
+    "**Écrit sur la carte.** Une copie du morceau où chaque piste écoute son "
+    "canal ; le plan est montré avant, l'original n'est pas touché":
+        "**Writes to the card.** A copy of the song where each track listens "
+        "to its channel; the plan is shown first, the original is not "
+        "touched",
+    "Calcule sur l'ordinateur une piste audio par synthé et par kit, avec "
+    "l'écoute fidèle au Deluge, toutes calées au début du morceau — "
+    "plusieurs minutes pour un long morceau":
+        "Computes on the computer one audio track per synth and per kit, "
+        "with the listening that is faithful to the Deluge, all aligned to "
+        "the start of the song — several minutes for a long song",
+    "Copie dans le dossier les pistes que le Deluge a exportées lui-même "
+    "(Export Tracks), le rendu le plus fidèle ; grisé s'il n'y en a pas pour "
+    "ce morceau":
+        "Copies into the folder the tracks the Deluge exported itself "
+        "(Export Tracks), the most faithful rendering; greyed out if there "
+        "are none for this song",
+    "Demande un dossier du PC, puis y écrit un dossier **neuf** pour le DAW, "
+    "avec un lisez-moi ; le morceau et la carte ne changent pas":
+        "Asks for a folder on the PC, then writes a **new** folder for the "
+        "DAW in it, with a readme; the song and the card do not change",
+    "Le DAW dont les réglages s'affichent pas à pas ci-dessous":
+        "The DAW whose settings are shown step by step below",
+    "Le style des sons générés pour les pistes devenues synthés et kits":
+        "The style of the sounds generated for the tracks that become synths "
+        "and kits",
+    "Les sections du nouveau morceau suivent l'arrangement du projet (coupé "
+    "à ses repères) ou ses scènes ; grisé si le projet n'a que l'un des "
+    "deux":
+        "The new song's sections follow the project's arrangement (cut at "
+        "its markers) or its scenes; greyed out if the project has only one "
+        "of the two",
+    "Lit un fichier MIDI, un set Ableton Live, un DAWproject ou un projet "
+    "Reaper, et propose ce que devient chaque piste — rien n'est encore "
+    "écrit":
+        "Reads a MIDI file, an Ableton Live set, a DAWproject or a Reaper "
+        "project, and suggests what each track becomes — nothing is written "
+        "yet",
+    "Ouvre dans l'explorateur Windows le dernier dossier exporté pour le "
+    "DAW, ou celui du projet ouvert — rien n'est modifié":
+        "Opens in Windows Explorer the last folder exported for the DAW, or "
+        "the open project's — nothing is changed",
+    "Un fichier .mid : tempo, repères de section, une piste par piste du "
+    "morceau, la batterie sur le canal 10. Tous les DAW l'ouvrent":
+        "A .mid file: tempo, section markers, one track per track of the "
+        "song, the drums on channel 10. Every DAW opens it",
+    "Un set Ableton Live : une piste MIDI par piste du morceau, une scène par "
+    "section, l'arrangement entier, les repères, le tempo, et les pistes "
+    "audio. Bâti avec les fichiers du Live installé sur ce PC ; grisé s'il "
+    "n'est pas trouvé":
+        "An Ableton Live set: one MIDI track per track of the song, one scene "
+        "per section, the whole arrangement, the markers, the tempo, and the "
+        "audio tracks. Built from the files of the Live installed on this PC; "
+        "greyed out if it is not found",
+    "Un projet .dawproject : pistes, clips en boucles, arrangement, scènes, "
+    "repères, et les pistes audio. Bitwig Studio l'ouvre, Studio One et "
+    "Cubase l'importent":
+        "A .dawproject project: tracks, looping clips, arrangement, scenes, "
+        "markers, and the audio tracks. Bitwig Studio opens it, Studio One "
+        "and Cubase import it",
+    "Un projet Reaper .rpp : pistes, objets MIDI en boucles, repères, et les "
+    "pistes audio":
+        "A Reaper .rpp project: tracks, looping MIDI items, markers, and the "
+        "audio tracks",
+    "Une longue section de l'arrangement est coupée en tranches de cette "
+    "taille, pour des clips à la mesure de la machine ; le déroulé ne "
+    "change pas":
+        "A long section of the arrangement is cut into slices of this size, "
+        "for clips that suit the machine; the running order does not change",
+    "Une piste qui écoute déjà un canal le garde ; décochée, chacune reçoit "
+    "un canal libre":
+        "A track that already listens to a channel keeps it; unticked, each "
+        "one gets a free channel",
 }

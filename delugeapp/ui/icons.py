@@ -43,6 +43,7 @@ ICON_NAMES = (
     "link", "warning", "check", "chevron-right", "chevron-down",
     "chevron-left", "plus",
     "minus", "filter", "grid", "list", "info", "backup", "midi", "atelier",
+    "home", "memo",
 )
 
 
@@ -427,8 +428,30 @@ def _draw_midi(p: QPainter, c: QColor) -> None:
         p.drawEllipse(QPointF(50 + 20 * cos(a), 50 + 20 * sin(a)), 5.5, 5.5)
 
 
+def _draw_home(p: QPainter, c: QColor) -> None:
+    """Une maison : l'accueil, d'où l'on part."""
+    _pen(p, c, 8.0)
+    p.drawPolyline(_poly([(14, 50), (50, 18), (86, 50)]))
+    _pen(p, c, 7.0)
+    _rounded(p, 26, 46, 48, 36, 5)
+    _fill(p, c)
+    _rounded(p, 43, 60, 14, 22, 3)
+
+
+def _draw_memo(p: QPainter, c: QColor) -> None:
+    """Une fiche cornée et ses lignes : le mémo du musicien."""
+    _pen(p, c, 7.0)
+    p.drawPolyline(_poly([(62, 14), (22, 14), (22, 86), (78, 86), (78, 30),
+                          (62, 14), (62, 30), (78, 30)]))
+    _pen(p, c, 6.0)
+    for y in (46, 60, 74):
+        p.drawLine(QPointF(34, y), QPointF(66, y))
+
+
 #: Table des fonctions de dessin, par nom d'icône.
 _DRAW = {
+    "home": _draw_home,
+    "memo": _draw_memo,
     "dashboard": _draw_dashboard,
     "samples": _draw_samples,
     "synth": _draw_synth,

@@ -384,6 +384,9 @@ delugeapp/
     atelier.py                  # le projet de l'atelier (§4.38)
     paramlaws.py                # les lois des réglages, lues dans le firmware (§4.39)
     soundedit.py                # les réglages d'un son, modifiables à la main (§4.40)
+    dsp.py                      # le traitement du signal du firmware, porté (§4.41)
+  data/
+    deluge_tables.npz           # les tables du firmware (formes d'onde, tanh…) (§4.41)
   ui/
     __init__.py
     theme.py
@@ -1304,16 +1307,21 @@ marque leur entrée.
 Écoute : `render.render_parts(parts, sounds, bpm, sr, sd)` — chaque partie jouée par un son généré
 pour le genre ; une même note de même durée n'est rendue qu'une fois (quatre mesures : ~1 s).
 
-### 4.21 `delugeapp/core/render.py` — moteur d'écoute hors-ligne (approximation du Deluge)
+### 4.21 `delugeapp/core/render.py` — moteur d'écoute hors-ligne (le calcul du Deluge)
 ```python
 def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5, sr: int = 44100,
                  gate: float = 0.7, velocity: float = 0.9,
-                 sd: SDCard | None = None) -> np.ndarray
-    """Rend un son mono/stéréo float32. Gère : subtractive (2 osc + noise + unison + detune),
-       fm (2 opérateurs), ringmod ; filtres LPF 12/24 dB et HPF ; enveloppes ADSR ;
-       LFO1 (globale) et LFO2 ; patch cables les plus courants ; distorsion (clipping),
-       bitcrush, sample rate reduction ; delay et reverb simples ; chorus/flanger/phaser.
-       Si osc type == 'sample' et `sd` fourni, lit l'échantillon et le transpose."""
+                 sd: SDCard | None = None, bpm: float = 120.0,
+                 glide_from: float = 0.0, effects: bool = True) -> np.ndarray
+    """Rend un son stéréo float32, au niveau de la sortie du Deluge. Gère : subtractive
+       (2 osc + bruit + unisson), fm (2 modulateurs, 2 porteuses), ringmod ; échelles
+       12/24 dB et drive, passe-haut en échelle ; enveloppes et LFO par blocs ; câbles ;
+       saturation ; réduction, mod FX, égaliseur, delay, réverbération du morceau.
+       Si osc type == 'sample' et `sd` fourni, lit l'échantillon (zone, sens, boucle)."""
+def sound_effects(sound, audio, sr=44100, bpm=120.0, limit_feedback=True) -> np.ndarray
+    """Les effets du son entier sur ses voix additionnées (``effects=False``)."""
+def filter_response(freqs, cutoff, resonance, mode="24dB", hpf=None) -> np.ndarray
+    """Réponse en dB des filtres du firmware, linéarisée, pour la courbe de l'interface."""
 def render_preview(preset: SynthPreset, notes: list[int] | None = None, sr: int = 44100,
                    sd: SDCard | None = None) -> np.ndarray
     """Petite phrase (par défaut accord/arpège selon la catégorie) pour l'audition."""
@@ -1330,8 +1338,32 @@ def render_pattern(pattern, bpm=120.0, sr=44100, kit=None, sd=None, bars=None,
 def mix(*tracks, levels=None) -> np.ndarray   # somme de rendus de longueurs différentes
 def spectrum(data: np.ndarray, sr: int, n: int = 4096) -> tuple[np.ndarray, np.ndarray]
 ```
-Qualité attendue : plausible, pas exact. Aucune dépendance hors numpy. Doit rendre 2,5 s
-en moins de 400 ms.
+Qualité attendue : le calcul du firmware de la machine (§4.41), depuis le 23 octobre 2026 —
+c'était « plausible, pas exact ». Aucune dépendance hors numpy. Doit rendre 2,5 s en moins
+de 600 ms au pire cas (une nappe à huit voix d'unisson) ; un preset de la carte rend 1,5 s
+en 0,1 s (médiane de 200), en 0,2 s pour 90 % d'entre eux.
+
+> **Correction mesurée (23 octobre 2026) — le calcul de la machine.** « C'est presque
+> parfait, je voudrais encore que tu améliores la similarité entre l'écoute sur le PC et
+> sur le Deluge. » Les lois des réglages étaient justes (22 octobre) ; le traitement du
+> signal ne l'était pas. Relevé contre le code du firmware : panoramique à −3 dB au centre
+> (la machine garde tout le niveau) ; unisson divisé par `n` après le filtre (la machine :
+> `1/√n` avant) ; bruit gaussien 7 dB trop bas ; formes d'onde normalisées (le carré sort
+> 5 dB au-dessus de la dent de scie) ; FM aux modulateurs croisés et à l'indice de 1,5 rad
+> (±2π au réglage 25) ; delay de 0,134 s au réglage neutre (0,37 s) et de retour 0,5
+> (l'unité) ; réverbération inventée ; et surtout un filtre par blocs FFT qui **laissait
+> fuir l'aigu** — une dent de scie filtrée à 59 Hz y gardait un centroïde de 3 kHz, quand la
+> basse acide de la machine est sombre. Le `volume` d'un preset, enfin, est le volume
+> **post-effets** du son : il ne pousse pas la saturation. Le moteur appelle désormais
+> `core/dsp.py` (§4.41), porté étage par étage et vérifié contre des transcriptions
+> entières du C. Rendus par les deux moteurs, les 911 presets de synthé de la carte :
+> aucun muet ; niveau médian −19,3 dBFS (−19,2 avant) ; 137 dépassent la pleine échelle
+> au niveau de la machine et sont ramenés sous 0,99 ; centroïde médian des soustractifs
+> 853 Hz (2 060 avant, la fuite du filtre), des FM 448 Hz (196 avant, l'indice). À
+> l'atelier, les parties reçoivent la carte (un son à échantillon y jouait une dent de
+> scie), batterie et synthés gardent leurs niveaux de machine et seul le mélange est ramené
+> sous la pleine échelle ; un kit passe par l'étage de son volume (`kit_gain`). La courbe de
+> filtre de l'interface est la réponse exacte de l'échelle (`filter_response`).
 
 > **Correction mesurée (22 octobre 2026) — « plausible » ne suffisait pas.**
 > L'utilisateur a écrit un morceau dans l'atelier, l'a chargé sur le Deluge : les sons
@@ -2664,6 +2696,278 @@ même résultat). Une variante que les retouches rendent identique au son de la 
 Les variantes prennent le nom donné à la main, numéroté à partir de 2. Mesuré sur 114 sons :
 huit variantes chaque fois, aucune retouche perdue.
 
+### 4.41 `delugeapp/core/dsp.py` — le traitement du signal du firmware, porté
+
+Le moteur d'écoute (§4.21) appelle ce module pour tout ce qui fait le son ; `paramlaws`
+(§4.39) donne les valeurs des réglages, `dsp` les calcule comme la machine (communautaire
+1.3, commit `102cf9f`). Les signaux sont des `float64` **à l'échelle des entiers du
+firmware** (±2³¹) : `multiply_32x32_rshift32(a, b)` s'écrit `a * b / 2³²`, et les seuils de
+saturation, les plafonds et les rapports de niveau tombent là où ils tombent sur la machine.
+
+```python
+SR = 44100; BLOCK = 128                 # paramètres, enveloppes, LFO : une fois par bloc
+def table(name) -> np.ndarray            # une table du firmware (data/deluge_tables.npz)
+def note_increment(note_code) -> int     # noteFrequencyTable >> (20 − octave)
+def sample_increment(note_code, sample_rate) -> int  # noteIntervalTable × (fréquence << 24) / 44 100
+CENT_SCALE = 42949672                    # un cent de réglage fin
+def fine_tuner(scaled) -> int            # multiplicateur lu dans centAdjustTableSmall, 2³⁰ à zéro
+def fine_tune(increment, multiplier) -> int  # (inc × mult) >> 32 << 2
+def unison_detuners(detune, voices) -> list[int]   # Sound::setupUnisonDetuners
+def adjust_pitch(increment, adjustment) / pitch_adjustment(octaves)  # Voice::adjustPitch
+def oscillator(kind, inc_blocks, n, phase0, amp=None, pulse_blocks=None,
+               retrig=0xFFFFFFFF) -> (signal, phase)       # Oscillator::renderOsc
+def fm_operator(inc_blocks, n, phase0, amp, modulation=None, feedback_blocks=None,
+                last=0.0) -> (signal, phase, dernière valeur)
+SAMPLE_UNITY = 1 << 24                   # incrément d'un échantillon lu à sa hauteur
+def sample_kernel(increment) -> int      # getWhichKernel : noyau 0 à 6 selon la transposition
+def read_sample(data, inc_blocks, n, loop=False)  # (n,) ou (canaux, n) ; sinc 16 points
+def lpf_config(mode, freq, res, morph=None) -> LadderConfig  # 12dB, 24dB, 24dBDrive
+def lpf_process(x, cfg, jitter, state=None) / lpf_response(cfg, freqs)
+def hpf_config(freq, res) -> HpfConfig / hpf_process(x, cfg) / hpf_response(cfg, freqs)
+def ladder_jitter(n, rng)                # la gigue de coupure, ±0,5 %
+def saturate(x, clipping, last)          # getTanHAntialiased(x, 5 + écrêtage) << (écrêtage − 2)
+class Envelope                           # envelope.cpp, par bloc
+def lfo_blocks(kind, inc_blocks, phase0, rng) / lfo_start_phase(kind, local)
+def pan_amplitudes(pan)                  # shouldDoPanning : linéaire, centre à plein niveau
+def bitcrush_srr(stereo, bitcrush, srr, post_fx) -> (stereo, post_fx)
+def mod_fx(stereo, kind, rate_inc, depth, offset, feedback, post_fx) -> (stereo, post_fx)
+def equalizer(stereo, bass, treble, bass_freq, treble_freq)
+def delay_samples(rate) / delay(stereo, length, feedback, ping_pong, analog)
+@dataclass class ReverbSettings(model=1, room_size=0.6, damping=0.72, width=1.0,
+                                hpf=0.0, lpf=1.0, pan=0)  # celle d'un morceau neuf
+def reverb(send, settings) -> stereo     # Mutable (1) ; Freeverb (0) ; Digital → Mutable
+OUTPUT_GAIN                              # mélange → sortie : 2²⁴ sort à 0,29 de pleine échelle
+def output_stage(stereo) -> stereo       # OUTPUT_GAIN et la saturation adoucie du compresseur maître
+```
+
+Ce que le portage change à l'oreille, mesuré contre l'ancien moteur :
+
+* **formes d'onde** : les tables du firmware, choisies selon la hauteur (`getTableNumber`) ;
+  sous 72 Hz, dent de scie et carré « crus », sans table ; à amplitude égale, le carré sort
+  5 dB au-dessus de la dent de scie (l'ancien moteur les normalisait) ; les formes
+  « analog » sont les tables relevées par Synthstrom. La largeur d'impulsion d'un carré
+  multiplie deux carrés décalés ; celle des autres formes passe par une **synchronisation**
+  interne (l'onde court `1 + largeur` fois plus vite et repart à chaque période) — 400 sons
+  de la carte s'en servent ;
+* **niveaux** : unisson réduit de `1/√n` avant le filtre (au lieu de `1/n` après) ; bruit
+  uniforme deux fois plus fort qu'une dent de scie au même réglage (il était 7 dB trop
+  bas) ; panoramique linéaire, plein niveau au centre (−3 dB avant) ; un échantillon plein
+  sort huit fois plus fort qu'une dent de scie ; le `volume` d'un preset est le volume
+  **post-effets** (`Sound::readParamTagFromFile`), il ne pousse pas la saturation ;
+* **filtres** : l'échelle à transistors échantillon par échantillon, avec sa rétroaction
+  saturée au-delà d'une résonance de 13, sa gigue de coupure et la compensation de niveau
+  (×0,5 sans résonance, ×1,25 au réglage 25) ; un filtre fermé est vraiment fermé —
+  l'ancien filtrage par blocs FFT laissait fuir l'aigu (une dent de scie filtrée à 59 Hz
+  y gardait un centroïde de 3 kHz) ; un son FM d'un firmware antérieur au communautaire
+  1.2.0 a ses filtres éteints ;
+* **FM** : les deux modulateurs s'additionnent (ou le second passe dans le premier) et
+  modulent **les deux** porteuses ; l'indice vaut ±2π au réglage 25 (1,5 rad avant) ; la
+  rétroaction est écrêtée à un huitième de période ;
+* **effets** : delay de 0,37 s au réglage neutre (0,134 s avant), rétroaction unité au
+  réglage 25 (0,5 avant), ping-pong, mode analogique (filtre de 26 coefficients et
+  saturation) ; chorus, flanger, phaser du firmware ; égaliseur ; réverbération
+  « Mutable » d'un morceau neuf (Freeverb pour un morceau sans modèle) ;
+* **échantillons** (depuis la vérification sur la machine, ci-dessous) : un fichier stéréo
+  se joue en stéréo, chaque canal au gain d'un mono — les sources mono de la voix sont
+  alors recopiées sur les deux canaux (`Voice::render`) ; transposé, il se relit par sinus
+  cardinal fenêtré à 16 points (`Interpolator::interpolate`, lecture « smooth » par
+  défaut), sur 16 bits, le noyau choisi par bloc selon la vitesse (`getWhichKernel`) ; la
+  sortie `t` lit la position `(t + 1)·r − 1`. À sa hauteur exacte, il sort tel quel.
+
+Vérifié contre des transcriptions **entières** du code C (`TestTraitementDuFirmware`) :
+l'échelle passe-bas à 6·10⁻⁵ près de la crête, le passe-haut à 2·10⁻⁵, les formes d'onde à
+6·10⁻⁸, les impulsions à 4·10⁻⁵ ; la FM à rétroaction garde les mêmes harmoniques à 0,01 dB
+près (sa boucle, en flottants, laisse dériver la phase de quelques pour cent). La réponse
+de l'échelle linéarisée, calculée en z (`lpf_response`), redonne la réponse impulsionnelle
+à 0,01 dB : c'est elle que trace la courbe de filtre de l'interface.
+
+**Vérifié sur la machine** (23 octobre 2026, avec l'accord de l'utilisateur). Un morceau
+d'essai, `SONGS/ESSAI ECOUTE.XML`, écrit par le câble : douze clips, un point du traitement
+chacun, oscillateurs à phase redémarrée à zéro pour que la forme d'onde se compare
+échantillon par échantillon. L'utilisateur en a lancé l'**export de pistes** (vue morceau,
+lecture arrêtée : SAVE maintenu + RECORD) ; les WAV, relus par le câble dans
+`SAMPLES/EXPORTS/ESSAI ECOUTE/CLIPS/`, sont le canal **MIX** de `Song::renderAudio` : la
+somme des sons **avant** réverbération et volume du morceau, ×32 saturé, 24 bits, sans
+normalisation — un niveau absolu, comparable au signal sec du moteur divisé par 2²⁶.
+
+| son d'essai | écart de niveau | écart de forme d'onde |
+|---|---|---|
+| sinus, impulsion, FM à rétroaction, unisson de 4 | 0,00 à 0,01 dB | −75 à −81 dB pendant la note |
+| dent de scie en échelle 24 dB, « drive » saturée, enveloppe de filtre | 0,00 à 0,02 dB | −13 à −32 dB, autant que deux rendus entre eux (gigue tirée au hasard) ; harmoniques à ±0,5 dB |
+| bruit, passe-haut et passe-bas 12 dB | +0,04 dB | spectre dans la dispersion du hasard (±1 dB grave, ±0,2 dB aigu) |
+| kit (48 kHz stéréo, 44,1 kHz mono), piano stéréo transposé | 0,00 dB | −69 à −81 dB |
+| delay ping-pong, retour 25 | 0,00 dB | −36 dB, échos calés à l'échantillon sur 6 s |
+| chorus | vitesse, profondeur, centre identiques | phase du LFO libre (selon ce que la machine a joué avant) |
+| égaliseur, graves et aigus relevés (second export, 4 novembre) | 0,00 dB | −80 dB |
+| phaser, flanger | 0,00 dB | −62 et −54 dB, la phase de départ du LFO retrouvée |
+| LFO 2 vers la hauteur (vibrato) | 0,00 dB | hauteur à 0,01 Hz près sur tout le cycle |
+| réduction d'échantillonnage et de résolution | −0,01 dB | −33 dB au point de départ retrouvé (quantification grossière) |
+| sortie audio, Song FX allumé (troisième export) : sinus sec | 0,00 dB | −75 dB, aigus extrêmes compris |
+| réverbération « Mutable », pincement et nappe | −0,2 et +0,1 dB | queue à ±1 dB par demi-seconde jusqu'à −125 dB |
+
+Quatre écarts trouvés, corrigés, et retestés contre les mêmes fichiers : l'échantillon
+stéréo rendu en mono (le piano d'essai, aux canaux en partie opposés, perdait 5 dB et sa
+largeur) ; l'interpolation linéaire (−19 dB sur le piano à l'octave, −33 dB sur la caisse
+claire à 48 kHz) ; le temps du delay — l'écho revient à la longueur du tampon **moins un**
+(le tampon a 20 cases de plus, l'écriture se fait 20 cases derrière la lecture), sauf au
+premier tour, écrit dans un tampon secondaire une case plus loin ; avant, les échos
+dérivaient d'un échantillon par répétition ; la hauteur calculée en flottants — la machine
+passe les cents, le réglage fin du son et le désaccord d'unisson par `centAdjustTableSmall`
+(257 points de 16 bits) en tronquant chaque produit, puis arrondit les réglages de hauteur
+à 2⁸ près (`adjustPitch`) : un dixième de cent d'écart, qui faisait dériver un unisson de
+−60 à −28 dB en une demi-seconde ; en entiers, −80 dB d'un bout à l'autre. Un cinquième,
+au troisième export (Song FX allumé : la machine enregistre après la réverbération et le
+compresseur maître, ×32, soit le quart de la sortie) : **l'écoute du PC sortait 4,4 dB trop
+fort** — le compresseur maître d'un morceau a un gain de base de 0,85 (`Song::Song`), non
+1,35 (valeur par défaut de la classe) — **et un peu trop brillante** : sa saturation adoucie
+(`getTanHAntialiased`, 3) moyenne deux échantillons successifs, −1,6 dB à 8 kHz, −7,6 dB à
+16 kHz (`output_stage`). Deux pièges de mesure : l'export rend par
+fenêtres de **32 échantillons** (`AudioEngine::routine`, rendu hors ligne), là où le jeu
+direct en prend de 12 à 128 selon la charge — comparé avec des blocs de 32, le pincement
+du delay passe de −0,08 à 0,00 dB ; et les clips s'exportent l'un après l'autre, si bien
+que la queue d'un delay sans fin (retour 25 : la machine ne l'abandonne jamais) déborde
+sur le clip suivant.
+
+Restent approchés : l'étirement temporel des échantillons, le glissé (en demi-tons, le
+firmware travaille en fréquence), le LFO 1 global (il repart à chaque note), le SVF (rendu
+par l'échelle 12 dB : aucun son de la carte ne s'en sert), le « tape warble » (rendu en
+chorus), la compression par son et le sidechain, la taille des fenêtres de rendu (128,
+le plafond du jeu direct), et l'abandon d'un delay après quelques répétitions sans son
+(`repeatsUntilAbandon`, de 4 à 110 selon le retour : sous −45 dB, inaudible). Le LFO des
+effets de modulation et la réduction d'échantillonnage gardent leur phase d'une note à
+l'autre sur la machine ; le moteur les fait partir de zéro. **Non vérifiés sur la
+machine** : l'arpégiateur, la réverbération Freeverb (morceaux sans modèle), le compresseur
+maître au travail (seulement au repos).
+
+**Tables.** `delugeapp/data/deluge_tables.npz` (85 tables, 271 Ko) : les formes d'onde
+« analog », les dents de scie et carrés à bande limitée, sinus et triangles anti-repliement,
+`tanHSmall` et `tanH2d`, les courbes d'enveloppe, `tanTable`, les tables des notes et des
+cents (`centAdjustTableSmall`) — extraites de `src/deluge/util/lookuptables/` du
+firmware —, et les sept noyaux de lecture
+des échantillons (`windowedSincKernel`, `dsp/interpolate/interpolate.cpp`). Le firmware est
+sous licence GPL 3 : distribuer l'application avec ces tables obligerait à la publier sous
+la même licence.
+
+**Coût.** Les boucles échantillon par échantillon (filtres, rétroactions) sont du Python
+pur, 0,2 µs par échantillon et par étage environ ; une garde de 10⁻³ à leur entrée
+(`DENORMAL_GUARD`, mille fois sous le bit de poids faible du firmware) empêche les nombres
+sous-normaux, qui doublaient le coût d'un filtre s'éteignant dans le silence.
+
+### 4.42 Le pont vers les DAW : `daw.py`, `dawimport.py`, `dawlive.py`, `dawals.py`
+
+Trois sens, au choix de l'utilisateur, autour d'un **modèle commun** en noires
+(`daw.DawSong` : `bpm`, mesure, tonique, `tracks`, `scenes`, `markers`, `arranged` ;
+`DawTrack` : `kind` synth/kit/midi/cv/audio, `channel` 0–15, `clips`, `placements`,
+`scenes` {scène: clip}, `drums` {hauteur: (rangée, nom)} ; `DawClip` : une boucle et ses
+`DawNote(pitch, start, length, velocity)` ; `Placement(clip, start, length)` : un clip posé
+qui boucle s'il dure plus que lui).
+
+```python
+# daw.py — du Deluge vers le DAW
+def from_deluge(path, name="") -> DawSong      # clipInstances, sinon arrangement déduit des sections
+def clip_sound(track, clip) -> Sound | Kit     # instrument + réglages propres du clip
+def render_stems(song, sd, folder, progress=None, should_stop=None) -> list[Path]
+def machine_stems(sd, song_name) -> list[Path] # SAMPLES/EXPORTS/<morceau>/TRACKS, TRACKS-00…
+def write_midi(song, path, ppq=960) -> int     # type 1, repères, batterie canal 10
+def dawproject_xml(song, audio=None) -> (bytes, bytes); def write_dawproject(song, path)
+def rpp_text(song, audio=None) -> str;         def write_rpp(song, path, audio=None)
+def write_folder(song, dest, formats=("midi", "dawproject", "rpp"), samples=None,
+                 als_template=None, machine_audio=None) -> {"folder", "files", "skipped"}
+# dawimport.py — du DAW vers le Deluge
+EXTENSIONS = (".mid", ".midi", ".dawproject", ".als", ".rpp")
+def read_project(path) -> DawSong              # ValueError lisible, fichier abîmé compris
+def default_choices(song) -> list[ImportChoice]; def guess_role(track) -> str
+def looks_like_drums(track) -> bool;  def sections_of(song, bars=8) -> [(début, fin, nom)]
+def uses_scenes(song, source="auto") -> bool
+def build_song(song, choices, *, name, sd=None, lib=None, genre="", bars=8,
+               source="auto", seed=7) -> songwriter.SongSpec
+# dawlive.py — jouer ensemble
+def read_routes(sd, rel) -> list[LiveRoute];  def propose_channels(routes, avoid, keep_existing=True)
+def plan_live(sd, rel, routes, name="", follow=None) -> LivePlan
+def verify_live(original, plan) -> str;       def write_live(sd, plan, apply=False) -> SongWrite
+def setup_steps(daw="ableton") -> list[str]
+```
+
+**Mesuré.**
+
+* Aller-retour sur les 53 morceaux de la carte qui ont des notes : Deluge → MIDI,
+  DAWproject et Reaper → relecture, **chaque note déroulée identique** dans les trois
+  formats. Le DAWproject est validé contre le schéma officiel (`Project.xsd`,
+  `MetaData.xsd`). Reaper écrit ses positions en secondes à six décimales : à 129 BPM,
+  32 noires se relisent 32,00000015 et ajoutaient un tour de boucle de durée nulle
+  (« Calm Down ») ; les positions sont recalées sur la grille de 960 par noire.
+* Import des sets de référence Live 8, 9 et 12 (dépôt libre `dawtool`) : pistes MIDI,
+  clips de l'arrangement (`ClipTimeable/ArrangerAutomation/Events/MidiClip`) et du
+  lanceur (`ClipSlotList/ClipSlot/ClipSlot/Value/MidiClip`), notes
+  (`KeyTrack/MidiKey` + `MidiNoteEvent`), scènes (`Scenes/Scene/Name` depuis Live 10,
+  `SceneNames/Scene Value` avant), repères, tempo (`MainTrack`, `MasterTrack` avant
+  Live 12). Sur le set Live 8, 324 notes sur 1 975 sont hors de la boucle de leur clip :
+  Live ne les joue pas, l'import non plus.
+* Chaîne complète, écrite sur une carte factice puis relue comme un morceau du Deluge : les
+  synthés reviennent note pour note ; seules diffèrent les notes qui chevauchent la
+  suivante sur la même hauteur — le firmware ignore une note qui commence avant la fin de la
+  précédente (`NoteRow::readFromFile`), l'import raccourcit donc la première.
+* Batteries reconnues sur les 128 pistes des morceaux exportés puis relus : 126 avec le
+  canal (le DAWproject et Reaper le portent note par note), le nom et le jeu ; le jeu seul
+  en reconnaît 106 (il manque les kits qui ne jouent qu'une ou deux rangées).
+* Sections : repères du projet, douze au plus (les plus courtes fusionnent), puis tranches
+  de `bars` mesures pour les longues — le morceau écrit enchaîne ses sections dans son
+  arrangement (`_instances`), le déroulé est donc le même avec des clips à la taille de la
+  machine.
+
+**Jouer ensemble — lu dans le firmware 1.3.** Un synthé porte `inputMidiChannel` (canal
+depuis 0, écrit après `activeModFunction` par `writeMelodicInstrumentAttributesToFile`) ;
+sans `inputMidiDevice`, tout appareil le fait jouer (`LearnedMIDI::equalsCable`). Chaque son
+d'un kit peut porter `<midiInput channel note />`, écrit à la fin du son
+(`SoundDrum::writeToFile`) ; un `<MIDIInput>` de kit entier passe avant
+(`Kit::offerReceivedNote`, la note étant la rangée du bas). Les sons d'un kit reçoivent les
+notes General MIDI de l'export (`daw.drum_pitch`). **Sur la carte de l'utilisateur, 42
+synthés écoutent déjà le canal 1**, celui de son MIDI Follow A : une écoute existante est
+gardée sauf demande, et le plan signale canaux partagés et MIDI Follow. La copie
+« *morceau* DAW » est prouvée comme celles de §4.37 : défaire les ajouts redonne
+l'original à l'octet, et chaque instrument relu, ajouts retirés, est identique ; les 54
+morceaux de la carte passent la preuve. Horloge : SETTINGS ▸ MIDI ▸ Clock ▸ Input / Output.
+
+**Ableton Live (`dawals`), mesuré sur le Live 12.4.16 Lite de l'utilisateur
+(`D:\Ableton`).** Un `.als` est un XML compressé sans format publié : rien n'est inventé,
+tout part de fichiers **écrits par le Live installé**, au même format (`12.0_12402`) — le
+set de base et sa piste MIDI (`Core Library/Defaults/Creating Tracks/MIDI Track/Default
+MIDI Track.als`), la piste audio (`…/Audio Track/Default Audio Track.als`), un clip MIDI
+`.alc` de la Core Library, un clip audio d'un set de démonstration. Live se trouve par son
+journal (`%APPDATA%/Ableton/Live */Preferences/Log.txt` cite ses `Resources`) ; l'édition
+par le nom de l'exécutable (`Ableton Live 12 Lite.exe`), et le set suit ses limites
+(`dawals.EDITIONS`, tableau d'Ableton, https://www.ableton.com/en/upgrade-live/) : **Lite
+8 pistes audio et MIDI, 16 scènes ; Intro 16 et 16 ; Standard et Suite sans limite**. Au-delà,
+les pistes de notes passent d'abord, l'audio prend les places libres, les premières scènes
+sont gardées, et c'est annoncé. Mesuré sur Live 12 Lite : « 9 pistes ; (limité à 8) » à
+l'ouverture, douze scènes sans avertissement ; Live charge quand même tout après « Continuer ». Les fichiers d'Ableton n'entrent pas dans le dépôt : les tests bâtissent
+une installation factice, et un test lit le vrai Live s'il est là.
+
+* Numéros globaux : toute balise finissant par « Target », plus `Pointee` et
+  `ControllerTargets.N`, porte un numéro unique sous `NextPointeeId` (578 dans le set
+  vide, 8 980 dans la démo, aucun doublon) ; les enveloppes les citent par `PointeeId`.
+  Chaque piste clonée est renumérotée à partir de `NextPointeeId`.
+* Le tempo vit deux fois : `MainTrack/…/Tempo/Manual` et l'enveloppe qui désigne sa
+  cible — sans elle, l'automation l'emporte.
+* Une case par scène dans **deux** listes par piste (`MainSequencer` et
+  `FreezeSequencer/ClipSlotList`) ; clips en boucle (`Loop`), notes groupées par hauteur
+  (`KeyTrack/MidiKey`, `MidiNoteEvent … NoteId`), repères (`Locator`).
+* Pistes audio : `FileRef` de type 1 (relatif au set), deux repères de calage
+  (0 s → 0 noire, durée → durée × BPM / 60), mode « Beats ».
+* Hors ligne : le `.als` de cinq morceaux, relu par `dawimport.from_als`, rend chaque note
+  à l'identique. **Dans Live** : « Cool1 4 » (6 pistes MIDI, 6 pistes audio rendues,
+  4 scènes) s'ouvre sans avertissement (« Loaded document was created by Ableton Live
+  12.4d1 ») ; noms, couleurs, scènes, clips, arrangement, repères et formes d'onde à leur
+  place, 108 BPM.
+
+**Pas encore mesuré** : l'écriture de « MIDI To : Deluge, canal N » dans un `.als` — le Live
+de l'utilisateur, pas encore autorisé, n'enregistre pas (« Sauvegarde et exportation sont
+désactivées »), et aucun set livré avec Live ne route vers un appareil extérieur.
+Ses réglages : sortie « Deluge » en « Piste » (cochée le 4 novembre, à sa demande de
+prendre la main sur Live), « Sync » laissée éteinte.
+
+**Non vérifié sur la machine** : le chargement d'une copie « DAW » et son jeu depuis Live.
+
 ---
 
 ## 5. Contrats de l'interface
@@ -2825,11 +3129,13 @@ class AppContext:
 > module UI. Ses champs `sd`, `lib`, `player` sont typés en commentaire pour éviter les imports
 > circulaires (`from __future__ import annotations` + `typing.TYPE_CHECKING`).
 
-**dashboard.py — « Tableau de bord »**
-Vignettes statistiques (échantillons, presets, kits, morceaux, espace libre, score de santé),
-bouton de scan, carte détectée, 3 dernières anomalies, morceaux récents, actions rapides
-(Générer un preset, Construire un kit, Sauvegarder, Nettoyer), répartition des échantillons
-par dossier (barres colorées PAD_CYCLE), rappel de sauvegarde.
+**dashboard.py — « Accueil »** (refonte du 23 octobre 2026, §5.30)
+« Que voulez-vous faire ? » : quatre portes (`ActionPad`) vers l'atelier, le générateur, un
+morceau du Deluge à continuer, la bibliothèque ; le bandeau « À faire maintenant » (§5.20),
+caché quand rien ne cloche ; sans carte, « Votre carte Deluge » ; le Deluge et le PC
+(§5.25) ; vignettes statistiques ; carte, analyse et [Analyser la carte] ; santé ; en mode
+avancé, la répartition des échantillons par dossier. Les « actions rapides » ont disparu :
+les portes et le bandeau les remplacent.
 
 **samples.py — « Échantillons »**
 Arbre des dossiers à gauche ; table filtrable à droite (nom, dossier, durée, SR, bits, canaux,
@@ -2871,8 +3177,10 @@ Barre d'action : Générer, Aléatoire total, Muter, Morpher entre deux, Écoute
 dans SYNTHS/<dossier> (avec choix du nom et du sous-dossier), Générer un lot (n presets
 dans un nouveau dossier). Onglet secondaire : générateur de kit (kitgen) avec choix des rôles.
 
-**toolbox.py — « Outils »**
-Onglets :
+**toolbox.py — « Mémo »** (refonte du 23 octobre 2026, §5.30)
+Quatre onglets : Gammes et accords, Calculatrice, Mixage harmonique, Aide-mémoire. Les
+onglets *Rythme* et *Arrangement*, et la progression de *Théorie*, sont passés dans
+l'atelier (§5.28). La liste d'origine, pour mémoire :
 - *Théorie* : tonique + gamme -> PianoKeys surligné, notes, accords diatoniques, générateur
   de progression (par genre/humeur), voicings, export MIDI, `<modeNotes>` à recopier dans le Deluge.
 - *Rythme* : générateur euclidien (pulses/steps/rotation par piste) + motifs par genre +
@@ -2907,18 +3215,24 @@ le guide de l'utilisateur), bouton « Réinitialiser l'index ».
 class MainWindow(QMainWindow):
     def __init__(self, ctx: AppContext)
 ```
-- Colonne de gauche : une rangée de `NavPad` (212 px, repliable à 64 px) avec les 10 pages ;
-  la page affichée s'allume à sa couleur, les autres restent en veilleuse.
+- Colonne de gauche : une rangée de `NavPad` (212 px, repliable à 64 px) avec les 10 pages,
+  dans l'ordre du travail — Accueil, puis les groupes `RailGroup` Créer (Atelier, Générateur,
+  Mémo), Bibliothèque (Échantillons, Presets, Kits, Morceaux) et La carte (Santé,
+  Réglages) ; la page affichée s'allume à sa couleur, les autres restent en veilleuse.
 - **Une seule barre du haut** (56 px, `CHROME`) : logotype, **barre de menus intégrée**
   (`menuBar()` rend celle-ci), écran OLED de la carte (cliquable : ouvre les réglages ; reprend
-  chaque message de la barre d'état), pastille du Deluge, recherche globale, « Analyser »,
+  chaque message de la barre d'état), pastille du Deluge, recherche globale, l'interrupteur
+  « Simple | Avancé » (`LevelSwitch`, §5.30 — il remplace « Analyser », passé sur l'accueil),
   touche de lecture ronde. Elle se resserre sous 1 360 et 1 180 px. Dessous, un filet lumineux
   à la couleur de la page.
 - `QStackedWidget` pour les pages, création paresseuse (page instanciée au premier affichage).
 - Barre d'état : message, barre de progression des tâches, indicateur de lecture, espace libre.
-- Menus : Fichier (Choisir la carte, Scanner, Sauvegarder, Quitter), Édition, Outils, Aide (À propos, Raccourcis).
-- Raccourcis : `Ctrl+R` scanner, `Ctrl+F` recherche, `Ctrl+G` générateur, `Espace` écouter/arrêter,
-  `Ctrl+,` réglages, `F1` aide, `Ctrl+1..9` puis `Ctrl+0` pages.
+- Menus : Fichier (Choisir la carte, Scanner, Sauvegarder, Quitter), Édition, Outils (Nouveau
+  morceau, Ouvrir un morceau du Deluge…, Générateur de presets, Mémo, Santé, Deluge en direct,
+  Synchroniser, Mode avancé, Replier), Aide (À propos, Raccourcis).
+- Raccourcis : `Ctrl+R` scanner, `Ctrl+F` recherche, `Ctrl+G` générateur, `Ctrl+N` nouveau
+  morceau, `Ctrl+E` mode avancé, `Espace` écouter/arrêter, `Ctrl+,` réglages, `F1` aide,
+  `Ctrl+1..9` puis `Ctrl+0` pages.
 - Restaure la géométrie et la dernière page via `QSettings`.
 - Au démarrage : si `settings.sd_path` est vide ou invalide -> propose la détection automatique
   puis un dialogue de choix de dossier, et affiche l'`EmptyState` du tableau de bord.
@@ -3306,6 +3620,13 @@ vides.
 
 ### 5.23 Des morceaux du Deluge depuis les outils de création
 
+> **Depuis la refonte du 23 octobre 2026 (§5.30)**, seuls l'atelier ([Écrire le morceau],
+> [Compléter le morceau]) et le découpeur ([Écrire en morceau]) écrivent un morceau. Les
+> boutons « en morceau » des outils, des kits et du générateur ont disparu : le générateur,
+> les presets et les kits **donnent** leur son à l'atelier ([Essayer dans l'atelier],
+> [Utiliser dans l'atelier]). Le parcours ci-dessous reste celui de toute écriture ; le
+> tableau est celui d'avant la refonte.
+
 Un bouton par outil, tous sur le même parcours (`ui/songexport.export_song`,
 `Page.write_song`) : construire le morceau (une erreur d'usage s'annonce avant toute
 question), demander le nom (`QInputDialog.getText`), montrer le plan et le faire
@@ -3602,7 +3923,9 @@ qui cite exprès des mots de l'autre langue.
 ### 5.28 L'Atelier (`delugeapp/ui/pages/atelier.py`)
 
 `AtelierPage` — `TITLE = N_("Atelier")` (« Studio » en anglais), icône `atelier`, couleur
-`PAD_RED`, septième page (`Ctrl+7`) ; la dixième, Réglages, prend `Ctrl+0`.
+`PAD_RED`, deuxième page depuis la refonte (`Ctrl+2`, §5.30) ; la dixième, Réglages, prend
+`Ctrl+0`. Les quatre onglets ci-dessous sont devenus **cinq étapes** (§5.30) ; ce qui suit
+décrit la première version, dont le contenu a été gardé.
 `NEEDS_CARD = False` : l'atelier compose sans carte, il la demande pour écrire.
 
 * En-tête : `_compose_button` [Composer], `_import_button` [Partir d'un morceau…],
@@ -3670,6 +3993,122 @@ annuler, écouter sans sortie) et `TestEditeurDansLesPages` (l'Atelier retouche 
 le morceau écrit porte la retouche ; annuler ne touche à rien ; une piste MIDI ne se retouche
 pas ; le Générateur ajoute le son retouché à l'historique). Débrancher le bouton de l'Atelier
 ou la valeur sous l'encodeur les fait échouer (vérifié).
+
+### 5.30 Refonte : un parcours de création, deux niveaux (23 octobre 2026)
+
+**La demande** : « revoir entièrement l'interface : simple à utiliser et à comprendre,
+un workflow logique de création musicale, pour le novice comme pour le producteur
+confirmé ».
+
+**Deux niveaux.** `Settings.interface_level` (`"simple"` par défaut, ou `"avance"` ;
+`config.normalize_level` accepte aussi « avancé », « advanced », « expert ») et
+`Settings.advanced`. Dans les pages :
+
+```python
+avance(widget)          # propriété Qt « niveau » = « avance » : caché au niveau simple
+contexte(widget, nom)   # propriété « contexte » : visible quand la page est dans ce contexte
+Page.apply_level()      # appelée après build(), à chaque changement de niveau et par set_context
+Page.set_context(nom)   # ex. le générateur : « preset » ou « kit », selon l'onglet
+Page._level_changed(advanced)   # crochet des pages (Réglages : ses deux boutons radio)
+```
+
+`apply_level` montre ou cache les widgets marqués, et les onglets marqués d'un
+`QTabWidget` (`setTabVisible`). **On ne marque jamais un widget que la logique de la page
+montre ou cache** (le canal d'une piste MIDI, les outils de batterie) : on marque son
+conteneur. La barre d'actions (`_ActionsCompactes`) se recalcule quand un bouton
+apparaît (`_incoherent`). Le niveau se change par l'interrupteur de la barre du haut
+(`chrome.LevelSwitch`, compact sous 1 180 px), Outils ▸ Mode avancé (`Ctrl+E`) ou
+Réglages ▸ Niveau de l'interface ; `MainWindow.set_interface_level` enregistre, synchronise
+les trois et réapplique toutes les pages bâties.
+
+**Le parcours.** Ordre des pages (`_page_classes`) : Dashboard (« Accueil », icône `home`),
+Atelier, Generator, Toolbox (« Mémo », icône `memo` ; « Notebook » en anglais), Samples,
+Synths, Kits, Songs, Health, Settings ; `RAIL_GROUPS` titre les groupes Créer, Bibliothèque,
+La carte. Les pages se passent la main :
+
+| d'où | bouton | signal | où |
+|---|---|---|---|
+| Accueil | 4 portes (`_song_pad`, `_sound_pad`, `_continue_pad`, `_explore_pad`) | `navigateRequested`, `songRequested` | Atelier (`#Style`, ou l'étape en cours), Générateur, choix d'un morceau, Échantillons |
+| Générateur | `_try_preset_button`, `_try_kit_button` [Essayer dans l'atelier] | `toAtelier({"preset", "part", "options", "edited"})` / `toAtelier({"kit"})` | `AtelierPage.offer_preset` / `offer_kit` |
+| Presets, Kits | `_use_button` [Utiliser dans l'atelier] | `toAtelier` | idem |
+| Morceaux | `_open_button` [Ouvrir dans l'atelier] | `navigateRequested("Atelier#SONGS/…")` | `AtelierPage.focus_on` → `open_song` |
+| Atelier | `_show_song_button` [Voir dans Morceaux] | `navigateRequested("Songs#…")` | Morceaux, le morceau choisi |
+
+`MainWindow._to_atelier` met l'atelier devant et lui remet l'offre. Sans morceau,
+`offer_*` **retient** le son pour la prochaine composition (`_pending_sounds`,
+`_pending_kit`, montrés à l'étape Style) ; avec un morceau, `atelier.use_preset` (la piste de
+son rôle, `part_for`) ou `use_kit` (la batterie). `ctx.atelier_state` (`{"summary", "step"}`)
+dit à l'accueil qu'un morceau est en cours : la première porte devient « Reprendre le
+morceau ».
+
+**L'atelier en cinq étapes** (`STEPS`, `STYLE … DELUGE`) : `StepBar` (`stepClicked`,
+`set_current`, `set_reached`) au-dessus d'un `QTabWidget` à barre cachée ; [Étape
+précédente] / [Étape suivante] dessous ; les étapes 2 à 5 montrent un `EmptyState` sans
+morceau. Style : genres, tempo et tonalité (Couleur, Graine : avancé), accords (avancé :
+[Écouter les accords], [Autres accords], [Autre accord] — la suite retouchée sert à la
+composition), parties, caractère (avancé), [Composer le morceau] / [Recomposer le morceau]
+(question avant de remplacer). Sons : colonne Pistes commune aux sons et aux clips
+([Ajouter] ; la nature, avancée, sinon déduite de la partie), [Autre son pour la rangée]
+(`kitgen.reroll_row`). Clips : grille de batterie **cliquable** (`ClipView.set_clip(…,
+rows, editable=True)`, `hitToggled` → `atelier.toggle_hit`), et en avancé `groove_clip`
+(toujours depuis le motif droit), `add_euclid`, le style de jeu (`AtelierTrack.feel`,
+`FEELS` : un clip neuf), [Clip en MIDI…]. Structure : la grille des sections. Deluge : nom
+du morceau, [Écrire le morceau], [Voir dans Morceaux], [Compléter le morceau], l'état de la
+machine ([Deluge en direct…], [Synchroniser]), et en avancé [Morceau en MIDI…]
+(`atelier.export_midi`, sections en repères). En-tête : [Ouvrir un morceau du Deluge…],
+[Écouter un extrait] (`fullest_section`), [Arrêter]. Recliquer le genre en cours ne défait
+rien (`_genre_clicked`).
+
+**Générateur à 980 px.** `_ColonneDeReglages` : une colonne défilante dont
+`minimumSizeHint` vaut la largeur de son contenu — le séparateur ne la comprime plus (il
+laissait 153 px sur 284). Pads de genre sur deux colonnes au-dessus de 270 px visibles,
+une en dessous ; encodeurs du centre sur quatre colonnes au-dessus de 300, deux en dessous
+(`GrilleAdaptative`) ; listes de « Rôle du son » à sept caractères au moins, graine à 72 px.
+`_level_changed` relit la largeur minimale des deux colonnes. Accueil : `ActionPad` prend
+la hauteur de sa phrase (`hauteur_voulue`), et `ActionPad.grouper` aligne les portes d'une
+rangée. Accords : [Autres accords] et [Autre accord] restent ouverts après la composition ;
+la suite retouchée marque le style comme changé (`_style_touched`).
+
+**Kits anciens.** `songwriter.current_kit(kit, sd)` met un kit de la carte au niveau c1.2.1
+— bornes en millisecondes converties en trames, résonance, polyphonie — **avant** que
+`drum_kit_for` le complète de rangées neuves ; il s'écrit ensuite en attributs. Avant la
+refonte, seul l'ancien « Motif en morceau » des Kits convertissait : un kit 2.x choisi dans
+l'atelier gardait des bornes que la machine ignore.
+
+**Tests** (`tests/test_ui.py`, en cliquant) : `TestLAtelierEnEtapes` (étapes vides, barre
+et boutons, recomposer après question, l'en-tête, le mode simple, [Autre accord], un
+accord retouché après composition, la couleur des accords), `TestLAtelierDessineLesClips` (un clic dans la grille, groove non
+cumulé, rangée euclidienne, style de jeu, exports MIDI, extrait, [Voir dans Morceaux]),
+`TestLesSonsRejoignentLAtelier`, `TestMorceauxDepuisLesOutils` (dans la vraie fenêtre :
+générateur, kit construit, preset et kit de la carte, kit 2.x converti, morceau ouvert
+depuis Morceaux), `TestLAccueilMeneAuTravail`, `TestLeNiveauDeLInterface` ;
+`TestLeManuelDecritChaqueCommande` tourne en mode avancé, un morceau composé.
+`TestSongWriter.test_un_kit_ancien_de_la_carte_est_converti_avant_d_etre_complete`
+(`tests/test_core.py`).
+
+### 5.31 La page DAW (`delugeapp/ui/pages/daw.py`)
+
+Onzième page, après Morceaux, couleur `PAD_PINK`, icône `link`, raccourci `Ctrl+9` ;
+Santé passe sur `Ctrl+0`, Réglages n'a plus de chiffre et garde `Ctrl+,`. Le pad de la
+dixième page affiche enfin son « 0 » (`NavPad` prenait 0 pour « pas de chiffre »).
+
+Trois onglets :
+
+* **Vers le DAW** — liste des morceaux, résumé (tempo, pistes, clips, notes, sections,
+  arrangement réel ou déduit), cases des formats (MIDI, DAWproject, Reaper), « Joindre
+  l'export de pistes du Deluge » (grisée sans export), « Rendre chaque piste sur
+  l'ordinateur » (avancé) ; « Exporter pour le DAW… » demande un dossier du PC et écrit
+  dans un fil un dossier **neuf**.
+* **Depuis le DAW** — « Ouvrir un projet… », une ligne par piste avec ce qu'elle devient
+  (synthé d'un rôle, kit, piste MIDI, laisser de côté), sections selon l'arrangement ou
+  les scènes, tranches et style (avancé) ; « Écrire le morceau… » passe par
+  `songexport.export_song` (nom, plan, accord, fichier neuf).
+* **Jouer ensemble** — liste des morceaux, canal de chaque piste (liste par ligne),
+  « Garder les canaux déjà réglés », note MIDI Follow, mode d'emploi pas à pas pour
+  Ableton Live ou un autre DAW ; « Écrire la copie… » montre le plan et demande l'accord.
+
+À 980 × 640, les colonnes de droite défilent au lieu d'écraser leurs cartes (rendu vérifié
+en PNG, français et anglais).
 
 ## 6. Contraintes de robustesse
 

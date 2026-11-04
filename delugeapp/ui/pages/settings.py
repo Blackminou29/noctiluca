@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QRadioButton,
     QScrollArea,
     QSlider,
     QSpinBox,
@@ -51,7 +52,7 @@ from ..theme import (
 )
 from ..widgets.common import (Card, ElidedLabel, clear_layout,
                               human_datetime, human_size)
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,8 @@ class SettingsPage(Page):
     resetIndexRequested = pyqtSignal()
     #: Demande d'ouvrir la fenêtre « Deluge en direct ».
     liveRequested = pyqtSignal()
+    #: Le niveau de l'interface a changé : « simple » ou « avance ».
+    levelChanged = pyqtSignal(str)
 
     def build(self) -> None:
         outer = QVBoxLayout(self.content())
@@ -116,6 +119,7 @@ class SettingsPage(Page):
         self._build_audio_card()
         self._build_scan_card()
         self._build_safety_card()
+        self._build_level_card()
         self._build_appearance_card()
         self._build_about_card()
         self._column.addStretch(1)
@@ -573,7 +577,11 @@ class SettingsPage(Page):
         self._midi_channel.valueChanged.connect(
             self.guard(self._apply_midi_channel))
         form.addRow(tr("Canal"), self._midi_channel)
-        body.addLayout(form)
+        # Ports et canal : l'application trouve le Deluge toute seule ; les
+        # choisir à la main est un réglage avancé.
+        ports = avance(QWidget())
+        ports.setLayout(form)
+        body.addWidget(ports)
 
         self._midi_auto = QCheckBox(
             tr("Se connecter dès que le Deluge apparaît"))
@@ -809,7 +817,9 @@ class SettingsPage(Page):
     # -- analyse ------------------------------------------------------------ #
 
     def _build_scan_card(self) -> None:
-        card = Card(tr("Analyse de la carte"))
+        # Empreintes, analyse acoustique, index : l'application les règle
+        # d'elle-même ; les toucher est l'affaire du niveau avancé.
+        card = avance(Card(tr("Analyse de la carte")))
         body = card.body()
 
         self._scan_hash = QCheckBox(
@@ -969,6 +979,51 @@ class SettingsPage(Page):
             self._apply_backup_dir()
 
     # -- apparence ---------------------------------------------------------- #
+
+    def _build_level_card(self) -> None:
+        """Le niveau de l'interface : l'essentiel, ou tout."""
+        card = Card(tr("Niveau de l'interface"))
+        body = card.body()
+        hint = QLabel(tr(
+            "Simple : chaque page montre l'essentiel, de quoi créer sans se "
+            "perdre. Avancé : tous les réglages et toutes les commandes — "
+            "graines, moteurs, exports, retouches de fichiers. La bascule "
+            "« Simple | Avancé » de la barre du haut fait de même  "
+            "(Ctrl+E)."))
+        hint.setProperty("role", "subtitle")
+        hint.setWordWrap(True)
+        body.addWidget(hint)
+        row = QHBoxLayout()
+        row.setSpacing(18)
+        self._level_simple = QRadioButton(tr("Simple"))
+        self._level_simple.clicked.connect(
+            self.guard(lambda: self._choose_level("simple")))
+        row.addWidget(self._level_simple)
+        self._level_advanced = QRadioButton(tr("Avancé"))
+        self._level_advanced.clicked.connect(
+            self.guard(lambda: self._choose_level("avance")))
+        row.addWidget(self._level_advanced)
+        row.addStretch(1)
+        body.addLayout(row)
+        self._column.addWidget(card)
+
+    def _choose_level(self, level: str) -> None:
+        self.ctx.settings.interface_level = level
+        try:
+            self.ctx.save()
+        except Exception:  # noqa: BLE001
+            log.exception("enregistrement du niveau impossible")
+        self.levelChanged.emit(level)
+        self.apply_level()
+
+    def _level_changed(self, advanced: bool) -> None:
+        """Les deux boutons disent le niveau, d'où qu'il ait changé."""
+        for bouton, coche in ((self._level_simple, not advanced),
+                              (self._level_advanced, advanced)):
+            if bouton.isChecked() != coche:
+                bouton.blockSignals(True)
+                bouton.setChecked(coche)
+                bouton.blockSignals(False)
 
     def _build_appearance_card(self) -> None:
         card = Card(tr("Apparence"))

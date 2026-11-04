@@ -20,7 +20,6 @@ TEXTS = {
     "Motif en MIDI": "Pattern as MIDI",
     "Exporter le motif d'essai en fichier MIDI":
         "Export the test pattern as a MIDI file",
-    "Motif en morceau": "Pattern as a song",
     "Rechercher un kit…": "Search for a kit…",
     "Aucun kit sélectionné": "No kit selected",
     "Rangées": "Rows",
@@ -70,6 +69,5 @@ TEXTS = {
     "Export impossible : %s": "Export failed: %s",
     "Motif exporté : %s": "Pattern exported: %s",
     "Choisissez d'abord un kit.": "Choose a kit first.",
-    "ce fichier ne contient pas de kit": "this file contains no kit",
-    "%s motif": "%s pattern",
+    "Utiliser dans l'atelier": "Use in the studio",
 }

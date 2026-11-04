@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Page « Générateur ».
+"""Page « Générateur » : un son ou un kit, pour la carte.
 
-Le cœur créatif : fabriquer des presets de synthé par genre musical ou au
-hasard, les écouter, les faire varier, et enregistrer ceux qu'on garde dans
-``SYNTHS/``.
+Fabriquer des presets de synthé par genre musical ou au hasard, les écouter,
+les faire varier, et enregistrer ceux qu'on garde dans ``SYNTHS/`` ; bâtir
+un kit dans la bibliothèque de la carte et l'enregistrer dans ``KITS/``. Un
+son ou un kit qui plaît s'essaie aussi **dans l'atelier**, au sein d'un
+morceau : rien n'est écrit, il y rejoint la piste qui lui convient.
 
 Trois colonnes : les réglages à gauche, le son obtenu au centre, la file des
-variations à droite. Tout rendu audio part dans un fil séparé.
+variations à droite. Les commandes de l'en-tête suivent l'onglet affiché ;
+le niveau « avancé » ajoute moteur, graine, mutation, éditeur, réglages
+obtenus, fondu et lots. Tout rendu audio part dans un fil séparé.
 
 La graine est affichée et modifiable : c'est elle qui rend un son
 reproductible. Noter une graine suffit à retrouver exactement le même preset.
@@ -17,7 +21,7 @@ from __future__ import annotations
 import logging
 import random
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -42,13 +46,13 @@ from ...core import genres as genres_mod
 from ...core.fixedpoint import to_display
 from ...i18n import N_, tr
 from ..theme import PAD
-from ..widgets.common import (Card, ElidedLabel, SectionTitle,
-                              hint_in_list)
+from ..widgets.common import (Card, ElidedLabel, GrilleAdaptative,
+                              SectionTitle, hint_in_list)
 from ..widgets.envelope import EnvelopeEditor
 from ..widgets.filtercurve import FilterCurve, SpectrumView
 from ..widgets.knob import Knob
 from ..widgets.waveform import WaveformView
-from .base import Page, tool_button
+from .base import Page, avance, contexte, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +71,25 @@ MACROS: tuple[tuple[str, str, str], ...] = (
 VARIATION_COUNT = 8
 
 
+class _ColonneDeReglages(QScrollArea):
+    """Une colonne de la page : elle défile en hauteur, mais le séparateur
+    ne la comprime pas sous la largeur de son contenu.
+
+    Mesuré à 980 px : il ne lui laissait que 153 px pour les 284 que
+    demandent les réglages du mode avancé, et les pads de genre sortaient du
+    cadre (« Aci », « Boards of »)."""
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        indice = super().minimumSizeHint()
+        interieur = self.widget()
+        if interieur is None:
+            return indice
+        largeur = (interieur.minimumSizeHint().width()
+                   + self.verticalScrollBar().sizeHint().width()
+                   + 2 * self.frameWidth())
+        return QSize(max(indice.width(), largeur), indice.height())
+
+
 class GeneratorPage(Page):
     """Générateur de presets et de kits."""
 
@@ -80,6 +103,9 @@ class GeneratorPage(Page):
 
     #: Un preset vient d'être enregistré sur la carte.
     presetSaved = pyqtSignal(str)
+    #: Un son ou un kit à essayer dans l'atelier : ``{"preset", "part",
+    #: "options", "edited"}`` ou ``{"kit"}``.
+    toAtelier = pyqtSignal(object)
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
@@ -88,6 +114,12 @@ class GeneratorPage(Page):
         self._history: list = []
         self._audio = None
         self._macros: dict[str, QSlider] = {}
+        #: Les réglages qui ont fait le son courant, quand c'est le
+        #: générateur qui l'a fait : l'atelier en tirera ses variantes.
+        self._preset_options = None
+        self._preset_edited = False
+        #: Les réglages et l'état de retouche de chaque son de l'historique.
+        self._history_meta: dict[int, tuple] = {}
 
     # -- construction ------------------------------------------------------- #
 
@@ -97,43 +129,83 @@ class GeneratorPage(Page):
         outer.setSpacing(8)
 
         header, actions = self.header(
-            tr("Générateur"), tr("Fabriquer un son par genre, ou au hasard"))
+            tr("Générateur"),
+            tr("Un son ou un kit pour votre carte, par genre ou au hasard"))
         outer.addWidget(header)
 
-        generate = tool_button(tr("Générer"), "wand", primary=True)
-        generate.clicked.connect(self.guard(self._generate))
-        actions.addWidget(generate)
+        # Les commandes du son de synthé : elles ne paraissent que sur son
+        # onglet. Celles du kit, que sur le sien — un « Générer » au-dessus
+        # du kit ne disait pas ce qu'il allait générer.
+        self._generate_button = contexte(
+            tool_button(tr("Générer"), "wand", primary=True), "preset")
+        self._generate_button.clicked.connect(self.guard(self._generate))
+        actions.addWidget(self._generate_button)
 
-        randomize = tool_button(tr("Au hasard"), "dice",
-                                tr("Genre, rôle et réglages tirés au sort"))
+        randomize = contexte(tool_button(
+            tr("Au hasard"), "dice",
+            tr("Genre, rôle et réglages tirés au sort")), "preset")
         randomize.clicked.connect(self.guard(self._randomize))
         actions.addWidget(randomize)
 
-        mutate = tool_button(tr("Muter"), "refresh",
-                             tr("Variante légère du son courant"))
+        mutate = contexte(avance(tool_button(
+            tr("Muter"), "refresh", tr("Variante légère du son courant"))),
+            "preset")
         mutate.clicked.connect(self.guard(self._mutate))
         actions.addWidget(mutate)
 
-        listen = tool_button(tr("Écouter"), "play")
+        listen = contexte(tool_button(tr("Écouter"), "play"), "preset")
         listen.clicked.connect(self.guard(self._listen))
         actions.addWidget(listen)
 
-        self._edit_button = tool_button(tr("Modifier le son…"), "settings")
+        self._edit_button = contexte(avance(tool_button(
+            tr("Modifier le son…"), "settings")), "preset")
         self._edit_button.clicked.connect(self.guard(self._edit))
         actions.addWidget(self._edit_button)
 
-        save = tool_button(tr("Enregistrer dans SYNTHS"), "save")
+        save = contexte(tool_button(tr("Enregistrer dans SYNTHS"), "save"),
+                        "preset")
         save.clicked.connect(self.guard(self._save))
         actions.addWidget(save)
 
-        song = tool_button(tr("Essayer en morceau"), "song")
-        song.clicked.connect(self.guard(self._song_from_preset))
-        actions.addWidget(song)
+        self._try_preset_button = contexte(tool_button(
+            tr("Essayer dans l'atelier"), "atelier"), "preset")
+        self._try_preset_button.clicked.connect(
+            self.guard(self._preset_to_atelier))
+        actions.addWidget(self._try_preset_button)
+
+        self._build_kit_actions(actions)
 
         tabs = QTabWidget()
         tabs.addTab(self._build_synth_tab(), tr("Preset de synthé"))
         tabs.addTab(self._build_kit_tab(), tr("Kit de batterie"))
+        tabs.currentChanged.connect(self.guard(
+            lambda index: self.set_context("kit" if index == 1
+                                           else "preset")))
+        self._contexte = "preset"
         outer.addWidget(tabs, 1)
+
+    def _build_kit_actions(self, actions) -> None:
+        """Les commandes du kit, dans l'en-tête, pour son seul onglet."""
+        build = contexte(tool_button(tr("Construire le kit"), "kit",
+                                     primary=True), "kit")
+        build.clicked.connect(self.guard(self._build_kit))
+        actions.addWidget(build)
+        listen = contexte(tool_button(tr("Écouter le kit"), "play"), "kit")
+        listen.clicked.connect(self.guard(self._listen_kit))
+        actions.addWidget(listen)
+        self._reroll_button = contexte(tool_button(tr("Autre son"), "dice"),
+                                       "kit")
+        self._reroll_button.clicked.connect(self.guard(self._reroll_kit_row))
+        actions.addWidget(self._reroll_button)
+        save = contexte(tool_button(tr("Enregistrer dans KITS"), "save"),
+                        "kit")
+        save.clicked.connect(self.guard(self._save_kit))
+        actions.addWidget(save)
+        self._try_kit_button = contexte(tool_button(
+            tr("Essayer dans l'atelier"), "atelier"), "kit")
+        self._try_kit_button.clicked.connect(
+            self.guard(self._kit_to_atelier))
+        actions.addWidget(self._try_kit_button)
 
     def _build_synth_tab(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -149,10 +221,20 @@ class GeneratorPage(Page):
         splitter.setSizes([330, 700, 320])
         return splitter
 
+    def _level_changed(self, advanced: bool) -> None:
+        # Les réglages du mode avancé élargissent la colonne : le séparateur
+        # relit sa largeur minimale.
+        for nom in ("_controls_scroll", "_preview_scroll"):
+            colonne = getattr(self, nom, None)
+            if colonne is not None:
+                colonne.updateGeometry()
+
     def _build_controls(self) -> QWidget:
-        scroll = QScrollArea()
+        scroll = _ColonneDeReglages()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._controls_scroll = scroll
         inner = QWidget()
         column = QVBoxLayout(inner)
         column.setContentsMargins(0, 0, PAD, 0)
@@ -179,6 +261,11 @@ class GeneratorPage(Page):
             self._genre_grid.addWidget(button, index // 2, index % 2)
             self._genre_buttons[key] = button
         genre_card.body().addLayout(self._genre_grid)
+        # Deux pads par rangée, un seul quand la colonne rétrécit : à 980 px,
+        # la seconde colonne sortait du cadre (« ards of Ca… », « Drum a… »).
+        self._genre_colonnes = GrilleAdaptative(
+            scroll.viewport(), self._genre_grid,
+            list(self._genre_buttons.values()), 2, 1, 270)
 
         self._genre_hint = QLabel("")
         self._genre_hint.setProperty("role", "subtitle")
@@ -186,8 +273,8 @@ class GeneratorPage(Page):
         genre_card.body().addWidget(self._genre_hint)
         column.addWidget(genre_card)
 
-        # -- rôle et mode
-        role_card = Card(tr("Rôle et moteur"))
+        # -- rôle, puis moteur et graine au niveau avancé
+        role_card = Card(tr("Rôle du son"))
         grid = QGridLayout()
         grid.setSpacing(6)
 
@@ -197,15 +284,15 @@ class GeneratorPage(Page):
             self._role.addItem(genres_mod.role_label(role), role)
         grid.addWidget(self._role, 0, 1)
 
-        grid.addWidget(QLabel(tr("Moteur")), 1, 0)
-        self._mode = QComboBox()
+        grid.addWidget(avance(QLabel(tr("Moteur"))), 1, 0)
+        self._mode = avance(QComboBox())
         self._mode.addItem(tr("Choisi par le genre"), "")
         for mode, label in (("subtractive", tr("Soustractive")), ("fm", "FM"),
                             ("ringmod", tr("Ring mod"))):
             self._mode.addItem(label, mode)
         grid.addWidget(self._mode, 1, 1)
 
-        grid.addWidget(QLabel(tr("Graine")), 2, 0)
+        grid.addWidget(avance(QLabel(tr("Graine"))), 2, 0)
         seed_row = QHBoxLayout()
         self._seed = QSpinBox()
         self._seed.setRange(0, 1 << 30)
@@ -217,9 +304,17 @@ class GeneratorPage(Page):
         dice.setFixedWidth(34)
         dice.clicked.connect(self.guard(self._roll_seed))
         seed_row.addWidget(dice)
-        holder = QWidget()
+        holder = avance(QWidget())
         holder.setLayout(seed_row)
         grid.addWidget(holder, 2, 1)
+        # Les listes et la graine se resserrent : à 980 px, en mode avancé,
+        # cette carte demandait 274 px à elle seule, et la colonne des genres
+        # en perdait sa seconde rangée de pads.
+        for liste in (self._role, self._mode):
+            liste.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            liste.setMinimumContentsLength(7)
+        self._seed.setMinimumWidth(72)
         role_card.body().addLayout(grid)
         column.addWidget(role_card)
 
@@ -251,9 +346,11 @@ class GeneratorPage(Page):
         return scroll
 
     def _build_preview(self) -> QWidget:
-        scroll = QScrollArea()
+        scroll = _ColonneDeReglages()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._preview_scroll = scroll
         inner = QWidget()
         column = QVBoxLayout(inner)
         column.setContentsMargins(0, 0, 0, 0)
@@ -287,7 +384,7 @@ class GeneratorPage(Page):
         sound.body().addWidget(self._spectrum)
         column.addWidget(sound)
 
-        knobs = Card(tr("Réglages obtenus"))
+        knobs = avance(Card(tr("Réglages obtenus")))
         grid = QGridLayout()
         grid.setSpacing(6)
         self._knobs: dict[str, Knob] = {}
@@ -306,9 +403,13 @@ class GeneratorPage(Page):
             grid.addWidget(knob, index // 4, index % 4)
             self._knobs[key] = knob
         knobs.body().addLayout(grid)
+        # Quatre encodeurs par rangée, deux quand la colonne rétrécit : à
+        # 980 px, en mode avancé, ils demandaient 276 px sur 153.
+        self._knob_colonnes = GrilleAdaptative(
+            scroll.viewport(), grid, list(self._knobs.values()), 4, 2, 300)
         column.addWidget(knobs)
 
-        shape = Card(tr("Enveloppes et filtre"))
+        shape = avance(Card(tr("Enveloppes et filtre")))
         self._env1 = EnvelopeEditor(title=tr("Enveloppe 1 — amplitude"))
         shape.body().addWidget(self._env1)
         self._filter = FilterCurve()
@@ -344,7 +445,8 @@ class GeneratorPage(Page):
             self.guard(lambda _i: self._adopt_variation()))
         body.addWidget(self._variation_list, 1)
 
-        batch = tool_button(tr("Générer un lot dans un dossier…"), "export")
+        batch = avance(tool_button(tr("Générer un lot dans un dossier…"),
+                                   "export"))
         batch.clicked.connect(self.guard(self._generate_batch))
         body.addWidget(batch)
 
@@ -360,7 +462,9 @@ class GeneratorPage(Page):
         # Fondre le son courant avec un son de l'historique : les réglages
         # continus se mélangent, les choix (formes d'onde, moteur) basculent
         # à mi-chemin.
-        morph_row = QHBoxLayout()
+        morph_host = avance(QWidget())
+        morph_row = QHBoxLayout(morph_host)
+        morph_row.setContentsMargins(0, 0, 0, 0)
         self._morph_amount = QSlider(Qt.Orientation.Horizontal)
         self._morph_amount.setRange(0, 100)
         self._morph_amount.setValue(50)
@@ -368,7 +472,7 @@ class GeneratorPage(Page):
         morph = tool_button(tr("Fondre"), "refresh")
         morph.clicked.connect(self.guard(self._morph))
         morph_row.addWidget(morph)
-        body.addLayout(morph_row)
+        body.addWidget(morph_host)
         return card
 
     def _build_kit_tab(self) -> QWidget:
@@ -405,36 +509,17 @@ class GeneratorPage(Page):
         self._kit_name = QLineEdit(tr("MON KIT"))
         grid.addWidget(self._kit_name, 1, 1)
 
-        grid.addWidget(QLabel(tr("Graine")), 2, 0)
-        self._kit_seed = QSpinBox()
+        grid.addWidget(avance(QLabel(tr("Graine"))), 2, 0)
+        self._kit_seed = avance(QSpinBox())
         self._kit_seed.setRange(0, 1 << 30)
         grid.addWidget(self._kit_seed, 2, 1)
 
-        grid.addWidget(QLabel(tr("Dossier à privilégier")), 3, 0)
-        self._kit_folder = QLineEdit()
+        grid.addWidget(avance(QLabel(tr("Dossier à privilégier"))), 3, 0)
+        self._kit_folder = avance(QLineEdit())
         self._kit_folder.setPlaceholderText(
             tr("facultatif — ex. SAMPLES/Artists/…"))
         grid.addWidget(self._kit_folder, 3, 1)
         body.addLayout(grid)
-
-        row = QHBoxLayout()
-        build = tool_button(tr("Construire le kit"), "kit", primary=True)
-        build.clicked.connect(self.guard(self._build_kit))
-        row.addWidget(build)
-        listen = tool_button(tr("Écouter"), "play")
-        listen.clicked.connect(self.guard(self._listen_kit))
-        row.addWidget(listen)
-        self._reroll_button = tool_button(tr("Autre son"), "dice")
-        self._reroll_button.clicked.connect(self.guard(self._reroll_kit_row))
-        row.addWidget(self._reroll_button)
-        save = tool_button(tr("Enregistrer dans KITS"), "save")
-        save.clicked.connect(self.guard(self._save_kit))
-        row.addWidget(save)
-        kit_song = tool_button(tr("Kit en morceau"), "song")
-        kit_song.clicked.connect(self.guard(self._song_from_kit))
-        row.addWidget(kit_song)
-        row.addStretch(1)
-        body.addLayout(row)
 
         self._kit_result = QListWidget()
         body.addWidget(self._kit_result, 1)
@@ -480,7 +565,8 @@ class GeneratorPage(Page):
     def _generate(self) -> None:
         from ...core import synthgen
 
-        self._show_preset(synthgen.generate(self._options()))
+        options = self._options()
+        self._show_preset(synthgen.generate(options), options=options)
         self.say(tr("Preset généré : %s") % self._preset.sound.name)
 
     def _randomize(self) -> None:
@@ -513,11 +599,19 @@ class GeneratorPage(Page):
         self.say(tr("Point de départ : %s. « Muter » ou « Produire 8 "
                     "variantes » partent de lui.") % preset.sound.name)
 
-    def _show_preset(self, preset) -> None:
-        """Affiche un preset et le place dans l'historique."""
+    def _show_preset(self, preset, options=None, edited: bool = False) -> None:
+        """Affiche un preset et le place dans l'historique.
+
+        ``options`` : les réglages qui l'ont fait, quand c'est le générateur
+        — l'atelier en tirera des variantes dans le style ; ``edited`` : il
+        a été retouché à la main depuis.
+        """
         from ...core import synthgen
 
         self._preset = preset
+        self._preset_options = options
+        self._preset_edited = bool(edited)
+        self._history_meta[id(preset)] = (options, bool(edited))
         sound = preset.sound
         self._name.setText(sound.name)
         try:
@@ -624,7 +718,8 @@ class GeneratorPage(Page):
         preset = copy.deepcopy(self._preset)
         preset.sound = dialog.edited_sound()
         preset.name = preset.sound.name or preset.name
-        self._show_preset(preset)
+        self._show_preset(preset, options=self._preset_options,
+                          edited=self._preset_edited or bool(changes))
         if changes:
             self.say(tr("Son retouché : %s.") % " · ".join(changes[:3]))
         else:
@@ -697,7 +792,9 @@ class GeneratorPage(Page):
         row = self._history_list.currentRow()
         if not 0 <= row < len(self._history):
             return
-        self._show_preset(self._history[row])
+        preset = self._history[row]
+        options, edited = self._history_meta.get(id(preset), (None, False))
+        self._show_preset(preset, options=options, edited=edited)
 
     # -- enregistrement ----------------------------------------------------- #
 
@@ -951,55 +1048,34 @@ class GeneratorPage(Page):
         self.say(tr("Kit enregistré : %s") % card.rel(target))
         self.presetSaved.emit(card.rel(target))
 
-    # -- morceaux du Deluge ------------------------------------------------- #
+    # -- vers l'atelier ------------------------------------------------------ #
 
-    def _genre_tempo(self, genre: str) -> int:
-        low, high = genres_mod.genre(genre or "techno").bpm
-        return int(round((low + high) / 2.0))
-
-    def _song_from_preset(self) -> None:
-        """Le son courant mis en situation : une phrase faite pour son rôle,
-        sur une progression et la batterie du genre."""
+    def _preset_to_atelier(self) -> None:
+        """Le son courant rejoint le morceau de l'atelier, à la piste de son
+        rôle — ou le prochain morceau, s'il n'y en a pas encore. Rien n'est
+        écrit : on l'écoute en situation, et le morceau s'écrit à la
+        dernière étape de l'atelier."""
         if self._preset is None:
             self.say(tr("Générez d'abord un son."))
             return
-        options = self._options()
-        genre = options.genre or "techno"
-        role = options.role or "bass"
-        preset = self._preset
-        bpm = self._genre_tempo(genre)
+        import copy
 
-        def build(card):
-            from ...core import rhythm, songwriter
+        options = self._preset_options
+        role = options.role if options is not None \
+            else (self._role.currentData() or "lead")
+        self.toAtelier.emit({
+            "preset": copy.deepcopy(self._preset), "part": role,
+            "options": copy.deepcopy(options),
+            "edited": self._preset_edited})
 
-            beat = rhythm.genre_beat(genre, bars=1, seed=1, fills=False)
-            kit, rows, _lost = songwriter.drum_kit_for(card, self.lib, genre,
-                                                       beat.tracks)
-            return songwriter.preset_song(
-                preset, name="", bpm=bpm, genre=genre, role=role,
-                drums=rhythm.loop(beat, 4), kit=kit, row_map=rows)
-
-        self.write_song(build, preset.sound.name or tr("Essai"))
-
-    def _song_from_kit(self) -> None:
-        """Le kit construit, avec le rythme de son genre, en morceau."""
+    def _kit_to_atelier(self) -> None:
+        """Le kit construit devient la batterie du morceau de l'atelier."""
         if self._kit is None or not self._kit.rows:
             self.say(tr("Construisez d'abord un kit."))
             return
-        genre = self._kit_genre.currentData() or "techno"
-        kit = self._kit
-        bpm = self._genre_tempo(genre)
+        import copy
 
-        def build(card):
-            from ...core import rhythm, songwriter
-
-            beat = rhythm.genre_beat(genre, bars=1, seed=1, fills=False)
-            rows = songwriter.drum_rows(beat.tracks, kit)
-            return songwriter.pattern_song(beat, kit, rows, name="", bpm=bpm,
-                                           kit_name=kit.name)
-
-        self.write_song(build, f"{self._kit.name} "
-                               f"{genres_mod.genre(genre).label}")
+        self.toAtelier.emit({"kit": copy.deepcopy(self._kit)})
 
 
     # -- rafraîchissement --------------------------------------------------- #

@@ -105,6 +105,9 @@ PAGE_COLORS = {
     "Synths": PAD_PURPLE,
     "Kits": PAD_GREEN,
     "Songs": PAD_BLUE,
+    # Le rose, dernière teinte libre des pads, entre le bleu des morceaux et
+    # l'orange de la santé.
+    "Daw": PAD_PINK,
     "Generator": PAD_MAGENTA,
     # Le rouge du bouton d'enregistrement : on y compose le morceau.
     "Atelier": PAD_RED,

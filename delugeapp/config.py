@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .i18n import N_, normalize, tr
+from .i18n import N_, normalize, tr, untranslated
 
 if TYPE_CHECKING:  # pragma: no cover - uniquement pour les annotations
     from delugeapp.core.audio_out import Player
@@ -37,7 +37,19 @@ __all__ = [
     "CONFIG_DIR", "SETTINGS_PATH", "DB_PATH", "LOG_PATH",
     "DEFAULT_BACKUP_DIR", "Settings", "AppContext",
     "load_settings", "save_settings", "ensure_config_dir",
+    "INTERFACE_LEVELS", "normalize_level",
 ]
+
+#: Les deux niveaux de l'interface : « simple » montre l'essentiel de chaque
+#: page, « avance » tous les réglages et toutes les commandes.
+INTERFACE_LEVELS: tuple[str, ...] = ("simple", "avance")
+
+
+def normalize_level(value: Any) -> str:
+    """« simple » ou « avance » ; ce qui n'est pas compris donne « simple »."""
+    texte = str(value or "").strip().casefold()
+    return "avance" if texte in untranslated(
+        ("avance", "avancé", "advanced", "expert")) else "simple"
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +266,16 @@ class Settings:
     #: Synchroniser d'office la copie de travail quand le Deluge est branché.
     auto_sync: bool = True
 
+    # -- l'interface ---------------------------------------------------------
+    #: « simple » : l'essentiel de chaque page ; « avance » : tout. Un nouveau
+    #: venu commence par l'essentiel, la bascule est dans la barre du haut.
+    interface_level: str = "simple"
+
+    @property
+    def advanced(self) -> bool:
+        """Vrai si l'interface montre tous les réglages."""
+        return self.interface_level == "avance"
+
     # -- sérialisation ----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         """Dictionnaire JSON-sérialisable des réglages."""
@@ -280,6 +302,7 @@ class Settings:
             "work_dir": self.work_dir,
             "card_backup": self.card_backup,
             "auto_sync": bool(self.auto_sync),
+            "interface_level": normalize_level(self.interface_level),
         }
 
     @classmethod
@@ -326,6 +349,7 @@ class Settings:
         s.work_dir = _as_str(g("work_dir"), s.work_dir)
         s.card_backup = _as_str(g("card_backup"), s.card_backup)
         s.auto_sync = _as_bool(g("auto_sync"), s.auto_sync)
+        s.interface_level = normalize_level(g("interface_level"))
         return s
 
     # -- confort ----------------------------------------------------------

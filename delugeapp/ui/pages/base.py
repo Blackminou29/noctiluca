@@ -74,6 +74,32 @@ PHRASE_GAP = 0.05
 #: Une note seule, ou une liste de notes imposée.
 SINGLE_NOTE = 0.8
 
+#: Propriété Qt d'une commande réservée au niveau « avancé ».
+NIVEAU = "niveau"
+#: Propriété Qt d'une commande qui n'a de sens que dans une partie de la
+#: page — l'onglet « Kit de batterie » du générateur, par exemple.
+CONTEXTE = "contexte"
+
+
+def avance(widget):
+    """Réserve ``widget`` au niveau « avancé », et le rend.
+
+    S'écrit autour de la création — ``actions.addWidget(avance(bouton))``.
+    La page le montre ou le cache selon le niveau choisi
+    (:meth:`Page.apply_level`) ; un onglet se marque par sa page. Ne marquer
+    que ce dont la page ne règle pas elle-même la visibilité : deux maîtres
+    pour un même widget, et le dernier qui parle gagne.
+    """
+    widget.setProperty(NIVEAU, "avance")
+    return widget
+
+
+def contexte(widget, nom: str):
+    """Rattache ``widget`` à une partie de la page (:meth:`Page.set_context`),
+    et le rend."""
+    widget.setProperty(CONTEXTE, str(nom))
+    return widget
+
 
 def _sans_accents(texte: str) -> str:
     """Minuscules sans accents ni ``&``, pour comparer deux libellés.
@@ -146,6 +172,11 @@ class Page(QWidget):
         super().__init__(parent)
         self.ctx = ctx
         self._built = False
+        #: La partie de la page affichée, pour les commandes qui n'ont de
+        #: sens que dans l'une d'elles (:func:`contexte`).
+        self._contexte = ""
+        #: L'en-tête de la page, une fois bâti.
+        self._hero = None
 
         # La page prend sa couleur **avant** de créer le moindre enfant :
         # boutons principaux, sélections, onglets, cases et curseurs sont
@@ -197,8 +228,69 @@ class Page(QWidget):
             self._tint_sections()
             self._light_up()
             self._explain_controls()
+            self.apply_level()
         except Exception:  # noqa: BLE001 - rempart, cf. SPEC §6.3
             log.exception("construction de la page %s en échec", self.TITLE)
+
+    # -- niveau de l'interface ---------------------------------------------- #
+
+    def advanced(self) -> bool:
+        """Vrai si l'interface montre tout (niveau « avancé »)."""
+        return bool(getattr(self.ctx.settings, "advanced", False))
+
+    def set_context(self, nom: str) -> None:
+        """Change la partie affichée : ses commandes paraissent, celles des
+        autres parties s'effacent."""
+        self._contexte = str(nom or "")
+        self.apply_level()
+
+    def apply_level(self) -> None:
+        """Montre ou cache les commandes selon le niveau et la partie.
+
+        Un nouveau venu voit l'essentiel ; le reste — graines, moteurs,
+        exports, réglages fins — paraît au niveau « avancé ». Rien n'est
+        détruit : une commande cachée garde son état, et revient telle
+        quelle. Les pages qui ont autre chose à réarranger redéfinissent
+        :meth:`_level_changed`.
+        """
+        if not self._built:
+            return
+        avance_ = self.advanced()
+        from PyQt6.QtWidgets import QTabWidget
+
+        pages_d_onglet = []
+        for onglets in self.findChildren(QTabWidget):
+            for index in range(onglets.count()):
+                page = onglets.widget(index)
+                pages_d_onglet.append(page)
+                if page is not None and page.property(NIVEAU) == "avance":
+                    onglets.setTabVisible(index, avance_)
+            if not onglets.isTabVisible(onglets.currentIndex()):
+                for index in range(onglets.count()):
+                    if onglets.isTabVisible(index):
+                        onglets.setCurrentIndex(index)
+                        break
+        for widget in self.findChildren(QWidget):
+            if any(widget is page for page in pages_d_onglet):
+                continue
+            niveau = widget.property(NIVEAU)
+            partie = widget.property(CONTEXTE)
+            if niveau is None and partie is None:
+                continue
+            visible = ((niveau != "avance" or avance_)
+                       and (not partie or partie == self._contexte))
+            if widget.isHidden() == visible:
+                widget.setVisible(visible)
+        try:
+            self._level_changed(avance_)
+        except Exception as exc:        # noqa: BLE001 - un réarrangement
+            log.debug("niveau non appliqué à %s : %s", self.TITLE, exc)
+        ajusteur = getattr(self._hero, "_actions_compactes", None)
+        if ajusteur is not None:
+            ajusteur.ajuster()
+
+    def _level_changed(self, advanced: bool) -> None:
+        """Ce que la page réarrange d'autre au changement de niveau."""
 
     def _light_up(self) -> None:
         """Allume les boutons principaux et teint les tracés de la page.
@@ -354,8 +446,10 @@ class Page(QWidget):
         ressemblaient donc toutes. Passer par la page évite d'avoir à répéter
         la teinte à chaque appel — et d'oublier de la mettre à jour.
         """
-        return page_header(title, subtitle, self.color, self.ICON,
-                           seed=art.seed_of(self.key))
+        host, actions = page_header(title, subtitle, self.color, self.ICON,
+                                    seed=art.seed_of(self.key))
+        self._hero = host
+        return host, actions
 
     def focus_on(self, hint: str) -> None:
         """Place la page sur la partie désignée par ``hint``.
@@ -624,10 +718,21 @@ class _ActionsCompactes(QObject):
                 etat = 1                  # seul le principal parle
             else:
                 etat = 2                  # que des icônes
-            if etat != self._compact:
+            if etat != self._compact or self._incoherent(boutons, etat):
                 self._replier(boutons, etat)
         except Exception as exc:       # noqa: BLE001 - un ajustement ne casse rien
             log.debug("barre d'actions non ajustée : %s", exc)
+
+    def _incoherent(self, boutons, etat: int) -> bool:
+        """Un bouton apparu depuis le dernier repli — le niveau « avancé »,
+        un autre onglet — n'en suit pas encore l'état."""
+        for bouton in boutons:
+            if not self._textes.get(id(bouton)):
+                continue
+            garde = etat == 0 or (etat == 1 and self._est_principal(bouton))
+            if garde != bool(bouton.text()):
+                return True
+        return False
 
     @staticmethod
     def _est_principal(bouton) -> bool:

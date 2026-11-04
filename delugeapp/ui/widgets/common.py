@@ -31,7 +31,8 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
+from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QLinearGradient,
+                         QPainter, QPen)
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -371,6 +372,165 @@ class StatTile(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
+
+
+class ActionPad(QPushButton):
+    """Une grande porte d'entrée : un pad allumé, un titre, une phrase.
+
+    C'est la pièce de « Que voulez-vous faire ? » sur l'accueil : chaque
+    intention — créer un morceau, créer un son… — se lit d'un coup d'œil,
+    à la couleur de la page où elle mène. Reste un ``QPushButton`` : son
+    texte est le titre, que l'aide et le manuel citent ; la phrase se pose
+    par :meth:`set_description`.
+    """
+
+    HAUTEUR = 96
+
+    def __init__(self, title: str, description: str = "",
+                 icon_name: str = "", color: str = GOLD,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(title, parent)
+        self._description = str(description or "")
+        self._icon = str(icon_name or "")
+        self._color = color
+        self._survol = False
+        self._groupe: list[ActionPad] = [self]
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(self.HAUTEUR)
+        self._titre = QFont(self.font())
+        self._titre.setPointSizeF(self._titre.pointSizeF() * 1.18)
+        self._titre.setBold(True)
+
+    @staticmethod
+    def grouper(pads) -> None:
+        """Des portes qui gardent la même hauteur, celle que demande la plus
+        longue de leurs phrases : rangées côte à côte, elles s'alignent."""
+        pads = list(pads)
+        for pad in pads:
+            pad._groupe = pads
+
+    def hauteur_voulue(self, largeur: int) -> int:
+        """La hauteur qui montre la phrase entière à cette largeur.
+
+        Mesuré à 980 px en anglais : à 96 px fixes, la troisième ligne de
+        « Create a song » sortait du cadre."""
+        texte = max(40, int(largeur) - 114)
+        titre = QFontMetrics(self._titre).height()
+        phrase = QFontMetrics(self.font()).boundingRect(
+            0, 0, texte, 10000, int(Qt.TextFlag.TextWordWrap),
+            self._description).height() if self._description else 0
+        return max(self.HAUTEUR, 30 + titre + phrase)
+
+    def _ajuster_hauteur(self) -> None:
+        hauteur = max(p.hauteur_voulue(p.width()) for p in self._groupe)
+        for pad in self._groupe:
+            if pad.height() != hauteur or pad.minimumHeight() != hauteur:
+                pad.setFixedHeight(hauteur)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - API Qt
+        super().resizeEvent(event)
+        self._ajuster_hauteur()
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        self._color = color or GOLD
+        self.update()
+
+    def description(self) -> str:
+        return self._description
+
+    def set_description(self, text: str) -> None:
+        self._description = str(text or "")
+        self._ajuster_hauteur()
+        self.update()
+
+    def set_icon(self, icon_name: str) -> None:
+        self._icon = str(icon_name or "")
+        self.update()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        return QSize(300, max(self.HAUTEUR, self.minimumHeight()))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - API Qt
+        return QSize(200, max(self.HAUTEUR, self.minimumHeight()))
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._survol = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - API Qt
+        self._survol = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            cadre = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+            actif = self.isEnabled()
+            fond = QLinearGradient(cadre.topLeft(), cadre.topRight())
+            fond.setColorAt(0.0, QColor(mix(PANEL_HI, self._color,
+                                            0.20 if self._survol else 0.12)))
+            fond.setColorAt(0.65, QColor(PANEL_HI))
+            p.setBrush(fond)
+            p.setPen(QPen(QColor(self._color if (self._survol and actif)
+                                 else BORDER_SOFT), 1.2))
+            p.drawRoundedRect(cadre, 14, 14)
+
+            cote = 50.0
+            pad = QRectF(cadre.left() + 16, cadre.center().y() - cote / 2,
+                         cote, cote)
+            if actif:
+                art.paint_pad(p, pad, self._color,
+                              glow=0.55 if self._survol else 0.35,
+                              radius=cote * 0.26)
+            else:
+                art.paint_off_pad(p, pad, diode=False, radius=cote * 0.26)
+            if self._icon:
+                taille = int(cote * 0.52)
+                encre = text_on(self._color) if actif else GREY
+                p.drawPixmap(int(pad.center().x() - taille / 2),
+                             int(pad.center().y() - taille / 2),
+                             icons.icon(self._icon, encre, taille).pixmap(
+                                 taille, taille))
+
+            gauche = pad.right() + 16
+            zone = QRectF(gauche, cadre.top() + 14,
+                          cadre.right() - gauche - 30, cadre.height() - 26)
+            p.setFont(self._titre)
+            p.setPen(QColor(PAD_WHITE if actif else TEXT_SOFT))
+            hauteur_titre = p.fontMetrics().height()
+            p.drawText(QRectF(zone.left(), zone.top(), zone.width(),
+                              hauteur_titre),
+                       int(Qt.AlignmentFlag.AlignLeft
+                           | Qt.AlignmentFlag.AlignVCenter),
+                       p.fontMetrics().elidedText(self.text(),
+                                                  Qt.TextElideMode.ElideRight,
+                                                  int(zone.width())))
+            p.setFont(self.font())
+            p.setPen(QColor(TEXT_SOFT))
+            p.drawText(QRectF(zone.left(), zone.top() + hauteur_titre + 2,
+                              zone.width(),
+                              zone.height() - hauteur_titre - 2),
+                       int(Qt.AlignmentFlag.AlignLeft
+                           | Qt.AlignmentFlag.AlignTop
+                           | Qt.TextFlag.TextWordWrap),
+                       self._description)
+            p.setPen(QColor(readable(self._color) if actif else GREY))
+            p.setFont(self._titre)
+            p.drawText(QRectF(cadre.right() - 30, cadre.top(), 20,
+                              cadre.height()),
+                       int(Qt.AlignmentFlag.AlignCenter), "›")
+            p.end()
+        except Exception as exc:  # noqa: BLE001 - un décor ne casse rien
+            log.debug("porte d'entrée non tracée : %s", exc)
 
 
 # --------------------------------------------------------------------------- #

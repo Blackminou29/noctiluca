@@ -1,63 +1,65 @@
 # -*- coding: utf-8 -*-
 """Moteur d'écoute hors-ligne : entendre un preset sans passer par le Deluge.
 
-Le but est de **juger un son**, pas de simuler la machine. Un preset généré
-doit pouvoir être écouté dans l'application avant d'être écrit sur la carte :
-la question à laquelle ce module répond est « est-ce que cette basse est
-grasse ? », pas « est-ce exactement ce que sortirait le Deluge ? ».
+Un preset généré doit pouvoir être écouté dans l'application avant d'être
+écrit sur la carte. Depuis le 23 octobre 2026, ce moteur ne se contente
+plus d'un son « plausible » : il **refait les calculs du firmware de la
+machine** (communautaire 1.3, commit ``102cf9f``), étage par étage, par
+:mod:`.dsp`.
 
-La SPEC §4.21 fixe la qualité attendue — « plausible, pas exact » — et un
-budget de **400 ms pour 2,5 secondes**. Trois choix techniques en découlent :
+* **La voix** se calcule par blocs de 128 échantillons, comme sur la
+  machine : enveloppes et LFO une fois par bloc, paramètres repatchés
+  (:mod:`.paramlaws`), amplitudes en rampe d'un bloc au suivant.
+  Oscillateurs lus dans les tables du firmware, unisson compensé en
+  ``1/√n`` *avant* le filtre, bruit uniforme, FM à deux modulateurs
+  additionnés qui modulent les deux porteuses, modulation en anneau ;
+  échelle à transistors échantillon par échantillon avec ses compensations
+  de niveau ; volume et enveloppe 1 après le filtre ; saturation adoucie.
+* **Le son** : panoramique linéaire, réduction d'échantillonnage et de
+  résolution, chorus, flanger ou phaser, égaliseur, delay (ping-pong,
+  analogique), envoi vers la réverbération, volume post-effets — le réglage
+  ``volume`` d'un preset est ce volume-là, et non celui de la voix.
+* **Le morceau** : une réverbération partagée (« Mutable », celle d'un
+  morceau neuf, ou Freeverb), puis le compresseur maître au repos et la
+  sortie (gain de base 0,85 du compresseur d'un morceau, et sa saturation
+  adoucie qui arrondit l'extrême aigu) : un mélange de 2²⁴ sort à 0,29 de
+  pleine échelle.
 
-* **tables d'onde à bandes limitées**, découpées par octave, lues par
-  interpolation linéaire. Produire les formes d'onde par addition
-  d'harmoniques serait plus juste mais coûterait dix fois plus cher pour
-  12 voix d'unisson ;
-* **filtre appliqué par blocs dans le domaine fréquentiel**, avec recouvrement
-  de moitié. Une récursion échantillon par échantillon en Python coûterait à
-  elle seule tout le budget ; ici un balayage de filtre complet prend 10 ms ;
-* **réverbération par convolution FFT** d'une réponse impulsionnelle
-  synthétique, soit 9 ms au lieu d'un réseau de retards bouclés.
+Les signaux circulent à l'échelle des entiers du firmware (±2³¹) jusqu'à la
+sortie. Les échantillons se lisent comme sur la machine : en stéréo s'ils le
+sont, par sinus cardinal fenêtré quand ils sont transposés. Restent
+approchés : l'étirement temporel, le glissé, le LFO 1 global (il repart à
+chaque note), la compression par son et le sidechain.
 
-**Les réglages suivent les lois du firmware** (:mod:`.paramlaws`) : durées
-d'enveloppe et leurs courbes, coupures, vitesses des LFO, lois de volume,
-désaccord d'unisson, glissé, et la manière dont un câble s'ajoute — sources
-bipolaires, force au carré vers une hauteur, *random* tiré une fois par note.
-Jusqu'au 22 octobre 2026, ces lois étaient estimées, et l'utilisateur
-entendait ses sons de l'atelier « sans rapport » avec le Deluge : un decay de
-13 durait 36 ms au lieu de 1,8 s, un vibrato léger balançait d'un
-demi-ton. Ce qui reste approché, c'est le traitement du signal : formes
-d'onde, filtre à résonance (le facteur de qualité d'un filtre à deux pôles
-pour une échelle à transistors), effets.
+Vérifié contre un export de pistes de la machine le 23 octobre 2026 (SPEC
+§4.41) : douze sons d'essai, niveaux à 0,1 dB près.
 
-Ne dépend que de numpy.
+Budget : SPEC §4.21, 2,5 secondes rendues en moins de 600 ms au pire cas (une
+nappe à huit voix d'unisson) ; un preset de la carte rend 1,5 s en 0,1 s
+(médiane). Ne dépend que de numpy.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import zlib
+from collections import OrderedDict
 from functools import lru_cache
 
 import numpy as np
 
+from . import dsp
 from . import paramlaws as laws
-from .fixedpoint import to_display
+from .fixedpoint import INT32_MIN
 from .model import Kit, Sound, SynthPreset, param_of_destination
 from .sdcard import SDCard
 
 log = logging.getLogger(__name__)
 
-#: Taille des tables d'onde.
-TABLE_SIZE = 2048
-
-#: Taille des blocs de filtrage, et recouvrement.
-FILTER_BLOCK = 1024
-
-#: Marge de sortie : la même pour tous les sons, pour que les lois de
-#: volume gardent leurs rapports (un son au réglage 50 partout, joué
-#: fort, frôle la pleine échelle).
-OUTPUT_HEADROOM = 0.07
+#: Fréquence de calcul : celle du Deluge. Un rendu demandé à une autre
+#: fréquence est calculé à 44,1 kHz puis rééchantillonné.
+ENGINE_RATE = dsp.SR
 
 #: Durée maximale laissée à l'extinction d'une note : un release de 50 dure
 #: 27 s sur la machine, l'écoute s'arrête avant.
@@ -66,18 +68,55 @@ MAX_TAIL_S = 4.0
 #: Destinations de modulation entendues par le rendu. Les autres sont
 #: ignorées avec une trace : le Deluge en accepte une cinquantaine.
 KNOWN_DESTINATIONS = (
-    "lpfFrequency", "lpfResonance", "hpfFrequency", "pitch", "volume",
-    "oscAVolume", "oscBVolume", "oscAPitch", "oscBPitch", "oscAPulseWidth",
+    "lpfFrequency", "lpfResonance", "lpfMorph", "hpfFrequency",
+    "hpfResonance", "hpfMorph", "pitch", "volume", "oscAVolume",
+    "oscBVolume", "oscAPitch", "oscBPitch", "oscAPulseWidth",
     "oscBPulseWidth", "noiseVolume", "modFXDepth", "modFXRate",
-    "reverbAmount", "delayFeedback", "pan", "lfo1Rate", "lfo2Rate",
-    "modulator1Amount", "modulator2Amount", "modulator1Pitch",
-    "modulator2Pitch", "env1Attack", "env1Decay", "env1Sustain",
-    "env1Release", "env2Attack", "env2Decay", "env2Sustain", "env2Release",
+    "reverbAmount", "delayFeedback", "delayRate", "pan", "lfo1Rate",
+    "lfo2Rate", "modulator1Amount", "modulator2Amount", "modulator1Pitch",
+    "modulator2Pitch", "modulator1Feedback", "modulator2Feedback",
+    "carrier1Feedback", "carrier2Feedback", "env1Attack", "env1Decay",
+    "env1Sustain", "env1Release", "env2Attack", "env2Decay", "env2Sustain",
+    "env2Release", "volumePostFX",
 )
 
 #: Tempo supposé pour l'aperçu d'un LFO synchronisé : un preset n'a pas de
 #: tempo, c'est le morceau qui le donne.
 PREVIEW_BPM = 120.0
+
+#: La réverbération d'un morceau neuf du firmware 1.3 (``Song::Song``) :
+#: modèle « Mutable », taille 0,6, amortissement 0,72, largeur 1, filtres
+#: ouverts. C'est aussi celle des morceaux que l'application écrit.
+PREVIEW_REVERB = dsp.ReverbSettings()
+
+#: Le volume d'un morceau neuf (``SONGS/DEFAULT.XML``), celui qu'écrit
+#: l'atelier : il règle l'envoi vers la réverbération de chaque son
+#: (``Song::renderAudio`` passe ``volumePostFX >> 1``), soit 2²⁶.
+SONG_VOLUME = 0x3504F334
+
+
+def _volume_factor(raw: int) -> float:
+    """``f²`` d'un volume de fichier (``getFinalParameterValueVolume`` sur
+    ``valeur >> 2``) : 1 au réglage 25, 2 pour 0x3504F334, 4 en butée."""
+    f = 1.0 + laws.raw_unit(raw)
+    return f * f
+
+
+#: ``reverbAmountAdjust`` que le morceau passe à ses sons.
+SONG_REVERB_ADJUST = float(1 << 25) * _volume_factor(SONG_VOLUME)
+
+
+def kit_gain(kit) -> float:
+    """Le gain de l'étage d'un kit (``GlobalEffectableForClip::renderOutput``)
+    : son volume, majoré d'un quart, puis ses filtres ouverts (−20 %) —
+    ``f² · 0,50``, l'unité au volume que l'atelier écrit."""
+    raw = (getattr(kit, "params", None) or {}).get("volume", SONG_VOLUME)
+    try:
+        raw = int(raw)
+    except (TypeError, ValueError):
+        raw = SONG_VOLUME
+    return _volume_factor(raw) / 2.0 * 1.25 * (
+        math.floor(float(1 << 31) * 1720000000.0 / dsp.Q32) * 2.0 / dsp.Q31)
 
 
 def synced_hz(sync_level: int, bpm: float = PREVIEW_BPM) -> float:
@@ -150,22 +189,6 @@ def _hpf_hz(unit: float) -> float:
     return float(laws.hpf_hz(laws.exp_octaves("hpfFrequency",
                                               float(unit) * 50.0)))
 
-
-def _q_of(resonance) -> np.ndarray:
-    """Facteur de qualité d'un filtre à deux pôles, depuis la résonance
-    traitée du firmware (0..1, :func:`.paramlaws.ladder_resonance`).
-
-    **Approché** : l'échelle à transistors n'est pas un filtre à deux pôles.
-    0,707 sans résonance, environ 2 au réglage 25, près de 5 en butée.
-    """
-    r = np.clip(np.asarray(resonance, dtype=np.float64), 0.0, 1.0)
-    return 0.707 / (1.0 - 0.85 * r)
-
-
-def _resonance_q(unit: float) -> float:
-    """Facteur de qualité depuis le réglage de résonance ramené à 0..1."""
-    return float(_q_of(laws.ladder_resonance(1.0 + laws.unit(
-        float(unit) * 50.0))))
 
 
 class _Patch:
@@ -258,373 +281,259 @@ def _modulations(sound: Sound, n: int, sr: int, sources: dict) -> _Patch:
     return _patch(sound, sources)
 
 
+# --------------------------------------------------------------------------- #
+# Valeurs finales des paramètres, à l'échelle du firmware
+# --------------------------------------------------------------------------- #
+
+#: Valeurs neutres (``getParamNeutralValue``) : celle d'un paramètre au
+#: réglage 25 et sans câble.
+NEUTRAL = {
+    "oscAVolume": 134217728.0, "oscBVolume": 134217728.0,
+    "volume": 134217728.0, "noiseVolume": 134217728.0,
+    "volumePostFX": 134217728.0, "volumePostReverbSend": 134217728.0,
+    "reverbAmount": 134217728.0, "modulator1Amount": 33554432.0,
+    "modulator2Amount": 33554432.0, "lpfFrequency": 2000000.0,
+    "hpfFrequency": 2672947.0, "lfo1Rate": 121739.0, "lfo2Rate": 121739.0,
+    "modFXRate": 121739.0, "lpfResonance": 268435450.0,
+    "hpfResonance": 268435450.0, "lpfMorph": 268435450.0,
+    "hpfMorph": 268435450.0, "env1Sustain": 1073741824.0,
+    "env2Sustain": 1073741824.0, "delayFeedback": 1073741824.0,
+    "modulator1Feedback": 5931642.0, "modulator2Feedback": 5931642.0,
+    "carrier1Feedback": 5931642.0, "carrier2Feedback": 5931642.0,
+    "delayRate": 16777216.0, "pitch": 16777216.0, "oscAPitch": 16777216.0,
+    "oscBPitch": 16777216.0, "modulator1Pitch": 16777216.0,
+    "modulator2Pitch": 16777216.0, "modFXDepth": 526133494.0,
+}
+
+#: Le réglage de preset d'un paramètre, quand son nom diffère de celui de
+#: la destination des câbles. ``None`` : rien dans le fichier, seuls les
+#: câbles le déplacent. Le ``volume`` d'un preset règle le volume
+#: post-effets du son (``Sound::readParamTagFromFile``) ; le volume de la
+#: voix, que visent les câbles ``volume``, n'est jamais enregistré.
+_PRESET_OF = {
+    "pitch": "pitchAdjust", "oscAPitch": "oscAPitchAdjust",
+    "oscBPitch": "oscBPitchAdjust", "volume": None,
+    "volumePostFX": "volume", "volumePostReverbSend": None,
+    "modulator1Pitch": None, "modulator2Pitch": None,
+}
+
+
+def _preset_u(sound: Sound, name: str, default: float = 25.0) -> float:
+    """Le réglage −1..+1 d'un paramètre, lu sous son nom de preset."""
+    key = _PRESET_OF.get(name, name)
+    if key is None:
+        return 0.0
+    return _u(sound, key, default)
+
+
+def _blocks(value, nb: int) -> np.ndarray:
+    """Un scalaire ou un tableau par bloc, étendu à ``nb`` blocs."""
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.ndim == 0:
+        return np.full(nb, float(arr))
+    return arr[:nb]
+
+
+def _final_volume(sound: Sound, name: str, mod: _Patch, nb: int,
+                  default: float = 25.0) -> np.ndarray:
+    """Valeur finale d'un paramètre de volume : ``neutre · f²``, ``f`` le
+    produit du réglage ``1 + u`` et des câbles, borné à 4."""
+    f = np.clip((1.0 + _preset_u(sound, name, default))
+                * _blocks(mod.factor(name), nb), 0.0, 4.0)
+    return np.minimum(NEUTRAL[name] * f * f, dsp.Q31 - 1.0)
+
+
+def _final_linear(sound: Sound, name: str, mod: _Patch, nb: int,
+                  default: float = 25.0) -> np.ndarray:
+    """Valeur finale d'un paramètre linéaire : ``neutre · f``."""
+    f = np.clip((1.0 + _preset_u(sound, name, default))
+                * _blocks(mod.factor(name), nb), 0.0, 4.0)
+    return np.minimum(NEUTRAL[name] * f, dsp.Q31 - 1.0)
+
+
+def _final_exp(sound: Sound, name: str, mod: _Patch, nb: int,
+               default: float = 25.0) -> np.ndarray:
+    """Valeur finale d'un paramètre exponentiel : ``getExp(neutre,
+    octaves)``, octaves du réglage et des câbles."""
+    octaves = laws.exp_range(name) * _preset_u(sound, name, default) \
+        + _blocks(mod.oct(name), nb)
+    return dsp.get_exp(NEUTRAL[name], octaves)
+
+
+def _final_hybrid(sound: Sound, name: str, mod: _Patch, nb: int,
+                  default: float = 25.0) -> np.ndarray:
+    """Valeur −1..+1 d'un paramètre hybride (largeur, panoramique) :
+    réglage et câbles additionnés."""
+    return np.clip(_preset_u(sound, name, default)
+                   + _blocks(mod.add(name), nb), -1.0, 1.0)
+
+
+def _patched(sound: Sound, name: str) -> bool:
+    """Un câble vise-t-il ce paramètre ?"""
+    return any(param_of_destination(c.destination) == name
+               for c in sound.patch_cables)
+
+
+def _env_rates(sound: Sound, env, index: int, static: _Patch
+               ) -> tuple[float, float, float, float]:
+    """``(attaque, decay, palier, release)`` d'une enveloppe, en valeurs du
+    firmware : vitesses en pas par échantillon, palier sur 2³¹. ``static`` :
+    les câbles des sources constantes de la note."""
+    prefix = "env%d" % index
+    attack = float(laws.attack_rate(
+        6.0 * laws.raw_unit(env.attack)
+        + np.mean(static.oct(prefix + "Attack"))))
+    decay = float(laws.decay_rate(
+        laws.raw_unit(env.decay) + np.mean(static.add(prefix + "Decay"))))
+    release = float(laws.release_rate(
+        laws.raw_unit(env.release) + np.mean(static.add(prefix + "Release"))))
+    sustain = 1073741824.0 * (1.0 + laws.raw_unit(env.sustain)) \
+        * float(np.mean(static.factor(prefix + "Sustain")))
+    return attack, decay, min(max(sustain, 0.0), dsp.Q31 - 1.0), release
+
+
 def _env_times(sound: Sound, env, index: int, static: _Patch
                ) -> tuple[float, float, float, float]:
     """``(attaque, decay, sustain, release)`` d'une enveloppe, en secondes
-    et en niveau, selon le firmware ; ``static`` : les câbles des sources
-    constantes de la note (vélocité, note, *random*)."""
-    prefix = "env%d" % index
-    attack = float(laws.attack_seconds(
-        6.0 * laws.raw_unit(env.attack)
-        + np.mean(static.oct(prefix + "Attack"))))
-    decay = float(laws.decay_seconds(
-        laws.raw_unit(env.decay) + np.mean(static.add(prefix + "Decay"))))
-    sustain = float(laws.sustain_level(
-        (1.0 + laws.raw_unit(env.sustain))
-        * np.mean(static.factor(prefix + "Sustain"))))
-    release = float(laws.release_seconds(
-        laws.raw_unit(env.release) + np.mean(static.add(prefix + "Release"))))
-    return attack, decay, sustain, release
+    et en niveau 0..1, selon le firmware."""
+    attack, decay, sustain, release = _env_rates(sound, env, index, static)
+    steps = float(1 << 23) / ENGINE_RATE
+    return (0.0 if attack > 245632 else steps / max(attack, 1e-9),
+            steps / max(decay, 1e-9), sustain / dsp.Q31,
+            steps / max(release, 1e-9))
+
+
+def _ramp(values: np.ndarray, n: int, start: float,
+          jumps: np.ndarray | None = None) -> np.ndarray:
+    """La rampe d'amplitude du firmware : dans chaque bloc, la valeur va
+    linéairement de celle du bloc précédent à la sienne. ``start`` : la
+    valeur d'avant le premier bloc ; ``jumps`` : blocs qui sautent sans
+    rampe (``shouldAvoidIncrementing``)."""
+    values = np.asarray(values, dtype=np.float64)
+    prev = np.empty_like(values)
+    prev[0] = start
+    prev[1:] = values[:-1]
+    if jumps is not None:
+        prev = np.where(jumps, values, prev)
+    frac = (np.arange(1, dsp.BLOCK + 1, dtype=np.float64)) / dsp.BLOCK
+    ramp = prev[:, None] + (values - prev)[:, None] * frac[None, :]
+    return ramp.ravel()[:n]
 
 
 # --------------------------------------------------------------------------- #
-# Tables d'onde
+# Filtres : modes et réponse
 # --------------------------------------------------------------------------- #
 
-@lru_cache(maxsize=256)
-def _wavetable(kind: str, band: int) -> np.ndarray:
-    """Une période d'onde, limitée aux harmoniques audibles de cette octave.
-
-    ``band`` est l'octave de la note jouée : plus elle est haute, moins
-    d'harmoniques tiennent sous la fréquence de Nyquist. Construire une table
-    par octave évite le repliement sans coûter un calcul par échantillon.
-    """
-    harmonics = max(1, min(512, int(2 ** (10 - band))))
-    phase = np.linspace(0.0, 2.0 * np.pi, TABLE_SIZE, endpoint=False,
-                        dtype=np.float64)
-    out = np.zeros(TABLE_SIZE, dtype=np.float64)
-
-    if kind in ("sine",):
-        out = np.sin(phase)
-    elif kind in ("saw", "analogSaw"):
-        for h in range(1, harmonics + 1):
-            out -= np.sin(h * phase) / h
-        out *= 2.0 / np.pi
-    elif kind in ("square", "analogSquare"):
-        for h in range(1, harmonics + 1, 2):
-            out += np.sin(h * phase) / h
-        out *= 4.0 / np.pi
-    elif kind == "triangle":
-        for i, h in enumerate(range(1, harmonics + 1, 2)):
-            out += ((-1) ** i) * np.sin(h * phase) / (h * h)
-        out *= 8.0 / (np.pi ** 2)
-    else:
-        # Forme inconnue : une dent de scie reste le choix le moins surprenant.
-        for h in range(1, harmonics + 1):
-            out -= np.sin(h * phase) / h
-        out *= 2.0 / np.pi
-
-    peak = float(np.max(np.abs(out)))
-    if peak > 0:
-        out /= peak
-    # Une valeur de bouclage en fin de table : l'interpolation ne doit pas
-    # retomber à zéro entre le dernier point et le premier.
-    return np.append(out, out[0]).astype(np.float32)
+_LPF_MODES = {"12db": "12dB", "24db": "24dB", "24dbdrive": "24dBDrive",
+              # Le SVF n'est pas porté : aucun son de la carte ne s'en sert.
+              "svf_band": "12dB", "svf_notch": "12dB"}
 
 
-def _read_table(kind: str, phase_cycles: np.ndarray, freq_hz: float) -> np.ndarray:
-    """Lit une table d'onde à la phase donnée, en cycles."""
-    if kind == "sine":
-        return np.sin(2.0 * np.pi * phase_cycles, dtype=np.float32)
-    band = int(max(0, min(10, np.log2(max(freq_hz, 20.0) / 20.0))))
-    table = _wavetable(kind, band)
-    index = (phase_cycles % 1.0) * TABLE_SIZE
-    return np.interp(index, _TABLE_INDEX, table).astype(np.float32)
-
-
-#: Abscisses de l'interpolation, calculées une seule fois.
-_TABLE_INDEX = np.arange(TABLE_SIZE + 1, dtype=np.float32)
-
-
-# --------------------------------------------------------------------------- #
-# Enveloppes et LFO
-# --------------------------------------------------------------------------- #
-
-def _adsr(n: int, sr: int, attack: float, decay: float, sustain: float,
-          release: float, gate: float) -> np.ndarray:
-    """Enveloppe échantillonnée, comme ``Envelope::render`` du firmware.
-
-    Attaque en ``1 − decayTableSmall4`` (montée bombée) — sautée quand le
-    firmware la juge instantanée ; decay en ``decayTableSmall8`` vers le
-    palier ; release en ``decayTableSmall8`` depuis le niveau atteint au
-    relâchement. ``attack``, ``decay`` et ``release`` sont les durées
-    **complètes** des étapes (:mod:`.paramlaws`). Un palier nul éteint
-    l'enveloppe à la fin du decay.
-
-    ``gate`` est la fraction de la durée pendant laquelle la touche est
-    tenue ; le relâchement part du niveau atteint à cet instant, et non du
-    palier théorique, sinon une note relâchée pendant son attaque produit un
-    saut de niveau.
-    """
-    out = np.zeros(n, dtype=np.float32)
-    if n <= 0:
-        return out
-    gate_samples = max(1, min(n, int(n * max(0.01, min(1.0, gate)))))
-    t = np.arange(gate_samples, dtype=np.float64) / float(sr)
-    held = np.empty(gate_samples, dtype=np.float64)
-
-    a = max(0.0, float(attack))
-    d = max(1.0 / sr, float(decay))
-    s = max(0.0, min(1.0, float(sustain)))
-    in_attack = t < a if a > 0 else np.zeros(gate_samples, dtype=bool)
-    if a > 0:
-        held[in_attack] = laws.attack_curve(t[in_attack] / a)
-    after = ~in_attack
-    td = t[after] - a
-    held[after] = np.where(td < d, s + (1.0 - s) * laws.decay_curve(td / d),
-                           s)
-    out[:gate_samples] = held
-
-    level = float(out[gate_samples - 1])
-    tail = n - gate_samples
-    if tail > 0:
-        r = max(1.0 / sr, float(release))
-        tr = np.arange(tail, dtype=np.float64) / float(sr)
-        out[gate_samples:] = level * np.where(tr < r,
-                                              laws.decay_curve(tr / r), 0.0)
-    return out
-
-
-def _lfo(n: int, sr: int, kind: str, rate_hz: float,
-         rng: np.random.Generator) -> np.ndarray:
-    """LFO bipolaire dans [-1, 1]."""
-    if n <= 0:
-        return np.zeros(0, dtype=np.float32)
-    t = np.arange(n, dtype=np.float32) / sr
-    phase = rate_hz * t
-
-    if kind == "sine":
-        return np.sin(2.0 * np.pi * phase, dtype=np.float32)
-    if kind == "triangle":
-        return (2.0 * np.abs(2.0 * (phase % 1.0) - 1.0) - 1.0).astype(np.float32)
-    if kind == "square":
-        return np.where((phase % 1.0) < 0.5, 1.0, -1.0).astype(np.float32)
-    if kind == "saw":
-        return (2.0 * (phase % 1.0) - 1.0).astype(np.float32)
-    if kind == "sah":
-        steps = max(1, int(rate_hz * n / sr))
-        values = rng.uniform(-1.0, 1.0, steps + 1).astype(np.float32)
-        return values[np.minimum((phase % steps).astype(np.int64)
-                                 if steps > 1 else np.zeros(n, dtype=np.int64),
-                                 steps)]
-    if kind == "rwalk":
-        steps = max(2, int(rate_hz * n / sr) + 1)
-        knots = np.cumsum(rng.uniform(-0.4, 0.4, steps)).astype(np.float32)
-        peak = float(np.max(np.abs(knots))) or 1.0
-        knots /= peak
-        return np.interp(np.linspace(0, steps - 1, n),
-                         np.arange(steps), knots).astype(np.float32)
-    return np.zeros(n, dtype=np.float32)
-
-
-# --------------------------------------------------------------------------- #
-# Modulations
-# --------------------------------------------------------------------------- #
-
-def _series(value, n: int) -> np.ndarray:
-    """Un scalaire ou un tableau, étendu à ``n`` échantillons (float32)."""
-    arr = np.asarray(value, dtype=np.float32)
-    if arr.ndim == 0:
-        return np.full(n, float(arr), dtype=np.float32)
-    return arr[:n].astype(np.float32)
-
-
-def _volume(sound: Sound, name: str, patch: _Patch, n: int,
-            default: float = 25.0) -> np.ndarray:
-    """Gain d'un paramètre de volume, relatif au réglage 25 (loi du
-    firmware : ``(1 + u)·Π(1 + v·a)`` élevé au carré)."""
-    factor = (1.0 + _u(sound, name, default)) \
-        * np.asarray(patch.factor(name), dtype=np.float64)
-    return _series(laws.volume_gain(factor), n)
-
-
-def _linear(sound: Sound, name: str, patch: _Patch, n: int,
-            default: float = 25.0) -> np.ndarray:
-    """Facteur d'un paramètre linéaire, relatif au réglage 25 (0 à 2)."""
-    factor = (1.0 + _u(sound, name, default)) \
-        * np.asarray(patch.factor(name), dtype=np.float64)
-    return _series(laws.linear_level(factor), n)
-
-
-def _octaves(sound: Sound, name: str, patch: _Patch, n: int,
-             default: float = 25.0) -> np.ndarray:
-    """Décalage en octaves d'un paramètre exponentiel : réglage et câbles."""
-    return _series(laws.exp_range(name) * _u(sound, name, default)
-                   + np.asarray(patch.oct(name), dtype=np.float64), n)
-
-
-def _hybrid(sound: Sound, name: str, patch: _Patch, n: int,
-            default: float = 25.0) -> np.ndarray:
-    """Valeur −1..+1 d'un paramètre hybride (largeur, panoramique)."""
-    return _series(np.clip(_u(sound, name, default)
-                           + np.asarray(patch.add(name), dtype=np.float64),
-                           -1.0, 1.0), n)
-
-
-# --------------------------------------------------------------------------- #
-# Filtres
-# --------------------------------------------------------------------------- #
-
-def _response(freqs: np.ndarray, cutoff_hz: float, q: float, poles: int,
-              high_pass: bool = False) -> np.ndarray:
-    """Réponse en fréquence d'un filtre résonant à 2 ou 4 pôles."""
-    w = freqs / max(cutoff_hz, 10.0)
-    denominator = (1.0 - w * w) + 1j * w / max(q, 0.05)
-    # Éviter la division par zéro exactement à la résonance.
-    denominator[np.abs(denominator) < 1e-9] = 1e-9
-    response = (-(w * w) if high_pass else 1.0) / denominator
-    if poles >= 4:
-        response = response * response
-    return response
-
-
-def _filter_sweep(signal: np.ndarray, sr: int, cutoff_hz: np.ndarray,
-                  q: np.ndarray, poles: int,
-                  high_pass: bool = False) -> np.ndarray:
-    """Filtre à coupure variable, par blocs dans le domaine fréquentiel.
-
-    Chaque bloc est fenêtré en Hann avec recouvrement de moitié, filtré avec
-    la coupure moyenne du bloc, puis réaccumulé. C'est ce qui permet de tenir
-    le budget de temps : une récursion par échantillon en Python coûterait à
-    elle seule plus que les 400 ms allouées à tout le rendu.
-    """
-    n = signal.size
-    if n == 0:
-        return signal
-    block = min(FILTER_BLOCK, max(64, 1 << int(np.log2(max(n, 64)))))
-    hop = block // 2
-    window = np.hanning(block).astype(np.float32)
-    freqs = np.fft.rfftfreq(block, 1.0 / sr)
-
-    padded = np.zeros(n + 2 * block, dtype=np.float32)
-    padded[block:block + n] = signal
-    out = np.zeros_like(padded)
-
-    for start in range(0, n + block, hop):
-        chunk = padded[start:start + block]
-        if chunk.size < block:
+def _community_at_least(firmware: str, version: tuple[int, ...]) -> bool:
+    """Le son vient-il d'un firmware communautaire au moins aussi récent ?
+    Une version sans ``c`` est un firmware officiel, plus ancien que tous.
+    Sans version, le son est réputé récent."""
+    text = str(firmware or "").strip().lower()
+    if not text:
+        return True
+    if not text.startswith("c"):
+        return False
+    parts = []
+    for piece in text[1:].split("-")[0].split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
             break
-        centre = min(n - 1, max(0, start - block + hop))
-        response = _response(freqs, float(cutoff_hz[centre]),
-                             float(q[centre]), poles, high_pass)
-        filtered = np.fft.irfft(np.fft.rfft(chunk * window) * response, block)
-        out[start:start + block] += filtered.astype(np.float32)
-
-    # La fenêtre de Hann à recouvrement de moitié somme à 1.
-    return out[block:block + n]
+    return tuple(parts) >= tuple(version)
 
 
-# --------------------------------------------------------------------------- #
-# Effets
-# --------------------------------------------------------------------------- #
-
-def _saturate(signal: np.ndarray, amount: float) -> np.ndarray:
-    """Distorsion douce par tangente hyperbolique."""
-    if amount <= 0:
-        return signal
-    drive = 1.0 + amount * 12.0
-    return (np.tanh(signal * drive) / np.tanh(drive)).astype(np.float32)
-
-
-def _bitcrush(signal: np.ndarray, amount: float) -> np.ndarray:
-    """Réduction de résolution : de 16 bits à 2 bits."""
-    if amount <= 0.01:
-        return signal
-    bits = max(2.0, 16.0 - amount * 14.0)
-    levels = 2.0 ** bits
-    return (np.round(signal * levels) / levels).astype(np.float32)
+def _filter_modes(sound: Sound) -> tuple[str | None, str | None, str]:
+    """``(passe-bas, passe-haut, routage)`` tels que le firmware les rend :
+    un son FM venu d'un firmware antérieur au communautaire 1.2.0 a ses
+    filtres éteints (``Sound::readFromFile``)."""
+    lpf = str(sound.lpf_mode or "24dB").lower()
+    hpf = str(sound.hpf_mode or "HPLadder").lower()
+    lpf_mode = None if lpf == "off" else _LPF_MODES.get(lpf, "24dB")
+    hpf_mode = None if hpf == "off" else "HPLadder"
+    if sound.mode == "fm" and not _community_at_least(sound.firmware,
+                                                      (1, 2, 0)):
+        lpf_mode = hpf_mode = None
+    route = {"l2h": "L2H", "para": "PARA"}.get(
+        str(sound.filter_route or "").lower(), "H2L")
+    return lpf_mode, hpf_mode, route
 
 
-def _decimate(signal: np.ndarray, amount: float) -> np.ndarray:
-    """Réduction de fréquence d'échantillonnage par maintien de valeur."""
-    if amount <= 0.01:
-        return signal
-    factor = max(1, int(1 + amount * 31))
-    if factor <= 1:
-        return signal
-    held = signal[::factor]
-    return np.repeat(held, factor)[:signal.size].astype(np.float32)
+def _filtered(x: np.ndarray, route: str, lpf, hpf, jitter: np.ndarray
+              ) -> np.ndarray:
+    """Un canal à travers les filtres, dans l'ordre du routage
+    (``FilterSet::renderLong``). ``lpf``/``hpf`` : configurations ou
+    ``None``."""
+    def low(signal):
+        return signal if lpf is None else dsp.lpf_process(signal, lpf, jitter)
+
+    def high(signal):
+        return signal if hpf is None else dsp.hpf_process(signal, hpf)
+
+    if route == "L2H":
+        return high(low(x))
+    if route == "PARA":
+        if lpf is None or hpf is None:
+            return high(low(x))
+        return low(x) + high(x)
+    return low(high(x))
 
 
-def _delay(signal: np.ndarray, sr: int, time_s: float, feedback: float,
-           mix: float) -> np.ndarray:
-    """Délai à répétitions, par sommation de copies décalées.
-
-    Additionner quelques copies atténuées coûte beaucoup moins qu'une boucle
-    de rétroaction échantillon par échantillon, pour un résultat
-    indiscernable à l'écoute.
-    """
-    if mix <= 0.01 or time_s <= 0:
-        return signal
-    offset = max(1, int(time_s * sr))
-    out = signal.copy()
-    level = mix
-    position = offset
-    repeats = 0
-    while level > 0.01 and position < signal.size and repeats < 12:
-        out[position:] += signal[:signal.size - position] * level
-        level *= max(0.0, min(0.95, feedback))
-        position += offset
-        repeats += 1
-    return out.astype(np.float32)
+@lru_cache(maxsize=128)
+def _filter_configs(mode: str, cutoff: float, resonance: float, hpf: float):
+    """Les configurations du firmware pour des réglages affichés."""
+    freq = dsp.get_exp(NEUTRAL["lpfFrequency"],
+                       laws.exp_octaves("lpfFrequency", cutoff))
+    res = NEUTRAL["lpfResonance"] * (1.0 + float(laws.unit(resonance)))
+    lpf = dsp.lpf_config(mode, [float(freq)], [res])
+    hcfg = None
+    if hpf >= 0:
+        hfreq = dsp.get_exp(NEUTRAL["hpfFrequency"],
+                            laws.exp_octaves("hpfFrequency", hpf))
+        hcfg = dsp.hpf_config([float(hfreq)], [0.0])
+    return lpf, hcfg
 
 
-@lru_cache(maxsize=16)
-def _reverb_ir(sr: int, seconds: float, bright: float) -> np.ndarray:
-    """Réponse impulsionnelle synthétique : bruit décroissant filtré."""
-    length = max(16, int(seconds * sr))
-    rng = np.random.default_rng(12345)
-    noise = rng.standard_normal(length).astype(np.float32)
-    decay = np.exp(-np.linspace(0.0, 7.0, length, dtype=np.float32))
-    ir = noise * decay
-    # Un lissage simple assombrit la queue, comme une vraie pièce.
-    taps = max(2, int((1.0 - bright) * 48) + 2)
-    kernel = np.ones(taps, dtype=np.float32) / taps
-    ir = np.convolve(ir, kernel, mode="same")
-    peak = float(np.max(np.abs(ir))) or 1.0
-    return (ir / peak).astype(np.float32)
-
-
-def _reverb(signal: np.ndarray, sr: int, amount: float,
-            size: float = 0.6) -> np.ndarray:
-    """Réverbération par convolution FFT."""
-    if amount <= 0.01:
-        return signal
-    ir = _reverb_ir(sr, 0.4 + size * 2.0, 0.5)
-    length = 1 << int(np.ceil(np.log2(signal.size + ir.size)))
-    wet = np.fft.irfft(np.fft.rfft(signal, length)
-                       * np.fft.rfft(ir, length), length)[:signal.size]
-    peak = float(np.max(np.abs(wet))) or 1.0
-    wet = (wet / peak * float(np.max(np.abs(signal)) or 1.0)).astype(np.float32)
-    return ((1.0 - amount * 0.5) * signal + amount * 0.7 * wet).astype(np.float32)
-
-
-def _mod_fx(signal: np.ndarray, sr: int, kind: str, depth: float,
-            rate_hz: float) -> np.ndarray:
-    """Chorus, flanger ou phaser : un délai court modulé."""
-    if kind in ("", "none") or depth <= 0.01:
-        return signal
-    base_ms = {"flanger": 2.0, "chorus": 14.0, "StereoChorus": 18.0,
-               "phaser": 6.0, "TapeWarble": 24.0, "grainFX": 30.0, "dimension": 10.0}.get(kind, 14.0)
-    sweep_ms = base_ms * depth * 0.8
-    n = signal.size
-    t = np.arange(n, dtype=np.float32) / sr
-    offset = (base_ms + sweep_ms * np.sin(2.0 * np.pi * rate_hz * t)) * sr / 1000.0
-    index = np.arange(n, dtype=np.float32) - offset
-    np.clip(index, 0, n - 1, out=index)
-    delayed = np.interp(index, np.arange(n, dtype=np.float32),
-                        signal).astype(np.float32)
-    sign = -1.0 if kind == "phaser" else 1.0
-    return (0.65 * signal + sign * 0.55 * depth * delayed).astype(np.float32)
+def filter_response(freqs, cutoff: float, resonance: float,
+                    mode: str = "24dB", hpf: float | None = None
+                    ) -> np.ndarray:
+    """Réponse en décibels des filtres du firmware, pour l'affichage :
+    l'échelle passe-bas (et le passe-haut en échelle si ``hpf`` est donné),
+    linéarisée (:func:`.dsp.lpf_response`), avec la compensation de niveau
+    que la voix applique. 0 dB : le niveau d'un filtre ouvert, sans
+    résonance. Réglages en affichage 0..50."""
+    lpf_mode = _LPF_MODES.get(str(mode or "24dB").lower(), "24dB")
+    lpf, hcfg = _filter_configs(
+        lpf_mode, round(float(cutoff), 2), round(float(resonance), 2),
+        -1.0 if hpf is None else round(float(hpf), 2))
+    freqs = np.asarray(freqs, dtype=np.float64)
+    response = dsp.lpf_response(lpf, freqs) * float(lpf.gain[0])
+    if hcfg is not None:
+        response = response * dsp.hpf_response(hcfg, freqs) \
+            * float(hcfg.gain[0])
+    return 20.0 * np.log10(np.maximum(np.abs(response), 1e-6))
 
 
 # --------------------------------------------------------------------------- #
-# Rendu d'un son
+# Échantillons
 # --------------------------------------------------------------------------- #
 
-def _sample_voice(sound: Sound, osc, note: int, n: int, sr: int,
-                  sd: SDCard | None) -> np.ndarray | None:
-    """Lit un échantillon de la carte et le transpose à la note demandée."""
+_SAMPLE_CACHE: OrderedDict = OrderedDict()
+_SAMPLE_CACHE_SIZE = 48
+
+
+def _load_sample(sd: SDCard | None, osc) -> tuple[np.ndarray, int] | None:
+    """L'échantillon d'un oscillateur, lu une fois puis gardé : ``(données
+    dans [−1, 1], fréquence)``, recadrées sur la zone jouée — ``(n,)`` pour
+    un fichier mono, ``(n, 2)`` pour un stéréo : le Deluge le joue en stéréo
+    (``Source::renderInStereo``). Mesuré sur la machine le 23 octobre 2026 :
+    chaque canal sort au même gain, à l'échantillon près ; la moyenne des
+    deux, rendue jusque-là, faisait perdre 5 dB à un piano dont les canaux
+    s'opposent en partie."""
     if sd is None or not osc.file_name:
         return None
     from . import wav
@@ -634,120 +543,58 @@ def _sample_voice(sound: Sound, osc, note: int, n: int, sr: int,
         log.debug("échantillon introuvable pour le rendu : %s", osc.file_name)
         return None
     try:
-        data, file_sr = wav.read(path, mono=True, max_frames=sr * 12)
-    except Exception as exc:  # noqa: BLE001
-        log.debug("échantillon illisible %s : %s", path, exc)
-        return None
-    if data.size == 0:
-        return None
-
-    # Transposition : l'échantillon est supposé enregistré en do médian, à
-    # défaut d'information de note de référence.
-    semis = (note - 60) + osc.transpose + osc.cents / 100.0
-    ratio = (2.0 ** (semis / 12.0)) * (file_sr / float(sr))
-    length = int(data.size / max(ratio, 1e-6))
-    if length <= 1:
-        return None
-    index = np.arange(min(length, n), dtype=np.float32) * ratio
-    np.clip(index, 0, data.size - 1, out=index)
-    voice = np.interp(index, np.arange(data.size, dtype=np.float32),
-                      data).astype(np.float32)
-    out = np.zeros(n, dtype=np.float32)
-    out[:voice.size] = voice
-    if osc.reversed:
-        out = out[::-1].copy()
-    return out
-
-
-def _oscillator(sound: Sound, osc, which: str, note: int, n: int, sr: int,
-                pitch_mod: np.ndarray, pw_unit: np.ndarray,
-                sd: SDCard | None, rng: np.random.Generator) -> np.ndarray:
-    """Un oscillateur, unisson compris."""
-    if osc.type in ("sample", "wavetable"):
-        voice = _sample_voice(sound, osc, note, n, sr, sd)
-        if voice is not None:
-            return voice
-        # Sans fichier, on retombe sur une onde : mieux vaut un son approché
-        # que le silence, puisque le but est de juger le preset.
-        kind = "saw"
-    elif osc.type in ("inLeft", "inRight", "dx7"):
-        kind = "sine"
+        stamp = path.stat().st_mtime_ns
+    except OSError:
+        stamp = 0
+    key = (str(path), stamp)
+    cached = _SAMPLE_CACHE.get(key)
+    if cached is None:
+        try:
+            data, file_sr = wav.read(path, max_frames=ENGINE_RATE * 20)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("échantillon illisible %s : %s", path, exc)
+            return None
+        if data.size == 0 or not file_sr:
+            return None
+        if data.ndim == 2:
+            data = data[:, 0] if data.shape[1] == 1 else data[:, :2]
+        cached = (np.ascontiguousarray(data, dtype=np.float32), int(file_sr))
+        _SAMPLE_CACHE[key] = cached
+        while len(_SAMPLE_CACHE) > _SAMPLE_CACHE_SIZE:
+            _SAMPLE_CACHE.popitem(last=False)
     else:
-        kind = osc.type
+        _SAMPLE_CACHE.move_to_end(key)
+    data, file_sr = cached
+    zone = getattr(osc, "zone", None)
+    if zone is not None:
+        scale = file_sr / 1000.0 if zone.unit == "ms" else 1.0
+        start = max(0, int(zone.start * scale))
+        end = int(zone.end * scale) if zone.end >= 0 else data.size
+        end = min(data.size, end)
+        if end > start + 1:
+            data = data[start:end]
+    if osc.reversed:
+        data = data[::-1]
+    return data, file_sr
 
-    semis = osc.transpose + osc.cents / 100.0 + sound.transpose
-    base_hz = 440.0 * 2.0 ** ((note + semis - 69) / 12.0)
-    base_hz = float(np.clip(base_hz, 8.0, sr * 0.45))
 
-    voices = max(1, min(8, sound.unison_num))
-    # ±désaccord/2 cents, réparti également (le firmware) ; c'était
-    # ±désaccord × 2 : quatre fois trop large.
-    cents = laws.unison_cents(sound.unison_detune, voices)
-    out = np.zeros(n, dtype=np.float32)
+def _sample_wave(data: np.ndarray, increments: np.ndarray, n: int,
+                 loop: bool) -> np.ndarray:
+    """Lecture à vitesse variable, un incrément par bloc
+    (:func:`dsp.sample_increment` réglé comme une note), comme la machine
+    (:func:`dsp.read_sample`) ; muette après la fin, ou bouclée. ``(n,)``
+    d'un échantillon mono, ``(2, n)`` d'un stéréo.
 
-    for v in range(voices):
-        freq = base_hz * 2.0 ** (cents[v] / 1200.0)
-        instant = freq * (2.0 ** (pitch_mod / 12.0))
-        phase = np.cumsum(instant / sr, dtype=np.float32)
-        # Phase de départ décalée : sans cela, les voix d'unisson s'ajoutent
-        # en phase et produisent un transitoire de niveau anormal.
-        phase += rng.uniform(0.0, 1.0)
-        wave = _read_table(kind, phase, freq)
+    Mesuré sur la machine le 23 octobre 2026 (export de pistes) :
+    l'interpolation linéaire d'avant laissait un écart de −19 dB sur un
+    piano joué à l'octave et de −33 dB sur une caisse claire à 48 kHz ;
+    celle-ci les ramène sous −68 dB."""
+    return dsp.read_sample(data, increments, n, loop)
 
-        if kind in ("square", "analogSquare"):
-            # Largeur d'impulsion : on soustrait une copie décalée.
-            width = np.clip(pw_unit, 0.02, 0.98)
-            shifted = _read_table(kind, phase + width, freq)
-            wave = (wave - shifted) * 0.5
-        out += wave
 
-    out /= float(voices)
-    return out
-
-def _fm_voice(sound: Sound, note: int, n: int, rate: int,
-              pitch_mod: np.ndarray, mod: _Patch, level_a: np.ndarray,
-              level_b: np.ndarray) -> np.ndarray:
-    """Le moteur FM du Deluge : deux porteuses, deux modulateurs.
-
-    Les porteuses sont des sinusoïdes accordées comme les oscillateurs A et
-    B ; chaque modulateur, accordé à part (``<modulator1>``,
-    ``<modulator2>``), module la phase de sa porteuse — ou, si
-    ``toModulator1`` est posé, celle du premier modulateur. C'est l'accord
-    des modulateurs qui fait le timbre : l'ancien rendu modulait avec
-    l'oscillateur B et rendait tous les presets FM semblables.
-    """
-    vib = (2.0 ** (pitch_mod / 12.0)).astype(np.float32)
-
-    def _phase(semis: float) -> np.ndarray:
-        hz = 440.0 * 2.0 ** ((note + sound.transpose + semis - 69) / 12.0)
-        hz = float(np.clip(hz, 1.0, rate * 0.45))
-        return np.cumsum(hz * vib / rate, dtype=np.float64)
-
-    two_pi = 2.0 * np.pi
-    m1 = getattr(sound, "modulator1", None)
-    m2 = getattr(sound, "modulator2", None)
-    m1_semis = (m1.transpose + m1.cents / 100.0) if m1 else 0.0
-    m2_semis = (m2.transpose + m2.cents / 100.0) if m2 else -12.0
-    to_m1 = bool(m2 and m2.to_modulator1)
-
-    # Indice de modulation : jusqu'à ~6 radians à fond, ce qui va du timbre
-    # doux au métal sans tomber dans le bruit. Le niveau d'un modulateur
-    # suit la loi de volume du firmware (quadratique) : 1,5 rad au réglage
-    # 25, 6 en butée.
-    depth1 = _volume(sound, "modulator1Amount", mod, n, 0.0) * 1.5
-    depth2 = _volume(sound, "modulator2Amount", mod, n, 0.0) * 1.5
-
-    m2_out = np.sin(two_pi * _phase(m2_semis)).astype(np.float32)
-    m1_out = np.sin(two_pi * _phase(m1_semis)
-                    + (m2_out * depth2 if to_m1 else 0.0)).astype(np.float32)
-    c1 = np.sin(two_pi * _phase(sound.osc1.transpose
-                                + sound.osc1.cents / 100.0)
-                + m1_out * depth1).astype(np.float32)
-    c2 = np.sin(two_pi * _phase(sound.osc2.transpose
-                                + sound.osc2.cents / 100.0)
-                + (0.0 if to_m1 else m2_out * depth2)).astype(np.float32)
-    return (c1 * level_a + c2 * level_b).astype(np.float32)
-
+# --------------------------------------------------------------------------- #
+# La voix
+# --------------------------------------------------------------------------- #
 
 def _graine(nom: str) -> int:
     """Graine stable du bruit, tirée du nom du son.
@@ -764,54 +611,517 @@ def _graine(nom: str) -> int:
     return zlib.crc32(str(nom or "").encode("utf-8")) & 0x7FFFFFFF
 
 
+def _retrig(osc) -> int:
+    """``retrigPhase`` sur 32 bits ; ``0xFFFFFFFF`` quand il est coupé."""
+    value = int(getattr(osc, "retrig_phase", -1))
+    return dsp.MASK32 if value == -1 else value & dsp.MASK32
 
 
-def _effects(sound: Sound, mixed: np.ndarray, rate: int, mod: _Patch,
-             bpm: float) -> np.ndarray:
-    """Mod FX, delay et réverbération d'un son, sur un signal mono."""
-    n = mixed.size
-    mod_rate = float(laws.lfo_hz(np.mean(
-        _octaves(sound, "modFXRate", mod, n))))
-    mod_depth = float(np.mean(_volume(sound, "modFXDepth", mod, n,
-                                      0.0))) / 4.0
-    mixed = _mod_fx(mixed, rate, sound.mod_fx_type, mod_depth, mod_rate)
+def _start_phase(kind: str, retrig: int, rng: np.random.Generator) -> int:
+    """La phase de départ d'une voix d'oscillateur : tirée au hasard
+    (``randomizeOscPhases``), sauf redémarrage réglé — zéro de l'onde,
+    plus ``retrigPhase``."""
+    if retrig == dsp.MASK32:
+        return int(rng.integers(0, 1 << 32))
+    zero = (1 << 30) if kind == "triangle" else 0
+    return (zero + retrig) & dsp.MASK32
 
-    delay_fb = float(np.mean(_linear(sound, "delayFeedback", mod, n,
-                                     0.0))) * 0.5
-    if delay_fb > 0.02:
+
+_WAVE_KINDS = ("sine", "triangle", "square", "saw", "analogSaw",
+               "analogSquare")
+
+
+def _render_voice(sound: Sound, note: int, n: int, gate: float,
+                  velocity: float, sd: SDCard | None, bpm: float,
+                  glide_from: float, rng: np.random.Generator
+                  ) -> np.ndarray:
+    """Une note du son (``Voice::render``), ``(2, n)`` à l'échelle entière,
+    avant les effets du son."""
+    block = dsp.BLOCK
+    nb = -(-n // block)
+    osc1, osc2 = sound.osc1, sound.osc2
+    if osc1 is None or osc2 is None:
+        log.debug("son sans oscillateur : rendu silencieux")
+        return np.zeros((2, n))
+
+    # -- sources constantes de la note (``voice.cpp``) ------------------- #
+    midi_velocity = max(1.0, min(127.0, float(velocity) * 127.0))
+    constants = {
+        "velocity": float(laws.velocity_source(midi_velocity)),
+        "note": float(laws.note_source(note)),
+        # *random* : une valeur tirée à chaque note, pas une dérive.
+        "random": float(rng.uniform(-1.0, 1.0)),
+        "aftertouch": 0.0,
+    }
+    static = _patch(sound, constants, only=set(constants))
+
+    # Un échantillon en mode ONCE se joue jusqu'au bout : le Deluge ignore
+    # alors la fin de la note.
+    if osc1.is_sample and int(getattr(osc1, "loop_mode", 0)) == 1:
+        gate = 1.0
+    release_block = nb if gate >= 1.0 else int(round(gate * n / block))
+
+    # -- enveloppes, un bloc à la fois ----------------------------------- #
+    envelopes = {}
+    end_block = nb
+    attack1 = 0.0
+    for index, env in ((1, sound.env1), (2, sound.env2)):
+        attack, decay, sustain, release = _env_rates(sound, env, index, static)
+        if index == 1:
+            attack1 = attack
+        machine = dsp.Envelope()
+        machine.note_on(attack, sustain)
+        has_sustain = int(env.sustain) != INT32_MIN \
+            or int(env.decay) > int(env.release)
+        values = np.empty(nb)
+        for b in range(nb):
+            if b == release_block:
+                machine.note_off(has_sustain)
+            values[b] = machine.render(attack, decay, sustain, release)
+            if index == 1 and end_block == nb and (
+                    machine.state == dsp.Envelope.OFF
+                    or (machine.state > dsp.Envelope.DECAY
+                        and values[b] <= -dsp.Q31)):
+                end_block = b + 1
+        envelopes[index] = values
+
+    # -- LFO ------------------------------------------------------------- #
+    def lfo_increment(lfo, key):
+        if getattr(lfo, "sync_level", 0):
+            hz = synced_hz(lfo.sync_level, bpm)
+            return hz * dsp.Q32 / ENGINE_RATE
+        return float(_final_exp(sound, key, static, 1)[0])
+
+    lfo1 = dsp.lfo_blocks(sound.lfo1.type, np.full(nb, lfo_increment(
+        sound.lfo1, "lfo1Rate")), dsp.lfo_start_phase(sound.lfo1.type, False),
+        rng)
+    lfo2 = dsp.lfo_blocks(sound.lfo2.type, np.full(nb, lfo_increment(
+        sound.lfo2, "lfo2Rate")), dsp.lfo_start_phase(sound.lfo2.type, True),
+        rng)
+
+    sources = dict(constants)
+    sources.update({
+        "envelope1": envelopes[1] / dsp.Q31,
+        "envelope2": envelopes[2] / dsp.Q31,
+        "lfo1": lfo1 / dsp.Q31,
+        "lfo2": lfo2 / dsp.Q31,
+    })
+    mod = _patch(sound, sources)
+
+    # -- hauteur --------------------------------------------------------- #
+    pitch_oct = 4.0 * _preset_u(sound, "pitch") + _blocks(mod.oct("pitch"), nb)
+    porta = _display(sound, "portamento", 0.0)
+    if glide_from and porta > 0 and sound.polyphonic != "legato":
+        glide = laws.glide_seconds(porta)
+        if glide > 0:
+            t = np.arange(nb, dtype=np.float64) * block / ENGINE_RATE
+            pitch_oct = pitch_oct + float(glide_from) / 12.0 * (
+                1.0 - laws.attack_curve(t / glide))
+
+    # -- amplitude et filtres ------------------------------------------- #
+    instant = attack1 > 245632
+    volume = _final_volume(sound, "volume", mod, nb)
+    overall = np.minimum(volume * (envelopes[1] / 2.0 + float(1 << 30))
+                         * 4.0 / dsp.Q32, dsp.Q31 - 1.0)
+    overall_ramp = _ramp(overall, n, overall[0] if instant else 0.0)
+
+    lpf_mode, hpf_mode, route = _filter_modes(sound)
+    has_filters = lpf_mode is not None or hpf_mode is not None
+    do_lpf = lpf_mode is not None and (
+        lpf_mode == "24dBDrive" or _patched(sound, "lpfFrequency")
+        or int(sound.param("lpfFrequency", 0x7FFFFFFF)) < 0x7FFFFFD2
+        or int(sound.param("lpfMorph", INT32_MIN)) > INT32_MIN)
+    do_hpf = hpf_mode is not None and (
+        _patched(sound, "hpfFrequency")
+        or int(sound.param("hpfFrequency", INT32_MIN)) != INT32_MIN
+        or int(sound.param("hpfMorph", INT32_MIN)) > INT32_MIN)
+    voices = max(1, min(8, int(sound.unison_num or 1)))
+    neutral_unison = math.floor(134217728.0 / math.sqrt(voices))
+    filter_gain = np.full(nb, 2.0 * neutral_unison)
+    lpf = hpf = None
+    if do_lpf:
+        lpf = dsp.lpf_config(
+            lpf_mode, _final_exp(sound, "lpfFrequency", mod, nb, 50.0),
+            _final_linear(sound, "lpfResonance", mod, nb, 0.0),
+            _final_linear(sound, "lpfMorph", mod, nb, 0.0))
+        filter_gain = filter_gain * lpf.gain
+    filter_gain = np.floor(filter_gain * 1720000000.0 / dsp.Q32) * 2.0
+    if do_hpf:
+        hpf = dsp.hpf_config(_final_exp(sound, "hpfFrequency", mod, nb, 0.0),
+                             _final_linear(sound, "hpfResonance", mod, nb,
+                                           0.0))
+        filter_gain = filter_gain * hpf.gain
+    jumps = np.concatenate(([False], filter_gain[1:] != filter_gain[:-1]))
+
+    # -- oscillateurs ---------------------------------------------------- #
+    stereo_unison = bool(sound.unison_spread) and voices > 1
+    pans =dsp.unison_pans(int(sound.unison_spread or 0), voices)
+    unison_l, unison_r = dsp.pan_amplitudes(pans)
+    buf = np.zeros((2, n)) if stereo_unison else np.zeros((1, n))
+    stereo_waves = []
+
+    def add(wave, u):
+        if wave.ndim == 2:
+            # Un échantillon stéréo s'ajoute après les sources mono, que le
+            # firmware recopie alors sur les deux canaux (``Voice::render``).
+            stereo_waves.append((wave, u))
+            return
+        if stereo_unison:
+            buf[0] += wave * unison_l[u]
+            buf[1] += wave * unison_r[u]
+        else:
+            buf[0] += wave
+
+    # La hauteur, en entiers comme la machine (``calculatePhaseIncrements``,
+    # puis ``adjustPitch`` au rendu) : réglages fins de l'oscillateur et du
+    # son, désaccord de l'unisson — chacun lu dans ``centAdjustTableSmall``
+    # et tronqué —, puis hauteur d'ensemble et hauteur propre, par bloc.
+    detuners = dsp.unison_detuners(int(sound.unison_detune or 0), voices)
+    master = dsp.fine_tuner(0)
+    overall_pitch = dsp.pitch_adjustment(pitch_oct)
+
+    def tuned(base, cents_offset, extra_oct):
+        fine = max(-50, min(50, int(cents_offset or 0))) * dsp.CENT_SCALE
+        inc = dsp.fine_tune(dsp.fine_tune(base, dsp.fine_tuner(fine)), master)
+        own = dsp.pitch_adjustment(np.broadcast_to(
+            np.asarray(extra_oct, dtype=np.float64), (nb,)))
+        out = []
+        for u in range(voices):
+            v = dsp.fine_tune(inc, detuners[u]) if voices > 1 else inc
+            out.append(dsp.adjust_pitch(dsp.adjust_pitch(
+                np.full(nb, v, dtype=np.int64), overall_pitch), own))
+        return out
+
+    def increments(transpose, cents_offset, extra_oct):
+        return tuned(dsp.note_increment(note + int(sound.transpose)
+                                        + int(transpose)),
+                     cents_offset, extra_oct)
+
+    def osc_kind(osc):
+        kind = str(osc.type or "")
+        if kind in _WAVE_KINDS:
+            return kind
+        if kind in ("inLeft", "inRight", "inStereo"):
+            return None   # l'entrée audio : rien à entendre ici
+        return "saw"      # échantillon absent, DX7 : une dent de scie
+
+    letters = ("A", "B")
+    pulse = {}
+    osc_oct = {}
+    for s, letter in enumerate(letters):
+        pw = _final_hybrid(sound, "osc%sPulseWidth" % letter, mod, nb)
+        pulse[s] = np.clip(np.round(pw * dsp.Q31), -dsp.Q31,
+                           dsp.Q31 - 1.0).astype(np.int64)
+        osc_oct[s] = 4.0 * _preset_u(sound, "osc%sPitch" % letter) \
+            + _blocks(mod.oct("osc%sPitch" % letter), nb)
+
+    if sound.mode == "fm":
+        _fm_sources(sound, mod, nb, n, overall, instant, neutral_unison,
+                    increments, osc_oct, pitch_oct, add, rng)
+    else:
+        # Bruit : une fois pour toute la voix (``voice.cpp``).
+        noise = _final_volume(sound, "noiseVolume", mod, nb, 0.0)
+        if np.any(noise > 0):
+            level = noise / 2.0
+            if has_filters:
+                level = level * filter_gain / dsp.Q32 * 16.0
+            level = np.minimum(level, 268435455.0) / 4.0
+            amp = np.repeat(level, block)[:n]
+            for c in range(buf.shape[0]):
+                buf[c] += rng.integers(-(1 << 31), 1 << 31, n) * amp / dsp.Q32
+
+        if sound.mode == "ringmod":
+            ring = np.full(nb, float(1 << 27))
+            if has_filters:
+                ring = ring * filter_gain / dsp.Q32 * 16.0
+            kinds = [osc_kind(osc1) or "saw", osc_kind(osc2) or "saw"]
+            for kind in kinds:
+                if kind in ("saw", "analogSaw"):
+                    ring = ring * 2.0
+            incs = [increments(osc.transpose, osc.cents, osc_oct[s])
+                    for s, osc in enumerate((osc1, osc2))]
+            ring_amp = np.repeat(ring, block)[:n]
+            for u in range(voices):
+                waves = []
+                for s, osc in enumerate((osc1, osc2)):
+                    retrig = _retrig(osc)
+                    start = _start_phase(kinds[s], retrig, rng)
+                    wave, _ = dsp.oscillator(kinds[s], incs[s][u], n, start,
+                                             None, pulse[s], retrig)
+                    waves.append(wave)
+                add(waves[0] * waves[1] / dsp.Q32 * ring_amp / dsp.Q32, u)
+        else:
+            for s, (osc, letter) in enumerate(zip((osc1, osc2), letters)):
+                volume_s = _final_volume(sound, "osc%sVolume" % letter, mod,
+                                         nb, 50.0 if s == 0 else 0.0)
+                if not np.any(volume_s > 0):
+                    continue
+                if has_filters:
+                    amp_blocks = np.round(volume_s * filter_gain / dsp.Q32)
+                else:
+                    amp_blocks = np.floor(volume_s / 16.0)
+                amp = _ramp(amp_blocks, n, amp_blocks[0] if instant else 0.0,
+                            jumps)
+                sample = _load_sample(sd, osc) if osc.is_sample else None
+                if sample is not None:
+                    data, file_sr = sample
+                    loop = int(getattr(osc, "loop_mode", 0)) == 2
+                    base = dsp.sample_increment(
+                        note + int(sound.transpose) + int(osc.transpose),
+                        file_sr)
+                    for u, incs in enumerate(tuned(base, osc.cents,
+                                                   osc_oct[s])):
+                        add(4.0 * amp * _sample_wave(data, incs, n, loop), u)
+                    continue
+                kind = osc_kind(osc)
+                if kind is None:
+                    continue
+                incs = increments(osc.transpose, osc.cents, osc_oct[s])
+                retrig = _retrig(osc)
+                for u in range(voices):
+                    wave, _ = dsp.oscillator(
+                        kind, incs[u], n, _start_phase(kind, retrig, rng), amp,
+                        pulse[s], retrig)
+                    add(wave, u)
+
+    if stereo_waves:
+        if buf.shape[0] == 1:
+            buf = np.vstack((buf, buf))
+        for wave, u in stereo_waves:
+            if stereo_unison:
+                buf[0] += wave[0] * unison_l[u]
+                buf[1] += wave[1] * unison_r[u]
+            else:
+                buf += wave
+
+    # -- filtres, volume, saturation, panoramique ----------------------- #
+    out = np.zeros((2, n))
+    lpf_cfg = lpf if do_lpf else None
+    hpf_cfg = hpf if do_hpf else None
+    clipping = int(sound.clipping_amount or 0)
+    channels = []
+    for c in range(buf.shape[0]):
+        x = buf[c]
+        if lpf_cfg is not None or hpf_cfg is not None:
+            jitter = dsp.ladder_jitter(n, rng)[0] if lpf_cfg is not None \
+                else np.ones(n)
+            x = _filtered(x, route, lpf_cfg, hpf_cfg, jitter)
+        if sound.mode != "fm":
+            x = x * overall_ramp / dsp.Q31
+        if clipping > 0:
+            x, _ = dsp.saturate(x, clipping)
+        channels.append(x)
+    if len(channels) == 1:
+        channels.append(channels[0])
+    out[0], out[1] = channels
+    if _patched(sound, "pan"):
+        pan = _final_hybrid(sound, "pan", mod, nb) * float(1 << 30)
+        left, right = dsp.pan_amplitudes(pan)
+        out[0] *= np.repeat(left, block)[:n]
+        out[1] *= np.repeat(right, block)[:n]
+    if end_block < nb:
+        out[:, end_block * block:] = 0.0
+    return out
+
+
+def _fm_sources(sound: Sound, mod: _Patch, nb: int, n: int,
+                overall: np.ndarray, instant: bool, neutral_unison: float,
+                increments, osc_oct: dict, pitch_oct: np.ndarray, add,
+                rng: np.random.Generator) -> None:
+    """Le moteur FM (``voice.cpp``) : le second modulateur, éventuellement
+    passé dans le premier, puis les deux additionnés modulent la phase des
+    deux porteuses. L'amplitude d'ensemble (volume, enveloppe 1) est déjà
+    dans celle des porteuses."""
+    block = dsp.BLOCK
+    overall_fm = overall * neutral_unison / dsp.Q32 * 8.0
+    carriers = []
+    sources = zip((sound.osc1, sound.osc2), ("A", "B"))
+    for s, (osc, letter) in enumerate(sources):
+        volume_s = _final_volume(sound, "osc%sVolume" % letter, mod, nb,
+                                 50.0 if s == 0 else 0.0)
+        amp_blocks = np.minimum(volume_s * overall_fm / dsp.Q32, 134217727.0)
+        amp = _ramp(amp_blocks, n, amp_blocks[0] if instant else 0.0)
+        feedback = _final_linear(sound, "carrier%dFeedback" % (s + 1), mod,
+                                 nb, 0.0)
+        carriers.append((osc, amp, amp_blocks, feedback,
+                         increments(osc.transpose, osc.cents, osc_oct[s])))
+    modulators = []
+    for m, modulator in enumerate((sound.modulator1, sound.modulator2)):
+        amount = _final_volume(sound, "modulator%dAmount" % (m + 1), mod, nb,
+                               0.0)
+        feedback = _final_linear(sound, "modulator%dFeedback" % (m + 1), mod,
+                                 nb, 0.0)
+        extra = _blocks(mod.oct("modulator%dPitch" % (m + 1)), nb)
+        modulators.append((modulator, amount, _ramp(amount, n, amount[0]),
+                           feedback,
+                           increments(modulator.transpose, modulator.cents,
+                                      extra)))
+    chain = bool(int(getattr(sound.modulator2, "to_modulator1", 0) or 0))
+    active = [bool(np.any(m[1] > 0)) for m in modulators]
+
+    def phase_of(thing):
+        retrig = _retrig(thing)
+        if retrig == dsp.MASK32:
+            return int(rng.integers(0, 1 << 32))
+        return retrig
+
+    for u in range(len(carriers[0][4])):
+        modulation = None
+        if active[1] and not (chain and not active[0]):
+            m1 = modulators[1]
+            modulation, _, _ = dsp.fm_operator(m1[4][u], n, phase_of(m1[0]),
+                                               m1[2], None, m1[3])
+            m0 = modulators[0]
+            if chain:
+                modulation, _, _ = dsp.fm_operator(
+                    m0[4][u], n, phase_of(m0[0]), m0[2], modulation, m0[3])
+            elif active[0]:
+                extra, _, _ = dsp.fm_operator(m0[4][u], n, phase_of(m0[0]),
+                                              m0[2], None, m0[3])
+                modulation = modulation + extra
+        elif active[0] and not active[1]:
+            m0 = modulators[0]
+            modulation, _, _ = dsp.fm_operator(m0[4][u], n, phase_of(m0[0]),
+                                               m0[2], None, m0[3])
+        for osc, amp, amp_blocks, feedback, incs in carriers:
+            if not np.any(amp_blocks > 0):
+                continue
+            wave, _, _ = dsp.fm_operator(incs[u], n, phase_of(osc), amp,
+                                         modulation, feedback)
+            add(wave, u)
+
+
+# --------------------------------------------------------------------------- #
+# Les effets du son
+# --------------------------------------------------------------------------- #
+
+def _raw(sound: Sound, key: str, default: int) -> float:
+    """Valeur brute d'un réglage de fichier (``eq`` compris)."""
+    try:
+        return float(int(sound.param(key, default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
+                 limit_feedback: bool) -> tuple[np.ndarray, np.ndarray]:
+    """Les effets du son entier, voix additionnées (``Sound::render``) :
+    panoramique, réduction, mod FX, égaliseur, delay, puis l'envoi vers la
+    réverbération et le volume post-effets. Les modulations s'y prennent au
+    repos. Rend ``(sec, envoi)`` à l'échelle entière.
+
+    :param limit_feedback: le Deluge borne la rétroaction du delay à 0,94
+        hors lecture d'un clip — l'audition d'un preset.
+    """
+    rest = {"velocity": 0.0, "note": 0.0, "random": 0.0, "aftertouch": 0.0}
+    mod = _patch(sound, rest, only=set(rest))
+    out = np.array(stereo, dtype=np.float64)
+    n = out.shape[1]
+
+    if not _patched(sound, "pan"):
+        left, right = dsp.pan_amplitudes(laws.raw_unit(
+            sound.param("pan", 0)) * float(1 << 30))
+        out[0] *= float(left)
+        out[1] *= float(right)
+
+    post_fx = float(_final_volume(sound, "volumePostFX", mod, 1, 40.0)[0])
+    post_reverb = float(_final_volume(sound, "volumePostReverbSend", mod,
+                                      1)[0])
+    reverb_amount = float(_final_volume(sound, "reverbAmount", mod, 1, 0.0)[0])
+
+    out, post_fx = dsp.bitcrush_srr(out, _raw(sound, "bitCrush", INT32_MIN),
+                                    _raw(sound, "sampleRateReduction",
+                                         INT32_MIN), post_fx)
+    rate = float(_final_exp(sound, "modFXRate", mod, 1)[0])
+    depth = float(_final_volume(sound, "modFXDepth", mod, 1)[0])
+    out, post_fx = dsp.mod_fx(out, sound.mod_fx_type, rate, depth,
+                              _raw(sound, "modFXOffset", 0),
+                              _raw(sound, "modFXFeedback", 0), post_fx)
+    eq = getattr(sound, "eq", {}) or {}
+    out = dsp.equalizer(out, float(eq.get("bass", 0)),
+                        float(eq.get("treble", 0)),
+                        float(eq.get("bassFrequency", 0)),
+                        float(eq.get("trebleFrequency", 0)))
+
+    feedback = float(_final_linear(sound, "delayFeedback", mod, 1, 0.0)[0])
+    if limit_feedback:
+        feedback = min(feedback, float((1 << 30) - (1 << 26)))
+    if feedback >= 256:
+        delay_rate = float(_final_exp(sound, "delayRate", mod, 1)[0])
         level = int(getattr(sound, "delay_sync_level", 0) or 0)
         if level > 0:
             hz = synced_hz(level, bpm)
-            delay_time = 1.0 / hz if hz > 0 else 0.25
+            seconds = 1.0 / hz if hz > 0 else 0.25
+            length = min(max(seconds * ENGINE_RATE * float(1 << 24)
+                             / max(delay_rate, 1.0), 1.0), 88200.0)
         else:
-            # Approché : le temps du delay libre n'est pas relevé dans le
-            # firmware ; 134 ms au réglage 25, une octave par cran.
-            delay_time = 0.134 * 2.0 ** -float(np.mean(
-                _octaves(sound, "delayRate", mod, n)))
-        mixed = _delay(mixed, rate, min(2.0, delay_time),
-                       min(0.95, delay_fb), delay_fb * 0.8)
+            length = float(dsp.delay_samples(delay_rate))
+        out = dsp.delay(out, length, feedback,
+                        bool(getattr(sound, "delay_ping_pong", 1)),
+                        bool(getattr(sound, "delay_analog", 0)))
 
-    send = float(np.mean(_volume(sound, "reverbAmount", mod, n, 0.0)))
-    reverb_amount = min(1.0, 0.45 * send)
-    if reverb_amount > 0.02:
-        mixed = _reverb(mixed, rate, reverb_amount)
-    return mixed
+    # ``processReverbSendAndVolume`` : l'envoi suit le volume du morceau et
+    # le volume post-effets du son.
+    send_amount = SONG_REVERB_ADJUST * reverb_amount / float(1 << 27)
+    send_and_post = post_fx * send_amount / float(1 << 27)
+    send = (out[0] + out[1]) * send_and_post * 2.0 / dsp.Q32 \
+        if reverb_amount > 0 else np.zeros(n)
+    dry = out * (post_reverb * post_fx / float(1 << 54))
+    return dry, send
 
+
+# --------------------------------------------------------------------------- #
+# Fréquence de sortie
+# --------------------------------------------------------------------------- #
+
+def _resampled(audio: np.ndarray, frames: int) -> np.ndarray:
+    """``(n, 2)`` ramené à ``frames`` images par interpolation linéaire,
+    après une moyenne glissante de la largeur du rapport quand on descend
+    (contre le repliement). L'application rend à 44,1 kHz : seuls les tests
+    descendent à 22,05 kHz."""
+    audio = np.asarray(audio, dtype=np.float64)
+    if audio.shape[0] == frames:
+        return audio
+    if audio.shape[0] == 0:
+        return np.zeros((frames, 2))
+    ratio = audio.shape[0] / float(max(frames, 1))
+    width = int(round(ratio))
+    if width > 1:
+        kernel = np.ones(width) / width
+        audio = np.stack([np.convolve(audio[:, c], kernel, mode="same")
+                          for c in range(audio.shape[1])], axis=1)
+    src = np.arange(audio.shape[0], dtype=np.float64)
+    dst = np.linspace(0.0, audio.shape[0] - 1, frames)
+    return np.stack([np.interp(dst, src, audio[:, c])
+                     for c in range(audio.shape[1])], axis=1)
+
+
+def _to_engine(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Un rendu ``(n, 2)`` à ``sr``, ramené à la fréquence du moteur."""
+    if int(sr) == ENGINE_RATE:
+        return np.asarray(audio, dtype=np.float64)
+    frames = max(1, int(round(audio.shape[0] * ENGINE_RATE / float(sr))))
+    return _resampled(audio, frames)
+
+
+# --------------------------------------------------------------------------- #
+# Rendu d'un son
+# --------------------------------------------------------------------------- #
 
 def sound_effects(sound: Sound, audio: np.ndarray, sr: int = 44100,
-                  bpm: float = PREVIEW_BPM) -> np.ndarray:
-    """Les effets d'un son — mod FX, delay, réverbération — sur un rendu
-    stéréo de ses voix déjà additionnées, comme le Deluge les applique au
-    son entier. Les modulations des effets s'y prennent au repos."""
+                  bpm: float = PREVIEW_BPM, limit_feedback: bool = True
+                  ) -> np.ndarray:
+    """Les effets d'un son — panoramique, réduction, mod FX, égaliseur,
+    delay, réverbération — sur un rendu stéréo de ses voix déjà
+    additionnées (:func:`render_sound` avec ``effects=False``), comme le
+    Deluge les applique au son entier."""
     if audio.size == 0:
         return audio
-    rest = {"velocity": 0.0, "note": 0.0, "random": 0.0, "aftertouch": 0.0}
-    mod = _patch(sound, rest, only=set(rest))
-    out = np.empty_like(audio)
-    for channel in range(audio.shape[1]):
-        out[:, channel] = _effects(sound, audio[:, channel].copy(), int(sr),
-                                   mod, bpm)
-    return out
+    frames = audio.shape[0]
+    engine = _to_engine(audio, sr).T / dsp.OUTPUT_GAIN
+    dry, send = _sound_chain(sound, engine, bpm, limit_feedback)
+    mixed = dsp.output_stage(dry + dsp.reverb(send, PREVIEW_REVERB))
+    return _resampled(mixed.T, frames).astype(np.float32)
 
 
 def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
@@ -832,176 +1142,54 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
     :param glide_from: écart en demi-tons de la note précédente : la note
         part de là et glisse, si le son a un glissé (``portamento``) et
         n'est pas en legato (``Voice::setupPorta``).
-    :param effects: ``False`` rend la voix seule, sans mod FX, delay ni
-        réverbération — :func:`render_parts` les applique au son entier
-        (:func:`sound_effects`).
+    :param effects: ``False`` rend la voix seule, avant panoramique, mod FX,
+        delay, réverbération et volume — :func:`render_parts` les applique
+        au son entier (:func:`sound_effects`).
 
-    Les niveaux suivent les lois de volume du firmware : deux sons, ou deux
-    vélocités, gardent leur rapport. Ne lève jamais : un son impossible à
+    Le niveau est celui de la sortie du Deluge, au volume du morceau que
+    l'atelier écrit ; une crête au-delà de 0,99 ramène le tout sous 0,99,
+    là où la machine écrêterait. Ne lève jamais : un son impossible à
     rendre donne un tableau silencieux.
     """
-    try:
-        n = max(1, int(float(seconds) * int(sr)))
-        rate = int(sr)
-        rng = np.random.default_rng(_graine(sound.name))
-
-        # -- sources constantes de la note (``voice.cpp``) ---------------- #
-        midi_velocity = max(1.0, min(127.0, float(velocity) * 127.0))
-        constants = {
-            "velocity": float(laws.velocity_source(midi_velocity)),
-            "note": float(laws.note_source(note)),
-            # *random* : une valeur tirée à chaque note, pas une dérive.
-            # La dérive (« rwalk » à 3 Hz) faisait tanguer d'un demi-ton
-            # les sons qui en portaient un câble vers la hauteur.
-            "random": float(rng.uniform(-1.0, 1.0)),
-            "aftertouch": 0.0,
-        }
-        static = _patch(sound, constants, only=set(constants))
-
-        # -- enveloppes et LFO ------------------------------------------- #
-        # Un échantillon en mode ONCE se joue jusqu'au bout : le Deluge
-        # ignore alors la fin de la note. Relâcher l'enveloppe à la fin de
-        # la note (release 0 sur une rangée de kit) coupait le son net.
-        osc1 = sound.osc1
-        if (osc1 is not None and osc1.is_sample
-                and int(getattr(osc1, "loop_mode", 0)) == 1):
-            gate = 1.0
-        a1, d1, s1, r1 = _env_times(sound, sound.env1, 1, static)
-        a2, d2, s2, r2 = _env_times(sound, sound.env2, 2, static)
-        env1 = _adsr(n, rate, a1, d1, s1, r1, gate)
-        env2 = _adsr(n, rate, a2, d2, s2, r2, gate)
-
-        def _lfo_hz(lfo, key):
-            # Un LFO synchronisé bat au tempo : sa vitesse libre est ignorée.
-            if getattr(lfo, "sync_level", 0):
-                return synced_hz(lfo.sync_level, bpm)
-            return float(laws.lfo_hz(
-                laws.exp_range(key) * _u(sound, key)
-                + np.mean(static.oct(key))))
-
-        lfo1 = _lfo(n, rate, sound.lfo1.type,
-                    _lfo_hz(sound.lfo1, "lfo1Rate"), rng)
-        lfo2 = _lfo(n, rate, sound.lfo2.type,
-                    _lfo_hz(sound.lfo2, "lfo2Rate"), rng)
-
-        # Sources bipolaires, comme les lit un câble sans polarité : une
-        # enveloppe vaut −1 au repos et +1 à son sommet.
-        sources = dict(constants)
-        sources.update({
-            "envelope1": laws.envelope_source(env1).astype(np.float32),
-            "envelope2": laws.envelope_source(env2).astype(np.float32),
-            "lfo1": lfo1,
-            "lfo2": lfo2,
-        })
-        mod = _patch(sound, sources)
-
-        # -- hauteur ------------------------------------------------------ #
-        master = _octaves(sound, "pitch", mod, n) * 12.0
-        porta = _display(sound, "portamento", 0.0)
-        if glide_from and porta > 0 and sound.polyphonic != "legato":
-            glide = laws.glide_seconds(porta)
-            if glide > 0:
-                t = np.arange(n, dtype=np.float64) / rate
-                # La hauteur part de la note précédente et la quitte en
-                # ``decayTableSmall4``, comme l'enveloppe du glissé.
-                master = master + (float(glide_from) * (
-                    1.0 - laws.attack_curve(t / glide))).astype(np.float32)
-        pitch_a = master + _series(mod.oct("oscAPitch"), n) * 12.0
-        pitch_b = master + _series(mod.oct("oscBPitch"), n) * 12.0
-        pw_a = 0.5 + 0.45 * _hybrid(sound, "oscAPulseWidth", mod, n)
-        pw_b = 0.5 + 0.45 * _hybrid(sound, "oscBPulseWidth", mod, n)
-
-        # -- oscillateurs ------------------------------------------------- #
-        osc_a = _oscillator(sound, sound.osc1, "A", note, n, rate, pitch_a,
-                            pw_a, sd, rng)
-        level_a = _volume(sound, "oscAVolume", mod, n, 50.0)
-        level_b = _volume(sound, "oscBVolume", mod, n, 0.0)
-
-        if sound.mode == "fm":
-            mixed = _fm_voice(sound, note, n, rate, pitch_a, mod,
-                              level_a, level_b)
-        elif sound.mode == "ringmod":
-            osc_b = _oscillator(sound, sound.osc2, "B", note, n, rate,
-                                pitch_b, pw_b, sd, rng)
-            mixed = (osc_a * osc_b * level_a).astype(np.float32)
-        else:
-            osc_b = _oscillator(sound, sound.osc2, "B", note, n, rate,
-                                pitch_b, pw_b, sd, rng)
-            mixed = (osc_a * level_a + osc_b * level_b).astype(np.float32)
-
-        noise_level = _volume(sound, "noiseVolume", mod, n, 0.0)
-        if float(np.max(noise_level)) > 1e-3:
-            mixed = mixed + (rng.standard_normal(n).astype(np.float32) * 0.5
-                             * noise_level)
-
-        # -- filtres ------------------------------------------------------ #
-        if str(sound.lpf_mode or "").lower() != "off":
-            poles = 2 if sound.lpf_mode in ("12dB",) else 4
-            cutoff = laws.lpf_hz(_octaves(sound, "lpfFrequency", mod, n, 50.0))
-            q = _q_of(laws.ladder_resonance(
-                _linear(sound, "lpfResonance", mod, n, 0.0)))
-            mixed = _filter_sweep(mixed, rate, cutoff.astype(np.float32),
-                                  q.astype(np.float32), poles)
-
-        if sound.hpf_mode and str(sound.hpf_mode).lower() != "off":
-            hp_cut = laws.hpf_hz(_octaves(sound, "hpfFrequency", mod, n, 0.0))
-            if float(np.max(hp_cut)) > 20.0:
-                hp_q = _q_of(laws.ladder_resonance(
-                    _linear(sound, "hpfResonance", mod, n, 0.0)))
-                mixed = _filter_sweep(mixed, rate, hp_cut.astype(np.float32),
-                                      hp_q.astype(np.float32), 2,
-                                      high_pass=True)
-
-        # -- enveloppe d'amplitude --------------------------------------- #
-        # ``voice.cpp`` : le volume du son, enveloppe 1 comprise
-        # (linéaire en niveau d'enveloppe).
-        mixed = mixed * env1 * _volume(sound, "volume", mod, n, 50.0)
-
-        # -- saleté ------------------------------------------------------- #
-        if sound.clipping_amount:
-            mixed = _saturate(mixed, min(1.0, sound.clipping_amount / 10.0))
-        mixed = _decimate(mixed, _unit(sound, "sampleRateReduction", 0.0))
-        mixed = _bitcrush(mixed, _unit(sound, "bitCrush", 0.0))
-
-        # -- effets ------------------------------------------------------- #
-        # Sur le Deluge, ils traitent le son entier, voix additionnées :
-        # :func:`render_parts` les applique une fois, à la partie.
-        if effects:
-            mixed = _effects(sound, mixed, rate, mod, bpm)
-
-        # -- niveau et stéréo -------------------------------------------- #
-        # Une marge fixe, la même pour tous les sons : les lois de volume
-        # gardent leurs rapports, d'un son à l'autre et d'une vélocité à
-        # l'autre. Seul un son qui écrêterait est ramené.
-        mixed = mixed * OUTPUT_HEADROOM
-        peak = float(np.max(np.abs(mixed)))
+    audio = _render_float(sound, note, seconds, sr, gate, velocity, sd, bpm,
+                          glide_from, effects)
+    if effects:
+        peak = float(np.max(np.abs(audio)))
         if peak > 0.99:
-            mixed = mixed * (0.99 / peak)
+            audio *= 0.99 / peak
+    return audio
 
-        # Panoramique : centré au réglage 25 (l'ancien calcul, 25/50,
-        # penchait chaque son à droite).
-        pan = float(np.clip(np.mean(_hybrid(sound, "pan", mod, n)),
-                            -1.0, 1.0))
-        left = mixed * float(np.sqrt((1.0 - pan) * 0.5))
-        right = mixed * float(np.sqrt((1.0 + pan) * 0.5))
 
-        if sound.unison_spread and sound.unison_num > 1:
-            # Élargissement : un très court décalage entre les canaux.
-            shift = max(1, int(sound.unison_spread / 50.0 * 0.004 * rate))
-            right = np.concatenate([np.zeros(shift, dtype=np.float32),
-                                    right[:-shift]])
-
+def _render_float(sound: Sound, note: int, seconds: float, sr: int,
+                  gate: float, velocity: float, sd: SDCard | None,
+                  bpm: float, glide_from: float = 0.0,
+                  effects: bool = True) -> np.ndarray:
+    """:func:`render_sound` sans le rattrapage de crête : les rendus qu'on
+    additionne (rangées d'un kit, coups d'un motif) gardent ainsi leurs
+    rapports, et seul le mélange est ramené."""
+    frames = max(1, int(float(seconds) * int(sr)))
+    try:
+        n = max(1, int(round(float(seconds) * ENGINE_RATE)))
+        rng = np.random.default_rng(_graine(sound.name))
+        voice = _render_voice(sound, int(note), n, float(gate),
+                              float(velocity), sd, float(bpm),
+                              float(glide_from or 0.0), rng)
+        if effects:
+            dry, send = _sound_chain(sound, voice, float(bpm), True)
+            voice = dsp.output_stage(dry + dsp.reverb(send, PREVIEW_REVERB))
+        else:
+            # La voix seule, au gain de sortie : :func:`sound_effects` la
+            # reprend et passe l'étage de sortie une fois, à la fin.
+            voice = voice * dsp.OUTPUT_GAIN
+        audio = _resampled(voice.T, frames)
         # Un fondu de 5 ms en fin de rendu : la fenêtre se termine parfois
         # au milieu du son, et une coupure nette s'entend comme un clic.
-        fade = min(n, max(1, int(0.005 * rate)))
-        ramp = np.linspace(1.0, 0.0, fade, dtype=np.float32)
-        left[-fade:] *= ramp
-        right[-fade:] *= ramp
-        return np.stack([left, right], axis=1).astype(np.float32)
+        fade = min(frames, max(1, int(0.005 * int(sr))))
+        audio[-fade:] *= np.linspace(1.0, 0.0, fade)[:, None]
+        return audio.astype(np.float32)
     except Exception as exc:  # noqa: BLE001 - rempart : on rend du silence
         log.exception("rendu impossible : %s", exc)
-        return np.zeros((max(1, int(float(seconds) * int(sr))), 2),
-                        dtype=np.float32)
+        return np.zeros((frames, 2), dtype=np.float32)
 
 
 def tail_seconds(sound: Sound) -> float:
@@ -1045,12 +1233,14 @@ def preview_notes(sound: Sound) -> list[int]:
     return list(_PREVIEW_NOTES.get(category, _PREVIEW_NOTES["Autre"]))
 
 
+
 def render_preview(preset: SynthPreset, notes: list[int] | None = None,
                    sr: int = 44100, sd: SDCard | None = None) -> np.ndarray:
     """Petite phrase d'audition, choisie selon la catégorie du preset.
 
     Les notes se succèdent avec un léger recouvrement, pour que les queues de
-    réverbération ne soient pas coupées net.
+    réverbération ne soient pas coupées net ; les effets traitent la phrase
+    entière, comme le son entier sur la machine.
     """
     sound = preset.sound
     if notes is None:
@@ -1059,28 +1249,37 @@ def render_preview(preset: SynthPreset, notes: list[int] | None = None,
 
     step = 0.55
     tail = 1.1
-    total = int((step * len(notes) + tail) * sr)
-    out = np.zeros((total, 2), dtype=np.float32)
-
-    for index, note in enumerate(notes):
-        voice = render_sound(sound, note=note, seconds=step + tail, sr=sr,
-                             gate=0.6, velocity=0.85, sd=sd, effects=False)
-        start = int(index * step * sr)
-        end = min(total, start + voice.shape[0])
-        out[start:end] += voice[:end - start]
-    # Les effets traitent la phrase entière, comme le son entier sur la
-    # machine.
-    out = sound_effects(sound, out, sr=sr)
-
+    total_s = step * len(notes) + tail
+    frames = int(total_s * sr)
+    n = int(total_s * ENGINE_RATE)
+    voices = np.zeros((2, n))
+    try:
+        rng = np.random.default_rng(_graine(sound.name))
+        length = int((step + tail) * ENGINE_RATE)
+        for index, note in enumerate(notes):
+            start = int(index * step * ENGINE_RATE)
+            count = min(length, n - start)
+            if count <= 0:
+                continue
+            voice = _render_voice(sound, note, count, 0.6 * length / count,
+                                  0.85, sd, PREVIEW_BPM, 0.0, rng)
+            voices[:, start:start + count] += voice
+        dry, send = _sound_chain(sound, voices, PREVIEW_BPM, True)
+        mixed = dry + dsp.reverb(send, PREVIEW_REVERB)
+    except Exception as exc:  # noqa: BLE001 - rempart : on rend du silence
+        log.exception("aperçu impossible : %s", exc)
+        return np.zeros((frames, 2), dtype=np.float32)
+    out = _resampled(dsp.output_stage(mixed).T, frames)
     peak = float(np.max(np.abs(out)))
     if peak > 0.99:
         out *= 0.99 / peak
-    return out
+    return out.astype(np.float32)
 
 
 def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                  sr: int = 44100, sd: SDCard | None = None,
-                 tail: float = 0.8, should_stop=None) -> np.ndarray | None:
+                 tail: float = 0.8, should_stop=None,
+                 normalize: bool = True) -> np.ndarray | None:
     """Rend des parties d'accompagnement, chacune avec son son.
 
     :param parts: ``{nom: [NoteEvent]}`` (cf. :mod:`delugeapp.core.accomp`),
@@ -1096,10 +1295,14 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
 
     Comme sur la machine : un son **mono** ou **legato** coupe sa note
     précédente ; un son qui a un glissé part de la note précédente ; le
-    tempo cale LFO et delay synchronisés.
+    tempo cale LFO et delay synchronisés ; les effets traitent chaque son
+    entier, et **une seule réverbération** reçoit les envois de tous, comme
+    celle du morceau.
 
     Une même note de même durée n'est rendue qu'une fois : une basse qui
     martèle la fondamentale coûte une note, pas trente-deux.
+    ``normalize=False`` laisse la crête telle quelle (:func:`mix` ramène
+    le mélange avec la batterie).
     """
     from .accomp import total_steps
 
@@ -1109,10 +1312,12 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
              for name, sound in (sounds or {}).items() if sound is not None}
     length_s = total_steps(parts) * step_s + max(tails.values(),
                                                   default=float(tail))
-    n = max(1, int(length_s * sr))
-    out = np.zeros((n, 2), dtype=np.float32)
-    cache: dict[tuple, np.ndarray] = {}
-    fade = max(1, int(0.008 * sr))
+    frames = max(1, int(length_s * sr))
+    rate = ENGINE_RATE
+    n = max(1, int(length_s * rate))
+    dry_total = np.zeros((2, n))
+    send_total = np.zeros(n)
+    fade = max(1, int(0.008 * rate))
     for name, events in (parts or {}).items():
         sound = (sounds or {}).get(name)
         if sound is None:
@@ -1121,14 +1326,16 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
         glides = (sound.polyphonic != "legato"
                   and _display(sound, "portamento", 0.0) > 0)
         ordered = sorted(events, key=lambda e: float(e.start))
-        voices = np.zeros((n, 2), dtype=np.float32)
+        voices = np.zeros((2, n))
+        cache: dict[tuple, np.ndarray] = {}
+        rng = np.random.default_rng(_graine(sound.name))
         previous = None
         for index, event in enumerate(ordered):
             if should_stop is not None and should_stop():
                 return None
             held = max(0.02, float(event.length) * step_s)
             seconds = held + tails.get(name, float(tail))
-            start = int(float(event.start) * step_s * sr)
+            start = int(float(event.start) * step_s * rate)
             if mono and index + 1 < len(ordered):
                 # La note suivante vole la voix : la rendre au-delà ne sert
                 # à rien.
@@ -1139,38 +1346,48 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
             glide = 0.0
             if glides and previous is not None:
                 glide = float(int(previous.note) - int(event.note))
-            key = (name, int(event.note), round(held, 3), round(seconds, 2),
+            key = (int(event.note), round(held, 3), round(seconds, 2),
                    int(event.velocity) // 5, glide)
             voice = cache.get(key)
             if voice is None:
-                voice = render_sound(
-                    sound, note=int(event.note), seconds=seconds, sr=sr,
-                    gate=min(1.0, held / seconds),
-                    # ``NoteEvent.velocity`` est un pourcentage : 100 %
-                    # joue la vélocité 127.
-                    velocity=max(1.0, min(100.0, float(event.velocity)))
-                    / 100.0,
-                    sd=sd, bpm=tempo, glide_from=glide, effects=False)
+                count = max(1, int(round(seconds * rate)))
+                try:
+                    voice = _render_voice(
+                        sound, int(event.note), count,
+                        min(1.0, held / seconds),
+                        # ``NoteEvent.velocity`` est un pourcentage : 100 %
+                        # joue la vélocité 127.
+                        max(1.0, min(100.0, float(event.velocity))) / 100.0,
+                        sd, tempo, glide, rng)
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("note impossible à rendre : %s", exc)
+                    voice = np.zeros((2, count))
                 cache[key] = voice
             previous = event
             if start >= n:
                 continue
-            length = voice.shape[0]
+            length = voice.shape[1]
             if mono and index + 1 < len(ordered):
                 # La note suivante vole la voix : relâchement rapide.
-                following = int(float(ordered[index + 1].start) * step_s * sr)
+                following = int(float(ordered[index + 1].start) * step_s
+                                * rate)
                 length = max(1, min(length, following - start + fade))
             end = min(n, start + length)
-            chunk = voice[:end - start].copy()
-            if end - start < voice.shape[0] and chunk.shape[0] > fade:
-                chunk[-fade:] *= np.linspace(1.0, 0.0, fade,
-                                             dtype=np.float32)[:, None]
-            voices[start:end] += chunk
-        # Les effets traitent le son entier, comme sur la machine : une
-        # réverbération par partie, et non une par note.
-        out += sound_effects(sound, voices, sr=sr, bpm=tempo)
+            chunk = voice[:, :end - start].copy()
+            if end - start < voice.shape[1] and chunk.shape[1] > fade:
+                chunk[:, -fade:] *= np.linspace(1.0, 0.0, fade)[None, :]
+            voices[:, start:end] += chunk
+        try:
+            dry, send = _sound_chain(sound, voices, tempo, False)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("effets impossibles pour %s : %s", name, exc)
+            continue
+        dry_total += dry
+        send_total += send
+    mixed = dry_total + dsp.reverb(send_total, PREVIEW_REVERB)
+    out = _resampled(dsp.output_stage(mixed).T, frames).astype(np.float32)
     peak = float(np.max(np.abs(out))) if out.size else 0.0
-    if peak > 0.98:
+    if normalize and peak > 0.98:
         out *= 0.98 / peak
     return out
 
@@ -1191,8 +1408,8 @@ def render_kit(kit: Kit, pattern=None, bpm: float = 128, sr: int = 44100,
         total = int((step * len(rows) + 1.2) * sr)
         out = np.zeros((total, 2), dtype=np.float32)
         for index, row in enumerate(rows):
-            voice = render_sound(row.sound, note=60, seconds=step + 1.0,
-                                 sr=sr, gate=0.5, velocity=0.9, sd=sd)
+            voice = _render_float(row.sound, 60, step + 1.0, sr, 0.5, 0.9,
+                                  sd, PREVIEW_BPM)
             start = int(index * step * sr)
             end = min(total, start + voice.shape[0])
             out[start:end] += voice[:end - start]
@@ -1214,16 +1431,18 @@ def render_kit(kit: Kit, pattern=None, bpm: float = 128, sr: int = 44100,
                 if voice is None:
                     # La vélocité d'un pas est un pourcentage (1 à 100) :
                     # la diviser par 127 faisait sonner un coup plein à 79 %.
-                    voice = render_sound(
-                        row.sound, note=60, seconds=1.2, sr=sr, gate=0.5,
-                        velocity=max(0.2, min(1.0, step_item.velocity
-                                              / 100.0)), sd=sd)
+                    voice = _render_float(
+                        row.sound, 60, 1.2, sr, 0.5,
+                        max(0.2, min(1.0, step_item.velocity / 100.0)), sd,
+                        tempo)
                     cache[key] = voice
                 start = int(float(step_item.pos) * seconds_per_step * sr)
                 end = min(total, start + voice.shape[0])
                 if end > start:
                     out[start:end] += voice[:end - start]
 
+    # Les rangées passent par l'étage du kit, à son volume.
+    out *= kit_gain(kit)
     peak = float(np.max(np.abs(out)))
     if peak > 0.99:
         out *= 0.99 / peak
@@ -1358,12 +1577,15 @@ def synth_drum(role: str, sr: int = 44100, velocity: float = 1.0
 
 def render_pattern(pattern, bpm: float = 120.0, sr: int = 44100,
                    kit: Kit | None = None, sd: SDCard | None = None,
-                   bars: int | None = None, tail: float = 0.8) -> np.ndarray:
+                   bars: int | None = None, tail: float = 0.8,
+                   normalize: bool = True) -> np.ndarray:
     """Rend un motif rythmique, bouclé sur ``bars`` mesures.
 
     Chaque piste est jouée par la rangée du kit qui porte son nom — un
-    échantillon de la carte — ou, à défaut, par la batterie synthétisée :
-    une piste euclidienne ou un rôle sans échantillon sonne quand même.
+    échantillon de la carte, au niveau de la machine, étage du kit compris —
+    ou, à défaut, par la batterie synthétisée : une piste euclidienne ou un
+    rôle sans échantillon sonne quand même. ``normalize=False`` laisse la
+    crête telle quelle, pour un mélange ramené une seule fois (:func:`mix`).
     """
     steps_total = int(pattern.steps)
     loops = 1
@@ -1384,10 +1606,9 @@ def render_pattern(pattern, bpm: float = 120.0, sr: int = 44100,
             voice = cache.get(key)
             if voice is None:
                 if row is not None:
-                    voice = render_sound(row.sound, note=60, seconds=1.2,
-                                         sr=sr, gate=0.5,
-                                         velocity=max(0.2, level / 20.0),
-                                         sd=sd)
+                    voice = _render_float(row.sound, 60, 1.2, sr, 0.5,
+                                          max(0.2, level / 20.0), sd,
+                                          tempo) * kit_gain(kit)
                 else:
                     voice = synth_drum(track, sr, level / 20.0)
                 cache[key] = voice
@@ -1400,7 +1621,7 @@ def render_pattern(pattern, bpm: float = 120.0, sr: int = 44100,
                 if end > start:
                     out[start:end] += voice[:end - start]
     peak = float(np.max(np.abs(out))) if out.size else 0.0
-    if peak > 0.98:
+    if normalize and peak > 0.98:
         out *= 0.98 / peak
     return out
 

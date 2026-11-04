@@ -52,7 +52,7 @@ from ..widgets.envelope import EnvelopeEditor
 from ..widgets.filtercurve import FilterCurve, SpectrumView
 from ..widgets.knob import Knob
 from ..widgets.waveform import WaveformView
-from .base import Page, tool_button
+from .base import Page, avance, tool_button
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +99,8 @@ class SynthsPage(Page):
     presetChosen = pyqtSignal(str)
     #: Demande d'ouvrir ce preset dans le générateur, pour le faire varier.
     openInGenerator = pyqtSignal(str)
+    #: Le preset choisi, pour le morceau de l'atelier : ``{"preset", "part"}``.
+    toAtelier = pyqtSignal(object)
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
@@ -106,6 +108,7 @@ class SynthsPage(Page):
         self._proxy = None
         self._preset = None
         self._current = ""
+        self._current_category = ""
         self._audio = None
 
     # -- construction ------------------------------------------------------- #
@@ -128,15 +131,20 @@ class SynthsPage(Page):
         stop.clicked.connect(self.guard(self._stop))
         actions.addWidget(stop)
 
-        duplicate = tool_button(tr("Dupliquer"), "copy",
-                                tr("Enregistrer une copie à côté de "
-                                   "l'original"))
-        duplicate.clicked.connect(self.guard(self._duplicate))
-        actions.addWidget(duplicate)
+        self._use_button = tool_button(tr("Utiliser dans l'atelier"),
+                                       "atelier")
+        self._use_button.clicked.connect(self.guard(self._use_in_atelier))
+        actions.addWidget(self._use_button)
 
         vary = tool_button(tr("Varier dans le générateur"), "wand")
         vary.clicked.connect(self.guard(self._vary))
         actions.addWidget(vary)
+
+        duplicate = avance(tool_button(tr("Dupliquer"), "copy",
+                                       tr("Enregistrer une copie à côté de "
+                                          "l'original")))
+        duplicate.clicked.connect(self.guard(self._duplicate))
+        actions.addWidget(duplicate)
 
         row = QHBoxLayout()
         row.setSpacing(6)
@@ -179,8 +187,10 @@ class SynthsPage(Page):
     def _build_detail(self) -> QWidget:
         tabs = QTabWidget()
         tabs.addTab(self._build_summary_tab(), tr("Vue d'ensemble"))
-        tabs.addTab(self._build_params_tab(), tr("Paramètres"))
-        tabs.addTab(self._build_mod_tab(), tr("Modulations"))
+        # Les réglages un à un et les câbles de modulation : le détail du
+        # son, pour qui veut le lire comme la machine l'écrit.
+        tabs.addTab(avance(self._build_params_tab()), tr("Paramètres"))
+        tabs.addTab(avance(self._build_mod_tab()), tr("Modulations"))
         self._tabs = tabs
         return tabs
 
@@ -398,6 +408,8 @@ class SynthsPage(Page):
             return
         rel = row["rel"] if "rel" in row.keys() else ""
         self._current = rel
+        self._current_category = (row["category"] or "") \
+            if "category" in row.keys() else ""
         self.presetChosen.emit(rel)
         self._load_preset(rel, row)
 
@@ -583,7 +595,19 @@ class SynthsPage(Page):
             except Exception as exc:  # noqa: BLE001
                 log.debug("arrêt impossible : %s", exc)
 
-    # -- vers le générateur -------------------------------------------------- #
+    # -- vers l'atelier et le générateur ------------------------------------- #
+
+    def _use_in_atelier(self) -> None:
+        """Le preset choisi rejoint le morceau de l'atelier, à la piste de sa
+        catégorie — une basse à la basse, une nappe aux accords. Rien n'est
+        écrit : l'original reste tel quel sur la carte."""
+        if self._preset is None or not self._current:
+            self.say(tr("Choisissez d'abord un preset."))
+            return
+        import copy
+
+        self.toAtelier.emit({"preset": copy.deepcopy(self._preset),
+                             "part": self._current_category})
 
     def _vary(self) -> None:
         """Ouvre le preset choisi dans le générateur."""

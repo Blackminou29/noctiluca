@@ -43,4 +43,5 @@ TEXTS = {
         "into a new section",
     "rien à ajouter : le projet ne contient que ce que le morceau a déjà":
         "nothing to add: the project only holds what the song already has",
+    "case hors du clip": "cell outside the clip",
 }
