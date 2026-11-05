@@ -323,6 +323,71 @@ signaux, et `Page.run()` pour les travaux longs.
 
 ---
 
+## 3 sexquadragies. La 1.3.0 définitive sur sa machine (5 novembre 2026)
+
+**La demande** : « j'ai installé la dernière version du firmware sur le Deluge, il faut
+vérifier que tout le logiciel fonctionne bien avec cette version. »
+
+### Ce qu'il a installé
+
+Sondé en lecture seule (identité, ping, racine de la carte par le câble) : la racine porte
+`deluge-c1_3_0.bin` (1 756 100 octets, daté du 5 novembre 0 h 48) à la place de
+`deluge-v1_3_0-beta+2026_10_18-102cf9f.bin`. C'est la **1.3.0 définitive** — tag `v1.3.0`,
+commit `156500e` —, qui descend de sa bêta (`102cf9f`) en **54 corrections**. L'identité ne
+change pas (`f0 7e 7f 06 02 00 21 7b 01 00 00 00 01 03 00 00 f7`, c1.3.0), ni la version
+écrite dans les fichiers (`firmwareVersion="c1.3.0"`, même construction pour les deux).
+Un dossier `System Volume Information/` est apparu à la racine : la carte est passée dans
+un lecteur du PC pour la mise à jour ; la synchronisation l'ignore déjà.
+
+### Les 54 corrections, relues pour l'application
+
+| Changement | Effet pour l'application |
+|---|---|
+| `<performanceView>` n'est plus écrit ni lu dans les morceaux (`#4921` retiré) | aucun : l'application ne l'écrit pas, et ses quatre lectures d'un morceau (`Song`, `daw.from_deluge`, `songinsert.read_target`, `dawlive.read_routes`) rendent le même contenu sans lui — vérifié sur les 5 morceaux de la bêta qui le portent |
+| `outputRecordingIndex="-1"` pour une piste audio sans source | aucun : jamais lu |
+| passe-haut de la réverbération du morceau appliqué au chargement (`#5184`) | aucun : nos morceaux écrivent `hpf="0"`, celui de l'écoute (`PREVIEW_REVERB`) |
+| somme des câbles vers un paramètre exponentiel saturée au lieu de déborder (`#5099`) | aucun : l'écoute additionne en flottants puis borne, comme la définitive |
+| delay analogique réécrit (`#5143`) | aucun : même résultat, dit le code et le montre sa lecture |
+| `calcApproxRMS` sans débordement | aucun : le compresseur maître mesure par son propre `calcRMS`, inchangé |
+| `fastPythag` corrigé | aucun : détection de hauteur et tables d'onde, que l'écoute n'imite pas |
+| DX7 permis dans un kit (`#5171`) | un kit à rangée DX7 se lit, se décrit, s'écoute (en dent de scie, comme un synthé DX7) et s'inventorie — essayé sur une copie de kit |
+| `smsysex` : un bloc d'écriture sans mémoire répond une erreur au lieu de planter | aucun : l'erreur remonte comme les autres (`FileError`) |
+| constantes de volume nommées (`kSongVolumeAdjustmentShift`…) | aucun : mêmes valeurs ; elles servent à l'aperçu d'un échantillon dans le navigateur |
+| écran : images identiques non renvoyées, envoi différé si le bus est pris | aucun : la recopie SysEx reste appelée à chaque image |
+| le reste (DIN MIDI, USB hôte, interface, automation, arpégiateur, audio clips, DX7) | rien que l'application lise, écrive ou imite |
+
+### Vérifié sur la machine, en lecture seule
+
+* Ports (quatre, comme avant ; un premier listage, pendant l'installation des pilotes, n'en
+  montrait aucun — il faut quelques secondes après le branchement), identité, ping 1,7 ms,
+  fichiers par USB oui.
+* Recopie de l'écran : 100 images en 5 s, image complète et lisible (son économiseur).
+* Lecture d'un morceau par le câble : 158 Ko/s, identique à la copie de travail.
+* Synchronisation calculée à blanc, manifestes intacts : elle recevra `deluge-c1_3_0.bin`
+  et rangera l'ancien `.bin` dans l'historique ; tout le reste est à jour.
+
+### Essais sur la machine, avec son accord (« lancer l'essai », 5 novembre)
+
+* **Écriture** : un morceau de l'atelier (`SONGS/ESSAI 1-3-0.XML`, techno 136 BPM, la
+  mineur, 4 instruments, 18 clips, kit de ses échantillons, 209 102 octets) écrit dans une
+  copie fantôme de la copie de travail puis envoyé par `cardsync.apply_plan` — le chemin de
+  la synchronisation —, un garde refusant toute écriture hors du fichier et de son
+  `~DCxxxx.TMP` : **3,5 s, 58 Ko/s** (comme en bêta), relu par le câble identique à l'octet,
+  aucun temporaire resté, aucun refus du garde, réel intact. **« Le morceau s'est bien
+  chargé »** sur la machine. Retiré de la carte ensuite, à sa demande (suppression seule
+  permise par le garde) ; jamais arrivé dans sa copie de travail, son application étant
+  fermée. Synchronisation recalculée à blanc : revenue à l'état d'avant l'essai.
+* **Un do** (note 60, canal 1) joué à 07:00:56 — **« j'ai bien entendu le do »**.
+* **Un preset** (`SYNTHS/acid/TB01.XML`, 45 réglages) envoyé à la basse du morceau
+  d'essai, puis sa phrase : **45 réglages en 0,2 s** — quatre fois plus vite qu'en bêta
+  (0,8 s), la cadence attendant le pong de chaque réglage — et le retour MIDI Follow les
+  renvoie aussitôt, **45 sur 45 identiques**. Cohérent avec `#5137` : le Deluge en
+  périphérique ne prend plus d'interruption à chaque jeton IN de l'hôte, et répond plus vite.
+* La table MIDI Follow compte 79 clés pour 81 assignations du fichier : le `255` de
+  `stutterRate` (non assigné) et un nom sans équivalent sont écartés — pas un écart.
+
+---
+
 ## 3 quinquadragies. L'écoute compilée, et ses voix en parallèle (5 novembre 2026)
 
 **La demande** : « faire les deux améliorations proposées » à la fin du §3 quaterquadragies

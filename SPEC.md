@@ -3,8 +3,9 @@
 **Projet racine :** `C:\Users\sebas\Desktop\Informatique\Deluge app`
 **Package :** `delugeapp/` — **Point d'entrée :** `main.py` à la racine du projet.
 **Python cible :** 3.11+ (testé 3.11 et 3.13, Windows).
-**Dépendances autorisées :** `PyQt6`, `numpy`, `matplotlib` (optionnel), `sounddevice` (optionnel),
-`Pillow` (optionnel). **Rien d'autre.** Tout import optionnel doit être protégé par `try/except ImportError`
+**Dépendances autorisées :** `PyQt6`, `numpy`, `numba` (recommandé : il compile le moteur
+d'écoute, §4.41), `matplotlib` (optionnel), `sounddevice` (optionnel), `Pillow` (optionnel).
+**Rien d'autre.** Tout import optionnel doit être protégé par `try/except ImportError`
 avec dégradation gracieuse (pas de crash si absent).
 **Langues de l'interface : français et anglais**, au choix dans le menu « Langue » (§5.26).
 Le français est la langue **source** : chaque libellé, menu, message et infobulle s'écrit en
@@ -30,6 +31,20 @@ français dans le code, et c'est ce texte qui sert de clé à sa traduction angl
 ---
 
 ## 1. Faits vérifiés sur le format Deluge (NE PAS RE-DÉDUIRE — c'est mesuré sur la carte réelle)
+
+> **Le firmware de la machine (5 novembre 2026) : la 1.3.0 définitive.** Tag `v1.3.0`,
+> commit `156500e`, fichier `deluge-c1_3_0.bin` à la racine de sa carte ; identité SysEx
+> `01 03 00` et `firmwareVersion="c1.3.0"` dans les fichiers, comme la bêta. Le code cité
+> dans cette SPEC l'a été au commit `102cf9f` (la bêta du 18 octobre), dont la définitive
+> descend en 54 corrections. Relues une à une : seuls changent, pour l'application,
+> l'élément `<performanceView>` des morceaux (plus écrit, plus lu — les morceaux de la bêta
+> le portent, sans effet sur nos lectures), l'`outputRecordingIndex` d'une piste audio sans
+> source (`-1`), le passe-haut de la réverbération du morceau, enfin appliqué au chargement
+> (nos morceaux écrivent `hpf="0"`, celui de l'écoute), la somme des câbles vers un
+> paramètre exponentiel, qui sature au lieu de déborder (l'écoute la bornait déjà), et le
+> DX7, permis dans un kit (lu, écouté en dent de scie). Protocole des fichiers par SysEx,
+> écran, identité : inchangés, sauf un bloc d'écriture sans mémoire, qui répond désormais
+> par une erreur. Rien à modifier dans le code ; détail dans REPRISE §3 sexquadragies.
 
 ### 1.1 Arborescence de la carte SD
 ```
