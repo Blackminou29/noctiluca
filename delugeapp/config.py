@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Réglages persistants et contexte applicatif de Deluge Companion.
+"""Réglages persistants et contexte applicatif de Noctiluca.
 
 Ce module est volontairement **sans dépendance Qt au niveau du module** :
 il est importé aussi bien par le cœur (`delugeapp.core.*`) que par l'interface.
 Les types Qt/cœur ne servent qu'aux annotations (`TYPE_CHECKING`), et le seul
 endroit qui touche à PyQt6 (`AppContext.sd_or_warn`) le fait par import local.
 
-Persistance : ``%APPDATA%/DelugeCompanion/settings.json`` (UTF-8, écriture
+Persistance : ``%APPDATA%/Noctiluca/settings.json`` (UTF-8, écriture
 atomique). La lecture est tolérante : clés inconnues ignorées, clés absentes
 remplacées par la valeur par défaut, types corrigés au mieux.
+
+L'application s'est appelée « Deluge Companion » jusqu'au 5 novembre 2026 :
+au premier lancement sous le nouveau nom, ses dossiers sont renommés
+(:func:`_reprendre`) et les chemins enregistrés suivent (:func:`chemin_actuel`).
 """
 from __future__ import annotations
 
@@ -29,14 +33,21 @@ if TYPE_CHECKING:  # pragma: no cover - uniquement pour les annotations
 
 log = logging.getLogger(__name__)
 
-APP_NAME = "Deluge Companion"
-APP_ORG = "DelugeCompanion"
+APP_NAME = "Noctiluca"
+APP_ORG = "Noctiluca"
+
+#: Le nom porté jusqu'au 5 novembre 2026. Ses dossiers et sa clé de registre
+#: sont repris une fois, sa variable d'environnement vaut toujours.
+LEGACY_APP_NAME = "Deluge Companion"
+LEGACY_APP_ORG = "DelugeCompanion"
 
 __all__ = [
     "APP_NAME", "APP_ORG", "CONFIG_ENV",
+    "LEGACY_APP_NAME", "LEGACY_APP_ORG", "LEGACY_CONFIG_ENV",
     "CONFIG_DIR", "SETTINGS_PATH", "DB_PATH", "LOG_PATH",
     "DEFAULT_BACKUP_DIR", "Settings", "AppContext",
     "load_settings", "save_settings", "ensure_config_dir",
+    "config_impose", "chemin_actuel", "REPRISES",
     "INTERFACE_LEVELS", "normalize_level",
 ]
 
@@ -81,18 +92,100 @@ def _base_dir() -> Path:
 #: d'écriture pour reproduire un bogue la laisse coupée dans les
 #: réglages de l'utilisateur, et sa carte perd son filet. C'est
 #: arrivé.
-CONFIG_ENV = "DELUGE_COMPANION_CONFIG"
+CONFIG_ENV = "NOCTILUCA_CONFIG"
+#: L'ancienne variable, toujours lue : un script d'essai écrit avant le
+#: changement de nom serait sinon branché sur les réglages réels.
+LEGACY_CONFIG_ENV = "DELUGE_COMPANION_CONFIG"
+
+
+def config_impose() -> str:
+    """Le dossier de configuration imposé par l'environnement, ou ``""``."""
+    for nom in (CONFIG_ENV, LEGACY_CONFIG_ENV):
+        valeur = (os.environ.get(nom) or "").strip()
+        if valeur:
+            return valeur
+    return ""
+
+
+#: Les dossiers de l'ancien nom repris à ce lancement : ``(ancien, nouveau,
+#: renommé)``. Le journal n'est pas encore ouvert quand ce module s'importe ;
+#: ``main.py`` les y inscrit ensuite.
+REPRISES: list[tuple[Path, Path, bool]] = []
+#: Les couples ``(ancien, nouveau)`` dont l'ancien a disparu : un chemin
+#: enregistré qui y mène encore est traduit par :func:`chemin_actuel`.
+_RENOMMES: list[tuple[Path, Path]] = []
+
+
+def _reprendre(ancien: Path, nouveau: Path) -> Path:
+    """Le dossier de l'ancien nom, renommé au nouveau s'il est seul.
+
+    Un renommage, pas une copie : chez l'utilisateur, 1,1 Go de sauvegardes
+    et 1,4 Go de copie de travail, sur le même disque — rien n'est réécrit,
+    rien n'est perdu. S'il échoue (un fichier tenu ouvert par une fenêtre de
+    l'ancienne version), l'ancien dossier sert tel quel et le renommage est
+    retenté au lancement suivant. Rend le dossier à utiliser.
+    """
+    if not nouveau.exists() and ancien.is_dir():
+        try:
+            ancien.rename(nouveau)
+        except OSError:
+            REPRISES.append((ancien, nouveau, False))
+            return ancien
+        REPRISES.append((ancien, nouveau, True))
+    if nouveau.is_dir() and not ancien.exists():
+        _RENOMMES.append((ancien, nouveau))
+    return nouveau
+
+
+def chemin_actuel(chemin: str) -> str:
+    """Un chemin enregistré sous l'ancien nom, traduit vers le nouveau.
+
+    Les réglages de l'utilisateur désignaient sa copie de travail par
+    ``…/DelugeCompanion/Carte`` et l'index retenait la même racine : une fois
+    le dossier renommé, ce chemin ne mène plus nulle part, et l'index se
+    serait vidé, croyant voir une autre carte. Un chemin hors des dossiers
+    repris revient tel quel.
+    """
+    texte = str(chemin or "")
+    if not texte.strip():
+        return texte
+    absolu = os.path.abspath(texte)
+    cle = os.path.normcase(absolu)
+    for ancien, nouveau in _RENOMMES:
+        racine = os.path.normcase(os.path.abspath(str(ancien)))
+        if cle == racine or cle.startswith(racine.rstrip("\\/") + os.sep):
+            return str(nouveau) + absolu[len(racine):]
+    return texte
 
 
 def _config_dir() -> Path:
-    """Dossier de configuration, que l'environnement peut imposer."""
-    impose = (os.environ.get(CONFIG_ENV) or "").strip()
+    """Dossier de configuration, que l'environnement peut imposer.
+
+    Un calcul, sans rien toucher : les tests l'appellent sans la variable.
+    Le renommage des dossiers de l'ancien nom n'a lieu qu'une fois, à
+    l'import de ce module, et seulement si rien n'est imposé.
+    """
+    impose = config_impose()
     if impose:
         return Path(impose).expanduser()
     return _base_dir() / APP_ORG
 
 
+def _local_dir() -> Path | None:
+    """Dossier de l'application dans ``%LOCALAPPDATA%``, ou ``None``."""
+    local = os.environ.get("LOCALAPPDATA")
+    return Path(local) / APP_ORG if local else None
+
+
 CONFIG_DIR: Path = _config_dir()
+#: Dossier de l'application dans ``%LOCALAPPDATA%`` : la copie de travail.
+_LOCAL_DIR: Path | None = _local_dir()
+if not config_impose():
+    # Le seul endroit qui renomme : une fois par lancement, à l'import.
+    CONFIG_DIR = _reprendre(_base_dir() / LEGACY_APP_ORG, CONFIG_DIR)
+    if _LOCAL_DIR is not None:
+        _LOCAL_DIR = _reprendre(_LOCAL_DIR.with_name(LEGACY_APP_ORG),
+                                _LOCAL_DIR)
 SETTINGS_PATH: Path = CONFIG_DIR / "settings.json"
 DB_PATH: Path = CONFIG_DIR / "library.db"
 LOG_PATH: Path = CONFIG_DIR / "app.log"
@@ -102,12 +195,9 @@ DEFAULT_BACKUP_DIR: Path = CONFIG_DIR / "backups"
 def _default_work_dir() -> Path:
     """Copie de travail par défaut : sur la machine (1,4 Go n'ont rien à faire
     dans un profil itinérant), sauf configuration imposée."""
-    if (os.environ.get(CONFIG_ENV) or "").strip():
+    if config_impose() or _LOCAL_DIR is None:
         return CONFIG_DIR / "Carte"
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        return Path(local) / APP_ORG / "Carte"
-    return CONFIG_DIR / "Carte"
+    return _LOCAL_DIR / "Carte"
 
 
 #: Où vit la copie de travail de la carte, sauf réglage contraire.
@@ -364,6 +454,16 @@ class Settings:
         if limit > 0:
             del self.recent_paths[limit:]
 
+    def relocate(self) -> bool:
+        """Traduit les chemins enregistrés sous l'ancien nom de l'application
+        (:func:`chemin_actuel`). Rend ``True`` si l'un d'eux a changé."""
+        avant = self.to_dict()
+        for nom in ("sd_path", "backup_dir", "work_dir", "card_backup"):
+            setattr(self, nom, chemin_actuel(getattr(self, nom)))
+        self.recent_paths = _as_str_list(
+            [chemin_actuel(p) for p in self.recent_paths], [])
+        return self.to_dict() != avant
+
     def backup_path(self) -> Path:
         """Dossier de sauvegarde effectif (défaut : %APPDATA%/…/backups)."""
         return Path(self.backup_dir) if self.backup_dir.strip() else DEFAULT_BACKUP_DIR
@@ -456,6 +556,9 @@ def load_settings() -> Settings:
         log.exception("Réglages illisibles (JSON invalide) : %s", path)
         return Settings()
     s = Settings.from_dict(data)
+    if s.relocate():
+        log.info("Chemins des réglages repris sous le nouveau nom (%s)",
+                 s.sd_path or "aucune carte")
     log.debug("Réglages chargés depuis %s", path)
     return s
 

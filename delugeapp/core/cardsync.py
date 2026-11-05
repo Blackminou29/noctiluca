@@ -15,7 +15,7 @@ carte, celui de la copie, et ce qu'ils étaient à la dernière synchronisation
 * une suppression n'est **jamais** propagée sans accord : la carte contient
   des mois de travail ;
 * ce qui est retiré de la copie de travail part dans son historique
-  (``.deluge-companion/historique``), jamais à la poubelle.
+  (``.noctiluca/historique``), jamais à la poubelle.
 
 Reconnaître un fichier réécrit par le Deluge
 --------------------------------------------
@@ -56,7 +56,8 @@ from ..i18n import N_, tr, untranslated
 log = logging.getLogger(__name__)
 
 __all__ = ["Action", "Exchange", "FolderCard", "LocalFile", "Record",
-           "SyncPlan", "SyncResult", "UsbCard", "apply_plan", "backup_state",
+           "SyncPlan", "SyncResult", "UsbCard", "adopt_legacy_meta",
+           "apply_plan", "backup_state",
            "changed_folders", "exchange_of", "is_junk", "load_exchanges",
            "load_manifest", "merge_plans", "parent_folder",
            "pending_changes", "plan_folders", "plan_sync",
@@ -64,7 +65,10 @@ __all__ = ["Action", "Exchange", "FolderCard", "LocalFile", "Record",
            "scan_local", "update_backup"]
 
 #: Dossier de l'application dans la copie de travail.
-META_DIR = ".deluge-companion"
+META_DIR = ".noctiluca"
+#: Le même, sous l'ancien nom de l'application : repris par
+#: :func:`adopt_legacy_meta`, et jamais envoyé au Deluge s'il reste.
+LEGACY_META_DIR = ".deluge-companion"
 MANIFEST = META_DIR + "/synchro.json"
 HISTORY = META_DIR + "/historique"
 #: Ce qui a été reçu du Deluge et envoyé vers lui, synchronisation par
@@ -85,16 +89,20 @@ BACKUP_STATE = META_DIR + "/sauvegarde.json"
 #: de corbeilles et d'index Spotlight.
 _JUNK_DIRS = untranslated({
     "system volume information", ".trashes", ".spotlight-v100", ".fseventsd",
-    ".temporaryitems", META_DIR,
+    ".temporaryitems", META_DIR, LEGACY_META_DIR,
     # Les originaux que ``samplefix`` met de côté : des copies de sûreté,
     # mieux à l'abri sur le PC que sur la carte.
     "_backup"})
 _JUNK_FILES = {".ds_store", "thumbs.db", "desktop.ini"}
 #: Les fichiers temporaires des écritures de l'application, qu'un arrêt
-#: brutal peut laisser derrière lui : ``.dc-tmp`` (ici), ``.tmp~``
-#: (``wav.write``) et ``<nom>.<8 signes>.tmp`` (``dxml.save``). Ils ne
-#: doivent jamais partir sur la carte.
-_TEMPORARY = re.compile(r"(\.dc-tmp|\.tmp~|\.[a-z0-9_]{8}\.tmp)$")
+#: brutal peut laisser derrière lui : ``.noct-tmp`` (ici ; ``.dc-tmp`` sous
+#: l'ancien nom), ``.tmp~`` (``wav.write``) et ``<nom>.<8 signes>.tmp``
+#: (``dxml.save``). Ils ne doivent jamais partir sur la carte.
+_TEMPORARY = re.compile(
+    r"(\.noct-tmp|\.dc-tmp|\.tmp~|\.[a-z0-9_]{8}\.tmp)$")
+#: Le suffixe d'un fichier en cours d'écriture, remplacé d'un coup une fois
+#: complet.
+_TMP = ".noct-tmp"
 
 #: Les dossiers qui portent la musique.
 MUSIC_DIRS = ("SONGS", "SYNTHS", "KITS", "SAMPLES")
@@ -189,6 +197,27 @@ def scan_local(work: Path) -> dict[str, LocalFile]:
                 continue
             trouve[rel] = LocalFile(int(st.st_size), int(st.st_mtime_ns))
     return trouve
+
+
+def adopt_legacy_meta(root: Path | str) -> bool:
+    """Renomme le dossier ``.deluge-companion`` de ``root`` en ``.noctiluca``.
+
+    La copie de travail et la sauvegarde de l'utilisateur l'ont reçu sous
+    l'ancien nom de l'application : sans lui, le manifeste manquait, et la
+    copie de travail passait pour neuve. Rien n'est fait si le nouveau
+    dossier existe déjà ; l'ancien reste alors, ignoré par la
+    synchronisation. Rend ``True`` si le dossier a été renommé.
+    """
+    ancien = Path(root) / LEGACY_META_DIR
+    nouveau = Path(root) / META_DIR
+    if not ancien.is_dir() or nouveau.exists():
+        return False
+    try:
+        ancien.rename(nouveau)
+    except OSError as exc:
+        log.warning("dossier %s non renommé : %s", ancien, exc)
+        return False
+    return True
 
 
 def load_manifest(work: Path) -> dict[str, Record]:
@@ -393,7 +422,7 @@ class FolderCard:
 
 
 def _write_atomic(cible: Path, data: bytes, mtime: float | None) -> None:
-    temporaire = cible.with_name(cible.name + ".dc-tmp")
+    temporaire = cible.with_name(cible.name + _TMP)
     temporaire.write_bytes(data)
     if mtime is not None:
         os.utime(temporaire, (mtime, mtime))
@@ -865,7 +894,7 @@ def _apply_one(action: Action, transport, work: Path,
 
     if action.kind == "copy_backup":
         local.parent.mkdir(parents=True, exist_ok=True)
-        temporaire = local.with_name(local.name + ".dc-tmp")
+        temporaire = local.with_name(local.name + _TMP)
         shutil.copy2(action.source, temporaire)
         os.replace(temporaire, local)
         _record(manifest, rel, action.size, action.date, action.time, local)
@@ -1074,7 +1103,7 @@ def record_exchange(work: Path, echange: Exchange) -> bool:
     tous = [echange] + load_exchanges(work)
     chemin = Path(work) / EXCHANGES
     chemin.parent.mkdir(parents=True, exist_ok=True)
-    temporaire = chemin.with_name(chemin.name + ".dc-tmp")
+    temporaire = chemin.with_name(chemin.name + _TMP)
     temporaire.write_text(json.dumps(
         {"version": 1,
          "exchanges": [e.to_dict() for e in tous[:MAX_EXCHANGES]]},
@@ -1180,7 +1209,7 @@ def _save_backup_state(work: Path, backup: Path, same: dict,
     chemin = Path(work) / BACKUP_STATE
     try:
         chemin.parent.mkdir(parents=True, exist_ok=True)
-        temporaire = chemin.with_name(chemin.name + ".dc-tmp")
+        temporaire = chemin.with_name(chemin.name + _TMP)
         temporaire.write_text(json.dumps(
             {"version": 1, "backup": str(backup), "updated": updated,
              "same": same}, ensure_ascii=False), encoding="utf-8")
@@ -1197,7 +1226,7 @@ def update_backup(work: Path, backup: Path, apply: bool = False,
 
     Ajoute ce qui manque, remplace ce qui a changé, **ne supprime rien** :
     ce que la carte n'a plus reste dans la sauvegarde. Une version remplacée
-    part dans ``<sauvegarde>/.deluge-companion/remplaces/<date>/`` au lieu
+    part dans ``<sauvegarde>/.noctiluca/remplaces/<date>/`` au lieu
     d'être perdue. Sans ``apply``, rien n'est écrit : le plan seulement.
 
     Un fichier déjà vérifié identique, dont ni la copie ni la sauvegarde
@@ -1207,6 +1236,10 @@ def update_backup(work: Path, backup: Path, apply: bool = False,
     figée pendant ce temps.
     """
     work, backup = Path(work), Path(backup)
+    if apply:
+        # La sauvegarde n'est écrite que par cette mise à jour : son dossier
+        # de l'ancien nom n'est repris qu'ici, pas au démarrage.
+        adopt_legacy_meta(backup)
     rapport = BackupUpdate()
     etat = backup_state(work, backup)
     memoire = etat.get("same") if isinstance(etat.get("same"), dict) else {}
@@ -1243,7 +1276,7 @@ def update_backup(work: Path, backup: Path, apply: bool = False,
                 ancienne = backup / META_DIR / "remplaces" / horodatage / rel
                 ancienne.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cible, ancienne)
-            temporaire = cible.with_name(cible.name + ".dc-tmp")
+            temporaire = cible.with_name(cible.name + _TMP)
             shutil.copy2(source, temporaire)
             os.replace(temporaire, cible)
             copie = cible.stat()

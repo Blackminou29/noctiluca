@@ -40,9 +40,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import os as _os                                             # noqa: E402
 import tempfile as _tempfile                                 # noqa: E402
 
-BAC_A_SABLE = Path(_tempfile.gettempdir()) / "deluge-companion-tests"
+BAC_A_SABLE = Path(_tempfile.gettempdir()) / "noctiluca-tests"
 BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
-_os.environ["DELUGE_COMPANION_CONFIG"] = str(BAC_A_SABLE)
+_os.environ["NOCTILUCA_CONFIG"] = str(BAC_A_SABLE)
 
 
 import numpy as np
@@ -1957,7 +1957,7 @@ class TestMainWindowAssemblage(MainWindowCase):
 
         win = self.window()
         self.assertIn(__version__, win.windowTitle())
-        self.assertIn("Deluge Companion", win.windowTitle())
+        self.assertIn("Noctiluca", win.windowTitle())
         self.assertEqual(len(win._classes), 11)
         self.assertEqual(len(win._buttons), 11)
         # Qt ajoute un menu interne sans titre (le débordement) : on ne
@@ -2167,8 +2167,11 @@ class TestMainWindowCarte(MainWindowCase):
         """
         from delugeapp import config as config_mod
 
-        reels = config_mod._base_dir() / config_mod.APP_ORG / "settings.json"
-        avant = reels.read_bytes() if reels.exists() else None
+        # Sous le nouveau nom et sous l'ancien : avant son premier lancement
+        # comme Noctiluca, les réglages de l'utilisateur sont encore là.
+        reels = [config_mod._base_dir() / nom / "settings.json"
+                 for nom in (config_mod.APP_ORG, config_mod.LEGACY_APP_ORG)]
+        avant = [r.read_bytes() if r.exists() else None for r in reels]
 
         win = self.window()
         autre = Path(self._tmp.name) / "carte-bis"
@@ -2179,9 +2182,33 @@ class TestMainWindowCarte(MainWindowCase):
         self.assertIn(self._tmp.name, str(config_mod.SETTINGS_PATH))
         self.assertTrue(config_mod.SETTINGS_PATH.exists(),
                         "les réglages devaient être écrits dans le bac à sable")
-        apres = reels.read_bytes() if reels.exists() else None
+        apres = [r.read_bytes() if r.exists() else None for r in reels]
         self.assertEqual(avant, apres,
                          "les réglages réels de l'utilisateur ont été modifiés")
+
+    def test_l_etat_de_fenetre_de_l_ancien_nom_est_repris(self):
+        """Une fois, au changement de nom : sans cela, la fenêtre se
+        rouvrait à sa taille d'origine, sur l'accueil."""
+        from PyQt6.QtCore import QSettings
+
+        from delugeapp.ui.mainwindow import adopt_window_state
+
+        dossier = Path(self._tmp.name)
+        ancien = QSettings(str(dossier / "ancien.ini"),
+                           QSettings.Format.IniFormat)
+        ancien.setValue("window/page", "Atelier")
+        ancien.setValue("window/rail", "narrow")
+        ancien.sync()
+        neuf = QSettings(str(dossier / "neuf.ini"), QSettings.Format.IniFormat)
+        self.assertEqual(adopt_window_state(ancien, neuf), 2)
+        self.assertEqual(neuf.value("window/page"), "Atelier")
+        self.assertEqual(neuf.value("window/rail"), "narrow")
+        self.assertEqual(ancien.value("window/page"), "Atelier",
+                         "l'ancien état n'est pas touché")
+        neuf.setValue("window/page", "Settings")
+        self.assertEqual(adopt_window_state(ancien, neuf), 0)
+        self.assertEqual(neuf.value("window/page"), "Settings",
+                         "un état déjà gardé sous le nouveau nom l'emporte")
 
     def test_changement_vers_un_chemin_vide_ignore(self):
         win = self.window()
@@ -2539,7 +2566,7 @@ class TestPointDEntree(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn(__version__, sortie)
-        self.assertIn("Deluge Companion", sortie)
+        self.assertIn("Noctiluca", sortie)
 
     # -- journal ------------------------------------------------------------ #
 
@@ -2628,7 +2655,7 @@ class TestPointDEntree(unittest.TestCase):
         import time
         import uuid
 
-        nom = "DelugeCompanion-test-%s" % uuid.uuid4().hex[:8]
+        nom = "Noctiluca-test-%s" % uuid.uuid4().hex[:8]
 
         class Fenetre:
             def __init__(self):
@@ -8804,3 +8831,46 @@ class TestDawPage(PageCase):
         page._daw_choice.setCurrentIndex(1)
         self.assertNotIn("MIDI To", page._steps.text())
         self.assertIn("Clock", page._steps.text())
+
+
+class TestAutoverification(unittest.TestCase):
+    """``Noctiluca --self-test`` (:mod:`delugeapp.autotest`), depuis les
+    sources.
+
+    Les scripts de ``packaging/`` la lancent sur chaque paquet construit, et
+    refusent le paquet si elle échoue : elle ne doit pas échouer ici pour une
+    raison étrangère à l'empaquetage. La fenêtre n'est pas ouverte : ses
+    remparts resteraient posés, et les cas de ce module l'ouvrent déjà.
+    """
+
+    @staticmethod
+    def _rapport() -> tuple[int, str]:
+        from delugeapp import autotest
+
+        with tempfile.TemporaryDirectory() as dossier:
+            chemin = Path(dossier) / "rapport.txt"
+            code = autotest.run(str(chemin), fenetre=False)
+            return code, chemin.read_text(encoding="utf-8")
+
+    def test_tout_est_en_ordre_depuis_les_sources(self):
+        from delugeapp.core import audio_out, dsp
+
+        if not (dsp.compiled() and audio_out._sd is not None):
+            self.skipTest("numba ou sounddevice absent : l'autovérification "
+                          "les exige d'un paquet")
+        code, texte = self._rapport()
+        self.assertEqual(code, 0, texte)
+        self.assertIn("tout est en ordre", texte)
+        self.assertNotIn("ÉCHEC", texte)
+
+    def test_refuse_de_travailler_dans_la_configuration_reelle(self):
+        """Configuration déjà chargée, et non déplacée : la vérification
+        ouvrirait l'index et les réglages de l'utilisateur. Elle refuse."""
+        from unittest import mock
+
+        from delugeapp import config
+
+        with mock.patch.object(config, "config_impose", lambda: ""):
+            code, texte = self._rapport()
+        self.assertEqual(code, 1)
+        self.assertIn("vérification refusée", texte)

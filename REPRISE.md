@@ -1,6 +1,9 @@
-# Point d'étape — Deluge Companion
+# Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 4 novembre 2026 (le pont vers les DAW, §3 triquadragies)
+**Dernière mise à jour :** 5 novembre 2026 (les paquets à distribuer, §3 octoquadragies)
+**Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
+paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
+`.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
 **État :** **application terminée et fonctionnelle.** Les cinq phases sont écrites,
 `python main.py` démarre, **la suite complète passe** (le nombre exact est dans le dernier
 § daté). Deux audits de bugs (§3 duovicies) puis trois passes sur les générateurs et la
@@ -30,6 +33,7 @@ calés sur sa mesure, et complète un morceau de la machine sans le réécrire �
 **L'interface suit le parcours de création** — accueil, atelier en cinq étapes, sons qui rejoignent le
 morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quadragies.
 **Le pont vers les DAW** : un morceau part vers tout DAW (MIDI, DAWproject, Reaper, pistes audio), un projet (MIDI, set Ableton Live, DAWproject, Reaper) revient en morceau, et le DAW joue les sons du Deluge, chaque piste sur son canal — voir §3 triquadragies.
+**L'application se distribue sans Python** : installateur NSIS pour Windows (construit et vérifié), image disque macOS et AppImage Linux (scripts et construction par GitHub, jamais lancés), chaque paquet autovérifié avant d'être emballé — voir §3 octoquadragies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -320,6 +324,162 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 octoquadragies. Les paquets : Windows, macOS, Linux (5 novembre 2026)
+
+**La demande** : « Je m'apprête à déployer le logiciel et à le fournir à d'autres
+utilisateurs. […] compile le logiciel avec un installateur de type NSIS […]. Je souhaite
+également une solution de déploiement pour des PC sous OS Mac et Linux. » Contrat : SPEC §8 ;
+mode d'emploi : `packaging/LISEZMOI.md`.
+
+### Ce qui a été construit
+
+* `packaging/noctiluca.spec` : PyInstaller *onedir*, une recette pour les trois systèmes ;
+  `requirements-construction.txt` fige les versions (celles des tests) ; `icones.py` rend
+  l'emblème (`icons.app_icon`) en `.ico` (9 tailles, une par tracé), `.icns`, `.png`, et le
+  bandeau 164 × 314 de l'installateur (treillis, emblème, « NOCTILUCA » magenta, version).
+* **Windows** : `construire-windows.ps1` (environnement neuf, `-Tests`, icônes,
+  PyInstaller, autovérification, NSIS, `-Certificat` pour signer) et `windows/noctiluca.nsi`.
+  Résultat : `build/paquets/Noctiluca-1.0.0-windows-x64-setup.exe`, **66 Mo** (242 Mo
+  installés, dont 115 de llvmlite et 69 de Qt).
+* **macOS** : `construire-macos.sh` (`.app`, notarisation si les variables d'Apple sont
+  posées, `.dmg`), `macos/entitlements.plist` (JIT de numba sous runtime renforcé).
+  **Linux** : `construire-linux.sh` (AppImage par `appimagetool`, autovérifiée elle aussi,
+  et `.tar.gz`), `linux/AppRun`, `linux/noctiluca.desktop`. `.gitattributes` garde leurs
+  fins de ligne Unix.
+* `.github/workflows/paquets.yml` : les trois sur les machines de GitHub (Windows 2022,
+  macOS 14 arm64, Ubuntu 22.04), brouillon de publication sur une étiquette `v*`. **Il n'y a
+  pas encore de dépôt distant** : rien n'a tourné.
+* `delugeapp/autotest.py` et `main.py --self-test [RAPPORT]` (SPEC §8.4) ; `main.py` donne
+  aussi une sortie à `sys.stdout`/`sys.stderr` quand ils valent `None` (application
+  fenêtrée sans console : `--version` levait).
+* Le chapitre « Installation » du manuel, fr et en, parle des installateurs ; `pip` passe
+  dans une section « Depuis les sources » (`#sources`).
+
+### Les pièges rencontrés
+
+1. **numba rangeait le cache du paquet dans les sources.** Dans le paquet, `dsp.py` n'est
+   connu que par `delugeapp\core\dsp.py`, relatif. Lancée depuis la racine du projet,
+   l'autovérification a fait trouver ce fichier à `InTreeCacheLocator` : cache écrit dans
+   `delugeapp/core/__pycache__`, daté par l'exécutable — **ce qui a invalidé le cache des
+   sources** (mesuré : `python main.py --self-test` a recompilé, 2,3 s, puis 0,5 s ; les
+   11 boucles de ce rendu sont rétablies, les autres se recompilent à leur premier usage). Les
+   scripts lancent désormais l'autovérification depuis le dossier du paquet ; chez
+   l'utilisateur, le cache va dans `%LOCALAPPDATA%\numba\Cache` (22 fichiers, 415 Ko),
+   et le rapport en donne l'emplacement. Le désinstallateur ne le retire pas (dossier au
+   nom de numba, partagé).
+2. **La plateforme Qt « offscreen » n'a pas de polices sous Windows** : le nom du bandeau
+   sortait en carrés. `icones.py` garde la plateforme native, sauf sur un Linux sans écran.
+3. **PowerShell 5.1 et la sortie d'erreur** : avec `$ErrorActionPreference = "Stop"`, la
+   première ligne que PyInstaller écrit sur stderr passe pour une erreur. Chaque programme
+   est lancé par `Lancer`, qui ne juge que son code de sortie. Le script porte un BOM :
+   sans lui, PowerShell 5.1 lit ses accents dans le jeu de caractères de Windows. Le `.nsi`
+   n'en a pas : `makensis /INPUTCHARSET UTF8`.
+4. **Les licences de numpy s'écrasaient** : plusieurs `LICENSE.txt` dans ses sous-dossiers,
+   réunis dans un seul. Seuls ceux des `*.dist-info` sont pris (169 fichiers au lieu de 171).
+5. **`collect_submodules("delugeapp")` aurait importé la configuration** — donc renommé les
+   dossiers de l'ancien nom chez qui construit. Les modules sont lus sur le disque.
+
+### Vérifié
+
+* **1 260 tests au vert** (1 258 + `TestAutoverification` : en ordre depuis les sources ;
+  refus dans la configuration réelle), dans l'environnement de construction.
+* L'autovérification **dans `Noctiluca.exe`** : 155 modules, 2 648 textes anglais, manuel,
+  tables, PortAudio V19.7.0, **11 boucles compilées par numba dans le paquet** (1,9 s la
+  première fois, 0,2 s ensuite : le cache sert), fenêtre de 11 pages ouverte et refermée.
+  Autovérification complète en 2 s.
+* L'installateur, déplié par 7-Zip : son contenu est **identique octet pour octet** au
+  dossier vérifié (169 fichiers), bandeau et icônes compris.
+* Empreinte de `settings.json` et clé de registre `HKCU\Software\Noctiluca` identiques avant
+  et après toutes les constructions ; aucun dossier temporaire laissé.
+
+### Pas vérifié
+
+* **L'installateur n'a pas été exécuté** : il demande les droits d'administrateur (fenêtre
+  UAC), donc la présence de l'utilisateur. Restent à voir : pages, installation, mise à
+  jour par-dessus, refus si ouvert, raccourcis, désinstallation.
+* **macOS et Linux n'ont jamais été construits** (ni Mac, ni WSL avec une distribution, ni
+  Docker sur ce PC) : scripts et workflow écrits d'après la documentation, non éprouvés.
+* La signature (Windows, Apple) : pas de certificat.
+
+### Ce qui reste à décider (par lui)
+
+* **La licence** (SPEC §8.8) : GPL v3, sauf licence commerciale de PyQt6 et retrait du
+  portage du firmware. Un `LICENSE.txt` à la racine fait apparaître la page de licence.
+* **La version** : encore `1.0.0` depuis le début du projet.
+* **Le MIDI hors Windows** : le porter (CoreMIDI, ALSA) demanderait une machine de chaque
+  système et le Deluge branché pour mesurer.
+* L'éditeur affiché (« Sébastien Abalain ») et l'identifiant macOS (`fr.abalain.noctiluca`).
+
+---
+
+## 3 septquadragies. Le nouveau nom : Noctiluca (5 novembre 2026)
+
+**La demande** : « Deluge Compagnon est déjà pris » (un site de raccourcis de la communauté
+porte ce nom) — trouver un nom qui aille avec le thème, puis « remplacer toutes les
+références à l'ancien nom dans le logiciel par le nouveau ». Il a choisi **Noctiluca**,
+le plancton qui s'allume quand l'eau bouge : le déluge et les pads lumineux. Recherche
+faite avant : « DELUGE » est une marque de Synthstrom Audible (USPTO, classes 9 et 15),
+d'où un nom sans « Deluge ».
+
+### Ce que le nom touchait, et qui ne se remplace pas d'un trait
+
+Le texte (titres, manuel, À propos, PDF du manuel, métadonnées DAWproject, canal
+d'instance) a suivi. Quatre traces portaient des **données de l'utilisateur** :
+
+| Trace | Chez lui | Ce qu'un simple remplacement aurait fait |
+|---|---|---|
+| `%APPDATA%/DelugeCompanion` | réglages, `library.db`, journal, **1,1 Go** de sauvegardes | démarrage sur des réglages neufs |
+| `%LOCALAPPDATA%/DelugeCompanion/Carte` | la copie de travail, **1,4 Go** | une copie vide à recréer par le câble — des heures |
+| `sd_path` et `last_scan_root` = ce chemin-là | réglages et index | la carte vue comme « dossier » ; **l'index vidé** par `forget_other_card` |
+| `.deluge-companion/` | manifeste, historique (51 Mo), échanges | la copie de travail prise pour neuve, l'ancien dossier **envoyé sur la carte** |
+
+Réponse (SPEC §4.1, tableau « Trace de l'ancien nom ») : **renommer, pas copier**
+(`config._reprendre`, à l'import, si rien n'est imposé) ; traduire les chemins enregistrés
+(`chemin_actuel`, `Settings.relocate`, `forget_other_card`) ; renommer le dossier de
+synchronisation de la copie au démarrage, celui de la **sauvegarde seulement à sa mise à
+jour** (elle n'est jamais écrite d'office) ; garder l'ancien dossier dans `is_junk` ;
+reprendre l'état de fenêtre du registre si le nouveau est vide. `DELUGE_COMPANION_CONFIG`
+vaut toujours, après `NOCTILUCA_CONFIG` (`config_impose()`). Les temporaires `.dc-tmp`
+deviennent `.noct-tmp`, les anciens restent reconnus. Le `tag` de la session SysEx
+change sans effet : lu dans `smsysex.cpp`, le firmware le renvoie tel quel et choisit la
+session par ancienneté — même code dans la bêta (`102cf9f`) et la 1.3.0 (`v1.3.0`).
+
+**Logotype** : « NOCTILUCA » prend la place et le magenta de « DELUGE », « POUR DELUGE »
+(« FOR DELUGE ») celle de « COMPANION », effacé sous 1 180 px comme lui. Démarrage :
+« POUR SYNTHSTROM DELUGE » en petites capitales, « NOCTILUCA » en grand. Rendu en PNG
+(fr, en ; 980, 1 180, 1 360, 1 600 px ; démarrage ; barre du manuel) : les cinq menus
+tiennent à 980 px.
+
+### Le piège évité
+
+La première version renommait dans `_config_dir()`. Or
+`TestDossierDeConfiguration` l'appelle **sans la variable** : la suite aurait renommé les
+dossiers réels de l'utilisateur. `_config_dir()` est redevenu un calcul pur ; le
+renommage n'a lieu qu'une fois, au niveau du module. Même famille :
+`MainWindow._settings_store` lisait la variable lui-même — il passe par `config_impose()`.
+
+### Vérifié
+
+* **1 258 tests au vert** (1 245 + 13 : `TestAncienNom`, l'ancienne variable, l'état de
+  fenêtre) ; empreintes de `settings.json` et de la clé de registre identiques avant et
+  après ; aucun dossier `Noctiluca` créé chez lui par la suite.
+* `test_premier_lancement_sous_le_nouveau_nom` : un vrai démarrage dans un profil
+  fabriqué (`APPDATA`, `LOCALAPPDATA` détournés) — renommé, pas copié (même `st_ino`).
+* **Simulation sur une copie de son profil** (réglages, index et dossier de
+  synchronisation copiés, racine transposée) : les deux dossiers renommés, la carte
+  reconnue comme copie de travail, **index intact** (1 747 échantillons, 955 presets,
+  54 morceaux), dossier de synchronisation repris, sauvegarde non touchée ; second
+  lancement sans effet. Une première passe avait vu le renommage refusé — mon script
+  tenait `library.db` ouvert (`with sqlite3.connect` valide sans fermer) ; le repli a joué
+  comme prévu : l'ancien dossier a servi, rien de perdu.
+
+**Chez lui, rien n'a encore bougé** : la reprise se fera à son prochain lancement, que le
+journal racontera (« dossier repris de l'ancien nom »). Restent sous l'ancien nom, et
+c'est voulu : les paragraphes datés de ce document, `KITS/COMPAGNON 1.XML` (un kit de sa
+carte), et `%TEMP%/DelugeCompanion` (aperçus temporaires, jamais relus).
 
 ---
 
@@ -3644,7 +3804,7 @@ image**. Le script de rendu tient en quarante lignes ; deux pièges :
   installée et tout le texte sort en carrés. Utiliser la vraie plateforme
   avec `WA_DontShowOnScreen` — la fenêtre est mise en page et peinte sans
   jamais apparaître ;
-- **poser `DELUGE_COMPANION_CONFIG` avant tout import de `delugeapp`**, sans
+- **poser `NOCTILUCA_CONFIG` avant tout import de `delugeapp`**, sans
   quoi le script écrit les réglages et l'état de fenêtre de l'utilisateur en
   quittant (§3 sexdecies) ;
 - **rendre aussi à 980 × 640, faire défiler les pages jusqu'en bas, et
@@ -3675,7 +3835,7 @@ Deux contrôles à refaire après toute modification touchant à l'écriture :
 
 ```bash
 # 1. les réglages réels ne doivent pas bouger
-sha256sum "$APPDATA/DelugeCompanion/settings.json"   # avant et après la suite
+sha256sum "$APPDATA/Noctiluca/settings.json"   # avant et après la suite
 # 2. la carte ne doit porter aucune trace
 find "SDCARD Deluge" -name "_BACKUP" -o -name "*.samplefix-tmp" \
      -o -name "*TRANCHES*" -o -name "*.bak"
@@ -3723,7 +3883,7 @@ Dans tous les cas : `SPEC.md` reste le contrat, et la règle du §6 ne se négoc
   ne pas les ajouter aux dépendances.
 - **Carte SD de travail :** `SDCARD Deluge/` — **exclue de git** (`.gitignore`).
   Le chemin est modifiable depuis les réglages de l'application.
-- **Index SQLite :** `%APPDATA%/DelugeCompanion/` — supprimable sans rien perdre d'autre
+- **Index SQLite :** `%APPDATA%/Noctiluca/` — supprimable sans rien perdre d'autre
   que le temps d'une nouvelle analyse. Tags, notes et favoris survivent à une réanalyse
   (`Library.clear()` les conserve, `clear_all()` les efface).
 

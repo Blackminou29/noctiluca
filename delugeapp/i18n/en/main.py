@@ -7,10 +7,11 @@ TEXTS = {
     "mais l'action en cours a échoué. Le détail est dans le journal.":
         "An unexpected error occurred.\n\nThe application stays open, but the "
         "current action failed. The details are in the log.",
-    "Deluge Companion — gestion de carte SD, génération de presets et outils "
+    "Noctiluca — gestion de carte SD, génération de presets et outils "
     "de composition pour Synthstrom Deluge.":
-        "Deluge Companion — SD card management, preset generation and "
+        "Noctiluca — SD card management, preset generation and "
         "songwriting tools for the Synthstrom Deluge.",
+    "POUR SYNTHSTROM DELUGE": "FOR SYNTHSTROM DELUGE",
     "CHEMIN": "PATH",
     "emplacement de la carte SD à utiliser": "location of the SD card to use",
     "vide l'index avant de démarrer": "empty the index before starting",

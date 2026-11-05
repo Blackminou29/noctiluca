@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Point d'entrée de Deluge Companion.
+"""Point d'entrée de Noctiluca.
 
 Lance l'application : journal, réglages, index, carte, lecteur audio, thème,
 puis la fenêtre principale.
@@ -18,6 +18,10 @@ Deux précautions valent d'être signalées :
 Usage :
 
     python main.py [--sd CHEMIN] [--reset-db] [--no-splash] [--version]
+
+et, pour vérifier un paquet construit (:mod:`delugeapp.autotest`) :
+
+    Noctiluca --self-test [RAPPORT]
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from __future__ import annotations
 import argparse
 import logging
 import logging.handlers
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -118,6 +123,24 @@ def _choose_language() -> str:
         return i18n.set_language(i18n.DEFAULT)
 
 
+def _log_reprises(log: logging.Logger) -> None:
+    """Inscrit au journal les dossiers repris de l'ancien nom.
+
+    Le renommage a lieu à l'import de ``delugeapp.config``, avant que le
+    journal ne soit ouvert : il est raconté ici.
+    """
+    from delugeapp.config import REPRISES
+
+    for ancien, nouveau, fait in REPRISES:
+        if fait:
+            log.info("dossier repris de l'ancien nom : %s -> %s",
+                     ancien, nouveau)
+        else:
+            log.warning("dossier de l'ancien nom gardé tel quel, renommage "
+                        "impossible (retenté au prochain lancement) : %s",
+                        ancien)
+
+
 def _install_excepthook() -> None:
     """Détourne les exceptions non rattrapées vers le journal et l'écran."""
     from delugeapp.i18n import tr
@@ -157,7 +180,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description=tr("Deluge Companion — gestion de carte SD, génération de "
+        description=tr("Noctiluca — gestion de carte SD, génération de "
                        "presets et outils de composition pour Synthstrom "
                        "Deluge."))
     parser.add_argument("--sd", metavar=tr("CHEMIN"),
@@ -183,6 +206,7 @@ def _build_context(args: argparse.Namespace):
     from delugeapp import i18n
     from delugeapp.config import (CONFIG_DIR, DB_PATH, AppContext,
                                   load_settings, save_settings)
+    from delugeapp.core import cardsync
     from delugeapp.core.audio_out import Player
     from delugeapp.core.db import Library
     from delugeapp.core.sdcard import SDCard
@@ -190,6 +214,13 @@ def _build_context(args: argparse.Namespace):
     log = logging.getLogger("delugeapp")
     settings = load_settings()
     i18n.set_language(settings.language)
+
+    # Le dossier de synchronisation de la copie de travail porte encore
+    # l'ancien nom chez qui l'a créée avant. (Celui de la sauvegarde, qu'on
+    # n'écrit pas d'office, attend sa prochaine mise à jour.)
+    if cardsync.adopt_legacy_meta(settings.work_path()):
+        log.info("dossier de synchronisation repris dans %s",
+                 settings.work_path())
 
     if args.sd:
         settings.sd_path = str(Path(args.sd).expanduser())
@@ -246,19 +277,18 @@ SPLASH_SIZE = (520, 300)
 def _splash(app):
     """Écran de démarrage : la couverture du guide, en petit.
 
-    Le treillis en haut, puis la typographie du plat : « COMPANION » en
-    capitales espacées, « SYNTHSTROM » en blanc, « DELUGE » en magenta et
-    son filet. Tracé à la densité de l'écran, pour rester net sur un
-    affichage agrandi.
+    Le treillis en haut, puis la typographie du plat : « POUR SYNTHSTROM
+    DELUGE » en capitales espacées, « NOCTILUCA » en magenta et son filet.
+    Tracé à la densité de l'écran, pour rester net sur un affichage agrandi.
     """
     from PyQt6.QtCore import QPointF, QRectF
     from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
     from PyQt6.QtWidgets import QSplashScreen
 
     from delugeapp import __version__
+    from delugeapp.i18n import tr
     from delugeapp.ui import art, icons
-    from delugeapp.ui.theme import (FONT_UI, PAD_MAGENTA, PAD_WHITE,
-                                    TEXT_SOFT)
+    from delugeapp.ui.theme import FONT_UI, PAD_MAGENTA, TEXT_SOFT
 
     largeur, hauteur = SPLASH_SIZE
     try:
@@ -303,12 +333,10 @@ def _splash(app):
         x = 132.0
         painter.setFont(police(7.5, 600, 4.0))
         painter.setPen(QColor(TEXT_SOFT))
-        painter.drawText(QPointF(x, 188), "COMPANION")
-        painter.setFont(police(19, 800, 1.0))
-        painter.setPen(QColor(PAD_WHITE))
-        painter.drawText(QPointF(x, 218), "SYNTHSTROM")
+        painter.drawText(QPointF(x, 188), tr("POUR SYNTHSTROM DELUGE"))
+        painter.setFont(police(27, 800, 1.5))
         painter.setPen(QColor(PAD_MAGENTA))
-        painter.drawText(QPointF(x, 248), "DELUGE")
+        painter.drawText(QPointF(x, 238), "NOCTILUCA")
         painter.fillRect(QRectF(x, 258, 92, 2.5), QColor(PAD_MAGENTA))
         painter.setFont(police(7, 700, 3.0))
         painter.drawText(QPointF(x, 280), f"VERSION {__version__}")
@@ -336,7 +364,7 @@ def _dispose(window) -> None:
 
 #: Le canal local par lequel une fenêtre qu'on relance appelle la première
 #: (``QLocalServer`` : un tube nommé sous Windows).
-INSTANCE_NAME = "DelugeCompanion-instance"
+INSTANCE_NAME = "Noctiluca-instance"
 
 
 def _already_running(name: str = INSTANCE_NAME) -> bool:
@@ -444,8 +472,29 @@ def _run_windows(app, args: argparse.Namespace, splash=None,
         _dispose(window)
 
 
+def _sorties_sures() -> None:
+    """Donne une sortie à qui écrit sur la console.
+
+    Empaquetée en application fenêtrée (``packaging/``), l'application n'a
+    pas de console : ``sys.stdout`` et ``sys.stderr`` valent ``None``, et
+    le premier ``write`` — ``--version``, une bibliothèque bavarde — lève
+    une exception.
+    """
+    for nom in ("stdout", "stderr"):
+        if getattr(sys, nom) is None:
+            setattr(sys, nom, open(os.devnull, "w", encoding="utf-8"))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Lance l'application. Retourne le code de sortie."""
+    _sorties_sures()
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["--self-test"]:
+        # Avant tout le reste : l'autovérification pose son propre dossier
+        # de configuration, que la lecture de la langue importerait.
+        from delugeapp import autotest
+
+        return autotest.run(argv[1] if len(argv) > 1 else None)
     _choose_language()
     from delugeapp.i18n import tr
 
@@ -454,12 +503,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:
         from delugeapp import __version__
 
-        sys.stdout.write(f"Deluge Companion {__version__}\n")
+        sys.stdout.write(f"Noctiluca {__version__}\n")
         return 0
 
     log_path = _setup_logging(args.verbose)
     log = logging.getLogger("delugeapp")
-    log.info("démarrage de Deluge Companion")
+    log.info("démarrage de Noctiluca")
+    _log_reprises(log)
 
     try:
         from PyQt6.QtWidgets import QApplication
@@ -495,7 +545,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run_windows(app, args, splash, instance)
     finally:
-        log.info("arrêt de Deluge Companion")
+        log.info("arrêt de Noctiluca")
 
 
 if __name__ == "__main__":

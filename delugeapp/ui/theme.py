@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Identité graphique de Deluge Companion : « la façade ».
+"""Identité graphique de Noctiluca : « la façade ».
 
 Reprend le *Guide du Synthstrom Deluge* de l'utilisateur, et cette fois
 ses signatures, pas seulement sa palette :
@@ -437,7 +437,7 @@ def _asset(kind: str, color: str, size: int = 12) -> str:
 
 _QSS_BASE = Template(r"""
 /* ======================================================================
-   Deluge Companion — feuille de style, partie commune
+   Noctiluca — feuille de style, partie commune
    Façade CHROME, fond PANEL_LO, panneaux PANEL, coins arrondis de pads.
    ====================================================================== */
 

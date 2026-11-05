@@ -490,8 +490,13 @@ def forget_other_card(sd: SDCard, lib: Library) -> bool:
 
     Favoris, notes et étiquettes sont conservés. Retourne ``True`` si
     l'index a été vidé.
+
+    Une racine retenue sous l'ancien nom de l'application est la même
+    carte, son dossier renommé (:func:`delugeapp.config.chemin_actuel`).
     """
-    racine = lib.get_meta("last_scan_root", "") or ""
+    from ..config import chemin_actuel
+
+    racine = chemin_actuel(lib.get_meta("last_scan_root", "") or "")
     if not racine or _same_root(racine, str(sd.root)):
         return False
     log.info("index de %s écarté : la carte est désormais %s",

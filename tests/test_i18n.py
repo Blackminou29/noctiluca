@@ -29,9 +29,9 @@ from unittest import mock
 import os as _os                                             # noqa: E402
 import tempfile as _tempfile                                 # noqa: E402
 
-BAC_A_SABLE = Path(_tempfile.gettempdir()) / "deluge-companion-tests"
+BAC_A_SABLE = Path(_tempfile.gettempdir()) / "noctiluca-tests"
 BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
-_os.environ["DELUGE_COMPANION_CONFIG"] = str(BAC_A_SABLE)
+_os.environ["NOCTILUCA_CONFIG"] = str(BAC_A_SABLE)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import i18n_analyse as analyse                               # noqa: E402

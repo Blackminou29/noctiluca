@@ -1,0 +1,5 @@
+# Les scripts de construction pour macOS et Linux gardent leurs fins de
+# ligne Unix, même extraits sous Windows : « bash » refuse les \r.
+*.sh text eol=lf
+packaging/linux/AppRun text eol=lf
+packaging/linux/*.desktop text eol=lf

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Le point d'entrée de l'AppImage : l'application construite par
+# PyInstaller, rangée dans usr/lib/noctiluca.
+ICI="$(dirname "$(readlink -f "$0")")"
+exec "$ICI/usr/lib/noctiluca/Noctiluca" "$@"

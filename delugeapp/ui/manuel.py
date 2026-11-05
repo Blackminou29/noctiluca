@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Le manuel de Deluge Companion, en français et en anglais.
+"""Le manuel de Noctiluca, en français et en anglais.
 
 Le texte vit dans ``delugeapp/docs/manuel.<langue>.md``, un fichier par
 langue. Ce module le lit, le met en page dans la typographie du *Guide du
@@ -138,13 +138,13 @@ LIBELLES = untranslated({
            "atelier": "ATELIER", "partie": "PARTIE", "chapitre": "CHAPITRE",
            "figure": "Figure",
            "ouvrir": "Ouvrir cette page dans l'application",
-           "pdf": "Deluge Companion - Manuel.pdf"},
+           "pdf": "Noctiluca - Manuel.pdf"},
     "en": {"astuce": "TIP", "attention": "CAUTION",
            "pro": "FROM THE PROS", "retenir": "REMEMBER",
            "atelier": "WORKSHOP", "partie": "PART", "chapitre": "CHAPTER",
            "figure": "Figure",
            "ouvrir": "Open this page in the application",
-           "pdf": "Deluge Companion - Manual.pdf"},
+           "pdf": "Noctiluca - Manual.pdf"},
 })
 
 #: Polices du guide, avec leurs replis hors de Windows.
@@ -1175,7 +1175,7 @@ class FenetreManuel(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - API Qt
         super().resizeEvent(event)
-        # « COMPANION » s'efface en fenêtre étroite, comme dans la fenêtre
+        # « POUR DELUGE » s'efface en fenêtre étroite, comme dans la fenêtre
         # principale : la place va à la recherche.
         self._logotype.set_compact(self.width() < 1150)
 

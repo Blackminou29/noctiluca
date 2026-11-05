@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ... import __version__
-from ...config import CONFIG_DIR
+from ...config import APP_NAME, CONFIG_DIR
 from ...core import sdcard as sdmod
 from ...core.delugelink import latency_text
 from ...i18n import N_, plural, tr
@@ -1083,7 +1083,7 @@ class SettingsPage(Page):
         card = Card(tr("À propos"))
         body = card.body()
 
-        title = QLabel(f"Deluge Companion {__version__}")
+        title = QLabel(f"{APP_NAME} {__version__}")
         title.setProperty("role", "title")
         body.addWidget(title)
 

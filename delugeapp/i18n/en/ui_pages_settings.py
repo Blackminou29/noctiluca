@@ -274,7 +274,7 @@ TEXTS = {
     "Accompagne l'utilisation d'un Synthstrom Deluge : gestion de la carte "
     "SD, génération de presets et de kits, et outils de composition.\n\n"
     "Identité visuelle reprise du Guide du Deluge OLED.":
-        "A companion for the Synthstrom Deluge: SD card management, preset "
+        "Works alongside the Synthstrom Deluge: SD card management, preset "
         "and kit generation, and songwriting tools.\n\nVisual identity taken "
         "from the Deluge OLED Guide.",
     "Dossier de configuration :": "Configuration folder:",

@@ -1,0 +1,25 @@
+# Noctiluca — dépendances de la construction des paquets
+#
+# Versions exactes : ce sont celles avec lesquelles les 1 258 tests passent
+# (Python 3.13). Un paquet se construit dans un environnement neuf, jamais
+# dans le Python de tous les jours : PyInstaller emporte tout ce qu'il
+# trouve, et PyQt5 ou PyQt6-WebEngine, installés à côté, gonfleraient le
+# paquet ou le feraient échouer (deux liaisons Qt à la fois).
+#
+# Monter une version : la changer ici, relancer la suite de tests dans cet
+# environnement, puis l'autovérification du paquet (`--self-test`).
+
+# --- L'application -------------------------------------------------------
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.1
+PyQt6-sip==13.11.1
+numpy==2.2.6
+numba==0.68.1
+llvmlite==0.50.0
+sounddevice==0.5.5
+
+# --- La construction -----------------------------------------------------
+pyinstaller==6.15.0
+pyinstaller-hooks-contrib==2025.8
+# Les icônes : .ico pour Windows, .icns pour macOS.
+pillow==11.2.1

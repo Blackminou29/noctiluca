@@ -163,7 +163,7 @@ class DelugeLiveWindow(QWidget):
         self._frames = -1
         self._dernier_etat = None
         self.setObjectName("LiveWindow")
-        self.setWindowTitle(tr("Deluge en direct — Deluge Companion"))
+        self.setWindowTitle(tr("Deluge en direct — Noctiluca"))
         self.resize(980, 660)
         self.setStyleSheet("QWidget#LiveWindow { background: %s; }"
                            % PANEL_LO)

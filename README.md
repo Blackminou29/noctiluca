@@ -1,4 +1,19 @@
-# Deluge Companion
+<p align="center"><img src=".github/captures/noctiluca.png" width="96" alt=""></p>
+
+<h1 align="center">Noctiluca</h1>
+
+<p align="center">
+  <b>Le compagnon de bureau du Synthstrom Deluge</b> : carte SD, création de sons, composition.<br>
+  <i>A desktop companion for the Synthstrom Deluge: SD card, sound design, composition.</i>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Blackminou29/noctiluca/releases/latest"><b>Télécharger · Download</b></a>
+  &nbsp;·&nbsp; <a href="#english">English</a>
+  &nbsp;·&nbsp; <a href="https://ko-fi.com/frenchfries29">Soutenir · Support ☕</a>
+</p>
+
+![L'atelier : un morceau en cinq étapes, du style au Deluge](.github/captures/atelier-fr.png)
 
 Application de bureau qui accompagne un **Synthstrom Deluge** : elle gère le
 contenu de la carte SD, range les échantillons et les presets, répare les
@@ -6,19 +21,103 @@ références cassées, génère des presets de synthé et des kits, compose avec
 vous un morceau du premier son à l'arrangement, et réunit les outils utiles
 au quotidien d'un producteur de musique électronique.
 
-Tout tient dans un dossier : pas de serveur, pas de compte, pas d'accès
+Tout tient sur votre ordinateur : pas de serveur, pas de compte, pas d'accès
 réseau. L'application lit la carte montée par un lecteur SD ou par l'USB du
-Deluge, et écrit son index dans le profil utilisateur.
+Deluge, et ne l'écrit jamais sans montrer d'abord ce qu'elle va faire.
 
-```
-python main.py
-```
+## Télécharger
+
+Gratuit, sans compte et sans publicité : prenez le fichier de votre système
+dans la page [**Releases**](https://github.com/Blackminou29/noctiluca/releases/latest).
+
+| Système | Fichier |
+|---|---|
+| Windows 10 ou 11, 64 bits | `Noctiluca-…-windows-x64-setup.exe` : lancez-le, l'installateur fait le reste |
+| macOS, Mac à puce Apple | `Noctiluca-…-macos-arm64.dmg` : glissez Noctiluca dans Applications |
+| Linux x86_64 | `Noctiluca-…-linux-x86_64.AppImage` : rendez-le exécutable, puis lancez-le |
+
+* **Le lien avec le Deluge branché** (écran recopié, carte lue par le câble,
+  jeu en direct) **n'existe que sous Windows**. Sous macOS et Linux, la carte
+  se lit avec un lecteur de cartes.
+* Les paquets ne sont pas signés. Au premier lancement, Windows peut afficher
+  « Windows a protégé votre ordinateur » : *Informations complémentaires ▸
+  Exécuter quand même*. macOS peut refuser d'ouvrir l'application : *Réglages
+  Système ▸ Confidentialité et sécurité ▸ Ouvrir quand même*.
+* Sous Linux, l'écoute des sons demande le paquet `libportaudio2`.
+
+## Soutenir le projet
+
+Noctiluca est gratuit, et le restera. S'il vous fait gagner du temps ou vous
+donne envie de rallumer votre Deluge, vous pouvez offrir un café à son auteur :
+c'est ce qui finance les soirées passées à le faire grandir.
+
+<p align="center">
+  <a href="https://ko-fi.com/frenchfries29"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Soutenir Noctiluca sur Ko-fi"></a>
+</p>
+
+| Créer un son | Par où commencer |
+|---|---|
+| ![Le générateur de sons](.github/captures/generator-fr.png) | ![L'accueil](.github/captures/dashboard-fr.png) |
+
+<a id="english"></a>
+
+## In English
+
+Noctiluca is a free desktop application for the **Synthstrom Deluge**. It
+manages the SD card (samples, presets, kits, songs), repairs broken
+references, generates synth presets and drum kits by genre, composes a whole
+song with you in five steps and sends it to the Deluge, and bridges the Deluge
+with your DAW. Nothing leaves your computer, and nothing is written to the card
+without showing you the plan first.
+
+**Download** the file for your system from the
+[Releases page](https://github.com/Blackminou29/noctiluca/releases/latest):
+the Windows installer, the macOS disk image (Apple silicon) or the Linux
+AppImage. The interface starts in French: choose **Langue ▸ English** once,
+and it stays in English. The live link with a connected Deluge (screen mirror,
+card over USB, live play) is Windows-only; on macOS and Linux, read the card
+with a card reader. The packages are not signed: on first launch, Windows may
+show "Windows protected your PC" (*More info ▸ Run anyway*), and macOS may
+block the app until you allow it in *System Settings ▸ Privacy & Security*.
+
+**Support**: Noctiluca is free and will stay free. If it helps you, you can
+[buy its author a coffee on Ko-fi](https://ko-fi.com/frenchfries29).
+
+| Studio | Generator |
+|---|---|
+| ![The studio](.github/captures/atelier-en.png) | ![The generator](.github/captures/generator-en.png) |
+
+## Licence
+
+Noctiluca est un logiciel libre, distribué sous la
+[licence publique générale GNU, version 3](LICENSE) (GPL v3) : vous pouvez
+l'utiliser, l'étudier, le modifier et le redistribuer, sous la même licence.
+Son moteur d'écoute reprend des tables et des algorithmes du
+[firmware du Deluge](https://github.com/SynthstromAudible/DelugeFirmware),
+lui aussi sous GPL v3. « Deluge » et « Synthstrom » sont des marques de
+Synthstrom Audible Limited ; Noctiluca est un projet indépendant, ni affilié à
+Synthstrom Audible ni approuvé par elle.
+
+*Noctiluca is free software under the GNU GPL v3. "Deluge" and "Synthstrom"
+are trademarks of Synthstrom Audible Limited; Noctiluca is an independent
+project, neither affiliated with nor endorsed by Synthstrom Audible.*
+
+---
+
+Ce qui suit est la documentation détaillée : installation depuis les sources,
+fonctionnement de chaque page, organisation du code.
 
 ---
 
 ## Installation
 
-Python **3.11 ou plus récent** (développé sur 3.13).
+Pour les utilisateurs, Noctiluca se distribue tout prêt, sans Python : un
+installateur pour Windows, une image disque pour macOS, une AppImage pour
+Linux. Les construire : [`packaging/LISEZMOI.md`](packaging/LISEZMOI.md)
+(sous Windows, `powershell -ExecutionPolicy Bypass -File
+packaging\construire-windows.ps1`).
+
+Depuis les sources : Python **3.11 ou plus récent** (développé sur 3.13).
 
 ```bash
 pip install -r requirements.txt
@@ -43,17 +142,24 @@ déjà ouverte — deux fenêtres se disputeraient le Deluge branché.
 | `--no-splash` | pas d'écran de démarrage |
 | `--verbose` | journal détaillé sur la console |
 | `--version` | affiche la version et quitte |
+| `--self-test [RAPPORT]` | vérifie l'application installée, sans toucher aux réglages, et quitte (0 : en ordre) ; absente de `--help` |
 
-Réglages, index et journal vivent dans `%APPDATA%\DelugeCompanion\` sous
-Windows, `~/.config/DelugeCompanion/` ailleurs : `settings.json`,
+Réglages, index et journal vivent dans `%APPDATA%\Noctiluca\` sous
+Windows, `~/.config/Noctiluca/` ailleurs : `settings.json`,
 `library.db`, `app.log`.
 
-La variable d'environnement **`DELUGE_COMPANION_CONFIG`** déplace ce dossier.
+La variable d'environnement **`NOCTILUCA_CONFIG`** déplace ce dossier.
 De quoi emporter le logiciel et ses réglages sur une clé USB :
 
 ```bash
-DELUGE_COMPANION_CONFIG=/media/cle/deluge-companion python main.py
+NOCTILUCA_CONFIG=/media/cle/noctiluca python main.py
 ```
+
+L'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. À son
+premier lancement sous le nouveau nom, elle renomme ses dossiers
+`DelugeCompanion` (réglages, index, copie de travail), sans rien copier, et
+reprend l'état de sa fenêtre ; l'ancienne variable `DELUGE_COMPANION_CONFIG`
+vaut toujours.
 
 ---
 
@@ -522,8 +628,10 @@ les échantillons de la carte ceux qui correspondent aux rôles du genre.
 
 ```
 main.py                  lancement, journal, écran de démarrage, garde-fous
+packaging/               installateur Windows, image macOS, AppImage Linux
 delugeapp/
   config.py              réglages persistants et contexte applicatif
+  autotest.py            --self-test : un paquet construit vérifié de l'intérieur
   docs/                  le texte du manuel, manuel.fr.md et manuel.en.md
   core/                  tout le métier, sans aucune dépendance à Qt
     sdcard.py            seule porte vers la carte (FAT32 insensible à la casse)

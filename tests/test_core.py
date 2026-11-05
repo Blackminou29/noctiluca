@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests du noyau de Deluge Companion.
+"""Tests du noyau de Noctiluca.
 
 Ces tests s'exécutent **sans carte SD** : chacun fabrique au besoin une carte
 factice dans un dossier temporaire (cf. SPEC §7). Ils n'importent jamais Qt,
@@ -37,9 +37,9 @@ import numpy as np
 import os as _os                                             # noqa: E402
 import tempfile as _tempfile                                 # noqa: E402
 
-BAC_A_SABLE = Path(_tempfile.gettempdir()) / "deluge-companion-tests"
+BAC_A_SABLE = Path(_tempfile.gettempdir()) / "noctiluca-tests"
 BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
-_os.environ["DELUGE_COMPANION_CONFIG"] = str(BAC_A_SABLE)
+_os.environ["NOCTILUCA_CONFIG"] = str(BAC_A_SABLE)
 
 
 from delugeapp.core import (accomp, analysis, backup, db, deps, dxml, genres,
@@ -4396,7 +4396,7 @@ class TestEcouteCompilee(unittest.TestCase):
             code = textwrap.dedent("""
                 import os, sys
                 sys.modules["numba"] = None
-                os.environ["DELUGE_COMPANION_CONFIG"] = sys.argv[3]
+                os.environ["NOCTILUCA_CONFIG"] = sys.argv[3]
                 sys.path.insert(0, sys.argv[4])
                 import numpy as np
                 from delugeapp.core import dsp, render
@@ -4426,7 +4426,7 @@ class TestEcouteCompilee(unittest.TestCase):
 
         code = textwrap.dedent("""
             import os, sys
-            os.environ["DELUGE_COMPANION_CONFIG"] = sys.argv[1]
+            os.environ["NOCTILUCA_CONFIG"] = sys.argv[1]
             sys.path.insert(0, sys.argv[2])
             import numpy as np
             from delugeapp.core import render
@@ -6797,7 +6797,7 @@ class TestDelugeLink(unittest.TestCase):
 
 
 class TestDossierDeConfiguration(unittest.TestCase):
-    """``DELUGE_COMPANION_CONFIG`` déplace les réglages hors de chez l'utilisateur.
+    """``NOCTILUCA_CONFIG`` déplace les réglages hors de chez l'utilisateur.
 
     Ce n'est pas un confort : mes propres scripts d'essai ont deux fois
     écrasé les réglages réels, et une fois en éteignant la confirmation
@@ -6810,13 +6810,16 @@ class TestDossierDeConfiguration(unittest.TestCase):
         from delugeapp import config as config_mod
 
         self.config_mod = config_mod
-        self._avant = os.environ.get(config_mod.CONFIG_ENV)
+        self._avant = {nom: os.environ.get(nom)
+                       for nom in (config_mod.CONFIG_ENV,
+                                   config_mod.LEGACY_CONFIG_ENV)}
 
     def tearDown(self):
-        if self._avant is None:
-            os.environ.pop(self.config_mod.CONFIG_ENV, None)
-        else:
-            os.environ[self.config_mod.CONFIG_ENV] = self._avant
+        for nom, valeur in self._avant.items():
+            if valeur is None:
+                os.environ.pop(nom, None)
+            else:
+                os.environ[nom] = valeur
 
     def _dossier(self, valeur):
         """Dossier de configuration que donnerait un démarrage avec ``valeur``."""
@@ -6829,6 +6832,16 @@ class TestDossierDeConfiguration(unittest.TestCase):
     def test_la_variable_impose_le_dossier(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(self._dossier(tmp), Path(tmp))
+
+    def test_l_ancienne_variable_vaut_toujours(self):
+        """Un script d'essai écrit sous l'ancien nom reste isolé : s'il
+        retombait sur les réglages réels, c'est la carte qui paierait."""
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ[self.config_mod.LEGACY_CONFIG_ENV] = tmp
+            self.assertEqual(self._dossier(None), Path(tmp))
+            with tempfile.TemporaryDirectory() as neuf:
+                self.assertEqual(self._dossier(neuf), Path(neuf),
+                                 "la nouvelle variable passe avant l'ancienne")
 
     def test_sans_la_variable_on_reste_chez_l_utilisateur(self):
         self.assertEqual(self._dossier(None).name, self.config_mod.APP_ORG)
@@ -6874,10 +6887,10 @@ class TestDossierDeConfiguration(unittest.TestCase):
         """
         import tests
 
-        reel = self.config_mod._base_dir() / self.config_mod.APP_ORG
-        self.assertNotEqual(
-            self.config_mod.CONFIG_DIR, reel,
-            "la suite écrirait dans les réglages réels de l'utilisateur")
+        for nom in (self.config_mod.APP_ORG, self.config_mod.LEGACY_APP_ORG):
+            self.assertNotEqual(
+                self.config_mod.CONFIG_DIR, self.config_mod._base_dir() / nom,
+                "la suite écrirait dans les réglages réels de l'utilisateur")
         self.assertEqual(self.config_mod.CONFIG_DIR, tests.BAC_A_SABLE)
         for chemin in (self.config_mod.SETTINGS_PATH,
                        self.config_mod.LOG_PATH,
@@ -6897,6 +6910,250 @@ class TestDossierDeConfiguration(unittest.TestCase):
         neuf = self.config_mod.Settings()
         self.assertTrue(neuf.confirm_writes)
         self.assertTrue(neuf.always_backup_before_write)
+
+
+class TestAncienNom(unittest.TestCase):
+    """« Deluge Companion » devient « Noctiluca » sans rien perdre.
+
+    Chez l'utilisateur : 1,1 Go dans ``%APPDATA%/DelugeCompanion``
+    (réglages, index, sauvegardes), 1,4 Go de copie de travail dans
+    ``%LOCALAPPDATA%/DelugeCompanion/Carte``, et ce chemin-là écrit dans ses
+    réglages et dans l'index. Un simple changement de nom aurait ouvert
+    l'application sur des réglages neufs, une copie de travail vide à
+    recréer par le câble — des heures — et un index vidé.
+    """
+
+    def setUp(self):
+        from unittest import mock
+
+        from delugeapp import config as config_mod
+
+        self.config_mod = config_mod
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = Path(self._tmp.name)
+        self.ancien = self.base / config_mod.LEGACY_APP_ORG
+        self.nouveau = self.base / config_mod.APP_ORG
+        for nom in ("REPRISES", "_RENOMMES"):
+            patch = mock.patch.object(config_mod, nom, [])
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_le_dossier_seul_est_renomme(self):
+        (self.ancien / "backups").mkdir(parents=True)
+        (self.ancien / "settings.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(self.config_mod._reprendre(self.ancien, self.nouveau),
+                         self.nouveau)
+        self.assertFalse(self.ancien.exists())
+        self.assertEqual((self.nouveau / "settings.json").read_text(
+            encoding="utf-8"), "{}")
+        self.assertTrue((self.nouveau / "backups").is_dir())
+        self.assertEqual(self.config_mod.REPRISES,
+                         [(self.ancien, self.nouveau, True)])
+        self.assertEqual(self.config_mod._RENOMMES,
+                         [(self.ancien, self.nouveau)])
+
+    def test_un_dossier_neuf_existant_n_est_pas_ecrase(self):
+        """Les deux à la fois : on garde le neuf, l'ancien reste intact et
+        ses chemins ne sont pas traduits — il mène encore quelque part."""
+        self.ancien.mkdir()
+        (self.ancien / "settings.json").write_text("ancien", encoding="utf-8")
+        self.nouveau.mkdir()
+        self.assertEqual(self.config_mod._reprendre(self.ancien, self.nouveau),
+                         self.nouveau)
+        self.assertEqual((self.ancien / "settings.json").read_text(
+            encoding="utf-8"), "ancien")
+        self.assertEqual(self.config_mod.REPRISES, [])
+        self.assertEqual(self.config_mod._RENOMMES, [])
+
+    def test_sans_ancien_dossier_rien_n_est_cree(self):
+        self.assertEqual(self.config_mod._reprendre(self.ancien, self.nouveau),
+                         self.nouveau)
+        self.assertFalse(self.nouveau.exists())
+        self.assertEqual(self.config_mod.REPRISES, [])
+
+    def test_un_renommage_impossible_garde_l_ancien_dossier(self):
+        """Une fenêtre de l'ancienne version tient ``library.db`` ouvert :
+        l'ancien dossier sert tel quel, rien n'est perdu ni dédoublé."""
+        from unittest import mock
+
+        self.ancien.mkdir()
+        with mock.patch.object(Path, "rename",
+                               side_effect=PermissionError("tenu ouvert")):
+            obtenu = self.config_mod._reprendre(self.ancien, self.nouveau)
+        self.assertEqual(obtenu, self.ancien)
+        self.assertTrue(self.ancien.is_dir())
+        self.assertFalse(self.nouveau.exists())
+        self.assertEqual(self.config_mod.REPRISES,
+                         [(self.ancien, self.nouveau, False)])
+        self.assertEqual(self.config_mod._RENOMMES, [])
+
+    def test_un_chemin_enregistre_suit_le_dossier(self):
+        self.config_mod._RENOMMES.append((self.ancien, self.nouveau))
+        actuel = self.config_mod.chemin_actuel
+        self.assertEqual(actuel(str(self.ancien / "Carte")),
+                         str(self.nouveau / "Carte"))
+        self.assertEqual(actuel(str(self.ancien)), str(self.nouveau))
+        if os.name == "nt":
+            self.assertEqual(actuel(str(self.ancien / "Carte").upper()),
+                             str(self.nouveau) + "\\CARTE")
+        for tel_quel in (str(self.base / "DelugeCompanionBis" / "Carte"),
+                         str(self.base / "Ailleurs"), "", "   "):
+            self.assertEqual(actuel(tel_quel), tel_quel)
+
+    def test_les_reglages_suivent_la_copie_de_travail(self):
+        self.config_mod._RENOMMES.append((self.ancien, self.nouveau))
+        carte = str(self.ancien / "Carte")
+        s = self.config_mod.Settings(
+            sd_path=carte, recent_paths=[carte, str(self.nouveau / "Carte"),
+                                         str(self.base / "Ailleurs")],
+            card_backup=str(self.base / "Sauvegarde"))
+        self.assertTrue(s.relocate())
+        self.assertEqual(s.sd_path, str(self.nouveau / "Carte"))
+        self.assertEqual(s.recent_paths, [str(self.nouveau / "Carte"),
+                                          str(self.base / "Ailleurs")])
+        self.assertEqual(s.card_backup, str(self.base / "Sauvegarde"))
+        self.assertFalse(s.relocate(), "une seconde fois, rien ne change")
+
+    def test_l_index_reconnait_la_carte_renommee(self):
+        """Sans la traduction, l'index se vidait au premier démarrage : la
+        racine retenue n'était plus celle de la carte ouverte."""
+        nouvelle = self.nouveau / "Carte"
+        for sous in ("SONGS", "SYNTHS", "KITS", "SAMPLES"):
+            (nouvelle / sous).mkdir(parents=True)
+        lib = db.Library(self.base / "index.db")
+        self.addCleanup(lib.close)
+        lib.set_meta("last_scan_root", str(self.ancien / "Carte"))
+        sd = sdcard.SDCard(nouvelle)
+        self.config_mod._RENOMMES.append((self.ancien, self.nouveau))
+        self.assertFalse(scan.forget_other_card(sd, lib))
+        self.assertEqual(lib.get_meta("last_scan_root"),
+                         str(self.ancien / "Carte"))
+        self.config_mod._RENOMMES.clear()
+        self.assertTrue(scan.forget_other_card(sd, lib),
+                        "le témoin : sans traduction, l'index est vidé")
+
+    def test_le_dossier_de_synchronisation_change_de_nom(self):
+        from delugeapp.core import cardsync
+
+        travail = self.base / "Carte"
+        (travail / cardsync.LEGACY_META_DIR / "historique").mkdir(parents=True)
+        (travail / cardsync.LEGACY_META_DIR / "synchro.json").write_bytes(b"{}")
+        self.assertTrue(cardsync.adopt_legacy_meta(travail))
+        self.assertEqual((travail / cardsync.MANIFEST).read_bytes(), b"{}")
+        self.assertTrue((travail / cardsync.HISTORY).is_dir())
+        self.assertFalse((travail / cardsync.LEGACY_META_DIR).exists())
+        self.assertFalse(cardsync.adopt_legacy_meta(travail))
+
+    def test_un_dossier_de_synchronisation_neuf_n_est_pas_ecrase(self):
+        from delugeapp.core import cardsync
+
+        travail = self.base / "Carte"
+        (travail / cardsync.LEGACY_META_DIR).mkdir(parents=True)
+        (travail / cardsync.LEGACY_META_DIR / "synchro.json").write_bytes(b"A")
+        (travail / cardsync.META_DIR).mkdir()
+        (travail / cardsync.MANIFEST).write_bytes(b"B")
+        self.assertFalse(cardsync.adopt_legacy_meta(travail))
+        self.assertEqual((travail / cardsync.LEGACY_META_DIR / "synchro.json")
+                         .read_bytes(), b"A")
+        self.assertEqual((travail / cardsync.MANIFEST).read_bytes(), b"B")
+        self.assertTrue(cardsync.is_junk(cardsync.LEGACY_META_DIR
+                                         + "/synchro.json"),
+                        "l'ancien dossier ne part jamais sur la carte")
+
+    def test_la_sauvegarde_n_est_reprise_qu_a_sa_mise_a_jour(self):
+        """La sauvegarde n'est écrite que par « Mettre à jour la
+        sauvegarde » : son dossier de l'ancien nom attend ce moment."""
+        from delugeapp.core import cardsync
+
+        travail, sauvegarde = self.base / "Carte", self.base / "Sauvegarde"
+        (travail / "SONGS").mkdir(parents=True)
+        (travail / "SONGS" / "A.XML").write_bytes(b"<song/>")
+        remplace = sauvegarde / cardsync.LEGACY_META_DIR / "remplaces" / "x"
+        remplace.mkdir(parents=True)
+        cardsync.update_backup(travail, sauvegarde)
+        self.assertTrue(remplace.is_dir(), "un plan seul n'écrit rien")
+        cardsync.update_backup(travail, sauvegarde, apply=True)
+        self.assertFalse((sauvegarde / cardsync.LEGACY_META_DIR).exists())
+        self.assertTrue((sauvegarde / cardsync.META_DIR / "remplaces" / "x")
+                        .is_dir())
+        self.assertEqual((sauvegarde / "SONGS" / "A.XML").read_bytes(),
+                         b"<song/>")
+
+    def test_premier_lancement_sous_le_nouveau_nom(self):
+        """Le vrai démarrage, dans un profil fabriqué : les deux dossiers
+        sont renommés — pas copiés —, la carte enregistrée reste la copie de
+        travail, et le lancement suivant ne refait rien."""
+        import json
+        import subprocess
+        import sys
+        import textwrap
+
+        itinerant, local = self.base / "Roaming", self.base / "Local"
+        conf = itinerant / self.config_mod.LEGACY_APP_ORG
+        copie = local / self.config_mod.LEGACY_APP_ORG / "Carte"
+        (copie / ".deluge-companion").mkdir(parents=True)
+        (copie / ".deluge-companion" / "synchro.json").write_bytes(b"{}")
+        conf.mkdir(parents=True)
+        (conf / "settings.json").write_text(json.dumps({
+            "sd_path": str(copie),
+            "recent_paths": [str(copie), str(self.base / "Ailleurs")]}),
+            encoding="utf-8")
+        fiche = (conf / "settings.json").stat().st_ino
+
+        env = {k: v for k, v in os.environ.items()
+               if k not in (self.config_mod.CONFIG_ENV,
+                            self.config_mod.LEGACY_CONFIG_ENV)}
+        env.update(APPDATA=str(itinerant), LOCALAPPDATA=str(local),
+                   XDG_CONFIG_HOME=str(itinerant))
+        code = textwrap.dedent("""
+            import json, sys
+            sys.path.insert(0, sys.argv[1])
+            from delugeapp import config
+            from delugeapp.core import cardsync
+            s = config.load_settings()
+            print(json.dumps({
+                "config": str(config.CONFIG_DIR),
+                "travail": str(config.DEFAULT_WORK_DIR),
+                "carte": s.sd_path, "recents": s.recent_paths,
+                "role": s.card_role(s.sd_path),
+                "synchro": cardsync.adopt_legacy_meta(s.work_path()),
+                "reprises": [f for _, _, f in config.REPRISES]}))
+        """)
+        depot = str(Path(__file__).resolve().parent.parent)
+
+        def lance():
+            fait = subprocess.run([sys.executable, "-c", code, depot],
+                                  env=env, capture_output=True, text=True,
+                                  timeout=120)
+            self.assertEqual(fait.returncode, 0, fait.stderr[-2000:])
+            return json.loads(fait.stdout.strip().splitlines()[-1])
+
+        neuve = str(local / self.config_mod.APP_ORG / "Carte")
+        premier = lance()
+        self.assertEqual(premier["config"],
+                         str(itinerant / self.config_mod.APP_ORG))
+        self.assertEqual(premier["travail"], neuve)
+        self.assertEqual(premier["carte"], neuve)
+        self.assertEqual(premier["recents"],
+                         [neuve, str(self.base / "Ailleurs")])
+        self.assertEqual(premier["role"], "travail")
+        self.assertTrue(premier["synchro"])
+        self.assertEqual(premier["reprises"], [True, True])
+        self.assertFalse(conf.exists())
+        self.assertFalse(copie.exists())
+        self.assertEqual((Path(neuve) / ".noctiluca" / "synchro.json")
+                         .read_bytes(), b"{}")
+        if fiche:
+            self.assertEqual((itinerant / self.config_mod.APP_ORG
+                              / "settings.json").stat().st_ino, fiche,
+                             "le fichier a été copié, pas renommé")
+
+        second = lance()
+        self.assertEqual(second["reprises"], [])
+        self.assertFalse(second["synchro"])
+        self.assertEqual((second["carte"], second["role"]),
+                         (neuve, "travail"))
 
 
 class TestApiPubliqueNonAppelee(unittest.TestCase):
@@ -9860,7 +10117,7 @@ class TestSynchroCarte(unittest.TestCase):
     def _fichiers(self, racine):
         return {p.relative_to(racine).as_posix(): p.read_bytes()
                 for p in Path(racine).rglob("*") if p.is_file()
-                and ".deluge-companion" not in p.parts}
+                and self.cs.META_DIR not in p.parts}
 
     # -- ce qui ne voyage pas ----------------------------------------------- #
 
@@ -9868,6 +10125,7 @@ class TestSynchroCarte(unittest.TestCase):
         for rel in (".Trashes/501/X.WAV", ".Trash-59016/files/A.XML",
                     ".Spotlight-V100/Store-V2/x", "System Volume Information/y",
                     "SONGS/._A.XML", "SYNTHS/.DS_Store", "SONGS/~DC1A2B.TMP",
+                    ".noctiluca/synchro.json",
                     ".deluge-companion/synchro.json",
                     "SYNTHS/P.XML.2026-10-18_12h00.bak",
                     "_BACKUP/SAMPLES/x.wav"):
@@ -9965,7 +10223,7 @@ class TestSynchroCarte(unittest.TestCase):
         self.assertEqual([a.rel for a in plan.of("delete_local")],
                          ["SONGS/A.XML"])
         self.assertFalse((self.travail / "SONGS/A.XML").exists())
-        historique = list((self.travail / ".deluge-companion/historique")
+        historique = list((self.travail / self.cs.HISTORY)
                           .rglob("A.XML"))
         self.assertEqual([p.read_bytes() for p in historique], [b"<song a/>"])
 
@@ -11001,8 +11259,8 @@ class TestEchangesAvecLeDeluge(unittest.TestCase):
         self.assertEqual(cs.merge_plans(complet, ancien).needs_consent, [])
 
     def test_les_temporaires_ne_voyagent_jamais(self):
-        for rel in ("SAMPLES/a.wav.dc-tmp", "SAMPLES/b.wav.tmp~",
-                    "SYNTHS/P.ab12cd_9.tmp"):
+        for rel in ("SAMPLES/a.wav.noct-tmp", "SAMPLES/a.wav.dc-tmp",
+                    "SAMPLES/b.wav.tmp~", "SYNTHS/P.ab12cd_9.tmp"):
             self.assertTrue(self.cs.is_junk(rel), rel)
         for rel in ("SONGS/tmp.XML", "SAMPLES/temp.wav"):
             self.assertFalse(self.cs.is_junk(rel), rel)

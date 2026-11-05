@@ -12,8 +12,8 @@ TEXTS = {
     "CV %d": "CV %d",
     "DAWproject": "DAWproject",
     "Durée : %d mesures": "Length: %d bars",
-    "Exporté du Deluge par Deluge Companion":
-        "Exported from the Deluge by Deluge Companion",
+    "Exporté du Deluge par Noctiluca":
+        "Exported from the Deluge by Noctiluca",
     "FL Studio": "FL Studio",
     "Fichier ▸ Importer ▸ Fichier MIDI, puis glissez les pistes audio dans "
     "la playlist.":

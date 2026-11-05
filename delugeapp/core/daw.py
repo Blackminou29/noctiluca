@@ -741,7 +741,7 @@ def dawproject_xml(song: DawSong, audio: dict[int, str] | None = None
     from .. import __version__
     ids = _Ids()
     project = ET.Element("Project", {"version": "1.0"})
-    ET.SubElement(project, "Application", {"name": "Deluge Companion",
+    ET.SubElement(project, "Application", {"name": "Noctiluca",
                                            "version": str(__version__)})
     transport = ET.SubElement(project, "Transport")
     ET.SubElement(transport, "Tempo", {
@@ -841,7 +841,7 @@ def dawproject_xml(song: DawSong, audio: dict[int, str] | None = None
     meta = ET.Element("MetaData")
     ET.SubElement(meta, "Title").text = song.name
     ET.SubElement(meta, "Comment").text = tr(
-        "Exporté du Deluge par Deluge Companion")
+        "Exporté du Deluge par Noctiluca")
     return _xml_bytes(project), _xml_bytes(meta)
 
 

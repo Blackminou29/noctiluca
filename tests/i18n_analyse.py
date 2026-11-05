@@ -30,7 +30,8 @@ TRADUIRE = {"tr", "N_"}
 #: changerait chaque son généré.
 EXEMPTER = {"untranslated", "tirage", "tirages"}
 #: Noms propres, identiques dans les deux langues.
-NOMS_PROPRES = {"Deluge Companion", "Synthstrom Deluge", "MIDI Follow",
+NOMS_PROPRES = {"Noctiluca", "Deluge Companion", "Synthstrom Deluge",
+                "MIDI Follow",
                 "Deluge",
                 # Noms de genres musicaux (``core/genres.py``).
                 "Deep house", "Drum and bass", "Berlin school",

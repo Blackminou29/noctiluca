@@ -73,7 +73,7 @@ RAIL_NARROW = 64
 TOPBAR_HEIGHT = 56
 
 #: Largeurs de fenêtre sous lesquelles la barre du haut se resserre : la
-#: recherche et l'écran rétrécissent, « COMPANION » et l'étiquette du
+#: recherche et l'écran rétrécissent, « POUR DELUGE » et l'étiquette du
 #: Deluge s'effacent. Mesuré : à 980 px, tout tient sans que les menus
 #: passent dans le débordement.
 TOPBAR_MEDIUM = 1360
@@ -142,12 +142,12 @@ RAIL_GROUPS: dict[str, str] = {
 #: La question du redémarrage, par (langue choisie, langue de la phrase).
 #: Volontairement bilingue : elle s'affiche dans les deux langues à la fois.
 _RESTART_TEXT: dict[tuple[str, str], str] = untranslated({
-    ("en", "en"): "Deluge Companion will restart in English. Restart now?",
-    ("en", "fr"): "Deluge Companion va redémarrer en anglais. Redémarrer "
+    ("en", "en"): "Noctiluca will restart in English. Restart now?",
+    ("en", "fr"): "Noctiluca va redémarrer en anglais. Redémarrer "
                   "maintenant ?",
-    ("fr", "fr"): "Deluge Companion va redémarrer en français. Redémarrer "
+    ("fr", "fr"): "Noctiluca va redémarrer en français. Redémarrer "
                   "maintenant ?",
-    ("fr", "en"): "Deluge Companion will restart in French. Restart now?",
+    ("fr", "en"): "Noctiluca will restart in French. Restart now?",
 })
 
 #: Ce que dit la barre d'état quand le redémarrage est remis à plus tard,
@@ -162,6 +162,25 @@ def _short_name(cls) -> str:
     """``DashboardPage`` -> ``Dashboard`` : la clé de navigation."""
     name = cls.__name__
     return name[:-4] if name.endswith("Page") else name
+
+
+def adopt_window_state(source: QSettings, cible: QSettings) -> int:
+    """Recopie l'état de fenêtre de ``source`` dans ``cible``, vide.
+
+    Sert une fois, au changement de nom : sans elle, la fenêtre se rouvrait
+    à sa taille d'origine, sur l'accueil. ``source`` n'est pas touchée.
+    Rend le nombre de clés reprises.
+    """
+    if cible.allKeys():
+        return 0
+    cles = source.allKeys()
+    for cle in cles:
+        cible.setValue(cle, source.value(cle))
+    if cles:
+        cible.sync()
+        log.info("état de la fenêtre repris de l'ancien nom (%d clés)",
+                 len(cles))
+    return len(cles)
 
 
 class MainWindow(QMainWindow):
@@ -326,7 +345,7 @@ class MainWindow(QMainWindow):
 
         Mesuré : à 980 px, la barre complète demandait 1 100 px et ses menus
         passaient dans un débordement « » ». L'écran et la recherche
-        rétrécissent, « COMPANION » et l'étiquette « DELUGE » s'effacent ;
+        rétrécissent, « POUR DELUGE » et l'étiquette « DELUGE » s'effacent ;
         tout revient en élargissant.
 
         Les menus passent avant l'écran et la recherche, qui leur cèdent ce
@@ -1583,19 +1602,26 @@ class MainWindow(QMainWindow):
         """Où l'état de la fenêtre est conservé.
 
         D'ordinaire le registre de l'utilisateur. Mais si la configuration a
-        été déplacée (``DELUGE_COMPANION_CONFIG``), l'état de la fenêtre
+        été déplacée (``NOCTILUCA_CONFIG``), l'état de la fenêtre
         suit : une installation portable emporte tout, et un script d'essai
         n'écrit plus dans le registre réel. J'y ai laissé une fois
         ``rail = narrow`` et ``page = Settings`` : l'utilisateur a démarré
         sur les réglages, navigation repliée en neuf icônes anonymes.
-        """
-        from ..config import APP_ORG, CONFIG_ENV, CONFIG_DIR
-        import os
 
-        if (os.environ.get(CONFIG_ENV) or "").strip():
+        La première fois sous le nouveau nom, l'état gardé sous l'ancien
+        (« Deluge Companion ») est repris.
+        """
+        from ..config import (APP_ORG, CONFIG_DIR, LEGACY_APP_NAME,
+                              LEGACY_APP_ORG, config_impose)
+
+        if config_impose():
             return QSettings(str(CONFIG_DIR / "fenetre.ini"),
                              QSettings.Format.IniFormat)
-        return QSettings(APP_ORG, APP_NAME)
+        store = QSettings(APP_ORG, APP_NAME)
+        if not store.allKeys():
+            adopt_window_state(QSettings(LEGACY_APP_ORG, LEGACY_APP_NAME),
+                               store)
+        return store
 
     def _restore_state(self) -> None:
         """Restaure la géométrie et la dernière page consultée."""

@@ -54,7 +54,7 @@ TEXTS = {
     "Clock ▸ Output).":
         "Clock: start playback on the Deluge. It is sent by default (MIDI ▸ "
         "Clock ▸ Output).",
-    "Deluge en direct — Deluge Companion": "Deluge Live — Deluge Companion",
+    "Deluge en direct — Noctiluca": "Deluge Live — Noctiluca",
     "DELUGE EN DIRECT": "DELUGE LIVE",
     "Écran de la machine": "The machine's screen",
     "Recopier l'écran": "Mirror the screen",

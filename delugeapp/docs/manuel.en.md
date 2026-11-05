@@ -1,4 +1,4 @@
-%% Deluge Companion manual — English text.
+%% Noctiluca manual — English text.
 %% The markup is described at the top of delugeapp/ui/manuel.py.
 %% The {#…} anchors are shared with the French text: never translate them.
 
@@ -6,11 +6,13 @@
 
 # Welcome {#bienvenue icone=info}
 
-> Deluge Companion keeps your Synthstrom Deluge company on the computer: it tidies its card, takes care of it, and makes sounds and songs the machine can play.
+> Noctiluca keeps your Synthstrom Deluge company on the computer: it tidies its card, takes care of it, and makes sounds and songs the machine can play.
 
 The Deluge is a self-sufficient machine. But everything it knows — your songs, your presets, your kits, thousands of samples — lives on a small SD card, and the machine does little to help you keep that card in order. A moved sample silently mutes a kit; a duplicated preset can't be spotted on the screen; a backup is always something you think of afterwards.
 
-Deluge Companion is the workshop that was missing next to the machine. It reads the card, shows you what it holds and what state it is in, repairs what is broken, and adds a set of creative tools that write straight into the Deluge's format.
+Noctiluca is the workshop that was missing next to the machine. It reads the card, shows you what it holds and what state it is in, repairs what is broken, and adds a set of creative tools that write straight into the Deluge's format.
+
+Its name is that of a sea plankton, *Noctiluca scintillans*: at night it lights up when the water moves — like the Deluge's pads under your fingers.
 
 ## What the application does {#ce-que-fait}
 
@@ -65,27 +67,27 @@ This manual opens from **Help ▸ Manual**, or with the [[F1]] key: it then open
 
 # Installation and start-up {#installation icone=settings}
 
-> A few minutes are enough: Python, two libraries, and the application opens — even without a card.
+> A minute is enough: the installer does everything, and the application opens — even without a card.
 
 ## What you need {#prerequis}
 
-- **Windows**, preferably: that is where the application is developed and where the MIDI link with the Deluge works. It starts elsewhere too, without that link.
-- **Python 3.11** or newer.
-- Two required libraries: **PyQt6** for the interface and **numpy** for audio.
-- One optional library: **sounddevice**, to hear sounds on the computer. Without it everything works, but the listen buttons stay silent.
+- **Windows 10 or 11**, 64-bit, preferably: that is where the MIDI link with the Deluge works. The application also runs on **macOS** (Apple silicon Macs) and **Linux**, without that link: there the card is read with a card reader.
 - For the link with the machine: a USB cable, and the Deluge **community firmware** — version 1.3 or newer for the card to open over the cable.
 
 ## Installing {#installer}
 
-In the application folder, a single command installs what is needed:
+- **Windows**: run `Noctiluca-…-windows-x64-setup.exe` and follow the installer. Noctiluca joins the Start menu, and the desktop if the box is ticked. For a new version, run its installer: it replaces the old one in the same place.
+- **macOS**: open `Noctiluca-…-macos-arm64.dmg`, then drag Noctiluca into the Applications folder.
+- **Linux**: make `Noctiluca-…-linux-x86_64.AppImage` executable (right-click ▸ Properties, or `chmod +x`), then run it. Listening to sounds needs the `libportaudio2` package, available in every distribution.
 
-`pip install -r requirements.txt`
+A splash screen in the guide's colours shows while loading, then the main window opens. The first time you listen to a sound takes a few seconds longer: the listening engine gets ready, once and for all.
 
-Then the application starts with:
+!!! attention Uninstalling leaves your data alone
+    Removing Noctiluca (Windows: Settings ▸ Apps) leaves your settings, your index and your card backups in place, in `%APPDATA%\Noctiluca` (`~/.config/Noctiluca` on macOS and Linux). Reinstalled, it finds them again.
 
-`python main.py`
+## From the source code {#sources}
 
-A splash screen in the guide's colours shows while loading, then the main window opens.
+For those who want to run the code themselves: **Python 3.11** or newer, then, in the application folder, `pip install -r requirements.txt` and `python main.py`. **PyQt6** and **numpy** are required; **numba** makes listening ten times faster; without **sounddevice**, the listen buttons stay silent.
 
 **One window at a time**: launching the application again brings the open window to the front. Two windows would fight over the connected Deluge: each would sync its card, and every reply from the machine would reach both.
 
@@ -100,7 +102,7 @@ A splash screen in the guide's colours shows while loading, then the main window
 | `--version` | prints the version, then quits |
 
 !!! pro Carrying the application on a stick
-    The `DELUGE_COMPANION_CONFIG` environment variable moves the folder holding the settings, the index and the log. Pointed at a USB stick, it makes the installation portable, settings included.
+    The `NOCTILUCA_CONFIG` environment variable moves the folder holding the settings, the index and the log. Pointed at a USB stick, it makes the installation portable, settings included.
 
 ## The first start {#premier-demarrage}
 
@@ -1089,7 +1091,7 @@ The controllers MIDI Follow mode understands are read from your card, in `SETTIN
 
 > With firmware 1.3, the card no longer leaves the machine: the application works on a copy kept in step with it, over the USB cable.
 
-[[figure flux | The Deluge, the working copy and the backup. | THE DELUGE ; its SD card stays inside ; USB cable, firmware 1.3 ; WORKING COPY ; on the PC, kept in step with the card ; on connection, after every write, on returning to the window — never while the machine plays ; DELUGE COMPANION ; BACKUP ; your full copy of the card, read and never written by everyday work ; updated on request, nothing is ever deleted]]
+[[figure flux | The Deluge, the working copy and the backup. | THE DELUGE ; its SD card stays inside ; USB cable, firmware 1.3 ; WORKING COPY ; on the PC, kept in step with the card ; on connection, after every write, on returning to the window — never while the machine plays ; NOCTILUCA ; BACKUP ; your full copy of the card, read and never written by everyday work ; updated on request, nothing is ever deleted]]
 
 ## Why a working copy {#pourquoi-copie}
 
@@ -1414,10 +1416,12 @@ Nothing half-written stays on the card: an interrupted backup is deleted so it c
 | Index | `library.db`, in the configuration folder |
 | Log | `app.log`, in the configuration folder (one MB at most, with the three previous ones beside it: `app.log.1` to `app.log.3`) |
 | Backups from the Health page | the folder chosen in the settings; by default `backups`, in the configuration folder |
-| Working copy | `%LOCALAPPDATA%\DelugeCompanion\Carte`, unless set otherwise |
-| Sync history | `.deluge-companion` in the working copy |
+| Working copy | `%LOCALAPPDATA%\Noctiluca\Carte`, unless set otherwise |
+| Sync history | `.noctiluca` in the working copy |
 | Originals of audio treatments | `_BACKUP` at the root of the card |
 | Archived samples | `_UNUSED` at the root of the card |
 | Copies before rewriting | a dated `.bak`, next to each rewritten XML |
 
-The **configuration folder** is `%APPDATA%\DelugeCompanion` under Windows, `~/.config/DelugeCompanion` elsewhere. The `DELUGE_COMPANION_CONFIG` environment variable moves it — and the working copy with it. Settings ▸ About ▸ [Open] shows it in Explorer.
+The **configuration folder** is `%APPDATA%\Noctiluca` under Windows, `~/.config/Noctiluca` elsewhere. The `NOCTILUCA_CONFIG` environment variable moves it — and the working copy with it. Settings ▸ About ▸ [Open] shows it in Explorer.
+
+Under its former name, Deluge Companion, the application kept everything in `DelugeCompanion` folders: on its first start it renames them, copying nothing and losing nothing, and takes back the settings, the index and the window state. The backup's folder waits for its next update. The former variable, `DELUGE_COMPANION_CONFIG`, still works.

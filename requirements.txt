@@ -1,4 +1,4 @@
-# Deluge Companion — dépendances
+# Noctiluca — dépendances
 #
 # Installation :
 #     pip install -r requirements.txt

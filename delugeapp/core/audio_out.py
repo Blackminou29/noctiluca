@@ -521,7 +521,7 @@ class Player:
 
     def _new_temp_path(self) -> Path:
         """Chemin d'un nouveau WAV temporaire d'aperçu."""
-        d = Path(tempfile.gettempdir()) / "DelugeCompanion"
+        d = Path(tempfile.gettempdir()) / "Noctiluca"
         try:
             d.mkdir(parents=True, exist_ok=True)
         except OSError:

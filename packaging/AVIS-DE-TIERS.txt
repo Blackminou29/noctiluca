@@ -1,0 +1,49 @@
+NOCTILUCA — COMPOSANTS TIERS / THIRD-PARTY COMPONENTS
+=====================================================
+
+(English below.)
+
+Noctiluca est un logiciel libre, distribué sous la licence publique générale
+GNU, version 3 (GPL v3). Code source : https://github.com/Blackminou29/noctiluca
+
+Noctiluca est livré avec les composants suivants. Le texte complet de chaque
+licence se trouve dans le dossier « licences » qui accompagne ce fichier.
+
+  Python ................ Python Software Foundation License
+  Qt 6 (PyQt6-Qt6) ...... GNU LGPL v3 — The Qt Company. Les bibliothèques
+                          de Qt sont des fichiers séparés, remplaçables.
+                          Sources : https://download.qt.io/official_releases/qt/
+  PyQt6, PyQt6-sip ...... GNU GPL v3 — Riverbank Computing Limited
+  NumPy ................. BSD 3 clauses (et les bibliothèques qu'il embarque,
+                          détaillées dans son fichier de licence)
+  numba, llvmlite ....... BSD 2 clauses — Anaconda, Inc. ; LLVM : Apache 2.0
+                          avec exception LLVM
+  sounddevice ........... MIT — Matthias Geier
+  PortAudio ............. MIT — Ross Bencina, Phil Burk
+  cffi, pycparser ....... MIT, BSD 3 clauses
+
+Le moteur d'écoute de Noctiluca reprend des tables et des algorithmes du
+firmware du Synthstrom Deluge (GNU GPL v3, © Synthstrom Audible Limited et
+contributeurs, https://github.com/SynthstromAudible/DelugeFirmware) :
+fichiers delugeapp/data/deluge_tables.npz et delugeapp/core/dsp.py.
+
+« Deluge » et « Synthstrom » sont des marques de Synthstrom Audible Limited.
+Noctiluca est un logiciel indépendant, ni affilié à Synthstrom Audible ni
+approuvé par elle.
+
+-----------------------------------------------------------------------------
+
+Noctiluca is free software, distributed under the GNU General Public License,
+version 3 (GPL v3). Source code: https://github.com/Blackminou29/noctiluca
+
+Noctiluca ships with the components listed above. The full text of each
+license is in the "licences" folder next to this file.
+
+Noctiluca's preview engine reuses lookup tables and algorithms from the
+Synthstrom Deluge firmware (GNU GPL v3, © Synthstrom Audible Limited and
+contributors, https://github.com/SynthstromAudible/DelugeFirmware): files
+delugeapp/data/deluge_tables.npz and delugeapp/core/dsp.py.
+
+"Deluge" and "Synthstrom" are trademarks of Synthstrom Audible Limited.
+Noctiluca is independent software, neither affiliated with nor endorsed by
+Synthstrom Audible.

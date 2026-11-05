@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Noctiluca
+GenericName=Synthstrom Deluge companion
+GenericName[fr]=Compagnon du Synthstrom Deluge
+Comment=SD card manager, sound design and composition tools for the Synthstrom Deluge
+Comment[fr]=Carte SD, création de sons et composition pour le Synthstrom Deluge
+Exec=Noctiluca
+Icon=noctiluca
+Terminal=false
+Categories=AudioVideo;Audio;Midi;
+Keywords=Deluge;Synthstrom;synth;sampler;SD;

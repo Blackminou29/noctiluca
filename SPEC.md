@@ -1,4 +1,8 @@
-# SPEC — Deluge Companion (application Python pour Synthstrom Deluge)
+# SPEC — Noctiluca (application Python pour Synthstrom Deluge)
+
+> L'application s'est appelée **Deluge Companion** jusqu'au 5 novembre 2026 ; le nom était
+> pris par un autre outil de la communauté, et « DELUGE » est une marque de Synthstrom
+> Audible. Le changement de nom et la reprise des dossiers : §4.1.
 
 **Projet racine :** `C:\Users\sebas\Desktop\Informatique\Deluge app`
 **Package :** `delugeapp/` — **Point d'entrée :** `main.py` à la racine du projet.
@@ -6,7 +10,8 @@
 **Dépendances autorisées :** `PyQt6`, `numpy`, `numba` (recommandé : il compile le moteur
 d'écoute, §4.41), `matplotlib` (optionnel), `sounddevice` (optionnel), `Pillow` (optionnel).
 **Rien d'autre.** Tout import optionnel doit être protégé par `try/except ImportError`
-avec dégradation gracieuse (pas de crash si absent).
+avec dégradation gracieuse (pas de crash si absent). La construction des paquets
+distribués emploie en plus PyInstaller et Pillow, que l'application n'importe jamais (§8).
 **Langues de l'interface : français et anglais**, au choix dans le menu « Langue » (§5.26).
 Le français est la langue **source** : chaque libellé, menu, message et infobulle s'écrit en
 français dans le code, et c'est ce texte qui sert de clé à sa traduction anglaise
@@ -454,10 +459,15 @@ tests/
 
 ### 4.1 `delugeapp/config.py`
 ```python
-APP_NAME = "Deluge Companion"
-APP_ORG  = "DelugeCompanion"
-CONFIG_DIR: Path            # %APPDATA%/DelugeCompanion (créé au besoin)
+APP_NAME = "Noctiluca"
+APP_ORG  = "Noctiluca"
+LEGACY_APP_NAME = "Deluge Companion"; LEGACY_APP_ORG = "DelugeCompanion"
+CONFIG_DIR: Path            # %APPDATA%/Noctiluca (créé au besoin)
 DB_PATH: Path               # CONFIG_DIR/library.db
+CONFIG_ENV = "NOCTILUCA_CONFIG"; LEGACY_CONFIG_ENV = "DELUGE_COMPANION_CONFIG"
+def config_impose() -> str     # le dossier imposé (nouvelle variable, puis l'ancienne) ou ""
+REPRISES: list[tuple[Path, Path, bool]]   # dossiers de l'ancien nom repris à ce lancement
+def chemin_actuel(chemin: str) -> str     # un chemin sous un dossier renommé, traduit
 
 @dataclass
 class Settings:
@@ -485,8 +495,9 @@ class Settings:
     def adopt_card_roles() -> bool # l'ancien dossier de travail -> sauvegarde
     def card_role(root) -> str     # "travail" | "sauvegarde" | "carte" | "dossier"
     def open_card(root) -> SDCard  # en lecture seule si c'est la sauvegarde
+    def relocate() -> bool         # chemins enregistrés sous l'ancien nom -> nouveau
 
-DEFAULT_WORK_DIR: Path         # %LOCALAPPDATA%/DelugeCompanion/Carte
+DEFAULT_WORK_DIR: Path         # %LOCALAPPDATA%/Noctiluca/Carte
 def load_settings() -> Settings
 def save_settings(s: Settings) -> None
 AppContext.sd_or_warn(parent, write=False)   # write=True refuse la sauvegarde
@@ -504,12 +515,41 @@ travail ». L'application y avait pourtant réparé dix presets le
 avant (`Page.writable_card`). Au démarrage, un dossier de travail qui n'est
 ni la racine d'un lecteur ni la copie de travail devient la sauvegarde.
 
-**`DELUGE_COMPANION_CONFIG`** impose le dossier de configuration
-(`CONFIG_ENV` dans le module). Deux usages : une installation portable, et
+**`NOCTILUCA_CONFIG`** impose le dossier de configuration
+(`CONFIG_ENV` dans le module ; l'ancienne `DELUGE_COMPANION_CONFIG` vaut
+toujours, après elle — `config_impose()`). Deux usages : une installation portable, et
 l'isolement obligatoire de tout script ou test qui lance l'application —
 celle-ci enregistre les réglages en quittant, et un script d'essai qui coupe
 la confirmation d'écriture la laisserait coupée chez l'utilisateur. C'est
-arrivé trois fois ; cf. §7.
+arrivé trois fois ; cf. §7. **Tout ce qui lit l'environnement passe par
+`config_impose()`** : `MainWindow._settings_store` lisait la variable lui-même,
+et un script resté sur l'ancienne aurait écrit l'état de fenêtre dans le
+registre réel.
+
+**Le changement de nom (5 novembre 2026).** À l'import du module, et
+seulement si rien n'est imposé, `_reprendre(ancien, nouveau)` **renomme**
+`%APPDATA%/DelugeCompanion` et `%LOCALAPPDATA%/DelugeCompanion` — un
+renommage sur le même disque, pas une copie : 1,1 Go et 1,4 Go chez
+l'utilisateur. Si le nouveau dossier existe déjà, rien n'est touché ; si le
+renommage échoue (un fichier tenu ouvert par une fenêtre de l'ancienne
+version), l'ancien dossier sert tel quel et le renommage est retenté au
+lancement suivant (`REPRISES`, inscrit au journal par `main.py`).
+`_config_dir()` reste un **calcul sans effet** : les tests l'appellent sans
+variable, et une version qui renommait aurait renommé les dossiers réels
+pendant la suite. Ce que le nom touchait encore :
+
+| Trace de l'ancien nom | Reprise |
+|---|---|
+| `sd_path`, `recent_paths`… dans `settings.json` (`…/DelugeCompanion/Carte`) | `Settings.relocate()` dans `load_settings()` ; enregistré à la sortie |
+| `last_scan_root` de l'index (sinon `forget_other_card` le vidait) | `chemin_actuel()` dans `scan.forget_other_card` |
+| `.deluge-companion/` de la copie de travail (manifeste, historique, échanges) | `cardsync.adopt_legacy_meta()` au démarrage (`main._build_context`) |
+| `.deluge-companion/remplaces/` de la sauvegarde | `adopt_legacy_meta()` dans `update_backup(apply=True)` seulement : la sauvegarde n'est jamais écrite d'office |
+| état de fenêtre (registre `DelugeCompanion\Deluge Companion`) | `adopt_window_state()` si le nouveau est vide ; l'ancien n'est pas touché |
+| temporaires `.dc-tmp` laissés par un arrêt brutal | toujours `is_junk` ; les nouveaux s'appellent `.noct-tmp` |
+| `tag` de la session SysEx | `"Noctiluca"` : le firmware le renvoie tel quel et choisit la session par ancienneté (`smSysex::assignSession`, identique de la bêta 1.3 à la 1.3.0) |
+
+`KITS/COMPAGNON 1.XML`, dans les tests et en §4.34, est un kit réel de la
+carte de l'utilisateur, pas l'ancien nom : il reste tel quel.
 
 ### 4.2 `delugeapp/core/fixedpoint.py`
 ```python
@@ -2348,11 +2388,13 @@ n'échappe rien.
 ### 4.34 `delugeapp/core/cardsync.py` — la copie de travail
 
 ```python
-META_DIR = ".deluge-companion"; MANIFEST = META_DIR + "/synchro.json"
+META_DIR = ".noctiluca"; MANIFEST = META_DIR + "/synchro.json"
+LEGACY_META_DIR = ".deluge-companion"   # l'ancien nom : is_junk, repris par adopt_legacy_meta
+def adopt_legacy_meta(root) -> bool    # renomme l'ancien dossier s'il est seul
 EXCHANGES = META_DIR + "/echanges.json"; BACKUP_STATE = META_DIR + "/sauvegarde.json"
 MAX_EXCHANGES = 200; MAX_NAMED = 300
 def is_junk(rel) -> bool              # corbeilles, Spotlight, ._*, temporaires
-                                      # (~DC*, .dc-tmp, .tmp~, *.xxxxxxxx.tmp),
+                                      # (~DC*, .noct-tmp, .dc-tmp, .tmp~, *.xxxxxxxx.tmp),
                                       # .bak et _BACKUP/ : restent sur le PC
 def scan_local(work) -> dict[str, LocalFile]
 def load_manifest(work) / save_manifest(work, records)
@@ -2387,7 +2429,7 @@ dernière fois :
 * changé des deux côtés -> **conflit** : la version du Deluge garde le nom,
   celle du PC devient « … (PC) » des deux côtés ; rien n'est écrasé ;
 * supprimé sur le Deluge -> retiré de la copie, **dans son historique**
-  (`.deluge-companion/historique/<date>/`) ;
+  (`.noctiluca/historique/<date>/`) ;
 * supprimé sur le PC -> **proposé** (`needs_consent`), jamais fait sans
   `allow_card_deletes` ;
 * disparu des deux côtés -> oublié du manifeste.
@@ -2418,7 +2460,7 @@ le changement se voit sans relire le contenu.
 
 **La sauvegarde** ne change que par `update_backup(..., apply=True)` :
 ajouts, remplacements (l'ancienne version gardée dans
-`<sauvegarde>/.deluge-companion/remplaces/<date>/`), **aucune
+`<sauvegarde>/.noctiluca/remplaces/<date>/`), **aucune
 suppression** — ce que la carte n'a plus reste dans la sauvegarde.
 
 **Ne relire que ce qui a bougé.** Le plan comparait le contenu de chaque fichier commun :
@@ -3116,7 +3158,7 @@ def pad_dot(color, size=11) -> QPixmap        # pastille d'une ligne de liste, e
 # `pastille(valeur brute) -> couleur` pose un petit pad devant le texte (DecorationRole).
 
 # chrome.py — la façade
-class Wordmark(QWidget)     # emblème, « DELUGE » magenta, « COMPANION » espacé ; set_compact
+class Wordmark(QWidget)     # emblème, « NOCTILUCA » magenta, « POUR DELUGE » espacé ; set_compact
 class OledDisplay(QPushButton)   # l'écran : set_display(étiquette, ligne, ton), flash(message)
 class NavPad(QPushButton)   # pad de navigation cochable : veilleuse, allumage animé, raccourci
 class LedButton(QPushButton)     # bouton rond qui s'allume : set_state(couleur, allumé)
@@ -3304,8 +3346,9 @@ class MainWindow(QMainWindow):
 #!/usr/bin/env python3
 # Lance l'application. Gère --sd <chemin>, --reset-db, --no-splash, --version.
 # Installe un hook d'exception qui affiche une QMessageBox lisible + trace dans le journal.
-# Journal : %APPDATA%/DelugeCompanion/app.log (RotatingFileHandler, 1 Mo, 3 fichiers).
-INSTANCE_NAME = "DelugeCompanion-instance"
+# Journal : %APPDATA%/Noctiluca/app.log (RotatingFileHandler, 1 Mo, 3 fichiers).
+INSTANCE_NAME = "Noctiluca-instance"
+def _log_reprises(log)      # inscrit au journal les dossiers repris de l'ancien nom
 def _already_running(name=INSTANCE_NAME) -> bool   # et prie l'autre de se montrer
 class _Instance(name=INSTANCE_NAME): window, server, listening
 ```
@@ -4196,7 +4239,7 @@ en PNG, français et anglais).
 ## 7. Tests (`tests/test_core.py`)
 
 **Bac à sable obligatoire.** Les quatre premières lignes de chaque module de
-test posent `DELUGE_COMPANION_CONFIG` sur un dossier temporaire, **avant tout
+test posent `NOCTILUCA_CONFIG` sur un dossier temporaire, **avant tout
 import de `delugeapp`** — qui calcule ses chemins à l'import. Elles sont
 répétées dans chaque module, et non dans `tests/__init__.py` : `unittest
 discover` charge les modules à plat, sans importer le paquet, et le garde-fou
@@ -4231,3 +4274,57 @@ lecture/écriture d'un preset (le XML réécrit doit se relire à l'identique), 
 notes (20 et 22 caractères), calcul du tempo, lecture/écriture WAV 16/24/32 bits,
 gammes/accords, euclidien (E(3,8) = `x..x..x.`), génération de preset reproductible pour une
 graine donnée, plan d'organisation en simulation qui ne touche à rien.
+
+---
+
+## 8. Distribution (`packaging/`, 5 novembre 2026)
+
+Les utilisateurs reçoivent l'application toute prête, sans Python. Mode d'emploi :
+`packaging/LISEZMOI.md` ; historique et mesures : REPRISE §3 octoquadragies.
+
+| Système | Paquet | Construit par |
+|---|---|---|
+| Windows 10/11 x64 | installateur NSIS `Noctiluca-<v>-windows-x64-setup.exe` | `construire-windows.ps1` |
+| macOS arm64 | image disque `Noctiluca-<v>-macos-arm64.dmg` (`Noctiluca.app`) | `construire-macos.sh` |
+| Linux x86_64 | `Noctiluca-<v>-linux-x86_64.AppImage` et `.tar.gz` | `construire-linux.sh` |
+
+Les trois aussi par `.github/workflows/paquets.yml` (à la demande, ou sur une étiquette `v*`).
+
+1. **Un dossier, pas un exécutable unique** (PyInstaller *onedir*, `noctiluca.spec`, commun
+   aux trois systèmes) : pas de décompression à chaque lancement, moins de soupçons des
+   antivirus, bibliothèques Qt remplaçables (LGPL). Pas d'UPX.
+2. **Environnement de construction neuf**, aux versions exactes de
+   `packaging/requirements-construction.txt` — jamais le Python de tous les jours (PyQt5 et
+   WebEngine y sont installés). Les scripts posent `NOCTILUCA_CONFIG` sur un dossier
+   temporaire pendant toute la construction.
+3. **Ce que la recette nomme, parce que l'analyse ne le voit pas** : chaque module du paquet,
+   lu sur le disque (le catalogue anglais s'importe par son nom ; `collect_submodules`
+   importerait le paquet, donc la configuration) ; `delugeapp/data/` et `delugeapp/docs/` ;
+   les licences (`*.dist-info` seulement) et `AVIS-DE-TIERS.txt`, dans `_internal/licences/`.
+   Ce qu'elle écarte : les traductions de Qt hors `qt_fr`/`qtbase_fr`, la PortAudio ASIO.
+4. **Autovérification** (`delugeapp/autotest.py`, `Noctiluca --self-test [RAPPORT]`, absente
+   de `--help`) : Qt et sa traduction française, import de chaque module, catalogue, manuel,
+   tables, PortAudio, une demi-seconde de son **compilée par numba**, puis la fenêtre ouverte
+   et refermée. Code 0 si tout l'essentiel est en ordre ; PortAudio absent sous Linux est un
+   manque, pas un échec. Configuration dans un dossier temporaire neuf posé **avant**
+   l'import de `config`, ports MIDI masqués, aucune carte cherchée, modales refusées ;
+   refus net (code 1) si la configuration réelle est déjà chargée. Aucun paquet n'est
+   emballé sans l'avoir passée, **lancée hors de la racine du projet** (voir 6).
+5. **L'installateur Windows** (`windows/noctiluca.nsi`, NSIS 3, MUI2, compilé avec
+   `/INPUTCHARSET UTF8`) : `Program Files` 64 bits pour tous, anglais ou français selon
+   Windows, menu Démarrer et Bureau (option), clé de désinstallation en vue 64 bits, mise à
+   jour au même endroit (ancien `_internal` retiré d'abord), refus tant que l'exécutable est
+   tenu ouvert, relance **non élevée** par l'Explorateur. Le désinstallateur retire ce qui a
+   été posé, fichier par fichier, sans `RMDir /r` sur le dossier d'installation, et **ne
+   touche jamais** `%APPDATA%\Noctiluca`. Page de licence seulement si `LICENSE.txt` (ou
+   `LICENCE.txt`, `LICENSE`, `LICENCE`) existe à la racine.
+6. **numba dans un paquet** : le module n'y est connu que par un chemin relatif
+   (`delugeapp\core\dsp.py`). Ce chemin n'existant pas chez l'utilisateur, numba range son
+   cache dans `%LOCALAPPDATA%\numba\Cache` (`UserWideCacheLocator`, daté par l'exécutable :
+   une mise à jour le renouvelle). Lancé depuis la racine du projet, il prendrait les sources
+   pour les siennes et écrirait dans leur `__pycache__`.
+7. **Le MIDI reste propre à Windows** (`midiport.py` sur `winmm`) : sous macOS et Linux,
+   tout ce qui passe par le câble est éteint, la carte se lit par un lecteur.
+8. **Licence** : PyQt6 (GPL v3) et les tables et algorithmes du firmware (GPL v3, §4.41)
+   font distribuer l'ensemble sous GPL v3, sauf licence commerciale de PyQt6 **et** retrait
+   de ce qui vient du firmware.

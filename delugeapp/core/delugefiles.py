@@ -424,8 +424,13 @@ class DelugeFiles:
                 log.info("session de fichiers refusée : %s", exc)
         return bool(self.supported)
 
-    def open_session(self, tag: str = "DelugeCompanion") -> int:
-        """Réserve un jeu de numéros de message à l'application."""
+    def open_session(self, tag: str = "Noctiluca") -> int:
+        """Réserve un jeu de numéros de message à l'application.
+
+        Le firmware renvoie ``tag`` tel quel et choisit la session par
+        ancienneté d'usage, quel qu'il soit (``smSysex::assignSession``,
+        identique de la bêta 1.3 à la 1.3.0) : le nom n'y change rien.
+        """
         objet, _ = self.request({"session": {"tag": tag}})
         partie = self._part(objet, "^session")
         mini = int(partie.get("midMin", 1))

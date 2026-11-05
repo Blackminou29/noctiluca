@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """La façade : les pièces de la fenêtre qui imitent la machine.
 
-* :class:`Wordmark` — le logotype de la couverture du guide : l'emblème,
-  « DELUGE » en magenta, « COMPANION » en capitales espacées ;
+* :class:`Wordmark` — le logotype, composé comme la couverture du guide :
+  l'emblème, « NOCTILUCA » en magenta, « POUR DELUGE » en capitales
+  espacées ;
 * :class:`OledDisplay` — l'écran du Deluge dans la barre du haut. Il dit
   quelle carte est ouverte et, comme la machine affiche ses messages en
   surimpression, il reprend un instant chaque message de la barre d'état —
@@ -92,22 +93,27 @@ def _police(famille: str, points: float, poids: int = 400,
 class Wordmark(QWidget):
     """L'emblème et le nom, tels que la couverture du guide les compose.
 
-    En fenêtre étroite, « COMPANION » s'efface et il ne reste que l'emblème
-    et « DELUGE » : la place va aux menus et à la recherche.
+    En fenêtre étroite, « POUR DELUGE » s'efface et il ne reste que l'emblème
+    et « NOCTILUCA » : la place va aux menus et à la recherche.
     """
+
+    #: Le nom, en grand et en magenta : un nom propre, le même partout.
+    NOM = "NOCTILUCA"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._compact = False
         self._nom = _police(FONT_UI, 13.5, 900, 1.6)
         self._suite = _police(FONT_UI, 7.2, 700, 3.0)
+        #: La machine qu'il sert, en petit.
+        self._legende = tr("POUR DELUGE")
         self.setSizePolicy(QSizePolicy.Policy.Fixed,
                            QSizePolicy.Policy.Preferred)
-        self.setToolTip(tr("Deluge Companion — la carte SD de votre "
+        self.setToolTip(tr("Noctiluca — la carte SD de votre "
                            "Deluge, ses sons et ses outils"))
 
     def set_compact(self, compact: bool) -> None:
-        """Masque ou montre « COMPANION »."""
+        """Masque ou montre « POUR DELUGE »."""
         compact = bool(compact)
         if compact != self._compact:
             self._compact = compact
@@ -118,10 +124,10 @@ class Wordmark(QWidget):
         return self._compact
 
     def sizeHint(self) -> QSize:  # noqa: N802 - API Qt
-        largeur = 40 + QFontMetricsF(self._nom).horizontalAdvance("DELUGE")
+        largeur = 40 + QFontMetricsF(self._nom).horizontalAdvance(self.NOM)
         if not self._compact:
             largeur += 10 + QFontMetricsF(self._suite).horizontalAdvance(
-                "COMPANION")
+                self._legende)
         return QSize(int(largeur) + 10, 40)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - API Qt
@@ -137,12 +143,12 @@ class Wordmark(QWidget):
             ligne = milieu + (metrique.ascent() - metrique.descent()) / 2.0
             p.setFont(self._nom)
             p.setPen(QColor(PAD_MAGENTA))
-            p.drawText(QPointF(x, ligne), "DELUGE")
+            p.drawText(QPointF(x, ligne), self.NOM)
             if not self._compact:
-                x += metrique.horizontalAdvance("DELUGE") + 10
+                x += metrique.horizontalAdvance(self.NOM) + 10
                 p.setFont(self._suite)
                 p.setPen(QColor(TEXT_SOFT))
-                p.drawText(QPointF(x, ligne - 0.5), "COMPANION")
+                p.drawText(QPointF(x, ligne - 0.5), self._legende)
             p.end()
         except Exception as exc:        # noqa: BLE001 - un décor ne casse rien
             log.debug("logotype non tracé : %s", exc)

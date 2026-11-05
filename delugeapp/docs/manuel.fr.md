@@ -1,4 +1,4 @@
-%% Manuel de Deluge Companion — texte français, langue source.
+%% Manuel de Noctiluca — texte français, langue source.
 %% Le balisage est décrit en tête de delugeapp/ui/manuel.py.
 %% Les ancres {#…} sont communes aux deux langues : ne pas les traduire.
 
@@ -6,11 +6,13 @@
 
 # Bienvenue {#bienvenue icone=info}
 
-> Deluge Companion accompagne votre Synthstrom Deluge sur l'ordinateur : il range sa carte, la soigne, et fabrique des sons et des morceaux qu'elle saura jouer.
+> Noctiluca accompagne votre Synthstrom Deluge sur l'ordinateur : il range sa carte, la soigne, et fabrique des sons et des morceaux qu'elle saura jouer.
 
 Le Deluge est une machine qui se suffit à elle-même. Mais tout ce qu'elle sait — vos morceaux, vos presets, vos kits, des milliers d'échantillons — vit sur une petite carte SD, et cette carte, la machine ne vous aide guère à la tenir en ordre. Un échantillon déplacé rend un kit muet sans prévenir ; un preset en double ne se repère pas sur l'écran ; une sauvegarde, on y pense toujours après.
 
-Deluge Companion est l'atelier qui manquait à côté de la machine. Il lit la carte, vous montre ce qu'elle contient et dans quel état elle est, répare ce qui est cassé, et ajoute une série d'outils de création qui écrivent directement dans le format du Deluge.
+Noctiluca est l'atelier qui manquait à côté de la machine. Il lit la carte, vous montre ce qu'elle contient et dans quel état elle est, répare ce qui est cassé, et ajoute une série d'outils de création qui écrivent directement dans le format du Deluge.
+
+Son nom est celui d'un plancton de la mer, *Noctiluca scintillans* : la nuit, il s'allume quand l'eau bouge — comme les pads du Deluge sous les doigts.
 
 ## Ce que fait l'application {#ce-que-fait}
 
@@ -65,27 +67,27 @@ Ce manuel s'ouvre par **Aide ▸ Manuel**, ou par la touche [[F1]] : il s'ouvre 
 
 # Installation et démarrage {#installation icone=settings}
 
-> Quelques minutes suffisent : Python, deux bibliothèques, et l'application s'ouvre — même sans carte.
+> Une minute suffit : l'installateur fait tout, et l'application s'ouvre — même sans carte.
 
 ## Ce qu'il faut {#prerequis}
 
-- **Windows**, de préférence : c'est là que l'application est développée et que le lien MIDI avec le Deluge fonctionne. Elle démarre aussi ailleurs, sans ce lien.
-- **Python 3.11** ou plus récent.
-- Deux bibliothèques obligatoires : **PyQt6** pour l'interface et **numpy** pour l'audio.
-- Une bibliothèque facultative : **sounddevice**, pour écouter les sons sur l'ordinateur. Sans elle, tout fonctionne, mais les boutons d'écoute restent muets.
+- **Windows 10 ou 11**, en 64 bits, de préférence : c'est là que le lien MIDI avec le Deluge fonctionne. L'application tourne aussi sous **macOS** (Mac à puce Apple) et sous **Linux**, sans ce lien : la carte s'y lit avec un lecteur de cartes.
 - Pour le lien avec la machine : un câble USB, et le **firmware communautaire** du Deluge — la version 1.3 ou plus récente pour que la carte s'ouvre par le câble.
 
 ## Installer {#installer}
 
-Dans le dossier de l'application, une seule commande installe ce qu'il faut :
+- **Windows** : lancez `Noctiluca-…-windows-x64-setup.exe` et suivez l'installateur. Noctiluca rejoint le menu Démarrer, et le Bureau si la case est cochée. Pour une nouvelle version, lancez son installateur : il remplace l'ancienne au même endroit.
+- **macOS** : ouvrez `Noctiluca-…-macos-arm64.dmg`, puis glissez Noctiluca dans le dossier Applications.
+- **Linux** : rendez `Noctiluca-…-linux-x86_64.AppImage` exécutable (clic droit ▸ Propriétés, ou `chmod +x`), puis lancez-le. L'écoute des sons demande le paquet `libportaudio2`, présent dans toutes les distributions.
 
-`pip install -r requirements.txt`
+Un écran de démarrage aux couleurs du guide s'affiche le temps du chargement, puis la fenêtre principale s'ouvre. La première écoute d'un son prend quelques secondes de plus : le moteur d'écoute se prépare, une fois pour toutes.
 
-Puis l'application se lance par :
+!!! attention Désinstaller ne touche pas à vos données
+    Retirer Noctiluca (Windows : Paramètres ▸ Applications) laisse en place vos réglages, votre index et les sauvegardes de votre carte, dans `%APPDATA%\Noctiluca` (`~/.config/Noctiluca` sous macOS et Linux). Réinstallé, il les retrouve.
 
-`python main.py`
+## Depuis les sources {#sources}
 
-Un écran de démarrage aux couleurs du guide s'affiche le temps du chargement, puis la fenêtre principale s'ouvre.
+Pour qui veut lancer le code lui-même : **Python 3.11** ou plus récent, puis, dans le dossier de l'application, `pip install -r requirements.txt` et `python main.py`. **PyQt6** et **numpy** sont obligatoires ; **numba** rend l'écoute dix fois plus rapide ; sans **sounddevice**, les boutons d'écoute restent muets.
 
 **Une seule fenêtre à la fois** : relancer l'application ramène au premier plan celle qui est déjà ouverte. Deux fenêtres se disputeraient le Deluge branché : chacune synchroniserait sa carte, et chaque réponse de la machine arriverait aux deux.
 
@@ -100,7 +102,7 @@ Un écran de démarrage aux couleurs du guide s'affiche le temps du chargement, 
 | `--version` | affiche la version, puis quitte |
 
 !!! pro Emporter l'application sur une clé
-    La variable d'environnement `DELUGE_COMPANION_CONFIG` déplace le dossier des réglages, de l'index et du journal. Pointée vers une clé USB, elle rend l'installation portable : réglages compris.
+    La variable d'environnement `NOCTILUCA_CONFIG` déplace le dossier des réglages, de l'index et du journal. Pointée vers une clé USB, elle rend l'installation portable : réglages compris.
 
 ## Le premier démarrage {#premier-demarrage}
 
@@ -1089,7 +1091,7 @@ Les contrôleurs que le mode MIDI Follow comprend sont lus sur votre carte, dans
 
 > Avec le firmware 1.3, la carte ne quitte plus la machine : l'application travaille sur une copie tenue à son image, par le câble USB.
 
-[[figure flux | Le Deluge, la copie de travail et la sauvegarde. | LE DELUGE ; sa carte SD reste dedans ; câble USB, firmware 1.3 ; COPIE DE TRAVAIL ; sur le PC, tenue à l'image de la carte ; à la connexion, après chaque écriture, au retour dans la fenêtre — jamais pendant que la machine joue ; DELUGE COMPANION ; SAUVEGARDE ; votre copie complète de la carte, lue et jamais écrite par le travail courant ; mise à jour sur commande, rien n'y est supprimé]]
+[[figure flux | Le Deluge, la copie de travail et la sauvegarde. | LE DELUGE ; sa carte SD reste dedans ; câble USB, firmware 1.3 ; COPIE DE TRAVAIL ; sur le PC, tenue à l'image de la carte ; à la connexion, après chaque écriture, au retour dans la fenêtre — jamais pendant que la machine joue ; NOCTILUCA ; SAUVEGARDE ; votre copie complète de la carte, lue et jamais écrite par le travail courant ; mise à jour sur commande, rien n'y est supprimé]]
 
 ## Pourquoi une copie de travail {#pourquoi-copie}
 
@@ -1414,10 +1416,12 @@ Rien d'écrit à moitié ne reste sur la carte : une sauvegarde interrompue est 
 | Index | `library.db`, dans le dossier de configuration |
 | Journal | `app.log`, dans le dossier de configuration (un Mo au plus, et les trois précédents à côté : `app.log.1` à `app.log.3`) |
 | Sauvegardes de la page Santé | le dossier choisi dans les réglages ; par défaut `backups`, dans le dossier de configuration |
-| Copie de travail | `%LOCALAPPDATA%\DelugeCompanion\Carte`, sauf réglage contraire |
-| Historique de la synchronisation | `.deluge-companion` dans la copie de travail |
+| Copie de travail | `%LOCALAPPDATA%\Noctiluca\Carte`, sauf réglage contraire |
+| Historique de la synchronisation | `.noctiluca` dans la copie de travail |
 | Originaux des traitements audio | `_BACKUP` à la racine de la carte |
 | Échantillons archivés | `_UNUSED` à la racine de la carte |
 | Copies avant réécriture | un `.bak` daté, à côté de chaque XML réécrit |
 
-Le **dossier de configuration** est `%APPDATA%\DelugeCompanion` sous Windows, `~/.config/DelugeCompanion` ailleurs. La variable d'environnement `DELUGE_COMPANION_CONFIG` le déplace — et la copie de travail avec lui. Réglages ▸ À propos ▸ [Ouvrir] l'affiche dans l'Explorateur.
+Le **dossier de configuration** est `%APPDATA%\Noctiluca` sous Windows, `~/.config/Noctiluca` ailleurs. La variable d'environnement `NOCTILUCA_CONFIG` le déplace — et la copie de travail avec lui. Réglages ▸ À propos ▸ [Ouvrir] l'affiche dans l'Explorateur.
+
+Sous son ancien nom, Deluge Companion, l'application rangeait tout dans des dossiers `DelugeCompanion` : à son premier lancement, elle les renomme, sans rien copier ni rien perdre, et reprend réglages, index et état de la fenêtre. Le dossier de la sauvegarde attend sa prochaine mise à jour. L'ancienne variable, `DELUGE_COMPANION_CONFIG`, vaut toujours.

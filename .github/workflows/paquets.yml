@@ -1,0 +1,133 @@
+# Les paquets de Noctiluca pour les trois systèmes, construits par GitHub.
+#
+# PyInstaller ne construit que pour le système qui le fait tourner : sans Mac
+# ni Linux sous la main, ce sont les machines de GitHub qui s'en chargent.
+#
+#   * à chaque envoi sur master qui touche au code, et à la demande (onglet
+#     Actions ▸ Paquets ▸ Run workflow) : les paquets sont à télécharger en
+#     bas de la page de l'exécution ;
+#   * à chaque étiquette de version (git tag v1.0.0 && git push --tags) :
+#     les mêmes paquets, réunis dans un brouillon de publication (onglet
+#     Releases), à relire avant de le publier.
+#
+# Chaque paquet passe l'autovérification (--self-test) avant d'être gardé ;
+# son rapport est joint à l'exécution, même en cas d'échec.
+
+name: Paquets
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    tags: ["v*"]
+    # La documentation seule ne change pas les paquets.
+    paths-ignore:
+      - "**.md"
+      - ".github/captures/**"
+      - ".github/FUNDING.yml"
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: NSIS
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+          }
+      - name: Construction
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\construire-windows.ps1 -Interpreteur python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctiluca-windows
+          path: build/paquets/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rapport-windows
+          path: build/autotest-*.txt
+
+  macos:
+    # Apple Silicon. Un Mac Intel demande son propre paquet, construit sur
+    # un Mac Intel (numba n'existe pas en « universal2 »).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Construction
+        run: bash packaging/construire-macos.sh
+        env:
+          PYTHON: python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctiluca-macos
+          path: build/paquets/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rapport-macos
+          path: build/autotest-*.txt
+
+  linux:
+    # La plus ancienne distribution servie : l'AppImage demande une glibc
+    # au moins aussi récente que celle de la machine qui la construit.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Bibliothèques du système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libportaudio2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libegl1 fonts-dejavu-core file
+      - name: Construction
+        run: bash packaging/construire-linux.sh
+        env:
+          PYTHON: python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctiluca-linux
+          path: build/paquets/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rapport-linux
+          path: build/autotest-*.txt
+
+  publication:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: noctiluca-*
+          path: paquets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Noctiluca ${{ github.ref_name }}
+          files: paquets/*
+          body: |
+            **Windows 10 / 11** : `Noctiluca-…-windows-x64-setup.exe` · **macOS** (puce Apple / Apple silicon) : `…-macos-arm64.dmg` · **Linux** : `…-linux-x86_64.AppImage`
+
+            Gratuit, sans compte. Le lien MIDI avec le Deluge branché n'existe que sous Windows. Paquets non signés : au premier lancement, Windows (*Informations complémentaires ▸ Exécuter quand même*) ou macOS (*Réglages Système ▸ Confidentialité et sécurité ▸ Ouvrir quand même*) demandent une confirmation.
+
+            *Free, no account. The live MIDI link with a connected Deluge is Windows-only. The packages are unsigned: Windows (More info ▸ Run anyway) or macOS (System Settings ▸ Privacy & Security ▸ Open Anyway) ask for confirmation on first launch. The interface starts in French: Langue ▸ English.*
+
+            ☕ Noctiluca vous plaît ? [Offrez un café à son auteur sur Ko-fi](https://ko-fi.com/frenchfries29) · *Enjoying Noctiluca? [Buy its author a coffee](https://ko-fi.com/frenchfries29).*

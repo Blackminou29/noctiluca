@@ -31,7 +31,7 @@ from pathlib import Path
 #:
 #: Dans le dossier temporaire du système, pas dans le projet : il contient des
 #: index SQLite et des journaux, qui n'ont rien à faire dans le dépôt.
-BAC_A_SABLE: Path = Path(tempfile.gettempdir()) / "deluge-companion-tests"
+BAC_A_SABLE: Path = Path(tempfile.gettempdir()) / "noctiluca-tests"
 
 try:
     BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
@@ -43,4 +43,7 @@ except OSError:                                     # pragma: no cover
 # Affectation inconditionnelle, et non ``setdefault`` : une variable héritée
 # de l'environnement pourrait désigner le dossier réel, ce qui annulerait la
 # protection — c'est précisément ce qu'il faut rendre impossible.
-os.environ["DELUGE_COMPANION_CONFIG"] = str(BAC_A_SABLE)
+os.environ["NOCTILUCA_CONFIG"] = str(BAC_A_SABLE)
+# L'ancienne variable, que l'application lit encore : retirée, pour que les
+# tests qui ôtent la nouvelle voient bien un démarrage sans rien d'imposé.
+os.environ.pop("DELUGE_COMPANION_CONFIG", None)
