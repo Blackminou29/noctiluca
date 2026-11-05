@@ -1339,9 +1339,32 @@ def mix(*tracks, levels=None) -> np.ndarray   # somme de rendus de longueurs dif
 def spectrum(data: np.ndarray, sr: int, n: int = 4096) -> tuple[np.ndarray, np.ndarray]
 ```
 Qualité attendue : le calcul du firmware de la machine (§4.41), depuis le 23 octobre 2026 —
-c'était « plausible, pas exact ». Aucune dépendance hors numpy. Doit rendre 2,5 s en moins
-de 600 ms au pire cas (une nappe à huit voix d'unisson) ; un preset de la carte rend 1,5 s
-en 0,1 s (médiane de 200), en 0,2 s pour 90 % d'entre eux.
+c'était « plausible, pas exact ». Dépend de numpy, et de numba s'il est installé (§4.41,
+« Coût »). Doit rendre 2,5 s en moins de 600 ms au pire cas (une nappe à huit voix
+d'unisson) ; un preset de la carte rend 1,5 s en 0,1 s (médiane de 200), en 0,2 s pour
+90 % d'entre eux.
+
+`render_parts` calcule ses voix distinctes en parallèle, sur `WORKERS` fils (quatre au
+plus), puis les effets de chaque son ; **chaque voix tire son hasard de sa note** (graine :
+le nom du son et la clé de la voix — note, durées, vélocité, glissé), et non plus d'un
+tirage partagé par la partie. Le mélange se fait dans l'ordre des notes : un rendu redonne
+le même son à l'échantillon près, quel que soit le nombre de fils. Sans numba, les voix se
+suivent dans un seul fil. `render_preview`, `render_kit` et `render_pattern` ne changent
+pas.
+
+> **Correction mesurée (5 novembre 2026) — la vitesse.** « Faire les deux améliorations
+> proposées » : numba, et les voix en parallèle. Écouter une section de huit mesures à
+> l'atelier prenait, sur sa machine, 4,0 s (techno), 3,5 (house), 5,3 (trance) et 8,6
+> (ambient) ; désormais 0,27, 0,47, 0,63 et 0,95 s — mesuré en alternance avec l'ancien
+> code, au meilleur de plusieurs écoutes, la machine faisant varier une mesure isolée du
+> simple au double. Les boucles compilées rendent les nombres de l'ancien code à
+> l'échantillon près, sauf le lissage à un pôle (10⁻¹⁵ de la crête, l'arrondi). Ce qui
+> change à l'oreille : les phases de départ, la gigue du filtre et *random* de chaque note,
+> tirés autrement — d'une note à l'autre, comme sur la machine, ils changeaient déjà.
+> Au-delà de quatre fils, le calcul ralentit : la part de Python de chaque voix ne se
+> partage pas, et sous Windows chaque grand tableau neuf coûte de la mémoire fraîche que
+> les fils se disputent — d'où les tampons réutilisés (`oscillator(out=…)`,
+> `dsp.mix_into`) et les boucles qui calculent elles-mêmes phases, gigue et garde.
 
 > **Correction mesurée (23 octobre 2026) — le calcul de la machine.** « C'est presque
 > parfait, je voudrais encore que tu améliores la similarité entre l'écoute sur le PC et
@@ -1812,7 +1835,8 @@ class MidiMessage: status, data1, data2, millis, stamp=0, data=b"",
 
 **Aucune bibliothèque tierce.** Ni `mido`, ni `python-rtmidi`, ni `pygame` :
 aucune n'est installée chez l'utilisateur, et le projet ne dépend que de
-`numpy` et PyQt6. Windows expose tout dans `winmm.dll`, appelé par `ctypes`.
+`numpy` et PyQt6 (numba, recommandé, n'accélère que l'écoute). Windows expose
+tout dans `winmm.dll`, appelé par `ctypes`.
 Hors Windows, `available()` rend `False` et tout devient silencieux.
 
 Règles non négociables :
@@ -2848,10 +2872,26 @@ des échantillons (`windowedSincKernel`, `dsp/interpolate/interpolate.cpp`). Le 
 sous licence GPL 3 : distribuer l'application avec ces tables obligerait à la publier sous
 la même licence.
 
-**Coût.** Les boucles échantillon par échantillon (filtres, rétroactions) sont du Python
-pur, 0,2 µs par échantillon et par étage environ ; une garde de 10⁻³ à leur entrée
-(`DENORMAL_GUARD`, mille fois sous le bit de poids faible du firmware) empêche les nombres
-sous-normaux, qui doublaient le coût d'un filtre s'éteignant dans le silence.
+**Coût.** Les boucles échantillon par échantillon — échelles, passe-haut, oscillateurs à
+table et à impulsion, rétroaction de la FM, enveloppes, gigue, saturation adoucie,
+réduction, phaser, flanger, chorus, réverbérations, lissage à un pôle — sont écrites
+**une fois**, dans un Python que numba compile (`_Boucle`, depuis le 5 novembre 2026) :
+compilées au premier appel, gardées sur disque dans `__pycache__` (recompilées après une
+modification de `dsp.py`), elles laissent les autres fils calculer pendant qu'elles
+tournent (`nogil`). Sans numba — non installé, ou une version de Python qu'il ne connaît
+pas encore —, ou si une compilation échoue (une trace au journal), la même fonction tourne
+en Python sur des listes, comme avant : 0,2 µs par échantillon et par étage environ.
+`compiled()` dit lequel ; numba ne s'importe qu'au premier calcul (une demi-seconde que le
+tracé d'un filtre, dans le fil de l'interface, n'a pas à payer). `prepare()` charge le code
+compilé de chaque boucle avec les types de l'écoute (1,4 s, quatre après une modification) :
+les pages qui font écouter (`Page.LISTENS`) la lancent 1,5 s après leur première apparition
+(`tasks.PREPARATION_DELAY_MS` : lancée aussitôt, elle ralentissait d'un tiers les pages
+bâties dans la foulée), dans un fil Python hors du registre des traitements, que
+`tasks.stop_all` arrête entre deux boucles ou empêche de partir. **En code compilé, un index hors du tableau ne lève rien et lit n'importe où** :
+chaque index tiré d'un signal est borné, NaN compris (`not v <= borne`). Une garde de 10⁻³
+à l'entrée des boucles (`DENORMAL_GUARD`, mille fois sous le bit de poids faible du
+firmware) empêche les nombres sous-normaux, qui doublaient le coût d'un filtre s'éteignant
+dans le silence.
 
 ### 4.42 Le pont vers les DAW : `daw.py`, `dawimport.py`, `dawlive.py`, `dawals.py`
 
@@ -2923,7 +2963,14 @@ d'un kit peut porter `<midiInput channel note />`, écrit à la fin du son
 (`Kit::offerReceivedNote`, la note étant la rangée du bas). Les sons d'un kit reçoivent les
 notes General MIDI de l'export (`daw.drum_pitch`). **Sur la carte de l'utilisateur, 42
 synthés écoutent déjà le canal 1**, celui de son MIDI Follow A : une écoute existante est
-gardée sauf demande, et le plan signale canaux partagés et MIDI Follow. La copie
+gardée sauf demande, et le plan signale canaux partagés et MIDI Follow. Sur demande (un
+autre canal choisi dans le tableau, ou « Garder les canaux déjà réglés » décoché), **un
+kit qui écoute un seul canal en change en entier** : la valeur `channel` seule est
+remplacée, dans le `<midiInput>` de chaque son comme dans le `<MIDIInput>` du kit, et la
+preuve le vérifie ; un kit dont les sons écoutent des canaux différents les leur laisse, et
+seuls ses sons muets prennent le canal. (Avant le 4 novembre 2026, ces sons étaient sautés
+en silence : sur une copie « DAW » relue, changer le canal du kit n'écrivait rien, alors que
+le plan annonçait « canal 5 (au lieu du canal 10) ».) La copie
 « *morceau* DAW » est prouvée comme celles de §4.37 : défaire les ajouts redonne
 l'original à l'octet, et chaque instrument relu, ajouts retirés, est identique ; les 54
 morceaux de la carte passent la preuve. Horloge : SETTINGS ▸ MIDI ▸ Clock ▸ Input / Output.

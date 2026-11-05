@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 import traceback
 from typing import Any, Callable
 
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QProgressDialog
 
 from ..i18n import tr
@@ -38,9 +39,58 @@ log = logging.getLogger(__name__)
 _ACTIVE: "list[tuple[QThread, Worker]]" = []
 
 
+#: La préparation de l'écoute (:func:`prepare_listening`) : son signal
+#: d'arrêt, puis son fil, une fois lancée.
+_PREPARATION: dict[str, Any] = {}
+
+#: Délai avant de lancer la préparation, une fois la page apparue. Mesuré le
+#: 5 novembre 2026 (vraie fenêtre, cinq fois en alternance) : lancée aussitôt,
+#: elle disputait à l'interface le verrou de Python, et les pages bâties dans
+#: la foulée prenaient un tiers de temps en plus (médiane 0,46 s contre 0,34).
+PREPARATION_DELAY_MS = 1500
+
+
 def active_count() -> int:
     """Nombre de travaux encore en cours."""
     return len(_ACTIVE)
+
+
+def prepare_listening() -> None:
+    """Prépare l'écoute dans un fil à part, une fois par session.
+
+    numba s'importe et le code compilé de chaque boucle du traitement du
+    signal se charge (:func:`delugeapp.core.dsp.prepare`) : 1,4 s, que la
+    première écoute attendait — quatre après une modification du moteur.
+    Les pages qui font écouter l'appellent à leur première apparition ; le
+    fil part :data:`PREPARATION_DELAY_MS` plus tard, la page installée. Une
+    écoute demandée avant charge numba elle-même, comme sans préparation.
+
+    Un simple fil Python, hors de :data:`_ACTIVE` : l'utilisateur n'a rien
+    demandé, rien ne s'affiche ni ne compte comme traitement en cours ; il
+    ne touche pas à Qt. :func:`stop_all` l'arrête entre deux boucles, ou
+    l'empêche de partir.
+    """
+    if _PREPARATION:
+        return
+    stop = threading.Event()
+    _PREPARATION["stop"] = stop
+
+    def run() -> None:
+        try:
+            from ..core import dsp
+
+            dsp.prepare(stop.is_set)
+        except Exception:  # noqa: BLE001 - l'écoute compilera elle-même
+            log.exception("préparation de l'écoute en échec")
+
+    def start() -> None:
+        if stop.is_set():
+            return
+        thread = threading.Thread(target=run, name="prepare_listening")
+        _PREPARATION["thread"] = thread
+        thread.start()
+
+    QTimer.singleShot(int(PREPARATION_DELAY_MS), start)
 
 
 def stop_all(timeout_ms: int = 3000) -> int:
@@ -50,6 +100,11 @@ def stop_all(timeout_ms: int = 3000) -> int:
     nombre de fils qui n'ont pas répondu dans le délai : ils sont alors
     terminés de force, ce qui vaut mieux qu'un plantage à la sortie.
     """
+    if "stop" in _PREPARATION:
+        _PREPARATION["stop"].set()
+    preparation = _PREPARATION.get("thread")
+    if preparation is not None and preparation.is_alive():
+        preparation.join(int(timeout_ms) / 1000.0)
     pending = list(_ACTIVE)
     for _thread, worker in pending:
         try:

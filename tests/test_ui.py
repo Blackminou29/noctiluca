@@ -2396,6 +2396,86 @@ class TestMainWindowFermeture(MainWindowCase):
         self.assertEqual(tasks.stop_all(100), 0)
 
 
+class TestPreparationDeLEcoute(MainWindowCase):
+    """À la première visite d'une page qui fait écouter, l'écoute se
+    prépare dans un fil à part : numba et le code compilé des boucles se
+    chargent (1,4 s), et la première écoute de la session ne les attend plus
+    (5 novembre 2026). La préparation simulée ici dure jusqu'à ce qu'on
+    l'arrête, comme une compilation après une modification du moteur."""
+
+    def setUp(self):
+        super().setUp()
+        import time
+        from unittest import mock
+
+        from delugeapp.ui import tasks
+
+        self.tasks = tasks
+        sauve = dict(tasks._PREPARATION)
+        tasks._PREPARATION.clear()
+
+        def remettre():
+            arret = tasks._PREPARATION.get("stop")
+            fil = tasks._PREPARATION.get("thread")
+            if arret is not None:
+                arret.set()
+            if fil is not None:
+                fil.join(5)
+            tasks._PREPARATION.clear()
+            tasks._PREPARATION.update(sauve)
+
+        self.addCleanup(remettre)
+        self.appels = []
+
+        def preparer(should_stop):
+            self.appels.append(should_stop)
+            while not should_stop():
+                time.sleep(0.01)
+            return False
+
+        patch = mock.patch("delugeapp.core.dsp.prepare", preparer)
+        patch.start()
+        self.addCleanup(patch.stop)
+        delai = mock.patch.object(tasks, "PREPARATION_DELAY_MS", 0)
+        delai.start()
+        self.addCleanup(delai.stop)
+
+    def test_fermee_avant_son_depart_la_preparation_ne_part_pas(self):
+        """Elle attend que la page soit installée ; la fenêtre fermée
+        entre-temps, elle ne part plus."""
+        from unittest import mock
+
+        with mock.patch.object(self.tasks, "PREPARATION_DELAY_MS", 300):
+            win = self.window()
+            win.go_to("Atelier")
+            _pump(50)
+            win.close()
+            _APP.processEvents()
+            _pump(400)
+        self.assertEqual(self.appels, [])
+        self.assertNotIn("thread", self.tasks._PREPARATION)
+
+    def test_la_premiere_page_qui_fait_ecouter_prepare_l_ecoute(self):
+        win = self.window()                # l'Accueil ne fait rien écouter
+        _pump(100)
+        self.assertEqual(self.appels, [])
+        win.go_to("Atelier")
+        _pump(150)
+        self.assertEqual(len(self.appels), 1)
+        win.go_to("Generator")
+        win.go_to("Atelier")
+        _pump(50)
+        self.assertEqual(len(self.appels), 1,
+                         "une seule préparation par session")
+        self.assertEqual(self.tasks.active_count(), 0,
+                         "rien ne compte comme un traitement en cours")
+        fil = self.tasks._PREPARATION["thread"]
+        self.assertTrue(fil.is_alive())
+        win.close()
+        _APP.processEvents()
+        self.assertFalse(fil.is_alive(), "la fermeture arrête la préparation")
+
+
 # --------------------------------------------------------------------------- #
 # Point d'entrée
 # --------------------------------------------------------------------------- #

@@ -238,6 +238,35 @@ def compute_score(issues: list[Issue]) -> int:
 # Les contrôles
 # --------------------------------------------------------------------------- #
 
+class _Lectures:
+    """L'index vu le temps d'un diagnostic : chaque liste n'y est lue qu'une
+    fois, et chaque contrôle en reçoit sa copie.
+
+    Mesuré sur la carte de l'utilisateur : la table des 1 747 échantillons
+    était relue neuf fois par diagnostic, et chaque liste de presets trois
+    fois — 0,13 s sur 0,35, fenêtre figée, à chaque retour sur le tableau
+    de bord. Rien ne s'écrit pendant un diagnostic : la mémoire ne survit
+    pas à l'appel, et ne peut donc rien montrer de périmé."""
+
+    _LUES = frozenset({"search_samples", "search_presets", "search_songs"})
+
+    def __init__(self, lib: Library) -> None:
+        self._lib = lib
+        self._vues: dict[tuple, list] = {}
+
+    def __getattr__(self, nom: str):
+        attribut = getattr(self._lib, nom)
+        if nom not in self._LUES:
+            return attribut
+
+        def lire(*args, **kwargs):
+            cle = (nom, args, tuple(sorted(kwargs.items())))
+            if cle not in self._vues:
+                self._vues[cle] = list(attribut(*args, **kwargs))
+            return list(self._vues[cle])
+        return lire
+
+
 def check_card(sd: SDCard, lib: Library,
                progress: Callable[[str], None] | None = None,
                backup_dir: Path | None = None) -> HealthReport:
@@ -253,6 +282,9 @@ def check_card(sd: SDCard, lib: Library,
 
     started = time.monotonic()
     issues: list[Issue] = []
+    # Les contrôles ci-dessous lisent l'index par cette vue mémorisée.
+    index = lib
+    lib = _Lectures(index)
 
     def _step(label: str, fn: Callable[[], Issue | None]) -> None:
         if progress is not None:
@@ -293,7 +325,7 @@ def check_card(sd: SDCard, lib: Library,
 
     stats = {}
     try:
-        stats = lib.stats()
+        stats = index.stats()
     except Exception as exc:  # noqa: BLE001
         log.debug("statistiques indisponibles : %s", exc)
 

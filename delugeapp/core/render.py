@@ -36,15 +36,21 @@ Vérifié contre un export de pistes de la machine le 23 octobre 2026 (SPEC
 
 Budget : SPEC §4.21, 2,5 secondes rendues en moins de 600 ms au pire cas (une
 nappe à huit voix d'unisson) ; un preset de la carte rend 1,5 s en 0,1 s
-(médiane). Ne dépend que de numpy.
+(médiane). Les voix d'une écoute de plusieurs parties se calculent en
+parallèle (:func:`render_parts`), quand :mod:`.dsp` est compilé par numba :
+une section de huit mesures en 0,3 à 1 s, au lieu de 4 à 9. Dépend de numpy,
+et de numba s'il est installé.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import os
+import threading
 import zlib
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, wait
 from functools import lru_cache
 
 import numpy as np
@@ -524,6 +530,7 @@ def filter_response(freqs, cutoff: float, resonance: float,
 
 _SAMPLE_CACHE: OrderedDict = OrderedDict()
 _SAMPLE_CACHE_SIZE = 48
+_SAMPLE_LOCK = threading.Lock()
 
 
 def _load_sample(sd: SDCard | None, osc) -> tuple[np.ndarray, int] | None:
@@ -547,23 +554,26 @@ def _load_sample(sd: SDCard | None, osc) -> tuple[np.ndarray, int] | None:
     except OSError:
         stamp = 0
     key = (str(path), stamp)
-    cached = _SAMPLE_CACHE.get(key)
-    if cached is None:
-        try:
-            data, file_sr = wav.read(path, max_frames=ENGINE_RATE * 20)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("échantillon illisible %s : %s", path, exc)
-            return None
-        if data.size == 0 or not file_sr:
-            return None
-        if data.ndim == 2:
-            data = data[:, 0] if data.shape[1] == 1 else data[:, :2]
-        cached = (np.ascontiguousarray(data, dtype=np.float32), int(file_sr))
-        _SAMPLE_CACHE[key] = cached
-        while len(_SAMPLE_CACHE) > _SAMPLE_CACHE_SIZE:
-            _SAMPLE_CACHE.popitem(last=False)
-    else:
-        _SAMPLE_CACHE.move_to_end(key)
+    # Les voix d'une écoute se calculent dans plusieurs fils à la fois.
+    with _SAMPLE_LOCK:
+        cached = _SAMPLE_CACHE.get(key)
+        if cached is None:
+            try:
+                data, file_sr = wav.read(path, max_frames=ENGINE_RATE * 20)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("échantillon illisible %s : %s", path, exc)
+                return None
+            if data.size == 0 or not file_sr:
+                return None
+            if data.ndim == 2:
+                data = data[:, 0] if data.shape[1] == 1 else data[:, :2]
+            cached = (np.ascontiguousarray(data, dtype=np.float32),
+                      int(file_sr))
+            _SAMPLE_CACHE[key] = cached
+            while len(_SAMPLE_CACHE) > _SAMPLE_CACHE_SIZE:
+                _SAMPLE_CACHE.popitem(last=False)
+        else:
+            _SAMPLE_CACHE.move_to_end(key)
     data, file_sr = cached
     zone = getattr(osc, "zone", None)
     if zone is not None:
@@ -667,22 +677,13 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
     attack1 = 0.0
     for index, env in ((1, sound.env1), (2, sound.env2)):
         attack, decay, sustain, release = _env_rates(sound, env, index, static)
-        if index == 1:
-            attack1 = attack
-        machine = dsp.Envelope()
-        machine.note_on(attack, sustain)
         has_sustain = int(env.sustain) != INT32_MIN \
             or int(env.decay) > int(env.release)
-        values = np.empty(nb)
-        for b in range(nb):
-            if b == release_block:
-                machine.note_off(has_sustain)
-            values[b] = machine.render(attack, decay, sustain, release)
-            if index == 1 and end_block == nb and (
-                    machine.state == dsp.Envelope.OFF
-                    or (machine.state > dsp.Envelope.DECAY
-                        and values[b] <= -dsp.Q31)):
-                end_block = b + 1
+        values, silent = dsp.envelope_blocks(attack, decay, sustain, release,
+                                             nb, release_block, has_sustain)
+        if index == 1:
+            attack1 = attack
+            end_block = silent
         envelopes[index] = values
 
     # -- LFO ------------------------------------------------------------- #
@@ -767,8 +768,8 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
             stereo_waves.append((wave, u))
             return
         if stereo_unison:
-            buf[0] += wave * unison_l[u]
-            buf[1] += wave * unison_r[u]
+            dsp.mix_into(buf[0], wave, unison_l[u])
+            dsp.mix_into(buf[1], wave, unison_r[u])
         else:
             buf[0] += wave
 
@@ -851,6 +852,7 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
                     waves.append(wave)
                 add(waves[0] * waves[1] / dsp.Q32 * ring_amp / dsp.Q32, u)
         else:
+            scratch = None
             for s, (osc, letter) in enumerate(zip((osc1, osc2), letters)):
                 volume_s = _final_volume(sound, "osc%sVolume" % letter, mod,
                                          nb, 50.0 if s == 0 else 0.0)
@@ -878,10 +880,14 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
                     continue
                 incs = increments(osc.transpose, osc.cents, osc_oct[s])
                 retrig = _retrig(osc)
+                if scratch is None:
+                    # Un seul tampon pour toutes les ondes de la note :
+                    # chacune est ajoutée avant que la suivante ne l'écrase.
+                    scratch = np.empty(n)
                 for u in range(voices):
                     wave, _ = dsp.oscillator(
                         kind, incs[u], n, _start_phase(kind, retrig, rng), amp,
-                        pulse[s], retrig)
+                        pulse[s], retrig, out=scratch)
                     add(wave, u)
 
     if stereo_waves:
@@ -907,7 +913,8 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
                 else np.ones(n)
             x = _filtered(x, route, lpf_cfg, hpf_cfg, jitter)
         if sound.mode != "fm":
-            x = x * overall_ramp / dsp.Q31
+            x = x * overall_ramp
+            x /= dsp.Q31
         if clipping > 0:
             x, _ = dsp.saturate(x, clipping)
         channels.append(x)
@@ -1276,6 +1283,66 @@ def render_preview(preset: SynthPreset, notes: list[int] | None = None,
     return out.astype(np.float32)
 
 
+#: Le nombre de fils qui calculent les voix d'une écoute. Mesuré sur la
+#: machine de l'utilisateur (24 cœurs, 5 novembre 2026) : 3 ou 4 fils
+#: rendent une section 1,7 fois plus vite qu'un seul, 6 ou 8 moins bien que
+#: 4 — la part de Python de chaque voix ne se partage pas, et les fils s'y
+#: attendent ; la mémoire fraîche des tableaux neufs non plus.
+WORKERS = max(1, min(4, (os.cpu_count() or 1) - 1))
+
+
+def _run_all(tasks: list, should_stop=None) -> list | None:
+    """Les résultats de ``tasks`` (fonctions sans argument), dans l'ordre ;
+    ``None`` si ``should_stop`` devient vrai en route.
+
+    Quand les boucles du traitement du signal sont compilées, elles laissent
+    les autres fils calculer pendant qu'elles tournent : les tâches se
+    répartissent alors sur :data:`WORKERS` fils. Sans numba, elles se
+    suivent dans ce fil-ci — en Python pur, des fils ne calculent pas plus
+    vite qu'un seul. ``should_stop`` n'est consulté que d'ici."""
+    if should_stop is not None and should_stop():
+        return None
+    workers = min(WORKERS, len(tasks)) if dsp.compiled() else 1
+    if workers <= 1:
+        results = []
+        for task in tasks:
+            if should_stop is not None and should_stop():
+                return None
+            results.append(task())
+        return results
+    pool = ThreadPoolExecutor(max_workers=workers,
+                              thread_name_prefix="rendu")
+    try:
+        futures = [pool.submit(task) for task in tasks]
+        pending = set(futures)
+        while pending:
+            _done, pending = wait(pending, timeout=0.05)
+            if should_stop is not None and should_stop():
+                return None
+        return [future.result() for future in futures]
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _voice_task(sound: Sound, key: tuple, note: int, count: int,
+                gate: float, velocity: float, sd: SDCard | None,
+                tempo: float, glide: float):
+    """Le calcul d'une voix de :func:`render_parts`, pour :func:`_run_all`.
+
+    Son hasard (phases de départ, gigue du filtre, *random*) lui est propre,
+    tiré du son et de la note : il ne dépend plus des voix rendues avant
+    elle, qui peuvent donc se calculer en même temps."""
+    def task():
+        rng = np.random.default_rng((_graine(sound.name), _graine(repr(key))))
+        try:
+            return _render_voice(sound, note, count, gate, velocity, sd,
+                                 tempo, glide, rng)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("note impossible à rendre : %s", exc)
+            return np.zeros((2, count))
+    return task
+
+
 def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                  sr: int = 44100, sd: SDCard | None = None,
                  tail: float = 0.8, should_stop=None,
@@ -1288,7 +1355,7 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     :param tail: secondes laissées, au moins, à l'extinction de chaque
         note ; un son au release plus long garde le sien
         (:func:`tail_seconds`).
-    :param should_stop: consulté entre deux notes ; vrai, le rendu s'arrête
+    :param should_stop: consulté pendant le calcul ; vrai, le rendu s'arrête
         et rend ``None``. Avec les vraies durées de release, un rendu peut
         dépasser deux secondes : à la fermeture, le fil doit pouvoir
         s'arrêter au lieu d'être tué en plein calcul.
@@ -1300,7 +1367,10 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     celle du morceau.
 
     Une même note de même durée n'est rendue qu'une fois : une basse qui
-    martèle la fondamentale coûte une note, pas trente-deux.
+    martèle la fondamentale coûte une note, pas trente-deux. Les voix
+    distinctes se calculent en parallèle (:func:`_run_all`), puis les effets
+    de chaque son ; le mélange se fait toujours dans le même ordre, si bien
+    qu'un rendu redonne le même son à l'échantillon près.
     ``normalize=False`` laisse la crête telle quelle (:func:`mix` ramène
     le mélange avec la batterie).
     """
@@ -1315,9 +1385,12 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     frames = max(1, int(length_s * sr))
     rate = ENGINE_RATE
     n = max(1, int(length_s * rate))
-    dry_total = np.zeros((2, n))
-    send_total = np.zeros(n)
     fade = max(1, int(0.008 * rate))
+
+    # -- le plan : chaque note posée, et la voix distincte qu'elle joue -- #
+    plans = []
+    jobs: dict[tuple, int] = {}       # voix → nombre d'échantillons
+    tasks = []
     for name, events in (parts or {}).items():
         sound = (sounds or {}).get(name)
         if sound is None:
@@ -1326,13 +1399,9 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
         glides = (sound.polyphonic != "legato"
                   and _display(sound, "portamento", 0.0) > 0)
         ordered = sorted(events, key=lambda e: float(e.start))
-        voices = np.zeros((2, n))
-        cache: dict[tuple, np.ndarray] = {}
-        rng = np.random.default_rng(_graine(sound.name))
+        placed = []
         previous = None
         for index, event in enumerate(ordered):
-            if should_stop is not None and should_stop():
-                return None
             held = max(0.02, float(event.length) * step_s)
             seconds = held + tails.get(name, float(tail))
             start = int(float(event.start) * step_s * rate)
@@ -1348,42 +1417,63 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                 glide = float(int(previous.note) - int(event.note))
             key = (int(event.note), round(held, 3), round(seconds, 2),
                    int(event.velocity) // 5, glide)
-            voice = cache.get(key)
-            if voice is None:
-                count = max(1, int(round(seconds * rate)))
-                try:
-                    voice = _render_voice(
-                        sound, int(event.note), count,
-                        min(1.0, held / seconds),
-                        # ``NoteEvent.velocity`` est un pourcentage : 100 %
-                        # joue la vélocité 127.
-                        max(1.0, min(100.0, float(event.velocity))) / 100.0,
-                        sd, tempo, glide, rng)
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("note impossible à rendre : %s", exc)
-                    voice = np.zeros((2, count))
-                cache[key] = voice
+            voice_key = (name, key)
+            count = jobs.get(voice_key)
+            if count is None:
+                count = jobs[voice_key] = max(1, int(round(seconds * rate)))
+                tasks.append(_voice_task(
+                    sound, key, int(event.note), count,
+                    min(1.0, held / seconds),
+                    # ``NoteEvent.velocity`` est un pourcentage : 100 % joue
+                    # la vélocité 127.
+                    max(1.0, min(100.0, float(event.velocity))) / 100.0,
+                    sd, tempo, glide))
             previous = event
             if start >= n:
                 continue
-            length = voice.shape[1]
+            length = count
             if mono and index + 1 < len(ordered):
                 # La note suivante vole la voix : relâchement rapide.
                 following = int(float(ordered[index + 1].start) * step_s
                                 * rate)
                 length = max(1, min(length, following - start + fade))
-            end = min(n, start + length)
-            chunk = voice[:, :end - start].copy()
-            if end - start < voice.shape[1] and chunk.shape[1] > fade:
-                chunk[:, -fade:] *= np.linspace(1.0, 0.0, fade)[None, :]
-            voices[:, start:end] += chunk
-        try:
-            dry, send = _sound_chain(sound, voices, tempo, False)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("effets impossibles pour %s : %s", name, exc)
-            continue
-        dry_total += dry
-        send_total += send
+            placed.append((voice_key, start, min(n, start + length)))
+        plans.append((name, sound, placed))
+
+    # -- les voix, les plus longues d'abord : elles finissent ensemble -- #
+    keys = list(jobs)
+    order = sorted(range(len(keys)), key=lambda i: -jobs[keys[i]])
+    rendered = _run_all([tasks[i] for i in order], should_stop)
+    if rendered is None:
+        return None
+    voices = {keys[i]: voice for i, voice in zip(order, rendered)}
+
+    # -- chaque son entier dans ses effets ------------------------------ #
+    def chain(name, sound, placed):
+        def task():
+            mixed = np.zeros((2, n))
+            for voice_key, start, end in placed:
+                voice = voices[voice_key]
+                chunk = voice[:, :end - start].copy()
+                if end - start < voice.shape[1] and chunk.shape[1] > fade:
+                    chunk[:, -fade:] *= np.linspace(1.0, 0.0, fade)[None, :]
+                mixed[:, start:end] += chunk
+            try:
+                return _sound_chain(sound, mixed, tempo, False)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("effets impossibles pour %s : %s", name, exc)
+                return None
+        return task
+
+    chained = _run_all([chain(*plan) for plan in plans], should_stop)
+    if chained is None:
+        return None
+    dry_total = np.zeros((2, n))
+    send_total = np.zeros(n)
+    for result in chained:
+        if result is not None:
+            dry_total += result[0]
+            send_total += result[1]
     mixed = dry_total + dsp.reverb(send_total, PREVIEW_REVERB)
     out = _resampled(dsp.output_stage(mixed).T, frames).astype(np.float32)
     peak = float(np.max(np.abs(out))) if out.size else 0.0

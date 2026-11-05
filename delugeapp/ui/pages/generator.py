@@ -100,6 +100,7 @@ class GeneratorPage(Page):
     ICON = "wand"
     #: Le générateur fonctionne sans carte : seul l'enregistrement en a besoin.
     NEEDS_CARD = False
+    LISTENS = True
 
     #: Un preset vient d'être enregistré sur la carte.
     presetSaved = pyqtSignal(str)

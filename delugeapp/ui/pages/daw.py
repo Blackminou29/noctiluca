@@ -145,6 +145,8 @@ class DawPage(Page):
 
     TITLE = N_("DAW")
     ICON = "link"
+    #: Les pistes audio pour le DAW se calculent comme l'écoute.
+    LISTENS = True
     EMPTY_DETAIL = N_("Indiquez l'emplacement de votre carte dans les "
                       "réglages. Ses morceaux pourront alors partir vers "
                       "votre DAW, et vos projets en revenir.")

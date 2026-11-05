@@ -4192,6 +4192,273 @@ class TestTraitementDuFirmware(unittest.TestCase):
                                        attendu, delta=0.1)
 
 
+def _son_complet():
+    """Un son qui passe par presque toutes les boucles du traitement du
+    signal : dent de scie et carré à largeur d'impulsion modulée, unisson
+    stéréo, échelle 24 dB saturée, passe-haut, écrêtage, phaser, delay et
+    réverbération."""
+    from delugeapp.core.model import PatchCable
+
+    sound = SynthPreset.new("BOUCLES").sound
+    sound.osc1.type = "saw"
+    sound.osc2.type = "square"
+    sound.unison_num = 3
+    sound.unison_spread = 30
+    sound.unison_detune = 12
+    sound.lpf_mode = "24dB"
+    sound.mod_fx_type = "phaser"
+    sound.clipping_amount = 2
+    for cle, valeur in (("oscAVolume", 40), ("oscBVolume", 35),
+                        ("oscBPulseWidth", 20), ("lpfFrequency", 30),
+                        ("lpfResonance", 45), ("hpfFrequency", 8),
+                        ("modFXDepth", 30), ("delayFeedback", 20),
+                        ("reverbAmount", 20), ("volume", 40)):
+        sound.set_param(cle, from_display(valeur, scale=50))
+    sound.patch_cables = [
+        PatchCable("lfo1", "oscBPulseWidth",
+                   PatchCable.amount_from_display(20)),
+        PatchCable("envelope2", "lpfFrequency",
+                   PatchCable.amount_from_display(15))]
+    return sound
+
+
+class TestEcouteCompilee(unittest.TestCase):
+    """Les boucles du traitement du signal, compilées par numba, et les
+    voix d'une écoute calculées en parallèle (5 novembre 2026).
+
+    Écouter une section de huit mesures à l'atelier prenait 2,5 à 9 s en
+    Python pur ; compilé et sur quatre fils, 0,3 à 1 s. Le calcul ne change
+    pas : chaque boucle compilée rend les mêmes nombres que la même
+    fonction en Python, et le nombre de fils ne change rien au son."""
+
+    def setUp(self):
+        from delugeapp.core import dsp
+
+        self.dsp = dsp
+        if not dsp.compiled():
+            self.skipTest("numba n'est pas installé")
+        self.addCleanup(setattr, dsp, "_compiled", True)
+
+    def _deux_fois(self, calcul):
+        """``calcul()`` compilé, puis en Python."""
+        self.dsp._compiled = True
+        compile_ = calcul()
+        self.dsp._compiled = False
+        try:
+            python = calcul()
+        finally:
+            self.dsp._compiled = True
+        return compile_, python
+
+    def _memes(self, a, b, rtol=0.0, msg=None):
+        a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
+        self.assertEqual(a.shape, b.shape, msg)
+        if rtol:
+            crete = float(np.max(np.abs(b))) or 1.0
+            self.assertLessEqual(float(np.max(np.abs(a - b))), rtol * crete,
+                                 msg)
+        else:
+            self.assertTrue(np.array_equal(a, b), msg)
+
+    def test_chaque_boucle_compilee_rend_les_nombres_du_python(self):
+        """À l'échantillon près, sauf le lissage à un pôle, que le Python
+        calcule d'un tableau entier par doublements : là, l'arrondi seul
+        diffère (10⁻¹⁵ de la crête)."""
+        d = self.dsp
+        n = 6000
+        nb = -(-n // d.BLOCK)
+        t = np.arange(n)
+        x = np.round(3e7 * np.sin(2 * np.pi * 110 * t / 44100)
+                     + 9e6 * np.sin(2 * np.pi * 2170 * t / 44100))
+        stereo = np.stack([x, np.roll(x, 37) * 0.7])
+        jitter = 1.0 + np.random.default_rng(4).uniform(-0.005, 0.005, n)
+        freq = np.linspace(1e6, 6e7, nb)
+        for mode in ("12dB", "24dB", "24dBDrive"):
+            for res, morph in ((0.0, 0.0), (5.3e8, 0.0), (4.5e8, 3e8)):
+                cfg = d.lpf_config(mode, freq, np.full(nb, res),
+                                   np.full(nb, morph))
+                self._memes(*self._deux_fois(
+                    lambda: d.lpf_process(x, cfg, jitter)),
+                    msg="passe-bas %s %g" % (mode, res))
+        resonance = np.full(nb, 5.36e8)
+        resonance[:nb // 3] = 0.0
+        resonance[nb // 3:2 * nb // 3] = 4.6e8
+        hcfg = d.hpf_config(np.linspace(3e5, 3e7, nb), resonance)
+        self._memes(*self._deux_fois(lambda: d.hpf_process(x, hcfg)),
+                    msg="passe-haut")
+        amp = np.full(n, float(1 << 26))
+        pw = np.linspace(0, 1.5e9, nb).astype(np.int64)
+        sale = np.full(n, 7.0)
+        for kind in ("sine", "triangle", "square", "saw", "analogSaw",
+                     "analogSquare"):
+            for note in (20, 57, 110):
+                incs = np.linspace(d.note_increment(note),
+                                   d.note_increment(note + 7),
+                                   nb).astype(np.int64)
+                for pulse in (None, pw):
+                    for a in (amp, None):
+                        compile_, python = self._deux_fois(
+                            lambda: d.oscillator(kind, incs, n, 987654321,
+                                                 a, pulse, 0)[0])
+                        self._memes(compile_, python, msg="%s %d" % (kind,
+                                                                     note))
+                        # Un tampon déjà sali rend la même onde.
+                        self._memes(d.oscillator(kind, incs, n, 987654321, a,
+                                                 pulse, 0, out=sale)[0],
+                                    python, msg="tampon réutilisé")
+        inc = np.full(nb, d.note_increment(57))
+        self._memes(*self._deux_fois(lambda: d.fm_operator(
+            inc, n, 12345, amp, np.full(n, 3e6), np.full(nb, 1.9e9))[0]),
+            msg="FM rétroaction")
+        for args in ((300000.0, 5000.0, 9e8, 800.0, 30, True),
+                     (40.0, 300.0, 0.0, 20.0, 20, False),
+                     (2000.0, 300.0, -2147483648.0, 90000.0, 10, True)):
+            compile_, python = self._deux_fois(
+                lambda: d.envelope_blocks(*args[:4], nb, *args[4:]))
+            self._memes(compile_[0], python[0], msg="enveloppe %r" % (args,))
+            self.assertEqual(compile_[1], python[1])
+        self._memes(*self._deux_fois(lambda: d.ladder_jitter(
+            n, np.random.default_rng(9))[0]), rtol=1e-12, msg="gigue")
+        self._memes(*self._deux_fois(lambda: d.tanh_antialiased(x * 9, 5)[0]),
+                    msg="saturation")
+        self._memes(*self._deux_fois(lambda: d.bitcrush_srr(
+            stereo, 5e8, 3e8, 1e9)[0]), msg="réduction")
+        for kind in ("phaser", "flanger", "chorus"):
+            self._memes(*self._deux_fois(lambda: d.mod_fx(
+                stereo, kind, 30000.0, 6e8, 0.0, 9e8, 1e9)[0]), msg=kind)
+        for model in (0, 1):
+            self._memes(*self._deux_fois(lambda: d.reverb(
+                x, d.ReverbSettings(model=model))), rtol=1e-12,
+                msg="réverbération %d" % model)
+        self._memes(*self._deux_fois(lambda: d.one_pole(x, 1 / 128, 3e6)[0]),
+                    rtol=1e-12, msg="un pôle")
+        # Aucune boucle n'est retombée sur Python en route.
+        self.assertTrue(d.compiled())
+
+    def test_le_nombre_de_fils_ne_change_rien_au_son(self):
+        """Une section de l'atelier, sur un fil puis sur quatre : les voix
+        finissent dans un autre ordre, le mélange reste le même à
+        l'échantillon près — chaque voix tire son hasard de sa note."""
+        from unittest import mock
+
+        from delugeapp.core import atelier
+
+        projet = atelier.new_project(atelier.Style(genre="trance", seed=3))
+        parts, _drums, _bars = atelier.section_parts(
+            projet, atelier.fullest_section(projet))
+        sons = atelier.listen_sounds(projet)
+        sons = {k: v for k, v in sons.items() if k in parts}
+        rendus = []
+        for fils in (1, 4, 4):
+            with mock.patch.object(render, "WORKERS", fils):
+                rendus.append(render.render_parts(
+                    parts, sons, bpm=projet.style.tempo(), normalize=False))
+        self.assertGreater(float(np.max(np.abs(rendus[0]))), 0.01)
+        for rendu in rendus[1:]:
+            self.assertTrue(np.array_equal(rendus[0], rendu))
+
+    def test_l_arret_interrompt_le_calcul_en_parallele(self):
+        """Demandé pendant le calcul des voix, l'arrêt rend ``None`` sans
+        attendre la fin de toutes."""
+        from unittest import mock
+
+        from delugeapp.core.accomp import NoteEvent
+
+        son = _son_complet()
+        partie = [NoteEvent(i * 4, 4, 45 + i, 100) for i in range(16)]
+        appels = []
+
+        def arret():
+            appels.append(1)
+            return len(appels) > 1
+
+        with mock.patch.object(render, "WORKERS", 4):
+            self.assertIsNone(render.render_parts({"A": partie}, {"A": son},
+                                                  should_stop=arret))
+
+    def test_sans_numba_l_ecoute_rend_le_meme_son(self):
+        """numba absent — paquet non installé, ou version de Python qu'il
+        ne connaît pas encore —, l'écoute tourne en Python et rend le même
+        son, à l'arrondi du lissage près."""
+        import subprocess
+        import sys
+        import textwrap
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chemin = Path(tmp) / "BOUCLES.XML"
+            preset = SynthPreset.new("BOUCLES")
+            preset.sound = _son_complet()
+            preset.save(chemin, backup=False)
+            son = SynthPreset.load(chemin).sound
+            attendu = render.render_sound(son, note=45, seconds=0.5,
+                                          sr=22050)
+            sortie = Path(tmp) / "rendu.npy"
+            code = textwrap.dedent("""
+                import os, sys
+                sys.modules["numba"] = None
+                os.environ["DELUGE_COMPANION_CONFIG"] = sys.argv[3]
+                sys.path.insert(0, sys.argv[4])
+                import numpy as np
+                from delugeapp.core import dsp, render
+                from delugeapp.core.model import SynthPreset
+                assert not dsp.compiled()
+                son = SynthPreset.load(sys.argv[1]).sound
+                np.save(sys.argv[2], render.render_sound(
+                    son, note=45, seconds=0.5, sr=22050))
+            """)
+            depot = str(Path(__file__).resolve().parent.parent)
+            fait = subprocess.run(
+                [sys.executable, "-c", code, str(chemin), str(sortie),
+                 str(BAC_A_SABLE), depot],
+                capture_output=True, text=True, timeout=300)
+            self.assertEqual(fait.returncode, 0, fait.stderr[-2000:])
+            obtenu = np.load(sortie)
+        self.assertGreater(float(np.max(np.abs(attendu))), 0.01)
+        self._memes(obtenu, attendu, rtol=1e-9)
+
+    def test_numba_ne_s_importe_qu_au_premier_calcul(self):
+        """Tracer une courbe de filtre — dans le fil de l'interface — ne
+        charge pas numba, une demi-seconde d'import ; la première écoute,
+        dans son fil, le charge."""
+        import subprocess
+        import sys
+        import textwrap
+
+        code = textwrap.dedent("""
+            import os, sys
+            os.environ["DELUGE_COMPANION_CONFIG"] = sys.argv[1]
+            sys.path.insert(0, sys.argv[2])
+            import numpy as np
+            from delugeapp.core import render
+            from delugeapp.core.model import SynthPreset
+            render.filter_response(np.geomspace(20, 20000, 64), 30.0, 20.0)
+            avant = "numba" in sys.modules
+            render.render_sound(SynthPreset.new("A").sound, seconds=0.1)
+            print(avant, "numba" in sys.modules)
+        """)
+        depot = str(Path(__file__).resolve().parent.parent)
+        fait = subprocess.run([sys.executable, "-c", code, str(BAC_A_SABLE),
+                               depot], capture_output=True, text=True,
+                              timeout=120)
+        self.assertEqual(fait.returncode, 0, fait.stderr[-2000:])
+        self.assertEqual(fait.stdout.split(), ["False", "True"])
+
+    def test_une_compilation_refusee_retombe_sur_python(self):
+        """Une boucle que numba refuse tourne en Python, avec une trace ; les
+        suivantes aussi, et leurs tableaux leur arrivent alors en listes."""
+        d = self.dsp
+
+        def refusee(values):
+            # Un objet Python quelconque : numba ne sait pas le typer.
+            return len([object()]) + values[0]
+
+        boucle = d._Boucle(refusee)
+        with self.assertLogs("delugeapp.core.dsp", "WARNING"):
+            self.assertEqual(boucle(np.array([3.0])), 4.0)
+        self.assertFalse(d.compiled())
+        self.assertIsInstance(d._seq(np.array([1.0])), list)
+
+
 class TestLoisDuFirmware(unittest.TestCase):
     """:mod:`paramlaws` face au firmware de la machine (1.3, ``102cf9f``).
 
@@ -11494,6 +11761,38 @@ class TestPontDaw(unittest.TestCase):
         encore = dawlive.plan_live(self.sd, plan.rel, relu)
         self.assertFalse(encore.ok)
         self.assertEqual(encore.edits, [])
+
+    def test_un_kit_deja_regle_change_de_canal_en_entier(self):
+        """Sur une copie « DAW », les sons du kit écoutent déjà : choisir un
+        autre canal pour le kit doit les y mener tous — le plan l'annonçait,
+        et rien ne changeait."""
+        from delugeapp.core import dawlive
+
+        rel = "SONGS/" + self._morceau().name
+        routes = dawlive.propose_channels(dawlive.read_routes(self.sd, rel),
+                                          avoid={0})
+        copie = dawlive.plan_live(self.sd, rel, routes)
+        self.assertTrue(dawlive.write_live(self.sd, copie, apply=True).applied)
+        relu = dawlive.read_routes(self.sd, copie.rel)
+        self.assertEqual(relu[1].existing, 9)
+        relu[1].channel = 4                     # choisi dans le tableau
+        plan = dawlive.plan_live(self.sd, copie.rel, relu)
+        self.assertTrue(plan.ok, plan.error)
+        self.assertEqual({(e[1], e[2]) for e in plan.edits}, {(b"9", b"4")})
+        self.assertEqual(len(plan.edits), len(relu[1].drums))
+        self.assertTrue(any("canal 5 (" in ligne for ligne in plan.lines))
+        fait = dawlive.write_live(self.sd, plan, apply=True)
+        self.assertTrue(fait.applied, fait.error)
+        apres = dawlive.read_routes(self.sd, plan.rel)
+        self.assertEqual(apres[1].existing, 4)
+        self.assertTrue(all(c == 4 for _s, _n, c in apres[1].drums))
+        # Les notes apprises restent les leurs.
+        self.assertEqual([n for _s, n, _c in apres[1].drums],
+                         [n for _s, n, _c in relu[1].drums])
+        # La preuve refuse un son resté sur l'ancien canal.
+        plan.data = plan.data.replace(b'channel="4"', b'channel="9"', 1)
+        self.assertNotEqual(dawlive.verify_live(
+            (self.root / copie.rel).read_bytes(), plan), "")
 
     def test_une_ecoute_existante_est_gardee_et_signalee(self):
         from delugeapp.core import dawlive

@@ -119,6 +119,7 @@ class AtelierPage(Page):
                       "bâtir un kit.")
     #: On compose et on écoute sans carte : seule l'écriture en a besoin.
     NEEDS_CARD = False
+    LISTENS = True
 
     #: Ouvrir « Deluge en direct ».
     liveRequested = pyqtSignal()

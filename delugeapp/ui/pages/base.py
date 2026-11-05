@@ -47,7 +47,7 @@ from PyQt6.QtWidgets import (
 
 from ...config import AppContext
 from ...i18n import N_, tr
-from .. import art, icons
+from .. import art, icons, tasks
 from ..theme import (
     BORDER_SOFT,
     CARD_TOP,
@@ -167,6 +167,10 @@ class Page(QWidget):
     EMPTY_ACTION2 = N_("Détecter la carte")
     #: Vrai si la page a besoin d'une carte valide pour montrer quoi que ce soit.
     NEEDS_CARD = True
+    #: Vrai si la page fait écouter des sons calculés : à sa première
+    #: apparition, l'écoute se prépare en arrière-plan
+    #: (:func:`.tasks.prepare_listening`).
+    LISTENS = False
 
     def __init__(self, ctx: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -373,6 +377,8 @@ class Page(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - API Qt
         super().showEvent(event)
+        if self.LISTENS:
+            tasks.prepare_listening()
         self.refresh()
 
     # -- confort ------------------------------------------------------------ #

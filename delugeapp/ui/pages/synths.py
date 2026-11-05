@@ -92,6 +92,7 @@ class SynthsPage(Page):
                       "oscillateurs, ses enveloppes et son filtre, expliqués "
                       "en français.")
     ICON = "synth"
+    LISTENS = True
     #: ``'synth'`` ou ``'kit'`` : la page des kits réutilise cette classe.
     KIND = "synth"
 

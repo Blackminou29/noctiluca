@@ -26,8 +26,10 @@ python main.py
 ```
 
 Deux paquets sont nécessaires — **PyQt6** pour l'interface et **numpy** pour
-tout ce qui touche à l'audio. **sounddevice** est optionnel : sans lui,
-l'application démarre normalement, mais les boutons d'écoute restent inactifs.
+tout ce qui touche à l'audio. **numba** est recommandé : il compile le moteur
+d'écoute, dix fois plus rapide ; sans lui, tout fonctionne, au même son, plus
+lentement. **sounddevice** est optionnel : sans lui, l'application démarre
+normalement, mais les boutons d'écoute restent inactifs.
 
 Une seule fenêtre à la fois : relancer l'application ramène celle qui est
 déjà ouverte — deux fenêtres se disputeraient le Deluge branché.

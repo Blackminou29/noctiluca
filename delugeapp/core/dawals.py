@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import copy
 import gzip
+import io
 import logging
 import os
 import re
@@ -185,6 +186,43 @@ def _read(path: Path) -> ET.Element:
         return ET.fromstring(f.read())
 
 
+def _first(path: Path, tag: str, version: str) -> ET.Element | None:
+    """Le premier élément ``tag`` d'un fichier de Live au format
+    ``version`` (``None`` si le format diffère), seul analysé.
+
+    Mesuré : le set de démonstration pèse 26,7 Mo de XML, son premier clip
+    audio commence à l'octet 24,9 millions, et le lire en entier — même en
+    flux — figeait la page DAW une demi-seconde. Un ``<`` ne pouvant pas
+    figurer tel quel dans une valeur, la balise se cherche dans les octets ;
+    ces éléments ne s'emboîtent pas, sa fin est la première qui suit. Si ce
+    morceau ne se lit pas seul, le fichier entier est lu."""
+    with gzip.open(path, "rb") as f:
+        donnees = f.read()
+    for _evenement, racine in ET.iterparse(io.BytesIO(donnees),
+                                           events=("start",)):
+        if racine.get("MinorVersion", "") != version:
+            return None
+        break
+    nom = tag.encode("ascii")
+    debut = re.search(rb"<" + nom + rb"[\s/>]", donnees)
+    if debut is None:
+        return None
+    fin = donnees.find(b"</" + nom + b">", debut.start())
+    if fin >= 0:
+        fin += len(nom) + 3
+        try:
+            el = ET.fromstring(donnees[debut.start():fin])
+        except ET.ParseError:
+            pass
+        else:
+            # Les blancs qui le suivaient, que le set recopie avec lui.
+            suite = donnees.find(b"<", fin)
+            el.tail = donnees[fin:suite if suite >= 0 else len(donnees)
+                              ].decode("utf-8") or None
+            return el
+    return next(ET.fromstring(donnees).iter(tag), None)
+
+
 def _is_pointee(tag: str) -> bool:
     return tag.endswith("Target") or tag == "Pointee" \
         or tag.startswith("ControllerTargets.")
@@ -217,23 +255,19 @@ class _Templates:
         clip = None
         for fichier in sorted((resources / _CLIPS).rglob("*.alc")):
             try:
-                doc = _read(fichier)
+                clip = _first(fichier, "MidiClip", version)
             except (OSError, ET.ParseError, EOFError):
                 continue
-            if doc.get("MinorVersion", "") == version:
-                clip = next(doc.iter("MidiClip"), None)
-                if clip is not None:
-                    break
+            if clip is not None:
+                break
         clip_audio = None
         for fichier in sorted((resources / _DEMOS).rglob("*.als")):
             try:
-                doc = _read(fichier)
+                clip_audio = _first(fichier, "AudioClip", version)
             except (OSError, ET.ParseError, EOFError):
                 continue
-            if doc.get("MinorVersion", "") == version:
-                clip_audio = next(doc.iter("AudioClip"), None)
-                if clip_audio is not None:
-                    break
+            if clip_audio is not None:
+                break
         if piste is None or clip is None:
             raise TemplateMissing(tr("Ableton Live : ses fichiers de départ "
                                      "manquent (Core Library)."))

@@ -57,18 +57,32 @@ copiées du firmware (``util/lookuptables/``, et les noyaux de
 publié sous licence GPL 3 : distribuer l'application avec ces tables
 obligerait à la publier sous la même licence.
 
-Ne dépend que de numpy. Module de calcul : ni carte, ni audio, ni Qt.
+**Vitesse.** Les récurrences — échelles, phaser, flanger, rétroaction de la
+FM, réverbérations — se calculent échantillon par échantillon : rien ne s'y
+vectorise sans changer le calcul. En Python pur, écouter une section de huit
+mesures à l'atelier demandait 2,5 à 9 s (4 novembre 2026). Chacune de ces
+boucles est donc écrite une fois, dans un Python que **numba** sait compiler
+(:class:`_Boucle`) : avec lui, elle tourne en code machine et laisse les
+autres fils calculer pendant ce temps ; sans lui, la même fonction tourne en
+Python, comme avant.
+
+Dépend de numpy, et de numba s'il est installé. Module de calcul : ni carte,
+ni audio, ni Qt.
 """
 
 from __future__ import annotations
 
 import array
+import logging
 import math
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 #: Fréquence d'échantillonnage du Deluge.
 SR = 44100
@@ -115,6 +129,158 @@ def _as_array(buf: array.array) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
+# Boucles compilées
+# --------------------------------------------------------------------------- #
+
+#: ``None`` tant que la question ne s'est pas posée (:func:`compiled`) ;
+#: puis vrai tant que les boucles passent par numba — faux s'il n'est pas
+#: installé, ou dès qu'une compilation a échoué.
+_compiled: bool | None = None
+_numba = None
+_JIT_LOCK = threading.Lock()
+
+
+def compiled() -> bool:
+    """Les boucles échantillon par échantillon tournent-elles compilées ?
+
+    numba ne s'importe qu'à la première question, donc au premier calcul :
+    une demi-seconde, que le tracé d'un filtre, dans le fil de
+    l'interface, n'a pas à payer."""
+    global _compiled, _numba
+    if _compiled is None:
+        with _JIT_LOCK:
+            if _compiled is None:
+                try:
+                    import numba
+                except Exception:  # noqa: BLE001 - absent, ou incompatible
+                    numba = None
+                _numba = numba
+                _compiled = numba is not None
+    return _compiled
+
+
+def _jit(fn):
+    """La version compilée de ``fn``, gardée sur disque à côté du module :
+    numba ne la recompile qu'après une modification du fichier."""
+    try:
+        return _numba.njit(cache=True, nogil=True)(fn)
+    except RuntimeError:  # aucun dossier où garder le code compilé
+        return _numba.njit(nogil=True)(fn)
+
+
+class _Boucle:
+    """Une boucle échantillon par échantillon.
+
+    Avec numba, elle est compilée au premier appel et rend la main aux
+    autres fils pendant qu'elle tourne (``nogil``) : les voix d'une écoute
+    se calculent alors en parallèle (:func:`.render.render_parts`). Sans
+    numba, ou si la compilation échoue, ``py_func`` — la même fonction —
+    tourne en Python ; ses tableaux lui arrivent en listes (:func:`_seq`),
+    trois fois plus rapides à indexer qu'un tableau numpy.
+
+    **En code compilé, un index hors du tableau ne lève rien : il lit
+    n'importe où.** Chaque index tiré d'un signal y est donc borné, NaN
+    compris (``not v <= borne``)."""
+
+    def __init__(self, fn) -> None:
+        self.py_func = fn
+        self.__name__ = fn.__name__
+        self.__doc__ = fn.__doc__
+        self._compiled_fn = None
+
+    def __call__(self, *args):
+        global _compiled
+        if compiled():
+            fn = self._compiled_fn
+            if fn is None:
+                with _JIT_LOCK:
+                    if self._compiled_fn is None:
+                        self._compiled_fn = _jit(self.py_func)
+                    fn = self._compiled_fn
+            try:
+                return fn(*args)
+            except _numba.core.errors.NumbaError as exc:
+                log.warning("boucle %s non compilée, calcul en Python : %s",
+                            self.__name__, exc)
+                _compiled = False
+        return self.py_func(*args)
+
+
+def _seq(values):
+    """Les valeurs d'un signal pour une :class:`_Boucle` : un tableau
+    contigu pour numba, une liste pour Python."""
+    values = np.asarray(values, dtype=np.float64)
+    return np.ascontiguousarray(values) if compiled() else values.tolist()
+
+
+def _flags(values):
+    """:func:`_seq` pour des booléens (un par bloc)."""
+    values = np.asarray(values, dtype=np.bool_)
+    return np.ascontiguousarray(values) if compiled() else values.tolist()
+
+
+def _out(n: int):
+    """Le tampon de sortie d'une :class:`_Boucle`."""
+    return np.zeros(int(n)) if compiled() else _buffer(n)
+
+
+def _zeros(n: int):
+    """Un tampon de travail d'une :class:`_Boucle`, relu autant qu'écrit."""
+    return np.zeros(int(n)) if compiled() else [0.0] * int(n)
+
+
+def prepare(should_stop=None) -> bool:
+    """Charge le code compilé de chaque boucle — ou le compile, après une
+    modification de ce fichier —, en la faisant tourner sur deux blocs de
+    silence, avec les types de l'écoute : rien de neuf ne se compile
+    ensuite. À lancer dans un fil à part : la première écoute d'une session
+    attendait ainsi une seconde de plus (import de numba compris), quatre
+    après une modification. ``should_stop`` est consulté entre deux
+    boucles. Rend faux sans numba, ou si l'arrêt a été demandé."""
+    if not compiled():
+        return False
+    n, nb = 2 * BLOCK, 2
+    silence = np.zeros(n)
+    stereo = np.zeros((2, n))
+    amp = np.ones(n)
+    inc = np.full(nb, note_increment(57), dtype=np.int64)
+    pulse = np.full(nb, 1 << 29, dtype=np.int64)
+    rng = np.random.default_rng(0)
+    steps = (
+        lambda: lpf_process(silence, lpf_config("24dB", [2e6] * nb,
+                                                [0.0] * nb),
+                            ladder_jitter(n, rng)[0]),
+        lambda: hpf_process(silence, hpf_config([2e6] * nb, [0.0] * nb)),
+        lambda: oscillator("saw", inc, n, 0, amp, None, MASK32,
+                           out=np.empty(n)),
+        lambda: oscillator("square", inc, n, 0, amp, pulse),
+        lambda: oscillator("sine", inc, n, 0, amp, pulse, 0),
+        lambda: fm_operator(inc, n, 0, amp, None, np.full(nb, 1e8)),
+        lambda: envelope_blocks(1000.0, 1000.0, 0.0, 1000.0, nb, 1, True),
+        lambda: tanh_antialiased(silence, 5),
+        lambda: mix_into(np.zeros(n), silence, 1.0),
+        lambda: bitcrush_srr(stereo, -Q31, 0.0, 1.0),
+        lambda: mod_fx(stereo, "phaser", 1.0, 1.0, 0.0, 0.0, 1.0),
+        lambda: mod_fx(stereo, "flanger", 1.0, 1.0, 0.0, 0.0, 1.0),
+        lambda: mod_fx(stereo, "chorus", 1.0, 1.0, 0.0, 0.0, 1.0),
+        lambda: reverb(silence + 1.0, ReverbSettings()),
+        lambda: one_pole(silence, 0.5),
+    )
+    for step in steps:
+        if should_stop is not None and should_stop():
+            return False
+        step()
+    return compiled()
+
+
+def _result(buf) -> np.ndarray:
+    """Un tampon de :func:`_out`, en tableau qui lui appartient."""
+    if isinstance(buf, np.ndarray):
+        return buf
+    return _as_array(buf).copy()
+
+
+# --------------------------------------------------------------------------- #
 # Petites fonctions du firmware
 # --------------------------------------------------------------------------- #
 
@@ -131,15 +297,20 @@ def tanh_unknown(x, saturation: int):
     return np.interp(v, _TANH_X, table("tanHSmall")) * scale
 
 
-@lru_cache(maxsize=1)
-def _tanh_list() -> list:
+def _tanh_list():
     """``tanHSmall`` ramenée à ±1, pour les boucles échantillon par
     échantillon, qui la lisent en ligne : ``p = (v + 1)·128``, puis
     interpolation entre ``tab[k]`` et ``tab[k + 1]``. ``math.tanh`` s'en
     écarte de 0,07 % ; près de l'auto-oscillation, l'écart grandissait
     jusqu'à 5 % de la crête. Un appel de fonction par échantillon, lui,
-    coûtait autant que le filtre."""
-    return [v / 32768.0 for v in table("tanHSmall").tolist()]
+    coûtait autant que le filtre. Un tableau pour numba, une liste sinon."""
+    return _tanh_table(compiled())
+
+
+@lru_cache(maxsize=2)
+def _tanh_table(as_array: bool):
+    values = table("tanHSmall") / 32768.0
+    return np.ascontiguousarray(values) if as_array else values.tolist()
 
 
 def tanh_antialiased(x: np.ndarray, saturation: int,
@@ -152,6 +323,11 @@ def tanh_antialiased(x: np.ndarray, saturation: int,
     x = np.asarray(x, dtype=np.float64)
     if x.size == 0:
         return x.copy(), last
+    if compiled() and x.ndim == 1:
+        out = np.empty(x.size)
+        last = _tanh2d_loop(np.ascontiguousarray(x), 2.0 ** s, float(last),
+                            _tanh_grid(), 32768.0 / 2.0 ** (s + 1), out)
+        return out, last
     work = np.clip(x * 2.0 ** s, -Q31, Q31 - 1.0) + Q31
     prev = np.empty_like(work)
     prev[0] = last
@@ -169,6 +345,34 @@ def tanh_antialiased(x: np.ndarray, saturation: int,
     return out, float(work[-1])
 
 
+@_Boucle
+def _tanh2d_loop(x, gain, last, grid, scale, out):
+    """:func:`tanh_antialiased` en une passe, sans ses neuf tableaux
+    intermédiaires ; rend la dernière valeur de travail."""
+    top, bottom = Q31 - 1.0, -Q31
+    if not (last >= 0.0 and last <= Q32):
+        last = Q31
+    for i in range(len(x)):
+        work = x[i] * gain
+        work = top if not work <= top else (bottom if work < bottom else work)
+        work += Q31
+        cx = work / 33554432.0
+        ix = int(cx)
+        if ix > 127:
+            ix = 127
+        fx = cx - ix
+        cy = last / 67108864.0
+        iy = int(cy)
+        if iy > 63:
+            iy = 63
+        fy = cy - iy
+        v1 = grid[iy, ix] * (1.0 - fx) + grid[iy, ix + 1] * fx
+        v2 = grid[iy + 1, ix] * (1.0 - fx) + grid[iy + 1, ix + 1] * fx
+        out[i] = (v1 * (1.0 - fy) + v2 * fy) * scale
+        last = work
+    return last
+
+
 def one_pole(x, k: float, y0: float = 0.0) -> tuple[np.ndarray, float]:
     """Filtre à un pôle ``y += k·(x − y)``, échantillon par échantillon,
     calculé d'un bloc : la récurrence est linéaire, une somme préfixe par
@@ -179,6 +383,12 @@ def one_pole(x, k: float, y0: float = 0.0) -> tuple[np.ndarray, float]:
     if n == 0:
         return x.copy(), float(y0)
     k = float(k)
+    if compiled() and x.ndim == 1:
+        # Compilée, la récurrence se calcule en une passe, sans les log₂(n)
+        # passes d'un tableau entier : 2,2 s sur les 22 de quatre écoutes de
+        # section, surtout dans la gigue des échelles.
+        y = np.empty(n)
+        return y, _one_pole_loop(np.ascontiguousarray(x), k, float(y0), y)
     a = 1.0 - k
     y = x * k
     shift, power = 1, a
@@ -189,6 +399,15 @@ def one_pole(x, k: float, y0: float = 0.0) -> tuple[np.ndarray, float]:
     if y0:
         y += y0 * a ** np.arange(1, n + 1, dtype=np.float64)
     return y, float(y[..., -1].ravel()[0]) if y.ndim == 1 else y[..., -1]
+
+
+@_Boucle
+def _one_pole_loop(x, k, y, out):
+    """:func:`one_pole` échantillon par échantillon ; rend le dernier état."""
+    for i in range(len(x)):
+        y += k * (x[i] - y)
+        out[i] = y
+    return y
 
 
 @lru_cache(maxsize=8)
@@ -212,6 +431,22 @@ def one_pole_short(x: np.ndarray, k: float, y0: np.ndarray
     c = x.shape[-1]
     y = x @ matrix[:c, :c].T + y0[:, None] * powers[None, :c]
     return y, y[:, -1].copy()
+
+
+def mix_into(dest: np.ndarray, wave: np.ndarray, gain: float) -> None:
+    """``dest += wave · gain``, sur place ; compilé, sans le tableau
+    intermédiaire du produit."""
+    if compiled() and dest.ndim == 1 and dest.flags.c_contiguous:
+        _mix_loop(dest, np.ascontiguousarray(wave, dtype=np.float64),
+                  float(gain))
+    else:
+        dest += wave * gain
+
+
+@_Boucle
+def _mix_loop(dest, wave, gain):
+    for i in range(len(dest)):
+        dest[i] += wave[i] * gain
 
 
 def pan_amplitudes(pan) -> tuple[np.ndarray, np.ndarray]:
@@ -407,10 +642,31 @@ def _read_table(tab: np.ndarray, phase: np.ndarray) -> np.ndarray:
     """``waveRenderingFunctionGeneral`` : lecture interpolée (fraction sur
     15 bits), rendue sur ``valeur × 65536``."""
     mag = _magnitude(tab)
+    if compiled() and phase.ndim == 1:
+        out = np.empty(phase.size)
+        _table_read(tab, np.ascontiguousarray(phase, dtype=np.int64),
+                    32 - mag, 16 - mag, out)
+        return out
     index = phase >> (32 - mag)
     frac = ((phase >> (16 - mag)) & 0xFFFF) >> 1
     v1 = tab[index]
     return v1 * 65536.0 + 2.0 * (tab[index + 1] - v1) * frac
+
+
+@_Boucle
+def _table_read(tab, phase, shift_index, shift_frac, out):
+    """:func:`_read_table` d'une passe."""
+    top = len(tab) - 2
+    for i in range(len(phase)):
+        p = phase[i]
+        index = p >> shift_index
+        if index < 0:
+            index = 0
+        elif index > top:
+            index = top
+        frac = ((p >> shift_frac) & 0xFFFF) >> 1
+        v1 = tab[index]
+        out[i] = v1 * 65536.0 + 2.0 * (tab[index + 1] - v1) * frac
 
 
 def _read_pulse(tab: np.ndarray, half_phase: np.ndarray,
@@ -508,7 +764,8 @@ def _wave(reader: _Reader, phase: np.ndarray, pulse_width=0) -> np.ndarray:
 
 def oscillator(kind: str, inc_blocks, n: int, phase0: int,
                amp: np.ndarray | None = None, pulse_blocks=None,
-               retrig: int = MASK32) -> tuple[np.ndarray, int]:
+               retrig: int = MASK32, out: np.ndarray | None = None
+               ) -> tuple[np.ndarray, int]:
     """Une voix d'oscillateur (``Oscillator::renderOsc``), bloc par bloc.
 
     :param kind: ``sine``, ``triangle``, ``square``, ``saw``,
@@ -522,6 +779,9 @@ def oscillator(kind: str, inc_blocks, n: int, phase0: int,
         ``lshiftAndSaturate<1>`` déjà appliqué).
     :param retrig: phase de redémarrage (``retrigPhase``), utile à la
         synchronisation interne ; ``0xFFFFFFFF`` quand elle est coupée.
+    :param out: ``n`` flottants à remplir au lieu d'un tableau neuf : passé
+        d'une voix d'unisson à la suivante, il épargne à chacune la
+        mémoire fraîche d'un tableau de la longueur de la note.
 
     La largeur d'impulsion d'un carré multiplie deux carrés décalés ; celle
     des autres formes passe par une **synchronisation** : l'onde court
@@ -534,36 +794,61 @@ def oscillator(kind: str, inc_blocks, n: int, phase0: int,
     if pulse_blocks is None:
         pulse_blocks = np.zeros(nb, dtype=np.int64)
     pulse_blocks = np.asarray(pulse_blocks, dtype=np.int64)
-    inc = np.repeat(inc_blocks, BLOCK)[:n]
-    phase = (int(phase0) + np.cumsum(inc)) & MASK32
-    out = np.zeros(n, dtype=np.float64)
+    if compiled():
+        # Les boucles des tables calculent leurs phases, d'après celle du
+        # début de chaque bloc. Les autres formes demanderont les tableaux
+        # entiers de phases et d'incréments : chaque tableau neuf de la
+        # longueur d'une note coûte, sous Windows, de la mémoire fraîche, que
+        # les fils de l'écoute se disputent.
+        inc = phase = None
+        starts = np.empty(inc_blocks.size, dtype=np.int64)
+        _block_starts(inc_blocks, int(phase0) & MASK32, starts)
+    else:
+        inc = np.repeat(inc_blocks, BLOCK)[:n]
+        phase = (int(phase0) + np.cumsum(inc)) & MASK32
+    if out is None:
+        out = np.zeros(n, dtype=np.float64)
+    else:
+        out.fill(0.0)
     end_phase = int((int(phase0) + int(inc_blocks.sum()) * BLOCK) & MASK32)
     if n == 0:
         return out, end_phase
 
     sync_kind = kind not in ("square",)
-    groups: dict[tuple, tuple[_Reader, list[int]]] = {}
-    seen: dict[tuple[int, int], tuple] = {}
-    for b, (step, pulse) in enumerate(zip(inc_blocks.tolist(),
-                                          pulse_blocks.tolist())):
-        if step <= 0:
-            continue
-        known = seen.get((step, pulse))
-        if known is None:
-            pw_sync = sync_kind and pulse != 0
-            if pw_sync and kind == "triangle":
-                # Le triangle choisit sa table d'après l'incrément accéléré.
-                p = abs(pulse) / Q31
-                reader = _reader(kind, int(step * (1.0 + p)), pulse, True)
-            else:
-                reader = _reader(kind, step, pulse, pw_sync)
-            key = (reader.mode, reader.name, pw_sync)
-            known = seen[(step, pulse)] = (key, reader)
-        key, reader = known
-        groups.setdefault(key, (reader, []))[1].append(b)
+    groups: dict[tuple, tuple[_Reader, list[np.ndarray]]] = {}
+    for blocks, step, pulse in _block_signatures(kind, inc_blocks,
+                                                 pulse_blocks):
+        pw_sync = sync_kind and pulse != 0
+        if pw_sync and kind == "triangle":
+            # Le triangle choisit sa table d'après l'incrément accéléré.
+            p = abs(pulse) / Q31
+            reader = _reader(kind, int(step * (1.0 + p)), pulse, True)
+        else:
+            reader = _reader(kind, step, pulse, pw_sync)
+        key = (reader.mode, reader.name, pw_sync)
+        groups.setdefault(key, (reader, []))[1].append(blocks)
 
     within = np.arange(BLOCK, dtype=np.int64)
-    for (_mode, _name, pw_sync), (reader, blocks) in groups.items():
+    for (_mode, _name, pw_sync), (reader, parts) in groups.items():
+        blocks = parts[0] if len(parts) == 1 \
+            else np.sort(np.concatenate(parts))
+        if compiled() and not pw_sync and reader.mode in ("table", "pulse"):
+            # Les cas courants, d'une seule passe : lecture, amplitude,
+            # écriture.
+            tab = table(reader.name)
+            mag = _magnitude(tab)
+            amp_or_none = _NO_AMP if amp is None else amp
+            scale = reader.raw if amp is None else reader.gain
+            if reader.mode == "table":
+                _table_osc(tab, starts, inc_blocks, blocks, amp_or_none,
+                           scale, 32 - mag, 16 - mag, out)
+            else:
+                _pulse_osc(tab, starts, inc_blocks, blocks, pulse_blocks,
+                           amp_or_none, scale, mag, out)
+            continue
+        if phase is None:
+            phase = np.zeros(n, dtype=np.int64)
+            _phase_loop(inc_blocks, int(phase0) & MASK32, phase)
         # Les échantillons du groupe, bloc par bloc : un masque de toute la
         # longueur par groupe coûtait n × blocs quand la largeur bouge.
         idx = (np.asarray(blocks, dtype=np.int64)[:, None] * BLOCK
@@ -576,6 +861,8 @@ def oscillator(kind: str, inc_blocks, n: int, phase0: int,
                 if reader.mode in ("square", "pulse") else 0
             values = _wave(reader, phase[idx], widths)
         else:
+            if inc is None:
+                inc = np.repeat(inc_blocks, BLOCK)[:n]
             values = _synced_wave(kind, reader, phase, inc, idx,
                                   pulse_blocks, int(retrig))
         scale = reader.raw if amp is None else reader.gain
@@ -584,6 +871,140 @@ def oscillator(kind: str, inc_blocks, n: int, phase0: int,
         else:
             out[idx] = values * amp[idx] * scale
     return out, end_phase
+
+
+_NO_AMP = np.zeros(0)
+
+
+@_Boucle
+def _phase_loop(inc_blocks, phase, out):
+    """La phase de chaque échantillon d'un oscillateur, sur 2³², après celle
+    de départ."""
+    n = len(out)
+    for b in range(len(inc_blocks)):
+        step = inc_blocks[b]
+        for i in range(b * BLOCK, min(n, (b + 1) * BLOCK)):
+            phase = (phase + step) & MASK32
+            out[i] = phase
+
+
+@_Boucle
+def _block_starts(inc_blocks, phase, out):
+    """La phase d'un oscillateur au début de chaque bloc, sur 2³²."""
+    for b in range(len(inc_blocks)):
+        out[b] = phase
+        phase = (phase + inc_blocks[b] * BLOCK) & MASK32
+
+
+@_Boucle
+def _table_osc(tab, starts, inc_blocks, blocks, amp, scale, shift_index,
+               shift_frac, out):
+    """:func:`_read_table` sur les blocs ``blocks`` d'un oscillateur,
+    multipliée par l'amplitude (aucune si ``amp`` est vide) et l'échelle,
+    écrite dans ``out``. Chaque échantillon avance la phase avant d'être
+    lu, comme la somme cumulée du calcul en Python."""
+    n = len(out)
+    top = len(tab) - 2
+    with_amp = len(amp) > 0
+    for j in range(len(blocks)):
+        b = blocks[j]
+        p = starts[b]
+        step = inc_blocks[b]
+        for i in range(b * BLOCK, min(n, (b + 1) * BLOCK)):
+            p = (p + step) & MASK32
+            index = p >> shift_index
+            if index < 0:
+                index = 0
+            elif index > top:
+                index = top
+            frac = ((p >> shift_frac) & 0xFFFF) >> 1
+            v1 = tab[index]
+            v = v1 * 65536.0 + 2.0 * (tab[index + 1] - v1) * frac
+            if with_amp:
+                out[i] = v * amp[i] * scale
+            else:
+                out[i] = v * scale
+
+
+@_Boucle
+def _pulse_osc(tab, starts, inc_blocks, blocks, pulse_blocks, amp, scale,
+               mag, out):
+    """:func:`_read_pulse` sur les blocs ``blocks`` d'un carré à largeur
+    d'impulsion, multipliée par l'amplitude (aucune si ``amp`` est vide) et
+    l'échelle, écrite dans ``out``."""
+    n = len(out)
+    top = len(tab) - 2
+    with_amp = len(amp) > 0
+    shift = 16 - mag
+    shift_index = 32 - mag
+    for j in range(len(blocks)):
+        b = blocks[j]
+        p = starts[b]
+        step = inc_blocks[b]
+        width = (pulse_blocks[b] + (1 << 31)) & MASK32
+        to_add = (-(width >> 1)) & MASK32
+        for i in range(b * BLOCK, min(n, (b + 1) * BLOCK)):
+            p = (p + step) & MASK32
+            half = p >> 1
+            index = half >> shift_index
+            if index < 0:
+                index = 0
+            elif index > top:
+                index = top
+            frac = (half >> shift) & 0x7FFF
+            out_a = -2.0 * (frac * tab[index + 1] + (32768 - frac) * tab[index])
+            later = (half + to_add) & MASK32
+            index = later >> shift_index
+            if index < 0:
+                index = 0
+            elif index > top:
+                index = top
+            frac = (later >> shift) & 0x7FFF
+            out_b = 2.0 * (frac * tab[index + 1] + (32767 - frac) * tab[index])
+            v = np.rint(2.0 * out_a * out_b / Q32) * 2.0
+            if with_amp:
+                out[i] = v * amp[i] * scale
+            else:
+                out[i] = v * scale
+
+
+#: Les seuils de :func:`_triangle_table`.
+_TRIANGLE_LIMITS = np.array([102261126, 143165576, 238609294, 429496729,
+                             715827882], dtype=np.int64)
+
+
+def _block_signatures(kind: str, inc_blocks: np.ndarray,
+                      pulse_blocks: np.ndarray) -> list:
+    """Les blocs sonores d'un oscillateur, rangés par forme lue.
+
+    La forme d'un bloc (:func:`_reader`) ne dépend de son incrément que par
+    la table qu'il choisit, et de sa largeur d'impulsion que par sa
+    présence : un numéro par bloc, calculé d'un coup. Rend, par numéro, les
+    blocs, l'incrément et la largeur du premier — de quoi appeler
+    :func:`_reader` une fois par numéro et non par bloc, car avec un
+    vibrato ou une largeur modulée, chaque bloc a son incrément."""
+    pw = pulse_blocks != 0
+    if kind == "triangle":
+        eff = np.where(pw, (inc_blocks * (1.0 + np.abs(pulse_blocks) / Q31))
+                       .astype(np.int64), inc_blocks)
+        number = np.where(eff < _TRIANGLE_CRUDE, 0, 1 + np.searchsorted(
+            _TRIANGLE_LIMITS, eff, side="left"))
+    elif kind == "square":
+        number = table_numbers(np.where(
+            pw, (inc_blocks * 0.6).astype(np.int64), inc_blocks))
+    elif kind == "sine":
+        number = np.zeros(inc_blocks.size, dtype=np.int64)
+    else:
+        number = table_numbers(inc_blocks)
+    signature = np.where(inc_blocks > 0, number * 2 + pw, -1)
+    values, first, inverse = np.unique(signature, return_index=True,
+                                       return_inverse=True)
+    out = []
+    for u, (value, b) in enumerate(zip(values.tolist(), first.tolist())):
+        if value >= 0:
+            out.append((np.nonzero(inverse.ravel() == u)[0],
+                        int(inc_blocks[b]), int(pulse_blocks[b])))
+    return out
 
 
 def _synced_wave(kind: str, reader: _Reader, phase: np.ndarray,
@@ -668,8 +1089,12 @@ def fm_operator(inc_blocks, n: int, phase0: int, amp: np.ndarray,
     Rend le signal (sinus × amplitude / 2³²), la phase finale et la
     dernière valeur de rétroaction."""
     inc_blocks = np.asarray(inc_blocks, dtype=np.int64)
-    inc = np.repeat(inc_blocks, BLOCK)[:n]
-    phase = (int(phase0) + np.cumsum(inc)) & MASK32
+    if compiled():
+        phase = np.zeros(n, dtype=np.int64)
+        _phase_loop(inc_blocks, int(phase0) & MASK32, phase)
+    else:
+        inc = np.repeat(inc_blocks, BLOCK)[:n]
+        phase = (int(phase0) + np.cumsum(inc)) & MASK32
     end_phase = int((int(phase0) + int(inc_blocks.sum()) * BLOCK) & MASK32)
     if feedback_blocks is None or not np.any(np.asarray(feedback_blocks)):
         if modulation is not None:
@@ -687,17 +1112,24 @@ def fm_operator(inc_blocks, n: int, phase0: int, amp: np.ndarray,
     small = phase >> 8
     if modulation is not None:
         small = small + np.round(modulation).astype(np.int64)
-    position = ((small & 0xFFFFFF) / 65536.0 + 256.0).tolist()
-    fb = np.asarray(feedback_blocks, dtype=np.float64) / Q32 / 65536.0
-    out = _buffer(n)
-    value = float(last)
+    position = _seq((small & 0xFFFFFF) / 65536.0 + 256.0)
+    fb = _seq(np.asarray(feedback_blocks, dtype=np.float64) / Q32 / 65536.0)
+    out = _out(n)
+    value = _fm_feedback_loop(position, fb, values, step, float(last), out)
+    return _result(out) * amp / Q32, end_phase, value
+
+
+@_Boucle
+def _fm_feedback_loop(position, fb, values, step, value, out):
+    """La récurrence de :func:`fm_operator` ; rend la dernière valeur."""
     hi = (float(1 << 21) - 1.0) / 65536.0
     lo = -float(1 << 21) / 65536.0
-    for b in range(fb.size):
-        k = float(fb[b])
+    n = len(position)
+    for b in range(len(fb)):
+        k = fb[b]
         for i in range(b * BLOCK, min(n, (b + 1) * BLOCK)):
             feedback = value * k
-            if feedback > hi:
+            if not feedback <= hi:
                 feedback = hi
             elif feedback < lo:
                 feedback = lo
@@ -705,17 +1137,23 @@ def fm_operator(inc_blocks, n: int, phase0: int, amp: np.ndarray,
             j = int(x)
             value = values[j] + step[j] * (x - j)
             out[i] = value
-    return _as_array(out) * amp / Q32, end_phase, value
+    return value
 
 
-@lru_cache(maxsize=1)
-def _sine_lists() -> tuple[list, list]:
+def _sine_lists():
     """Le sinus de ``SineOsc`` pour la boucle de rétroaction, déplié sur
     trois périodes : valeurs sur 2³¹ et pentes par pas de table."""
+    return _sine_tables(compiled())
+
+
+@lru_cache(maxsize=2)
+def _sine_tables(as_array: bool):
     tab = table("sineWaveSmall")
-    values = np.tile(tab[:-1] * 65536.0, 3).tolist()
-    step = np.tile((tab[1:] - tab[:-1]) * 65536.0, 3).tolist()
-    return values, step
+    values = np.tile(tab[:-1] * 65536.0, 3)
+    step = np.tile((tab[1:] - tab[:-1]) * 65536.0, 3)
+    if as_array:
+        return np.ascontiguousarray(values), np.ascontiguousarray(step)
+    return values.tolist(), step.tolist()
 
 
 # --------------------------------------------------------------------------- #
@@ -981,9 +1419,24 @@ def ladder_jitter(n: int, rng: np.random.Generator,
     """La gigue de coupure de l'échelle : du bruit uniforme (``>> 2``)
     lissé à 1/128 par échantillon, soit ±0,5 % environ. Rend le facteur
     appliqué au coefficient et l'état final."""
-    noise = rng.integers(-(1 << 29), 1 << 29, n).astype(np.float64)
-    smooth, last = one_pole(noise, 1.0 / 128.0, state)
+    noise = rng.integers(-(1 << 29), 1 << 29, n)
+    if compiled():
+        # D'une passe : chaque tableau neuf d'une voix coûte, sous Windows,
+        # de la mémoire fraîche, que les fils de l'écoute se disputent.
+        out = np.empty(n)
+        return out, _jitter_loop(noise, 1.0 / 128.0, float(state), out)
+    smooth, last = one_pole(noise.astype(np.float64), 1.0 / 128.0, state)
     return 1.0 + smooth / Q32, last
+
+
+@_Boucle
+def _jitter_loop(noise, k, y, out):
+    """:func:`ladder_jitter` : le bruit lissé (:func:`one_pole`), puis le
+    facteur ; rend le dernier état du lissage."""
+    for i in range(len(noise)):
+        y += k * (float(noise[i]) - y)
+        out[i] = 1.0 + y / Q32
+    return y
 
 
 def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
@@ -992,37 +1445,61 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
     (``do12dBLPFOnSample``, ``do24dBLPFOnSample``, ``doDriveLPFOnSample``).
 
     ``state`` : les mémoires des quatre étages, mises à jour sur place.
-    Chaque cas a sa boucle : un test par échantillon coûte, en Python, autant
-    qu'une multiplication du filtre.
     """
     n = x.size
     if state is None:
         state = [0.0, 0.0, 0.0, 0.0]
-    s1, s2, s3, s4 = state
-    xs = (np.asarray(x, dtype=np.float64) + DENORMAL_GUARD).tolist()
-    # Le coefficient d'un étage, gigue comprise, pour chaque échantillon.
-    moves = (np.repeat(cfg.m, BLOCK)[:n] * jitter).tolist()
-    out = _buffer(n)
-    tab = _tanh_list()
-    mode = cfg.mode
-    per = [cfg.c1.tolist(), cfg.c2.tolist(), cfg.c3.tolist(),
-           cfg.c4.tolist(), cfg.k_in.tolist(), cfg.k_fb.tolist(),
-           cfg.saturate.tolist(), cfg.k_morph.tolist(),
-           cfg.oversample.tolist()]
-    # getTanHUnknown(x, 2), (x, 4), (x, 7) : plafonds et entrées.
-    in2, top2 = 4.0 / Q31, float(1 << 27)
-    in4, top4 = 16.0 / Q31, float(1 << 25)
-    in7, top7 = 128.0 / Q31, float(1 << 22)
-    nb = len(per[0])
-    for b in range(nb):
-        c1, c2, c3, c4, k_in, k_fb, sat, k_morph, over = (
-            col[b] for col in per)
+    out = _out(n)
+    state[:] = _lpf_loop(
+        _seq(x), _seq(cfg.m), _seq(np.broadcast_to(jitter, (n,))),
+        _seq(cfg.c1), _seq(cfg.c2), _seq(cfg.c3), _seq(cfg.c4),
+        _seq(cfg.k_in), _seq(cfg.k_fb), _flags(cfg.saturate),
+        _seq(cfg.k_morph), _flags(cfg.oversample),
+        _LPF_CODES.get(cfg.mode, 2), out, _tanh_list(),
+        *(float(s) for s in state))
+    return _result(out)
+
+
+#: Le numéro de chaque échelle pour :func:`_lpf_loop`.
+_LPF_CODES = {"12dB": 0, "24dB": 1, "24dBDrive": 2}
+
+#: ``getTanHUnknown(x, 2)``, ``(x, 4)``, ``(x, 7)`` : entrées et plafonds.
+_IN2, _TOP2 = 4.0 / Q31, float(1 << 27)
+_IN4, _TOP4 = 16.0 / Q31, float(1 << 25)
+_IN7, _TOP7 = 128.0 / Q31, float(1 << 22)
+
+
+@_Boucle
+def _lpf_loop(x, ms, jitter, c1s, c2s, c3s, c4s, k_ins, k_fbs, sats,
+              k_morphs, overs, mode, out, tab, s1, s2, s3, s4):
+    """Les échantillons de :func:`lpf_process`, bloc par bloc ; ``mode`` :
+    0 pour 12 dB, 1 pour 24 dB, 2 pour « drive ». Rend les quatre mémoires.
+
+    Le coefficient d'un étage est ``ms[b]`` (un par bloc) multiplié par la
+    gigue de l'échantillon. Chaque cas a sa boucle : un test par
+    échantillon coûte, en Python, autant qu'une multiplication du filtre."""
+    n = len(x)
+    in2, top2 = _IN2, _TOP2
+    in4, top4 = _IN4, _TOP4
+    in7, top7 = _IN7, _TOP7
+    y4 = 0.0
+    for b in range(len(c1s)):
+        m = ms[b]
+        c1 = c1s[b]
+        c2 = c2s[b]
+        c3 = c3s[b]
+        c4 = c4s[b]
+        k_in = k_ins[b]
+        k_fb = k_fbs[b]
+        sat = sats[b]
+        k_morph = k_morphs[b]
         start = b * BLOCK
         stop = min(n, start + BLOCK)
-        if mode == "12dB" and not sat:
+        if mode == 0 and not sat:
             for i in range(start, stop):
-                mm = moves[i]
-                u = (xs[i] - k_fb * (s1 * c1 + s2 * c2 + s3 * c3)) * k_in
+                mm = m * jitter[i]
+                u = ((x[i] + DENORMAL_GUARD)
+                     - k_fb * (s1 * c1 + s2 * c2 + s3 * c3)) * k_in
                 a = (u - s1) * mm
                 y1 = a + s1
                 s1 = y1 + a
@@ -1033,13 +1510,13 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
                 y3 = a + s3
                 s3 = y3 + a
                 out[i] = 2.0 * (2.0 * y3 - y2)
-        elif mode == "12dB":
+        elif mode == 0:
             for i in range(start, stop):
-                v = xs[i]
-                mm = moves[i]
+                v = x[i] + DENORMAL_GUARD
+                mm = m * jitter[i]
                 u = (v - k_fb * (s1 * c1 + s2 * c2 + s3 * c3)) * k_in
                 w = (u + v * k_morph) * in2
-                w = 1.0 if w > 1.0 else (-1.0 if w < -1.0 else w)
+                w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
                 p = (w + 1.0) * 128.0
                 k = int(p)
                 if k > 255:
@@ -1055,11 +1532,11 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
                 y3 = a + s3
                 s3 = y3 + a
                 out[i] = 2.0 * (2.0 * y3 - y2)
-        elif mode == "24dB" and not sat:
+        elif mode == 1 and not sat:
             for i in range(start, stop):
-                mm = moves[i]
+                mm = m * jitter[i]
                 fb = s1 * c1 + s2 * c2 + s3 * c3 + s4 * c4
-                u = (xs[i] - k_fb * fb) * k_in
+                u = ((x[i] + DENORMAL_GUARD) - k_fb * fb) * k_in
                 a = (u - s1) * mm
                 y1 = a + s1
                 s1 = y1 + a
@@ -1073,13 +1550,13 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
                 y4 = a + s4
                 s4 = y4 + a
                 out[i] = 2.0 * y4
-        elif mode == "24dB":
+        elif mode == 1:
             for i in range(start, stop):
-                v = xs[i]
-                mm = moves[i]
+                v = x[i] + DENORMAL_GUARD
+                mm = m * jitter[i]
                 u = (v - k_fb * (s1 * c1 + s2 * c2 + s3 * c3 + s4 * c4)) * k_in
                 w = (u + v * k_morph) * in2
-                w = 1.0 if w > 1.0 else (-1.0 if w < -1.0 else w)
+                w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
                 p = (w + 1.0) * 128.0
                 k = int(p)
                 if k > 255:
@@ -1101,13 +1578,13 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
         else:
             # Échelle « drive » : rétroaction et sortie saturées, calcul
             # doublé aux hautes résonances aiguës.
-            steps = 2 if over else 1
+            steps = 2 if overs[b] else 1
             for i in range(start, stop):
-                v = xs[i]
-                mm = moves[i]
+                v = x[i] + DENORMAL_GUARD
+                mm = m * jitter[i]
                 for _ in range(steps):
                     w = (s1 * c1 + s2 * c2 + s3 * c3 + s4 * c4) * in7
-                    w = 1.0 if w > 1.0 else (-1.0 if w < -1.0 else w)
+                    w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
                     p = (w + 1.0) * 128.0
                     k = int(p)
                     if k > 255:
@@ -1116,7 +1593,7 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
                     u = (v - k_fb * fb) * k_in
                     if sat:
                         w = (u + v * k_morph) * in2
-                        w = 1.0 if w > 1.0 else (-1.0 if w < -1.0 else w)
+                        w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
                         p = (w + 1.0) * 128.0
                         k = int(p)
                         if k > 255:
@@ -1135,14 +1612,13 @@ def lpf_process(x: np.ndarray, cfg: LadderConfig, jitter: np.ndarray,
                     y4 = a + s4
                     s4 = y4 + a
                 w = 2.0 * y4 * in4
-                w = 1.0 if w > 1.0 else (-1.0 if w < -1.0 else w)
+                w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
                 p = (w + 1.0) * 128.0
                 k = int(p)
                 if k > 255:
                     k = 255
                 out[i] = top4 * (tab[k] + (tab[k + 1] - tab[k]) * (p - k))
-    state[:] = [s1, s2, s3, s4]
-    return _as_array(out).copy()
+    return s1, s2, s3, s4
 
 
 @dataclass
@@ -1194,37 +1670,96 @@ def hpf_process(x: np.ndarray, cfg: HpfConfig,
     n = x.size
     if state is None:
         state = [0.0, 0.0, 0.0, Q31]
-    h1, l1, h3, last = state
-    xs = (np.asarray(x, dtype=np.float64) + DENORMAL_GUARD).tolist()
-    out = _buffer(n)
-    tab = _tanh_list()
-    in2, top2 = 4.0 / Q31, float(1 << 27)
-    cols = [cfg.g.tolist(), cfg.c3.tolist(), cfg.cl.tolist(),
-            cfg.c_a.tolist(), cfg.c_out.tolist(), cfg.resonance.tolist()]
-    nb = len(cols[0])
-    for b in range(nb):
-        g, c3, cl, c_a, c_out, p_r = (col[b] for col in cols)
+    out = _out(n)
+    state[:] = _hpf_loop(
+        _seq(x), _seq(cfg.g), _seq(cfg.c3), _seq(cfg.cl), _seq(cfg.c_a),
+        _seq(cfg.c_out), _seq(cfg.resonance), out, _tanh_list(),
+        _tanh_grid(), *(float(s) for s in state))
+    return _result(out)
+
+
+def _tanh_grid():
+    """``tanH2d``, pour une lecture échantillon par échantillon : un
+    tableau pour numba, des listes sinon."""
+    return _tanh_grid_table(compiled())
+
+
+@lru_cache(maxsize=2)
+def _tanh_grid_table(as_array: bool):
+    grid = table("tanH2d")
+    return np.ascontiguousarray(grid) if as_array else grid.tolist()
+
+
+@_Boucle
+def _hpf_loop(x, gs, c3s, cls, c_as, c_outs, p_rs, out, tab, grid,
+              h1, l1, h3, last):
+    """Les échantillons de :func:`hpf_process`, bloc par bloc. Rend les
+    trois mémoires et la dernière valeur de travail de la saturation."""
+    n = len(x)
+    in2, top2 = _IN2, _TOP2
+    top, bottom = Q31 - 1.0, -Q31
+    scale = 32768.0 / 4.0   # >> (1 + 1)
+    if not (last >= 0.0 and last <= Q32):
+        last = Q31
+    for b in range(len(gs)):
+        g = gs[b]
+        c3 = c3s[b]
+        cl = cls[b]
+        c_a = c_as[b]
+        c_out = c_outs[b]
+        p_r = p_rs[b]
         start = b * BLOCK
         stop = min(n, start + BLOCK)
-        strong = p_r > 900000000.0
-        medium = p_r > 750000000.0
-        if strong:
-            seg = xs[start:stop]
-            # Saturation adoucie : calculée à part, faute de mieux en ligne.
-            seg_out, h1, l1, h3, last = _hpf_strong(
-                seg, g, c3, cl, c_a, c_out, h1, l1, h3, last)
-            out[start:stop] = array.array("d", seg_out)
+        if p_r > 900000000.0:
+            # Forte résonance : la saturation adoucie
+            # ``getTanHAntialiased(a, 1)`` dépend de l'échantillon précédent,
+            # la table à deux entrées se lit en ligne (numpy à chaque
+            # échantillon coûtait 20 µs, soit 1,4 s pour 1,5 s de son).
+            for i in range(start, stop):
+                v = x[i] + DENORMAL_GUARD
+                a = (v - h1) * g
+                lp = a + h1
+                h1 = lp + a
+                first = v - lp
+                a = c_a * (first + h3 * c3 + l1 * cl)
+                work = a * 2.0
+                work = top if not work <= top else (
+                    bottom if work < bottom else work)
+                work += Q31
+                cx = work / 33554432.0
+                ix = int(cx)
+                if ix > 127:
+                    ix = 127
+                fx = cx - ix
+                cy = last / 67108864.0
+                iy = int(cy)
+                if iy > 63:
+                    iy = 63
+                fy = cy - iy
+                row = grid[iy]
+                v1 = row[ix] + (row[ix + 1] - row[ix]) * fx
+                row = grid[iy + 1]
+                v2 = row[ix] + (row[ix + 1] - row[ix]) * fx
+                a = (v1 + (v2 - v1) * fy) * scale
+                last = work
+                d = (a - h3) * g
+                hp = d + h3
+                h3 = hp + d
+                d = ((a - hp) - l1) * g
+                lo = d + l1
+                l1 = lo + d
+                out[i] = a * c_out
             continue
         a = 0.0
-        if medium:
+        if p_r > 750000000.0:
             for i in range(start, stop):
-                v = xs[i]
+                v = x[i] + DENORMAL_GUARD
                 d = (v - h1) * g
                 lp = d + h1
                 h1 = lp + d
                 a = c_a * (v - lp + h3 * c3 + l1 * cl)
                 w = a * in2
-                w = 1.0 if w > 1.0 else (-1.0 if w < -1.0 else w)
+                w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
                 p = (w + 1.0) * 128.0
                 k = int(p)
                 if k > 255:
@@ -1239,7 +1774,7 @@ def hpf_process(x: np.ndarray, cfg: HpfConfig,
                 out[i] = y * c_out
         else:
             for i in range(start, stop):
-                v = xs[i]
+                v = x[i] + DENORMAL_GUARD
                 d = (v - h1) * g
                 lp = d + h1
                 h1 = lp + d
@@ -1253,60 +1788,10 @@ def hpf_process(x: np.ndarray, cfg: HpfConfig,
                 out[i] = a * c_out
         # La valeur de travail de la saturation adoucie, pour un bloc
         # suivant plus résonant : celle du dernier échantillon suffit.
-        work = min(max(a * 4.0, -Q31), Q31 - 1.0)
+        work = a * 4.0
+        work = top if not work <= top else (bottom if work < bottom else work)
         last = work + Q31
-    state[:] = [h1, l1, h3, last]
-    return _as_array(out).copy()
-
-
-@lru_cache(maxsize=1)
-def _tanh_grid() -> list:
-    """``tanH2d`` en listes, pour une lecture échantillon par échantillon."""
-    return table("tanH2d").tolist()
-
-
-def _hpf_strong(seg, g, c3, cl, c_a, c_out, h1, l1, h3, last):
-    """Un bloc du passe-haut à forte résonance, où la saturation adoucie
-    ``getTanHAntialiased(a, 1)`` dépend de l'échantillon précédent : la
-    table à deux entrées lue en Python pur (numpy à chaque échantillon
-    coûtait 20 µs, soit 1,4 s pour 1,5 s de son)."""
-    grid = _tanh_grid()
-    top, bottom = Q31 - 1.0, -Q31
-    scale = 32768.0 / 4.0   # >> (1 + 1)
-    out = []
-    for v in seg:
-        a = (v - h1) * g
-        lp = a + h1
-        h1 = lp + a
-        first = v - lp
-        a = c_a * (first + h3 * c3 + l1 * cl)
-        work = a * 2.0
-        work = top if work > top else (bottom if work < bottom else work)
-        work += Q31
-        cx = work / 33554432.0
-        ix = int(cx)
-        if ix > 127:
-            ix = 127
-        fx = cx - ix
-        cy = last / 67108864.0
-        iy = int(cy)
-        if iy > 63:
-            iy = 63
-        fy = cy - iy
-        row = grid[iy]
-        v1 = row[ix] + (row[ix + 1] - row[ix]) * fx
-        row = grid[iy + 1]
-        v2 = row[ix] + (row[ix + 1] - row[ix]) * fx
-        a = (v1 + (v2 - v1) * fy) * scale
-        last = work
-        d = (a - h3) * g
-        hp = d + h3
-        h3 = hp + d
-        d = ((a - hp) - l1) * g
-        lo = d + l1
-        l1 = lo + d
-        out.append(a * c_out)
-    return out, h1, l1, h3, last
+    return h1, l1, h3, last
 
 
 # --------------------------------------------------------------------------- #
@@ -1425,6 +1910,126 @@ class Envelope:
         return (self.last - float(1 << 30)) * 2.0
 
 
+def envelope_blocks(attack: float, decay: float, sustain: float,
+                    release: float, nb: int, release_block: int,
+                    has_sustain: bool) -> tuple[np.ndarray, int]:
+    """Une :class:`Envelope` sur ``nb`` blocs, la touche relâchée au bloc
+    ``release_block`` : ses valeurs, et le nombre de blocs après lequel
+    elle s'est tue (``nb`` si jamais)."""
+    if compiled():
+        out = np.empty(int(nb))
+        end = _envelope_loop(float(attack), float(decay), float(sustain),
+                             float(release), int(release_block),
+                             bool(has_sustain), table("decayTableSmall4"),
+                             table("decayTableSmall8"), out)
+        return out, end
+    machine = Envelope()
+    machine.note_on(attack, sustain)
+    values = np.empty(int(nb))
+    end = int(nb)
+    for b in range(int(nb)):
+        if b == release_block:
+            machine.note_off(has_sustain)
+        values[b] = machine.render(attack, decay, sustain, release)
+        if end == nb and (machine.state == Envelope.OFF
+                          or (machine.state > Envelope.DECAY
+                              and values[b] <= -Q31)):
+            end = b + 1
+    return values, end
+
+
+@_Boucle
+def _envelope_loop(attack, decay, sustain, release, release_block,
+                   has_sustain, decay4, decay8, out):
+    """:func:`envelope_blocks` d'une passe : la machine à états de
+    :class:`Envelope`, recopiée ligne à ligne (états 0 attaque, 1 decay,
+    2 palier, 3 release, 4 éteinte), ``_decay_table`` en ligne."""
+    nb = len(out)
+    n = float(BLOCK)
+    end = nb
+    smoothed = sustain
+    ignored = False
+    pos = 0.0
+    pre = 0.0
+    if attack > 245632:
+        state = 1
+        last = Q31 - 1.0
+    else:
+        state = 0
+        last = 0.0
+    for b in range(nb):
+        if b == release_block:
+            if not has_sustain:
+                ignored = True
+            elif state < 3:
+                state = 3
+                pos = 0.0
+                pre = last
+        value = -Q31
+        while True:
+            if state == 0:
+                pos += attack * n
+                if pos >= 8388608:
+                    pos = 0.0
+                    state = 1
+                    continue
+                index = int(pos) >> 15
+                if index >= 256:
+                    level = decay4[256] * 32768.0
+                else:
+                    frac = int(pos) & 32767
+                    level = decay4[index] * (32768 - frac) \
+                        + decay4[index + 1] * frac
+                last = max(Q31 - 1.0 - level, 1.0)
+            elif state == 1:
+                toward = math.floor((sustain - smoothed) / 512.0)
+                smoothed += n * toward
+                smoothed = min(max(smoothed, -Q31), Q31 - 1.0)
+                index = int(pos) >> 15
+                if index >= 256:
+                    level = decay8[256] * 32768.0
+                else:
+                    frac = int(pos) & 32767
+                    level = decay8[index] * (32768 - frac) \
+                        + decay8[index + 1] * frac
+                last = smoothed + level * (Q31 - 1.0 - smoothed) / Q32 * 2.0
+                pos += decay * n
+                if pos >= 8388608:
+                    state = 2
+            elif state == 2:
+                toward = math.floor((sustain - smoothed) / 512.0)
+                smoothed += n * toward
+                last = smoothed
+                if sustain <= 0:
+                    state = 4
+                elif ignored:
+                    state = 3
+                    pos = 0.0
+                    pre = last
+            elif state == 3:
+                pos += release * n
+                if pos >= 8388608:
+                    state = 4
+                    last = 0.0
+                    break
+                index = int(pos) >> 15
+                if index >= 256:
+                    level = decay8[256] * 32768.0
+                else:
+                    frac = int(pos) & 32767
+                    level = decay8[index] * (32768 - frac) \
+                        + decay8[index + 1] * frac
+                last = level * pre / Q32 * 2.0
+            else:
+                break
+            value = (last - float(1 << 30)) * 2.0
+            break
+        out[b] = value
+        if end == nb and (state == 4 or (state > 1 and value <= -Q31)):
+            end = b + 1
+    return end
+
+
 #: Phases de départ d'un LFO (``getLFOInitialPhaseForZero``,
 #: ``getLFOInitialPhaseForNegativeExtreme``).
 def lfo_start_phase(kind: str, local: bool) -> int:
@@ -1530,22 +2135,28 @@ def bitcrush_srr(stereo: np.ndarray, bitcrush: float, srr: float,
 
     low_inc = float(get_exp(4194304.0, (srr + Q31) / 8.0 / float(1 << 26)))
     high_inc = math.floor(4294967295.0 / math.floor(low_inc / 64.0)) * 64.0
-    n = out.shape[1]
-    left = out[0].tolist()
-    right = out[1].tolist()
+    left = _seq(out[0])
+    right = _seq(out[1])
+    quantum = float(1 << mask_srr) if mask_srr is not None else 0.0
+    _srr_loop(left, right, low_inc, float(high_inc), quantum)
+    return np.array([left, right]), post_fx
+
+
+@_Boucle
+def _srr_loop(left, right, low_inc, high_inc, quantum):
+    """La réduction d'échantillonnage de :func:`bitcrush_srr`, sur place."""
     last_l = last_r = grab_l = grab_r = old_l = old_r = 0.0
     low_pos = 0.0
     high_pos = 0.0
     step = 1.0 / 4194304.0
-    quantum = float(1 << mask_srr) if mask_srr is not None else 0.0
-    for i in range(n):
+    for i in range(len(left)):
         if low_pos < 4194304.0:
             s2 = low_pos * step
             s1 = 1.0 - s2
             old_l, old_r = grab_l, grab_r
             grab_l = last_l * s1 + left[i] * s2
             grab_r = last_r * s1 + right[i] * s2
-            if quantum:
+            if quantum != 0.0:
                 grab_l = math.floor(grab_l / quantum) * quantum
                 grab_r = math.floor(grab_r / quantum) * quantum
             low_pos += low_inc
@@ -1557,7 +2168,6 @@ def bitcrush_srr(stereo: np.ndarray, bitcrush: float, srr: float,
         left[i] = old_l * s1 + grab_l * s2
         right[i] = old_r * s1 + grab_r * s2
         high_pos += high_inc
-    return np.array([left, right]), post_fx
 
 
 #: ``kModFXBufferSize`` et les temps du flanger, en échantillons.
@@ -1636,6 +2246,11 @@ def _read_mod_fx(dry: np.ndarray, times: np.ndarray) -> np.ndarray:
     rétroaction : le tampon garde le signal sec), à mi-niveau comme le
     firmware (``strength1 = 65535 << 15``)."""
     n = dry.size
+    if compiled():
+        out = np.empty(n)
+        _mod_fx_loop(np.ascontiguousarray(dry, dtype=np.float64),
+                     np.ascontiguousarray(times, dtype=np.float64), out)
+        return out
     steps = np.floor(times / 65536.0).astype(np.int64)
     frac = (times - steps * 65536.0) / 65536.0
     # Un retard nul relit l'échantillon écrit 512 pas plus tôt.
@@ -1648,31 +2263,54 @@ def _read_mod_fx(dry: np.ndarray, times: np.ndarray) -> np.ndarray:
     return (a * (1.0 - frac) + b * frac) * 0.5
 
 
+@_Boucle
+def _mod_fx_loop(dry, times, out):
+    """:func:`_read_mod_fx` d'une passe : avant le début, le tampon est
+    muet."""
+    n = len(dry)
+    for i in range(n):
+        t = times[i]
+        step = math.floor(t / 65536.0)
+        frac = (t - step * 65536.0) / 65536.0
+        back = _MOD_FX_SIZE if step == 0 else step
+        j = i - back
+        a = dry[j] if 0 <= j < n else 0.0
+        j = i - step - 1
+        b = dry[j] if 0 <= j < n else 0.0
+        out[i] = (a * (1.0 - frac) + b * frac) * 0.5
+
+
 def _flanger(stereo: np.ndarray, left_time: np.ndarray,
              right_time: np.ndarray, feedback: float) -> np.ndarray:
     """Le flanger : la sortie retardée, pondérée par la rétroaction,
     réinjectée dans le tampon et ajoutée au signal."""
     out = np.array(stereo, dtype=np.float64)
-    size = _MOD_FX_SIZE
     for channel, times in ((0, left_time), (1, right_time)):
-        dry = (stereo[channel] + DENORMAL_GUARD).tolist()
-        tm = times.tolist()
-        buf = [0.0] * size
-        res = [0.0] * len(dry)
-        write = 0
-        for i, v in enumerate(dry):
-            t = tm[i]
-            step = int(t // 65536.0)
-            frac = (t - step * 65536.0) / 65536.0
-            p1 = (write - step) & (size - 1)
-            p2 = (p1 - 1) & (size - 1)
-            delayed = (buf[p1] * (1.0 - frac) + buf[p2] * frac) * 0.5
-            wet = delayed * feedback * 2.0
-            buf[write] = wet + v
-            res[i] = v + wet
-            write = (write + 1) & (size - 1)
-        out[channel] = res
+        res = _out(out.shape[1])
+        _flanger_loop(_seq(stereo[channel] + DENORMAL_GUARD), _seq(times),
+                      float(feedback), _zeros(_MOD_FX_SIZE), res)
+        out[channel] = _result(res)
     return out
+
+
+@_Boucle
+def _flanger_loop(dry, times, feedback, buf, out):
+    """Un canal de :func:`_flanger` ; ``buf`` : le tampon de 512 cases."""
+    size = len(buf)
+    write = 0
+    for i in range(len(dry)):
+        v = dry[i]
+        t = times[i]
+        step = int(t // 65536.0)
+        frac = (t - step * 65536.0) / 65536.0
+        # Le masque garde l'index dans le tampon, quel que soit le temps.
+        p1 = (write - step) & (size - 1)
+        p2 = (p1 - 1) & (size - 1)
+        delayed = (buf[p1] * (1.0 - frac) + buf[p2] * frac) * 0.5
+        wet = delayed * feedback * 2.0
+        buf[write] = wet + v
+        out[i] = v + wet
+        write = (write + 1) & (size - 1)
 
 
 def _phaser(stereo: np.ndarray, lfo: np.ndarray, depth: float,
@@ -1680,38 +2318,44 @@ def _phaser(stereo: np.ndarray, lfo: np.ndarray, depth: float,
     """Le phaser : six passe-tout du premier ordre balayés par le LFO, avec
     rétroaction (``processOnePhaserSample``)."""
     a1 = (float(1 << 30) - ((lfo + Q31) / 2.0) * depth / Q32) / float(1 << 30)
-    fb = feedback / Q31
+    fb = float(feedback / Q31)
     out = np.array(stereo, dtype=np.float64)
-    coef = a1.tolist()
+    coef = _seq(a1)
     for channel in (0, 1):
-        dry = (stereo[channel] + DENORMAL_GUARD).tolist()
-        res = _buffer(len(dry))
-        mem = p1 = p2 = p3 = p4 = p5 = p6 = 0.0
-        for i, v in enumerate(dry):
-            a = coef[i]
-            mem = v + mem * fb
-            # Les six passe-tout, déroulés.
-            was = mem
-            mem = p1 - mem * a
-            p1 = mem * a + was
-            was = mem
-            mem = p2 - mem * a
-            p2 = mem * a + was
-            was = mem
-            mem = p3 - mem * a
-            p3 = mem * a + was
-            was = mem
-            mem = p4 - mem * a
-            p4 = mem * a + was
-            was = mem
-            mem = p5 - mem * a
-            p5 = mem * a + was
-            was = mem
-            mem = p6 - mem * a
-            p6 = mem * a + was
-            res[i] = v + mem
-        out[channel] = _as_array(res)
+        res = _out(out.shape[1])
+        _phaser_loop(_seq(stereo[channel] + DENORMAL_GUARD), coef, fb, res)
+        out[channel] = _result(res)
     return out
+
+
+@_Boucle
+def _phaser_loop(dry, coef, fb, out):
+    """Un canal de :func:`_phaser`."""
+    mem = p1 = p2 = p3 = p4 = p5 = p6 = 0.0
+    for i in range(len(dry)):
+        v = dry[i]
+        a = coef[i]
+        mem = v + mem * fb
+        # Les six passe-tout, déroulés.
+        was = mem
+        mem = p1 - mem * a
+        p1 = mem * a + was
+        was = mem
+        mem = p2 - mem * a
+        p2 = mem * a + was
+        was = mem
+        mem = p3 - mem * a
+        p3 = mem * a + was
+        was = mem
+        mem = p4 - mem * a
+        p4 = mem * a + was
+        was = mem
+        mem = p5 - mem * a
+        p5 = mem * a + was
+        was = mem
+        mem = p6 - mem * a
+        p6 = mem * a + was
+        out[i] = v + mem
 
 
 def equalizer(stereo: np.ndarray, bass: float, treble: float,
@@ -1914,6 +2558,13 @@ def _mutable(send: np.ndarray, settings: ReverbSettings,
     apout = x
 
     lfo1, lfo2 = _reverb_lfos(n)
+    if compiled():
+        out_l = np.empty(n)
+        out_r = np.empty(n)
+        _mutable_loop(np.ascontiguousarray(apout), np.ascontiguousarray(lfo1),
+                      np.ascontiguousarray(lfo2), room, klp, kap, out_l,
+                      out_r)
+        return _mutable_output(out_l, out_r, hp_cut, lp_cut, gains)
     tail = 6400
     total = n + tail
     hist1 = np.zeros(total + 1)   # del1, indexé par échantillon (+tail)
@@ -1949,7 +2600,13 @@ def _mutable(send: np.ndarray, settings: ReverbSettings,
         c = _allpass_block(c, ap[2197], idx, 2196, kap)
         hist2[idx] = c
         out_l[start:stop] = c * 2.0
-    out = np.zeros((2, n))
+    return _mutable_output(out_l, out_r, hp_cut, lp_cut, gains)
+
+
+def _mutable_output(out_l: np.ndarray, out_r: np.ndarray, hp_cut: float,
+                    lp_cut: float, gains: tuple[float, float]) -> np.ndarray:
+    """Les filtres de sortie de :func:`_mutable`, l'écrêtage et le gain."""
+    out = np.zeros((2, out_l.size))
     for channel, wet, gain in ((0, out_l, gains[0]), (1, out_r, gains[1])):
         low, _ = one_pole(wet, hp_cut)
         wet = wet - low
@@ -1959,10 +2616,73 @@ def _mutable(send: np.ndarray, settings: ReverbSettings,
     return out
 
 
+#: Les tampons de :func:`_mutable_loop` : une puissance de deux au-delà du
+#: plus long retard lu (6 261 + 50 + 1 échantillons).
+_MUTABLE_SIZE = 8192
+
+
+@_Boucle
+def _mutable_loop(apout, lfo1, lfo2, room, klp, kap, out_l, out_r):
+    """La boucle de :func:`_mutable`, échantillon par échantillon, sur des
+    tampons circulaires. Chaque lecture remonte plus loin qu'un bloc de la
+    version Python : les deux calculs sont les mêmes."""
+    mask = _MUTABLE_SIZE - 1
+    hist1 = np.zeros(_MUTABLE_SIZE)
+    hist2 = np.zeros(_MUTABLE_SIZE)
+    ap1 = np.zeros(_MUTABLE_SIZE)
+    ap2 = np.zeros(_MUTABLE_SIZE)
+    ap3 = np.zeros(_MUTABLE_SIZE)
+    ap4 = np.zeros(_MUTABLE_SIZE)
+    lp1 = 0.0
+    lp2 = 0.0
+    for i in range(len(apout)):
+        a_in = apout[i]
+        now = i & mask
+        # Branche « droite » : lit del2, écrit del1.
+        offset = 6261.0 + 50.0 * lfo2[i]
+        whole = int(offset)
+        frac = offset - whole
+        r = hist2[(i - whole) & mask] * (1.0 - frac) \
+            + hist2[(i - whole - 1) & mask] * frac
+        lp1 += klp * (a_in + r * room - lp1)
+        tail = ap1[(i - 2181) & mask]
+        fed = lp1 + tail * -kap
+        ap1[now] = fed
+        c = fed * kap + tail
+        tail = ap2[(i - 2689) & mask]
+        fed = c + tail * kap
+        ap2[now] = fed
+        c = fed * -kap + tail
+        hist1[now] = c
+        out_r[i] = c * 2.0
+        # Branche « gauche » : lit del1, écrit del2.
+        offset = 4460.0 + 40.0 * lfo1[i]
+        whole = int(offset)
+        frac = offset - whole
+        r = hist1[(i - whole) & mask] * (1.0 - frac) \
+            + hist1[(i - whole - 1) & mask] * frac
+        lp2 += klp * (a_in + r * room - lp2)
+        tail = ap3[(i - 2524) & mask]
+        fed = lp2 + tail * -kap
+        ap3[now] = fed
+        c = fed * kap + tail
+        tail = ap4[(i - 2196) & mask]
+        fed = c + tail * kap
+        ap4[now] = fed
+        c = fed * -kap + tail
+        hist2[now] = c
+        out_l[i] = c * 2.0
+
+
 def _allpass_stream(x: np.ndarray, delay_len: int, k: float) -> np.ndarray:
     """Un passe-tout de Schroeder sur tout un signal, par tranches de son
     retard : ``w = x + k·w[−L]``, ``y = −k·w + w[−L]``."""
     n = x.size
+    if compiled():
+        y = np.empty(n)
+        _allpass_loop(np.ascontiguousarray(x, dtype=np.float64), float(k),
+                      np.zeros(int(delay_len)), y)
+        return y
     # ``w[i + L]`` garde ce qui a été écrit à l'échantillon i.
     w = np.zeros(n + delay_len)
     y = np.zeros(n)
@@ -1973,6 +2693,22 @@ def _allpass_stream(x: np.ndarray, delay_len: int, k: float) -> np.ndarray:
         w[start + delay_len:stop + delay_len] = cur
         y[start:stop] = -k * cur + tail
     return y
+
+
+@_Boucle
+def _allpass_loop(x, k, history, out):
+    """:func:`_allpass_stream` échantillon par échantillon ; ``history`` :
+    un tour de retard, en tampon circulaire."""
+    size = len(history)
+    pos = 0
+    for i in range(len(x)):
+        tail = history[pos]
+        cur = x[i] + k * tail
+        history[pos] = cur
+        out[i] = -k * cur + tail
+        pos += 1
+        if pos == size:
+            pos = 0
 
 
 def _allpass_block(c: np.ndarray, history: np.ndarray, idx: np.ndarray,

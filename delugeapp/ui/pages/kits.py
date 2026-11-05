@@ -57,6 +57,7 @@ class KitsPage(Page):
                       "les sons qu'elles utilisent et celles qui sont "
                       "cassées.")
     ICON = "kit"
+    LISTENS = True
     #: Aide du séquenceur d'essai, quand le motif a bien des rangées.
     AIDE_MOTIF = N_("Cliquez les pads pour composer un motif, puis écoutez "
                     "le kit ou exportez le motif en MIDI.")

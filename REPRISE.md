@@ -323,6 +323,205 @@ signaux, et `Page.run()` pour les travaux longs.
 
 ---
 
+## 3 quinquadragies. L'écoute compilée, et ses voix en parallèle (5 novembre 2026)
+
+**La demande** : « faire les deux améliorations proposées » à la fin du §3 quaterquadragies
+— numba, et les voix calculées en parallèle.
+
+### Ce qui a été fait
+
+* **numba 0.68.1** installé dans son Python 3.13 (avec llvmlite 0.50) ; un essai à blanc
+  avait d'abord vérifié que numpy 2.2.6 ne bougeait pas. `requirements.txt` : une section
+  « Recommandé ».
+* **`dsp._Boucle`** : chaque boucle échantillon par échantillon est écrite **une fois**, dans
+  un Python que numba compile (`cache=True` dans `__pycache__`, `nogil=True`) ; sans numba,
+  ou si une compilation échoue (trace au journal, `_compiled` passe à faux), la même
+  fonction tourne en Python sur des listes (`_seq`, `_out`, `_zeros`), comme avant. Sont
+  compilés : les échelles et le passe-haut (garde et gigue calculées dans la boucle),
+  l'oscillateur à table et à impulsion (phase tirée du début de chaque bloc,
+  `_block_starts`), la rétroaction de la FM, l'enveloppe (`envelope_blocks` ; la classe
+  `Envelope` reste, pour Python et pour les tests), la gigue, la saturation adoucie, le
+  lissage à un pôle, la réduction d'échantillonnage, phaser, flanger, chorus, la
+  réverbération « Mutable » (tampons circulaires de 8 192) et ses passe-tout, la lecture
+  d'une table de LFO, `mix_into`.
+* **Le choix de la table d'un oscillateur** se faisait bloc par bloc en Python : avec un
+  vibrato ou une largeur modulée, chaque bloc appelait `_reader`. `_block_signatures` range
+  les blocs par numéro de table, d'un coup : 3,7 → 1,0 ms par appel, en Python comme
+  compilé.
+* **`render_parts`** : le plan de toutes les notes, puis les voix distinctes en parallèle
+  (`_run_all`, les plus longues d'abord), puis les effets de chaque son en parallèle, puis
+  le mélange dans l'ordre. **Chaque voix tire son hasard de sa note**
+  (`(graine(son), graine(repr(clé)))`) : c'est le seul changement audible, et il était
+  accepté. `WORKERS` = 4 au plus ; sans numba, un seul fil. Le cache des échantillons a
+  pris un verrou.
+* **numba ne s'importe qu'au premier calcul** (`dsp.compiled()`) : le tracé de la courbe de
+  filtre importe `render` dans le fil de l'interface, et l'aurait payé 0,5 s.
+* **La préparation de l'écoute** : `dsp.prepare()` fait tourner chaque boucle sur deux blocs
+  de silence, avec les types de l'écoute ; `tasks.prepare_listening()` la lance dans un fil
+  Python (hors de `_ACTIVE` : ni témoin d'activité, ni « traitement en cours ») 1,5 s après
+  la première apparition d'une page `LISTENS` — Atelier, Générateur, Presets, Kits, DAW ;
+  `stop_all` l'arrête entre deux boucles, ou l'empêche de partir.
+
+### Mesures, sur sa machine
+
+La machine fait varier une mesure isolée **du simple au double** (Windsurf, Steam…) :
+chaque comparaison alterne l'ancien code (exporté de `HEAD`) et le nouveau, au meilleur de
+plusieurs écoutes (`duel.py`).
+
+| Section de 8 mesures | Avant (Python) | Après |
+|---|---|---|
+| techno | 4,04 s | **0,27 s** |
+| house | 3,53 s | **0,47 s** |
+| trance | 5,34 s | **0,63 s** |
+| ambient | 8,62 s | **0,95 s** |
+
+* Compilé sur un seul fil, une section prend 0,4 à 1,7 s ; 3 ou 4 fils la divisent par 1,7 ;
+  6 ou 8 font **moins bien** que 4.
+* Import de `render` : 0,16 s, numba non chargé. Préparation : 1,4 s (4,3 s après une
+  modification de `dsp.py`, qui oblige numba à tout recompiler). Après elle, la première
+  écoute va déjà à la vitesse de croisière (trance 0,32 s).
+* Sans numba : 4 à 8 s, comme avant, aux variations de la machine près.
+* **La préparation gêne l'interface tant qu'elle tourne** : elle dispute le verrou de Python
+  au fil de l'interface. Mesuré dans la vraie fenêtre, sans carte, cinq fois en
+  alternance avec un témoin où elle ne fait rien (`banc_preparation.py`) : cinq pages
+  visitées pour la première fois juste après l'Atelier, médiane 0,46 s contre 0,34. D'où
+  le délai de 1,5 s. Quatre audits d'usage complets (copie fantôme) n'avaient rien
+  tranché : deux audits identiques y différaient de 2,5 fois.
+
+### Vérifié
+
+* Chaque étage contre `HEAD` (`compare_dsp.py`) : **identique à l'échantillon près**
+  (échelles aux trois modes, résonance et morph ; passe-haut dans ses trois régimes ; six
+  formes d'onde × quatre notes × largeur × amplitude ; FM ; 432 enveloppes ; saturation ;
+  réduction ; phaser, flanger, chorus ; delay), sauf ce qui passe par le lissage à un pôle
+  (réverbérations, continu du delay, gigue) : 10⁻¹⁵ de la crête, l'arrondi.
+* Après le changement de hasard, l'empreinte de cinq sections rendues n'a plus bougé à
+  travers les remaniements suivants (enveloppe, tampons, phases).
+* `TestEcouteCompilee` (6 tests) et `TestPreparationDeLEcoute`. **Vérifiés en introduisant
+  des défauts** : le test des boucles échoue sur un défaut de la version compilée seule,
+  **pas** sur un défaut commun aux deux — la boucle n'étant écrite qu'une fois, il garde la
+  fidélité de numba au Python, pas au firmware : celle-là reste aux tests du firmware et,
+  pour ce changement, à la comparaison avec `HEAD`. Le test du parallèle échoue avec un
+  hasard non semé ; ceux de la préparation sans `LISTENS`, sans l'arrêt à la fermeture, et
+  sans la garde qui l'empêche de partir une fois la fenêtre fermée.
+* Audit d'usage réel (vraie fenêtre sur la copie fantôme, comme au §3 quaterquadragies) :
+  journal sans alerte, aucune modale, **réel intact**.
+
+### Pièges rencontrés
+
+* **Sous Windows, les fils se disputent la mémoire fraîche** : un grand tableau numpy neuf
+  se paie en défauts de page. Mesuré (`suspects.py`) : une boucle compilée va 6,8 fois plus
+  vite sur 8 fils, des tableaux neufs 2,4 fois au mieux, le Python pur pas du tout. D'où un
+  seul tampon d'onde par note (`oscillator(out=…)`), `mix_into`, et les boucles qui
+  calculent elles-mêmes phases, gigue et garde. Il reste une quinzaine de tableaux de la
+  longueur de la note par voix.
+* **En code compilé, un index hors du tableau ne lève rien** : il lit n'importe où. Chaque
+  index tiré d'un signal est borné, NaN compris (`not v <= borne`).
+* Le script qui a remplacé les lectures de `_compiled` par `compiled()` a aussi touché le
+  corps de `compiled()` — une récursion sans fin, vue à la relecture.
+* Toute modification de `dsp.py` invalide le cache de numba : la première écoute (ou la
+  préparation) qui suit recompile tout, 3 à 4 s.
+* Le nom d'un fil (`threading.Thread(name=…)`) en français passe pour un texte visible
+  non traduit : `test_i18n` l'a refusé. Un identifiant technique suffit.
+
+**1 245 tests au vert** (211 s), les 7 nouveaux aussi sous pytest ; réglages réels, index
+et copie de travail identiques avant et après chaque audit.
+
+---
+
+## 3 quaterquadragies. Analyse complète : un bug, trois lenteurs (4 novembre 2026, soir)
+
+**La demande** : « Analyse entièrement le logiciel à la recherche d'erreurs et bugs et
+corrige-les. Regarde s'il est possible d'optimiser le code. »
+
+### Ce qui a été passé en revue
+
+* **Base** : 1 236 tests au vert (326 s). Journal de l'utilisateur : aucune erreur depuis le
+  11 octobre ; l'alerte « Périphérique audio introuvable » de chaque lancement (14–23
+  octobre) venait de son DAC USB débranché — aujourd'hui trouvé (index 5), et le réglage est
+  revenu à « par défaut ».
+* **Analyse statique** (pyflakes, ruff — règles de bugs, installés dans le dossier
+  temporaire, pas dans son Python) : propre. Les alertes restantes sont voulues (les
+  `lambda: …emit()` du correctif des boutons inertes) ou de faux positifs (fonctions
+  appelées dans le tour de boucle qui les définit).
+* **Données réelles** : les 54 morceaux, 911 presets et 44 kits de la sauvegarde passés dans
+  les lecteurs, les conversions vers le DAW et retour, la copie « DAW » (avec et sans
+  « garder les canaux »), `songinsert.read_target`, l'éditeur de son (51 016 lectures) et
+  le rendu : **aucune exception**, allers-retours identiques note pour note.
+* **Lus en entier** : `daw`, `dawimport`, `dawlive`, `dawals`, `ui/pages/daw`,
+  `cardsync`, `ui/tasks`, `audio_out`, le début de `atelier` ; les écritures et
+  suppressions de tous les modules (`organize.apply`, temporaires, `.bak`).
+* **Audit d'usage réel** (§3 sexvicies) : la vraie fenêtre sur une copie fantôme de sa copie
+  de travail (2 776 liens physiques), index copié et repointé, aucun port MIDI, modales
+  refusées ; empreintes de ses réglages, de son index, de ses manifestes et de sa copie de
+  travail **identiques avant et après**, chaque fois.
+
+### Le bug : un kit déjà réglé ne changeait pas de canal
+
+Sur une copie « DAW » relue, les sons du kit portent déjà leur `<midiInput>`.
+`plan_live` les sautait : choisir un autre canal pour le kit n'écrivait rien, et le plan de
+la confirmation annonçait pourtant « canal 5 (au lieu du canal 10) » — ou bien « chaque
+piste écoute déjà son canal » si rien d'autre ne changeait. Même chose pour un kit entier
+(`<MIDIInput>`) et pour la case « Garder les canaux déjà réglés » décochée, dont l'aide
+promet que « chacune reçoit un canal libre ». Désormais un kit qui écoute un seul canal en
+change en entier (la valeur seule est remplacée, comme pour un synthé) et la preuve le
+vérifie ; un kit aux sons sur des canaux différents les garde. Test
+`test_un_kit_deja_regle_change_de_canal_en_entier`, **vérifié en retirant le correctif**
+(il échoue alors sur le message trompeur).
+
+### Les lenteurs, mesurées sur sa carte
+
+| | Avant | Après |
+|---|---|---|
+| Première visite de la page DAW (`dawals.template_problem`) | 0,52 s | **0,08 s** |
+| Retour sur Échantillons (1 747 lignes) | 0,35 s | **0,04 s** |
+| Retour sur Presets (911 lignes) | 0,18 s | **0,03 s** |
+| Diagnostic de santé (hors fenêtre) | 0,130 s | **0,063 s** |
+| Retour sur l'Accueil (fenêtre figée) | 0,32 s | **0,20 s** |
+
+* **Ableton** : pour un seul clip audio, le set de démonstration de Live (26,7 Mo de XML,
+  premier clip à l'octet 24,9 millions) était analysé en entier ; une lecture en flux n'y
+  changeait rien. La balise se cherche maintenant dans les octets (un `<` ne peut pas
+  figurer dans une valeur), seul l'élément est analysé — avec ses blancs de queue, que le
+  set recopie : sans eux, le `.als` écrit différait d'un saut de ligne. Vérifié : trois
+  sets écrits avant et après **identiques à l'octet**.
+* **Tableaux** : chaque retour sur une page remettait le modèle à zéro, et le proxy de tri
+  relisait chaque valeur à chaque comparaison (30 572 lectures pour 1 747 lignes). Des
+  lignes égales à celles affichées (`sqlite3.Row` se compare par valeur) ne touchent plus à
+  rien — la sélection et la position restent, en prime.
+* **Santé** : la table des échantillons était relue neuf fois par diagnostic, chaque liste de
+  presets trois fois. Une vue mémorisée le temps d'un seul diagnostic (`health._Lectures`) :
+  rapport identique sur sa carte (92/100, 9 anomalies, mêmes éléments). Pas de mémoire d'une
+  visite à l'autre : une note périmée après un geste dans l'Explorateur serait un défaut.
+
+### Ce qui n'a pas été optimisé, et pourquoi
+
+**L'écoute d'une section à l'Atelier prend 2,5 à 9 s** (8 mesures : techno 2,5 s, house
+3,4 s, trance 5,3 s, ambient 8,9 s). Le temps part dans les boucles échantillon par
+échantillon du traitement du signal porté du firmware — l'échelle passe-bas (un tiers),
+le phaser, le flanger —, récurrences non linéaires à coefficients variables : rien ne s'y
+vectorise sans changer le calcul, et la mécanique des boucles est déjà la plus rapide en
+Python pur (mesuré : indices 0,055 s contre `zip` 0,061 s). Deux voies, **à voir avec
+l'utilisateur** — il a demandé les deux, faites le 5 novembre (§3 quinquadragies) :
+
+1. un compilateur (`numba`) : une dépendance nouvelle ;
+2. rendre les voix en parallèle (24 cœurs) : il faudrait un tirage aléatoire par voix au lieu
+   d'un par partie — phases et gigue du filtre changeraient, donc le son à l'échantillon près.
+   Paralléliser par partie garde le son identique mais ne rapporte que ×1,3 (la partie
+   d'accords domine : 5,6 s sur 8,9 en ambient), pas de quoi faire tourner des processus de
+   calcul dans l'application.
+
+### Pièges rencontrés
+
+* Comparer deux modèles XML en effaçant leur `tail` m'a d'abord fait croire à une égalité :
+  c'est le `.als` complet qu'il fallait comparer.
+* Un module rechargé à la main depuis `git show` doit être inscrit dans `sys.modules` avant
+  exécution, sans quoi `@dataclass` échoue.
+
+**1 237 tests au vert** (301 s), réglages réels identiques avant et après.
+
+---
+
 ## 3 triquadragies. Le pont vers les DAW (4 novembre 2026)
 
 **La demande** : « Je souhaites que le logiciel puisse faire le pont entre le déluge et un

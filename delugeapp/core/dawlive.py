@@ -205,6 +205,7 @@ class LivePlan:
 
 _ACTIVE_MOD = re.compile(rb'\sactiveModFunction\s*=\s*"[^"]*"')
 _INPUT_CHANNEL = re.compile(rb'\sinputMidiChannel\s*=\s*"(?P<v>[^"]*)"')
+_CHANNEL = re.compile(rb'\schannel\s*=\s*"(?P<v>[^"]*)"')
 
 
 def _tabs(n: int) -> bytes:
@@ -240,6 +241,18 @@ def _synth_edit(data: bytes, span, channel: int, existing: int | None
     return (span.start + fin, b"", insere)
 
 
+def _channel_edit(data: bytes, span, channel: int
+                  ) -> tuple[int, bytes, bytes] | None:
+    """Une écoute déjà réglée (``midiInput`` d'un son, ``MIDIInput`` d'un
+    kit) qui change de canal : la valeur seule est remplacée."""
+    if span is None:
+        return None
+    m = _CHANNEL.search(data, span.start, span.open_end)
+    if m is None or _int(m.group("v")) == channel:
+        return None
+    return (m.start("v"), m.group("v"), str(channel).encode())
+
+
 def _drum_edit(data: bytes, span, channel: int, note: int
                ) -> tuple[int, bytes, bytes] | None:
     from .songinsert import _indent_of, _line_start
@@ -261,7 +274,11 @@ def _drum_edit(data: bytes, span, channel: int, note: int
 def plan_live(sd: SDCard, rel: str, routes: list[LiveRoute], name: str = "",
               follow: set[int] | None = None) -> LivePlan:
     """La copie du morceau où chaque piste écoute son canal (``routes``,
-    tel que :func:`propose_channels` les règle). Rien n'est écrit."""
+    tel que :func:`propose_channels` les règle). Rien n'est écrit.
+
+    Un kit qui écoute déjà un seul canal en change en entier, ses sons
+    comme le kit lui-même ; un kit dont les sons écoutent des canaux
+    différents les leur laisse, et seuls ses sons muets prennent le canal."""
     from .songinsert import _children, _elements
     from .songwriter import free_song_name
 
@@ -294,14 +311,25 @@ def plan_live(sd: SDCard, rel: str, routes: list[LiveRoute], name: str = "",
             if edit is not None:
                 edits.append(edit)
             continue
+        enfants = _children(spans, span)
         if route.whole_kit:
+            edit = _channel_edit(data, next((s for s in enfants
+                                             if s.name == "MIDIInput"), None),
+                                 route.channel)
+            if edit is not None:
+                edits.append(edit)
             continue
-        sources = next((s for s in _children(spans, span)
-                        if s.name == "soundSources"), None)
+        sources = next((s for s in enfants if s.name == "soundSources"), None)
         sons = [s for s in _children(spans, sources) if s.name == "sound"] \
             if sources is not None else []
         for son, (_nom, note, deja) in zip(sons, route.drums):
             if deja is not None:
+                if route.existing is not None:
+                    edit = _channel_edit(data, next(
+                        (s for s in _children(spans, son)
+                         if s.name == "midiInput"), None), route.channel)
+                    if edit is not None:
+                        edits.append(edit)
                 continue
             edit = _drum_edit(data, son, route.channel, note)
             if edit is not None:
@@ -333,10 +361,12 @@ def plan_live(sd: SDCard, rel: str, routes: list[LiveRoute], name: str = "",
 
 
 def _without_inputs(el: ET.Element) -> ET.Element:
-    """L'instrument sans ce que la copie peut ajouter : son canal d'écoute,
-    et l'écoute de ses sons."""
+    """L'instrument sans ce que la copie peut ajouter ou changer : son canal
+    d'écoute, celui du kit entier, et l'écoute de ses sons."""
     el = copy.deepcopy(el)
     el.attrib.pop("inputMidiChannel", None)
+    for entier in el.findall("MIDIInput"):
+        entier.attrib.pop("channel", None)
     sources = el.find("soundSources")
     for son in (list(sources) if sources is not None else []):
         for appris in son.findall("midiInput"):
@@ -373,24 +403,31 @@ def verify_live(original: bytes, plan: LivePlan) -> str:
         if not _same_tree(_without_inputs(x), _without_inputs(y)):
             return tr("un élément du morceau a changé : rien n'est écrit")
     for route in plan.routes:
-        if route.channel is None or not route.can_listen or route.whole_kit:
+        if route.channel is None or not route.can_listen:
             continue
         el = nouveaux[route.index]
+        manque = tr("%s n'écoute pas le canal prévu : rien n'est écrit") \
+            % route.name
         if route.kind == "synth":
             if _int(dxml.get(el, "inputMidiChannel")) != route.channel:
-                return tr("%s n'écoute pas le canal prévu : rien n'est "
-                          "écrit") % route.name
+                return manque
+            continue
+        if route.whole_kit:
+            entier = el.find("MIDIInput")
+            if entier is None or _int(entier.get("channel")) != route.channel:
+                return manque
             continue
         sources = el.find("soundSources")
         sons = [s for s in (list(sources) if sources is not None else [])
                 if s.tag == "sound"]
         for son, (_nom, note, deja) in zip(sons, route.drums):
+            if deja is not None and route.existing is None:
+                continue                # canaux différents : laissés
             appris = son.find("midiInput")
-            if deja is None and (appris is None or _int(appris.get(
-                    "channel")) != route.channel
-                    or _int(appris.get("note")) != note):
-                return tr("%s n'écoute pas le canal prévu : rien n'est "
-                          "écrit") % route.name
+            if appris is None or _int(appris.get("channel")) != route.channel:
+                return manque
+            if deja is None and _int(appris.get("note")) != note:
+                return manque
     return ""
 
 
