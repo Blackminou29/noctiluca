@@ -70,12 +70,15 @@ les machines de GitHub, gratuitement pour un dépôt public. Le dépôt :
    (onglet **Actions**) ; une fois l'exécution terminée, les trois paquets
    sont à télécharger en bas de sa page ;
 2. pour publier une version : monter `__version__` dans
-   `delugeapp/__init__.py`, commiter, puis poser l'étiquette — dans GitHub
-   Desktop, onglet *History*, clic droit sur le commit ▸ *Create Tag…*
-   (`v1.1.0`), puis *Push origin* ; ou `git tag -a v1.1.0 -m "…"` et
-   `git push --follow-tags`. Les paquets arrivent dans un **brouillon** de
-   publication (onglet *Releases*), avec un texte d'accompagnement et le lien
-   Ko-fi : le relire, puis *Publish release*.
+   `delugeapp/__init__.py`, commiter, puis poser l'étiquette **dans GitHub
+   Desktop** — onglet *History*, clic droit sur le commit ▸ *Create Tag…*
+   (`v1.1.0`), puis *Push origin*. Une étiquette posée en ligne de commande
+   (`git tag`) n'est **pas** envoyée par GitHub Desktop, et git en ligne de
+   commande n'a pas d'identifiants GitHub sur ce PC : seul GitHub Desktop
+   détient la connexion. Les paquets arrivent environ quatre minutes plus tard
+   dans un **brouillon** de publication (onglet *Releases*), avec un texte
+   d'accompagnement et le lien Ko-fi : le relire, essayer l'installateur, puis
+   *Publish release*.
 
 Le bouton de don de la page du dépôt vient de `.github/FUNDING.yml`.
 

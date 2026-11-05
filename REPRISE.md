@@ -393,14 +393,28 @@ Desktop par sa commande (`github.bat <dossier>`), et **l'utilisateur a publié l
   71 Mo, macOS 86 Mo, Linux 314 Mo (AppImage et archive). C'est **la première fois que le
   Mac et le Linux sont construits** : aucun correctif n'a été nécessaire.
 
+* **La version 1.0.0** (exécution 42032680827, étiquette `v1.0.0` sur `435a7af`) : macOS
+  1 min 15 s, Linux 1 min 33 s, Windows 3 min 43 s, puis le brouillon de publication créé.
+  Un premier essai d'étiquette, posée par `git tag -a` en ligne de commande, n'est **pas
+  parti** : GitHub Desktop n'envoie que les étiquettes créées chez lui (*History ▸ Create
+  Tag…*), et git en ligne de commande n'a pas d'identifiants GitHub sur ce PC
+  (`GCM_INTERACTIVE=never` l'a dit sans ouvrir de fenêtre). Le commit, lui, est parti
+  seul — documentation seule, donc sans construction (`paths-ignore`).
+* **L'installateur Windows essayé par l'utilisateur**, téléchargé depuis le brouillon :
+  installé, « tout fonctionne ». **La version est publiée** le 5 novembre 2026 à 13 h 17
+  (UTC) : https://github.com/Blackminou29/noctiluca/releases/tag/v1.0.0 — Windows 70,7 Mo,
+  macOS 89,0 Mo, AppImage 151,1 Mo, archive Linux 165,1 Mo.
+
 ### Pas vérifié
 
 * Les rapports d'autovérification de GitHub : journaux et paquets ne se lisent qu'avec une
   connexion au compte (l'API répond « Must have admin rights » sans elle). Le succès de
   l'étape suffit à dire que tout l'essentiel est en ordre, pas ce qui manque (le son
   sous Linux est un manque, pas un échec).
-* L'installateur Windows n'a toujours pas été exécuté ; la page Ko-fi n'a pas pu être
-  ouverte (Cloudflare refuse les requêtes automatiques).
+* La page Ko-fi n'a pas pu être ouverte (Cloudflare refuse les requêtes automatiques).
+* Les paquets macOS et Linux n'ont tourné que sur les machines de GitHub : aucun Mac ni
+  Linux d'utilisateur ne les a encore ouverts. Le désinstallateur Windows et la mise à
+  jour par-dessus une version précédente n'ont pas été essayés.
 
 ---
 
