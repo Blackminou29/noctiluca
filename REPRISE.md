@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 5 novembre 2026 (les paquets à distribuer, §3 octoquadragies)
+**Dernière mise à jour :** 5 novembre 2026 (la publication sur GitHub, §3 novoquadragies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -33,7 +33,8 @@ calés sur sa mesure, et complète un morceau de la machine sans le réécrire �
 **L'interface suit le parcours de création** — accueil, atelier en cinq étapes, sons qui rejoignent le
 morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quadragies.
 **Le pont vers les DAW** : un morceau part vers tout DAW (MIDI, DAWproject, Reaper, pistes audio), un projet (MIDI, set Ableton Live, DAWproject, Reaper) revient en morceau, et le DAW joue les sons du Deluge, chaque piste sur son canal — voir §3 triquadragies.
-**L'application se distribue sans Python** : installateur NSIS pour Windows (construit et vérifié), image disque macOS et AppImage Linux (scripts et construction par GitHub, jamais lancés), chaque paquet autovérifié avant d'être emballé — voir §3 octoquadragies.
+**L'application se distribue sans Python** : installateur NSIS pour Windows, image disque macOS et AppImage Linux, chaque paquet autovérifié avant d'être emballé — voir §3 octoquadragies.
+**Elle est publiée**, gratuite, sous GPL v3, avec une invitation au don sur Ko-fi : https://github.com/Blackminou29/noctiluca, où GitHub construit les trois paquets — voir §3 novoquadragies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -324,6 +325,82 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 novoquadragies. La publication sur GitHub (5 novembre 2026)
+
+**La demande** : « Créer un dépôt GitHub […] pour pouvoir distribuer le logiciel à d'autres
+utilisateurs. Le but n'est pas de le vendre, seulement faire une invitation au don sur la
+page descriptive grâce à Ko-fi. » Ses choix, demandés avant d'écrire quoi que ce soit :
+page **ko-fi.com/frenchfries29**, dépôt **public**, **adresse anonyme** de GitHub dans
+l'historique, un commit de tout le travail en attente sous **GPL v3**.
+
+### Ce qui a été fait
+
+* `LICENSE` : le texte canonique de la GPL v3 (celui livré avec PyQt6, 674 lignes). Sa
+  présence fait apparaître la page de licence de l'installateur Windows (compilé et
+  vérifié). `AVIS-DE-TIERS.txt` donne la licence et l'adresse du code source.
+* `.github/FUNDING.yml` (`ko_fi: frenchfries29`) : le bouton « Sponsor » du dépôt.
+* La page d'accueil du dépôt, en tête du README : emblème, téléchargement par système,
+  limites dites franchement (MIDI sous Windows seulement, paquets non signés et comment
+  passer l'avertissement), « Soutenir le projet » avec le bouton Ko-fi, une partie en
+  anglais (qui dit que l'interface démarre en français : *Langue ▸ English*), la licence
+  et la mention des marques de Synthstrom. La documentation détaillée suit, inchangée.
+* Cinq captures dans `.github/captures/` (atelier, générateur, accueil en français ;
+  atelier et générateur en anglais), rendues **sans carte** — rien du contenu de
+  l'utilisateur — dans une configuration isolée, ports MIDI masqués, avec un lecteur
+  **à volume nul** : générer un son le fait jouer, et sans lecteur l'écran du haut
+  annonçait « Aucune sortie audio disponible ». Plateforme native (l'« offscreen » n'a pas
+  de polices sous Windows), fenêtre `WA_DontShowOnScreen`. Réglages et registre
+  identiques avant et après.
+* Le workflow construit aussi à chaque envoi sur `master` qui touche au code (la
+  documentation seule ne le relance pas), et le brouillon de publication porte un texte
+  bilingue : quel fichier pour quel système, avertissements, lien Ko-fi.
+* **L'historique réécrit** avant toute publication (`git filter-branch --env-filter`) :
+  `sebastien.abalain@gmail.com` → `213517402+Blackminou29@users.noreply.github.com`, auteur
+  et validateur, sur les 11 commits ; dates gardées, **arbre final identique**. Le
+  `.git/config` du projet porte désormais ce nom et cette adresse. Identifiants :
+
+  | Avant | Après | Commit |
+  |---|---|---|
+  | `c7da0ce` | `1f3b519` | Point d'étape : fondations |
+  | `ffe4821` | `9c4430e` | Deluge Companion 1.0.0 |
+  | `3b0de55` | `78cfb30` | Interface repensée, dialogue avec le Deluge |
+  | `4bd92b0` | `28f882b` | Des morceaux depuis chaque outil |
+  | `ff323c8` | `c4bc658` | La carte reste dans le Deluge |
+  | `773520e` | `1b05dc0` | L'interface en français ou en anglais |
+  | `8d87e3e` | `14c16bc` | L'atelier, le manuel, l'écoute fidèle |
+  | `35a9d92` | `7b4853d` | Le parcours de création, le pont vers les DAW |
+  | `9367602` | `705101b` | Une analyse complète, une écoute dix fois plus rapide |
+  | `2cd6a2f` | `7e7da0f` | La 1.3.0 définitive vérifiée |
+  | `4ab1547` | `00d219a` | Le nouveau nom, les paquets, la publication |
+
+### La publication elle-même
+
+GitHub Desktop est connecté au compte **Blackminou29** — pas `frenchfries29`, le nom de la
+configuration git globale (un autre compte, de 2017) et de la page Ko-fi. Le contrôle de
+l'ordinateur n'était pas disponible dans la session : le projet a été ouvert dans GitHub
+Desktop par sa commande (`github.bat <dossier>`), et **l'utilisateur a publié lui-même**
+(*Publish repository*, nom `noctiluca`, case « privé » décochée).
+
+### Vérifié
+
+* Le dépôt est public, à son nom, avec sa description ; `master` suit `origin/master`.
+* **La première construction par GitHub** (exécution 42029059455, commit `00d219a`) :
+  **macOS en 1 min 28 s, Linux en 2 min 21 s, Windows en 3 min 41 s** — chaque paquet construit,
+  **autovérifié dans le paquet** (le script s'arrête sinon), emballé. Paquets : Windows
+  71 Mo, macOS 86 Mo, Linux 314 Mo (AppImage et archive). C'est **la première fois que le
+  Mac et le Linux sont construits** : aucun correctif n'a été nécessaire.
+
+### Pas vérifié
+
+* Les rapports d'autovérification de GitHub : journaux et paquets ne se lisent qu'avec une
+  connexion au compte (l'API répond « Must have admin rights » sans elle). Le succès de
+  l'étape suffit à dire que tout l'essentiel est en ordre, pas ce qui manque (le son
+  sous Linux est un manque, pas un échec).
+* L'installateur Windows n'a toujours pas été exécuté ; la page Ko-fi n'a pas pu être
+  ouverte (Cloudflare refuse les requêtes automatiques).
 
 ---
 
