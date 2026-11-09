@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, macos-14, ubuntu-22.04]
+        os: [windows-2022, macos-15, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -88,8 +88,10 @@ jobs:
 
   macos:
     # Apple Silicon. Un Mac Intel demande son propre paquet, construit sur
-    # un Mac Intel (numba n'existe pas en « universal2 »).
-    runs-on: macos-14
+    # un Mac Intel (numba n'existe pas en « universal2 »). GitHub a retiré
+    # les machines macos-14 (« The configuration 'macos-14-arm64-us-default'
+    # is not supported », 9 novembre 2026) : macos-15.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

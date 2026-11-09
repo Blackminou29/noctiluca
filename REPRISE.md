@@ -479,13 +479,20 @@ manuel (fr et en) et SPEC §5.26 suivent. L'installateur Windows était déjà b
 en premier ; le texte des publications (`paquets.yml`) disait « The interface starts in
 French » : corrigé.
 
-### La version 1.0.1
+### Les versions 1.0.1 et 1.0.2
 
 « Faire le commit et passer l'application en version 1.0.1 » : `__version__ = "1.0.1"`
 (`delugeapp/__init__.py`, que lisent les trois scripts de construction et `updates.py`), puis
-un commit de tout le travail du 7 au 9 novembre. L'étiquette `v1.0.1` se pose dans GitHub
-Desktop (*History ▸ Create Tag…*), l'envoi aussi : c'est elle qui fait construire les
-paquets et le brouillon de publication.
+un commit de tout le travail du 7 au 9 novembre (`bec7118`), envoyé et étiqueté `v1.0.1` par
+lui. **La construction a échoué sur macOS** : GitHub a retiré les machines macos-14 (« The
+configuration 'macos-14-arm64-us-default' is not supported », les deux tâches annulées sans
+machine) ; la publication, qui attend les trois systèmes, a été sautée — pas de brouillon.
+Windows et Linux construits ; **les tests échouent sous Linux** (premier passage hors
+Windows, journal lisible seulement connecté — à lire). GitHub Desktop ne supprime pas une
+étiquette déjà envoyée : à son choix, **publication en 1.0.2** (workflow sur macos-15),
+l'étiquette `v1.0.1` restant sans publication. À sa demande aussi, son adresse personnelle
+est retirée de ce fichier (la table de réécriture de l'historique, plus bas) ; elle reste
+dans les versions déjà publiées de REPRISE.md.
 
 ### Vérifié
 
@@ -727,7 +734,7 @@ l'historique, un commit de tout le travail en attente sous **GPL v3**.
   documentation seule ne le relance pas), et le brouillon de publication porte un texte
   bilingue : quel fichier pour quel système, avertissements, lien Ko-fi.
 * **L'historique réécrit** avant toute publication (`git filter-branch --env-filter`) :
-  `sebastien.abalain@gmail.com` → `213517402+Blackminou29@users.noreply.github.com`, auteur
+  l'adresse personnelle de l'auteur → `213517402+Blackminou29@users.noreply.github.com`, auteur
   et validateur, sur les 11 commits ; dates gardées, **arbre final identique**. Le
   `.git/config` du projet porte désormais ce nom et cette adresse. Identifiants :
 

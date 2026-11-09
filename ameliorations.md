@@ -42,7 +42,7 @@ L'arpégiateur n'a pas été vérifié sur la machine.
 
 ### 3.1 Le premier passage des tests sur GitHub
 
-Le workflow lance la suite sur Windows, macOS et Linux. Elle n'y a encore jamais tourné : **à regarder après ton prochain envoi**. L'étape signale sans bloquer les paquets ; un échec sur Mac ou Linux serait à corriger dans une 1.0.2.
+Le workflow lance la suite sur Windows, macOS et Linux. Premier passage le 9 novembre (commit de la 1.0.1) : **elle échoue sous Linux** ; macOS n'a pas tourné (machines macos-14 retirées par GitHub, passé à macos-15). Le détail n'est lisible qu'avec un compte connecté : **copie-moi la fin du journal** de l'étape « Suite de tests » (onglet Actions ▸ l'exécution ▸ tests (ubuntu-22.04)). L'étape signale sans bloquer les paquets.
 
 ### 3.2 Le MIDI hors Windows
 
@@ -62,7 +62,7 @@ Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
 * le refus quand l'application est ouverte ;
 * les paquets Mac et Linux chez un vrai utilisateur.
 
-À essayer avec l'installateur de la 1.0.1 (la mise à jour par-dessus la 1.0.0 en premier) : les essais demandent ta présence (fenêtre UAC). La signature évite l'avertissement SmartScreen, et la demande à la fondation SignPath vient de l'auteur. La marche à suivre est dans `packaging/LISEZMOI.md`.
+À essayer avec l'installateur de la 1.0.2 (la mise à jour par-dessus la 1.0.0 en premier) : les essais demandent ta présence (fenêtre UAC). La signature évite l'avertissement SmartScreen, et la demande à la fondation SignPath vient de l'auteur. La marche à suivre est dans `packaging/LISEZMOI.md`.
 
 ### 3.4 Plus loin
 
@@ -93,7 +93,7 @@ Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
 
 ## Ordre proposé
 
-1. **Le premier passage des tests sur GitHub** (3.1) et **l'installateur** (3.3), avec la construction de la 1.0.1.
+1. **Les tests sur GitHub** (3.1 : ils échouent sous Linux, à lire dans le journal de l'exécution) et **l'installateur** (3.3), avec la construction de la 1.0.2.
 2. **Les points ouverts par les essais** (§4) : la santé, puis la surveillance du prochain gros envoi.
 3. **L'horloge sous Windows** (1.2) : suivre la proposition #5276 jusqu'à son acceptation.
 4. **Le MIDI sur Mac et Linux** (3.2), quand un Mac ou un Linux sera à portée avec le Deluge.
