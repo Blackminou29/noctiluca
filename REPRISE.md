@@ -521,6 +521,11 @@ branchant sur `scanFinished`. **L'application elle-même pouvait donc se figer �
 analyse**, rarement. Test : la fin d'analyse n'appelle jamais `receivers()` et ne rafraîchit
 la page qu'une fois — il échoue avec l'ancien code.
 
+**La 1.0.3** : le passage de `72ede47` est le premier entièrement vert sur GitHub (trois
+constructions, trois suites de tests) ; à sa demande, `__version__ = "1.0.3"` — correctifs de
+l'interblocage et de la casse pour les utilisateurs. Étiquette `v1.0.3` posée par lui. Un
+blocage intermittent ne se juge pas sur un seul passage vert : à surveiller aux suivants.
+
 ### Vérifié
 
 * Suite complète : **1 359 tests au vert** (214 s ; 797 du cœur, 464 d'interface, 68 de
