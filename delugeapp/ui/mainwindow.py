@@ -1218,6 +1218,11 @@ class MainWindow(QMainWindow):
                 signal.connect(slot)
             except TypeError as exc:
                 log.debug("signal %s.%s non branché : %s", key, name, exc)
+            else:
+                if name == "scanFinished":
+                    # La page ne se rafraîchit plus d'elle-même : la fenêtre
+                    # le fait (``DashboardPage._scan_done``).
+                    page.scan_listened = True
 
     def _open_in_generator(self, rel: str) -> None:
         """Ouvre un preset de la carte dans le générateur."""

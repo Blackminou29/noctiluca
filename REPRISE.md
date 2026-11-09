@@ -507,6 +507,20 @@ refusé à l'ouverture (« erreur inconnue du système MIDI ») — le test pass
 d'analyse de la carte, un autre fil sans code Python, numba qui compile probablement), qui
 arrête toute la suite — 600 s sur GitHub. Suite complète sur ce PC : **1 360 tests au vert** (223 s).
 
+**Puis un vrai blocage** (passage de `8609405`, Windows de GitHub) : un autre test,
+`test_la_sauvegarde_se_compare_et_se_met_a_jour_hors_du_fil`, figé 10 minutes — et la pile
+était **la même** que celle du premier « délai dépassé » : fil principal à
+`dashboard.py:899`, `if self.receivers(self.scanFinished) == 0`, un autre fil sans code
+Python. Ce n'était donc pas de la lenteur. Cause probable : `QObject::receivers()`
+verrouille la liste des connexions (un verrou d'une réserve de 131, choisi selon l'adresse
+de l'objet) en gardant le verrou de Python ; un fil de travail qui se termine (`thread.quit()`
+dans `tasks._cleanup`) détruit ses objets Qt sous ce même genre de verrou et attend celui de
+Python pour défaire ses connexions — chacun attend l'autre, au hasard des adresses. Le seul
+appel de ce genre dans l'application est retiré : la fenêtre pose `scan_listened` en se
+branchant sur `scanFinished`. **L'application elle-même pouvait donc se figer à la fin d'une
+analyse**, rarement. Test : la fin d'analyse n'appelle jamais `receivers()` et ne rafraîchit
+la page qu'une fois — il échoue avec l'ancien code.
+
 ### Vérifié
 
 * Suite complète : **1 359 tests au vert** (214 s ; 797 du cœur, 464 d'interface, 68 de

@@ -2476,6 +2476,42 @@ class TestAnalyseIncrementaleParTousLesChemins(MainWindowCase):
         page._scan_button.click()
         self.assertEqual(demandes, [False])
 
+    def test_la_fin_d_analyse_ne_demande_rien_a_qt(self):
+        """``receivers()`` verrouille la liste des connexions de Qt ; un fil
+        de travail qui se terminait pouvait tenir ce verrou en attendant celui
+        de Python, et deux tests s'y sont figés sur les machines Windows de
+        GitHub (9 novembre 2026). La fenêtre dit qu'elle écoute ; la page,
+        rafraîchie par elle, ne l'est qu'une fois par analyse."""
+        from unittest import mock
+
+        from delugeapp.ui import tasks
+        from delugeapp.ui.pages.dashboard import DashboardPage
+
+        self.assertFalse(DashboardPage.scan_listened)   # page seule
+        appels: list = []
+        with mock.patch.object(DashboardPage, "receivers",
+                               lambda *args: appels.append(args) or 0):
+            win = self.window()
+            win.go_to("Dashboard")
+            page = win._pages["Dashboard"]
+            self.assertTrue(page.scan_listened)
+            for _ in range(500):
+                _pump(20)
+                if tasks.active_count() == 0:
+                    break
+            rafraichis: list = []
+            vrai = page._refresh
+            page._refresh = lambda: (rafraichis.append(1), vrai())[-1]
+            page._scan_button.click()
+            _pump(20)
+            for _ in range(500):
+                _pump(20)
+                if tasks.active_count() == 0:
+                    break
+            _pump(50)
+        self.assertEqual(appels, [])
+        self.assertEqual(len(rafraichis), 1)
+
     def test_ctrl_r_analyse_ce_qui_a_change(self):
         from PyQt6.QtGui import QAction, QKeySequence
 

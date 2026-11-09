@@ -153,6 +153,9 @@ class DashboardPage(Page):
     songRequested = pyqtSignal()
     #: L'analyse vient de se terminer : les autres pages doivent se rafraîchir.
     scanFinished = pyqtSignal()
+    #: Vrai quand la fenêtre écoute :attr:`scanFinished` (elle le pose en s'y
+    #: branchant) : la page n'a alors pas à se rafraîchir elle-même.
+    scan_listened = False
     #: Envoyer des fichiers du PC au Deluge : la fenêtre ouvre le choix.
     sendRequested = pyqtSignal(list, str)
     #: Synchroniser tout de suite avec le Deluge branché.
@@ -895,8 +898,12 @@ class DashboardPage(Page):
         # La fenêtre répond à ``scanFinished`` en rafraîchissant la page
         # visible — celle-ci, le plus souvent. Se rafraîchir aussi soi-même
         # coûtait un second diagnostic de santé après chaque analyse ; on ne
-        # le fait que si personne n'écoute.
-        if self.receivers(self.scanFinished) == 0:
+        # le fait que si personne n'écoute. Le drapeau, pas ``receivers()`` :
+        # Qt y verrouille la liste des connexions, et un fil de travail qui
+        # se termine peut tenir ce verrou en attendant celui de Python — deux
+        # tests s'y sont figés, ici même, sur les machines Windows de GitHub
+        # (9 novembre 2026).
+        if not self.scan_listened:
             self._refresh()
         self.scanFinished.emit()
 
