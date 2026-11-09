@@ -49,7 +49,9 @@ Le workflow lance la suite sur Windows, macOS et Linux. Premier passage le 9 nov
 * Windows de GitHub : le synthé GS de Microsoft déclaré mais impossible à ouvrir (pas de service audio) — le test passe son tour **seulement là** ;
 * Windows de GitHub : l'étape des clips a dépassé le délai de garde de 2 minutes et arrêté la suite — 10 minutes sur GitHub.
 
-macOS n'a pas encore tourné (machines macos-14 retirées par GitHub, passé à macos-15 pour la 1.0.2). L'étape signale sans bloquer les paquets.
+Second passage (`3a207e7`) : Windows et Linux verts ; macOS, un seul échec — le jeu calé sur l'horloge, test en temps réel, première note 51 ms en retard sur une machine partagée de GitHub (tolérance portée à 80 ms là seulement, 12 ms ailleurs). L'étape signale sans bloquer les paquets.
+
+Vu dans le journal macOS : « Segoe UI » n'existe pas sur Mac ; Qt cherche un remplaçant (100 à 170 ms au démarrage) et prend la police du système. Choisir la police selon le système l'éviterait — détail, pas un défaut visible.
 
 ### 3.2 Le MIDI hors Windows
 

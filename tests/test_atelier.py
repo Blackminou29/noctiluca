@@ -886,11 +886,15 @@ class TestJouerCaleSurLaMachine(unittest.TestCase):
             fil.join(1.0)
         attaques = [t for kind, _n, t in lien._out.recus if kind == "on"]
         self.assertEqual(len(attaques), 4)
+        # Au début de la mesure suivante, à quelques millisecondes près
+        # (mesuré : 1,7 ms d'avance voulue, ±0,8 ms). Les machines de GitHub,
+        # partagées, ont pris 51 ms de retard (macOS, 9 novembre 2026) :
+        # 80 ms y gardent chaque note sur son pas (une double-croche dure
+        # 122 ms à 123 BPM).
+        ecart = 0.08 if _os.environ.get("GITHUB_ACTIONS") else 0.012
         for attaque, pas in zip(attaques, range(0, 16, 4)):
             attendu = depart["t0"] + (96 + pas * 6) * periode
-            # Au début de la mesure suivante, à quelques millisecondes près
-            # (mesuré : 1,7 ms d'avance voulue, ±0,8 ms).
-            self.assertAlmostEqual(attaque, attendu, delta=0.012)
+            self.assertAlmostEqual(attaque, attendu, delta=ecart)
 
     def test_la_machine_s_arrete_le_jeu_aussi(self):
         lien = DelugeLink()
