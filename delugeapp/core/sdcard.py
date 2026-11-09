@@ -458,6 +458,34 @@ class SDCard:
         clean = str(rel or "").replace("\\", "/").strip("/")
         return self.root / clean if clean else self.root
 
+    def exists(self, rel: str) -> bool:
+        """Le chemin est-il pris sur la carte, **casse confondue**, comme sur
+        la FAT du Deluge ? Sous Linux, « Essai.XML » ne voit pas
+        « ESSAI.XML » ; la machine les confond, et un nom libre choisi ainsi
+        y écraserait l'autre (tests sous Linux, 9 novembre 2026).
+
+        Chaque dossier est relu, sans le cache de :meth:`_listing` : un nom
+        libre se cherche juste après une écriture.
+        """
+        clean = str(rel or "").replace("\\", "/").strip("/")
+        try:
+            if self.abs(clean).exists():
+                return True
+        except OSError:
+            return False
+        courant = self.root
+        for seg in (s for s in clean.split("/") if s and s != "."):
+            try:
+                with os.scandir(courant) as it:
+                    noms = {e.name.lower(): e.name for e in it}
+            except OSError:
+                return False
+            reel = noms.get(seg.lower())
+            if reel is None:
+                return False
+            courant = courant / reel
+        return True
+
     # -- résolution insensible à la casse ---------------------------------- #
 
     def _listing(self, rel_dir: str) -> dict[str, str]:

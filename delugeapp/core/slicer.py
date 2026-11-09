@@ -373,7 +373,7 @@ def save_sliced_kit(sd: SDCard, sliceset: SliceSet, name: str = "",
 
     # Un nom déjà pris n'est jamais écrasé : on numérote.
     index = 2
-    while sd.abs(rel).exists():
+    while sd.exists(rel):
         rel = "%s/%s %d.XML" % (base, titre, index)
         index += 1
         if index > 99:

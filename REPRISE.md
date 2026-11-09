@@ -494,6 +494,19 @@ l'étiquette `v1.0.1` restant sans publication. À sa demande aussi, son adresse
 est retirée de ce fichier (la table de réécriture de l'historique, plus bas) ; elle reste
 dans les versions déjà publiées de REPRISE.md.
 
+**Le premier passage des tests hors de ce PC** (journaux copiés par lui : le détail n'est
+lisible que connecté). Linux, 1 359 tests en 224 s, 2 échecs : `free_song_name` voyait libre
+« Essai.XML » à côté de « ESSAI.XML » — `sd.abs(rel).exists()` suit la casse de l'hôte, la FAT
+du Deluge la confond ; six recherches de nom libre (morceau, version d'un morceau,
+instrument, découpe, table d'onde, sauvegarde de firmware) passent désormais par
+`SDCard.exists`, casse confondue, dossiers relus sans cache — test qui simule un système
+sensible à la casse, échoue sans le correctif ; et `units.file_size` d'un dossier (4 096 sous
+Linux, 0 désormais hors fichier régulier). Windows de GitHub : le synthé GS déclaré mais
+refusé à l'ouverture (« erreur inconnue du système MIDI ») — le test passe son tour si
+`GITHUB_ACTIONS` ; et l'étape des clips au-delà du chien de garde de 120 s (pile : fin
+d'analyse de la carte, un autre fil sans code Python, numba qui compile probablement), qui
+arrête toute la suite — 600 s sur GitHub. Suite complète sur ce PC : **1 360 tests au vert** (223 s).
+
 ### Vérifié
 
 * Suite complète : **1 359 tests au vert** (214 s ; 797 du cœur, 464 d'interface, 68 de

@@ -1486,7 +1486,7 @@ def free_song_name(sd: SDCard, name: str) -> str:
     suite = re.match(r"^(?P<base>.*\S)\s+(?P<n>\d{1,3})$", base)
     stem, index = ((suite.group("base"), int(suite.group("n")) + 1) if suite
                    else (base, 2))
-    while sd.abs(rel).exists() or Path(rel).stem.upper() in _RESERVED:
+    while sd.exists(rel) or Path(rel).stem.upper() in _RESERVED:
         rel = "SONGS/%s %d.XML" % (stem, index)
         index += 1
         if index > 999:

@@ -235,7 +235,7 @@ class FirmwarePlan:
 def _backup_dir(sd: SDCard) -> str:
     base = "_BACKUP/firmware-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     rel, n = base, 2
-    while sd.abs(rel).exists():
+    while sd.exists(rel):
         rel, n = "%s-%d" % (base, n), n + 1
     return rel
 

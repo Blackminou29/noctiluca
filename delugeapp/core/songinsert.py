@@ -478,7 +478,7 @@ def next_version(sd: SDCard, stem: str) -> str:
     base, number = match.group("base"), int(match.group("n"))
     for candidate in range(number + 1, 1000):
         rel = "SONGS/%s %d.XML" % (base, candidate)
-        if not sd.abs(rel).exists():
+        if not sd.exists(rel):
             return rel
     raise ValueError(tr("trop de morceaux portent déjà ce nom"))
 

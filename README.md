@@ -710,7 +710,7 @@ delugeapp/
     widgets/             façade (écran, pads de navigation), potentiomètre,
                          enveloppe, forme d'onde, pads, piano…
 tests/
-  test_core.py           797 tests du cœur
+  test_core.py           798 tests du cœur
   test_ui.py             464 tests d'interface, dont ceux du manuel
   test_i18n.py           30 tests de la traduction
   test_atelier.py        68 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
@@ -730,7 +730,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-1 359 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+1 360 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

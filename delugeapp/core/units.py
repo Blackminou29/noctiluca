@@ -19,6 +19,7 @@ Les grandeurs suivent la langue de l'interface : « 9,9 Mio » en français,
 
 from __future__ import annotations
 
+import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -94,9 +95,11 @@ def file_size(path: Path | str) -> int:
 
     Les appelants chiffrent des plans portant sur des milliers de fichiers :
     un fichier disparu entre l'inventaire et l'affichage ne doit pas
-    interrompre le calcul.
+    interrompre le calcul. Un dossier compte pour 0 : Windows le dit, Linux
+    lui donne 4 096 octets (tests sous Linux, 9 novembre 2026).
     """
     try:
-        return Path(path).stat().st_size
+        info = Path(path).stat()
     except (OSError, ValueError):
         return 0
+    return info.st_size if stat.S_ISREG(info.st_mode) else 0

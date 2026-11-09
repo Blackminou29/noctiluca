@@ -42,7 +42,14 @@ L'arpégiateur n'a pas été vérifié sur la machine.
 
 ### 3.1 Le premier passage des tests sur GitHub
 
-Le workflow lance la suite sur Windows, macOS et Linux. Premier passage le 9 novembre (commit de la 1.0.1) : **elle échoue sous Linux** ; macOS n'a pas tourné (machines macos-14 retirées par GitHub, passé à macos-15). Le détail n'est lisible qu'avec un compte connecté : **copie-moi la fin du journal** de l'étape « Suite de tests » (onglet Actions ▸ l'exécution ▸ tests (ubuntu-22.04)). L'étape signale sans bloquer les paquets.
+Le workflow lance la suite sur Windows, macOS et Linux. Premier passage le 9 novembre (commit de la 1.0.1), journal lu grâce à toi : quatre échecs, **corrigés** (à revoir au passage suivant sur GitHub, macOS compris) —
+
+* Linux : un nom de morceau pris ne se voyait pas s'il différait par la casse (« Essai.XML » contre « ESSAI.XML »), alors que la FAT du Deluge les confond : **vrai défaut**, aussi pour les instruments, découpes, tables d'onde et firmware — `SDCard.exists`, casse confondue ;
+* Linux : un dossier « pesait » 4 096 octets (`units.file_size` : 0 hors fichier) ;
+* Windows de GitHub : le synthé GS de Microsoft déclaré mais impossible à ouvrir (pas de service audio) — le test passe son tour **seulement là** ;
+* Windows de GitHub : l'étape des clips a dépassé le délai de garde de 2 minutes et arrêté la suite — 10 minutes sur GitHub.
+
+macOS n'a pas encore tourné (machines macos-14 retirées par GitHub, passé à macos-15 pour la 1.0.2). L'étape signale sans bloquer les paquets.
 
 ### 3.2 Le MIDI hors Windows
 

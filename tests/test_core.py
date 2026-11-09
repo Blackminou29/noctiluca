@@ -6550,7 +6550,14 @@ class TestMidiPort(unittest.TestCase):
         if not ports:
             self.skipTest("aucun port de sortie MIDI autre que le Deluge")
         out = midiport.MidiOut()
-        self.assertTrue(out.open(ports[0]))
+        ouvert = out.open(ports[0])
+        if not ouvert and os.environ.get("GITHUB_ACTIONS"):
+            # Les machines Windows Server de GitHub déclarent le synthé GS de
+            # Microsoft mais refusent de l'ouvrir, faute de service audio
+            # (9 novembre 2026). Ailleurs, un refus reste une erreur.
+            self.skipTest("port %s refusé par la machine de GitHub : %s"
+                          % (ports[0].name, out.last_error))
+        self.assertTrue(ouvert, out.last_error)
         try:
             self.assertTrue(out.is_open)
             self.assertEqual(out.device.name, ports[0].name)
@@ -9128,6 +9135,32 @@ class TestSongWriter(unittest.TestCase):
                          "SONGS/Essai 3.XML")
         self.assertEqual(songwriter.free_song_name(self.sd, "SONG1"),
                          "SONGS/SONG1.XML")
+
+    def test_un_nom_pris_se_voit_casse_confondue(self):
+        """Sous Linux, « Essai.XML » ne voyait pas « ESSAI.XML », et le
+        morceau prenait un nom que la FAT du Deluge confond avec l'autre
+        (tests sur GitHub, 9 novembre 2026). Windows confondant déjà les
+        casses, un système qui les distingue est simulé ici."""
+        from unittest import mock
+
+        from delugeapp.core import songwriter
+
+        (self.root / "SONGS" / "ESSAI.XML").write_bytes(b"<song />")
+        vrai = Path.exists
+
+        def sensible(chemin, *args, **kwargs):
+            if not vrai(chemin, *args, **kwargs):
+                return False
+            parent = chemin.parent
+            return parent == chemin or chemin.name in os.listdir(parent)
+
+        with mock.patch.object(Path, "exists", sensible):
+            self.assertFalse((self.root / "SONGS" / "Essai.XML").exists())
+            self.assertTrue(self.sd.exists("SONGS/Essai.XML"))
+            self.assertTrue(self.sd.exists("songs/essai.xml"))
+            self.assertFalse(self.sd.exists("SONGS/Essai 2.XML"))
+            self.assertEqual(songwriter.free_song_name(self.sd, "Essai"),
+                             "SONGS/Essai 2.XML")
 
     def test_le_morceau_ecrit_se_relit(self):
         from delugeapp.core import songwriter

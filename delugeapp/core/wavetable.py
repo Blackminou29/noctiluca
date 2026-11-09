@@ -116,7 +116,7 @@ def write_wavetable(sd: SDCard, source_rel: str, name: str = "",
         return "", tr("son introuvable : %s") % source_rel
     stem = safe_deluge_name(name or Path(source_rel).stem) or "TABLE"
     rel, n = "%s/%s.wav" % (FOLDER, stem), 2
-    while sd.abs(rel).exists():
+    while sd.exists(rel):
         rel = "%s/%s %d.wav" % (FOLDER, stem, n)
         n += 1
     if not apply:

@@ -93,8 +93,10 @@ _MODALES_REFUSEES: list[str] = []
 
 #: Au-delà, un test est tenu pour figé : la pile de chaque fil est écrite et
 #: le processus s'arrête. Le plus long test d'interface dure une dizaine de
-#: secondes.
-_DELAI_MAX_TEST = 120
+#: secondes. Sur les machines de GitHub, bien plus lentes, l'étape des clips
+#: a dépassé 2 minutes sous Windows et arrêté toute la suite (9 novembre
+#: 2026) : 10 minutes y laissent le temps sans cacher un vrai blocage.
+_DELAI_MAX_TEST = 600 if os.environ.get("GITHUB_ACTIONS") else 120
 
 #: ``(propriétaire, nom, original)`` de chaque remplacement, pour les rendre.
 _ORIGINAUX: list[tuple[object, str, object]] = []

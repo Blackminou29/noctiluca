@@ -396,7 +396,7 @@ def _free_rel(sd: SDCard, folder: str, name: str, taken: set[str]) -> str:
     base = "SYNTHS/%s" % folder.strip("/") if folder.strip("/") else "SYNTHS"
     stem = safe_deluge_name(name or "MULTI")
     rel, index = "%s/%s.XML" % (base, stem), 2
-    while sd.abs(rel).exists() or norm_rel(rel) in taken:
+    while sd.exists(rel) or norm_rel(rel) in taken:
         rel = "%s/%s %d.XML" % (base, stem, index)
         index += 1
     return rel
