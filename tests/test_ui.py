@@ -1165,6 +1165,9 @@ class PageCase(WidgetCase):
         settings.sd_path = str(self.root)
         settings.autoplay = False
         settings.backup_dir = str(base / "sauvegardes")
+        # Les tests d'interface s'affichent en français, la langue des textes
+        # du code ; une installation neuve, elle, démarre en anglais.
+        settings.language = "fr"
         self.ctx = AppContext(settings=settings, sd=self.sd, lib=self.lib,
                               player=None)
 
@@ -1568,6 +1571,61 @@ class TestSamplesPage(PageCase):
         page._only_fav.setChecked(True)
         self.assertEqual(page._model.rowCount(), 1)
 
+    def test_un_son_va_sur_un_pad_de_favori_du_deluge(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        from delugeapp.core import favourites
+
+        page = self._page()
+        page._table.selectRow(0)
+        rel = page._current
+        self.assertEqual(page._deluge_fav_button.text(),
+                         "Sur un pad du Deluge")
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            page._deluge_fav_button.click()
+        self.assertEqual(favourites.read(self.sd, "SAMPLES"),
+                         [favourites.Favourite(0, 0, 4, rel)])
+        self.assertIn("banque 1, pad 1", page._deluge_fav.text())
+        self.assertEqual(page._deluge_fav_button.text(),
+                         "Retirer du pad du Deluge")
+        self.assertTrue(self.lib.get_rating("sample", rel)["favorite"])
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            page._deluge_fav_button.click()
+        self.assertEqual(favourites.read(self.sd, "SAMPLES"), [])
+
+    def test_une_etiquette_se_pose_au_clavier_et_au_bouton(self):
+        """``add_tag`` existait sans champ ni bouton pour l'appeler."""
+        from PyQt6.QtCore import Qt as _Qt
+        from PyQt6.QtTest import QTest
+
+        page = self._page()
+        self.assertFalse(page._tag_filter.isVisibleTo(page))
+        page._table.selectRow(0)
+        premier = page._current
+        QTest.keyClicks(page._tag_edit, "sombre")
+        QTest.keyClick(page._tag_edit, _Qt.Key.Key_Return)
+        self.assertIn("sombre", self.lib.tags_of("sample", premier))
+        self.assertEqual(page._tag_edit.text(), "")
+
+        page._table.selectRow(1)
+        page._tag_edit.setText("live")
+        page._tag_add.click()
+        self.assertIn("live", self.lib.tags_of("sample", page._current))
+
+        # Le filtre apparaît, et ne garde que les sons de l'étiquette.
+        self.assertTrue(page._tag_filter.isVisibleTo(page))
+        index = page._tag_filter.findData("sombre")
+        self.assertGreater(index, 0)
+        page._tag_filter.setCurrentIndex(index)
+        page._tag_filter.activated.emit(index)
+        self.assertEqual(page._model.rowCount(), 1)
+        page._clear_filters()
+        self.assertEqual(page._model.rowCount(), 3)
+
 
 class TestSynthsAndKits(PageCase):
 
@@ -1724,6 +1782,81 @@ class TestSongsPage(PageCase):
         midifile.clip_to_midi(target, clip, page._song.tempo_bpm)
         self.assertTrue(target.is_file())
         self.assertGreater(target.stat().st_size, 40)
+
+
+class TestEcouterUnMorceau(PageCase):
+    """La page Morceaux était la seule de la bibliothèque sans écoute :
+    pour entendre un clip, il fallait ouvrir le morceau dans l'atelier."""
+
+    def setUp(self):
+        super().setUp()
+
+        class Lecteur:
+            available = True
+            is_playing = False
+
+            def __init__(self):
+                self.joues = []
+
+            def set_volume(self, _v):
+                pass
+
+            def play_array(self, donnees, taux, loop=False):
+                self.joues.append((donnees.shape[0], taux))
+
+            def stop(self):
+                pass
+
+        self.lecteur = Lecteur()
+        self.ctx.player = self.lecteur
+
+    def _page(self):
+        from delugeapp.ui.pages.songs import SongsPage
+
+        page = self.open(SongsPage)
+        page._table.selectRow(0)
+        return page
+
+    def _attendre(self):
+        from delugeapp.ui import tasks
+
+        for _ in range(300):
+            _pump(20)
+            if tasks.active_count() == 0:
+                break
+        _pump(20)
+
+    def test_ecouter_le_clip_puis_le_morceau(self):
+        page = self._page()
+        page._clips.selectRow(0)
+        page._listen_clip_button.click()
+        self._attendre()
+        self.assertEqual(len(self.lecteur.joues), 1)
+        # La boucle entière, silence de fin compris.
+        clip = page._song.clips[0]
+        attendu = clip.bars * 4 * 60.0 / page._song.tempo_bpm * 44100
+        trames, taux = self.lecteur.joues[0]
+        self.assertEqual(taux, 44100)
+        self.assertAlmostEqual(trames, attendu, delta=2)
+        page._listen_song_button.click()
+        self._attendre()
+        self.assertEqual(len(self.lecteur.joues), 2)
+
+    def test_un_double_clic_et_espace_ecoutent_aussi(self):
+        page = self._page()
+        page._clips.selectRow(0)
+        page._clips.itemDoubleClicked.emit(page._clips.item(0, 0))
+        self._attendre()
+        page._listen()
+        self._attendre()
+        self.assertEqual(len(self.lecteur.joues), 2)
+
+    def test_arreter_pendant_le_calcul_ne_joue_rien(self):
+        page = self._page()
+        page._listen_song_button.click()
+        page._stop_button.click()
+        self._attendre()
+        self.assertEqual(self.lecteur.joues, [])
 
 
 class TestGeneratorPage(PageCase):
@@ -2315,6 +2448,315 @@ class TestMainWindowActions(MainWindowCase):
         self.assertFalse(win._progress.isVisible())
 
 
+class TestAnalyseIncrementaleParTousLesChemins(MainWindowCase):
+    """Bouton, Ctrl+R, bandeau : la même analyse, incrémentale.
+
+    Le bouton n'était incrémental que parce que ``guard`` lui transmettait le
+    booléen de ``clicked`` ; Ctrl+R et le bandeau relisaient toute la carte
+    (117 s chez l'utilisateur, le 5 novembre 2026).
+    """
+
+    def _demandes(self, win):
+        page = win._pages["Dashboard"]
+        demandes: list[bool] = []
+
+        def run(fn, *args, **kwargs):
+            demandes.append(kwargs.get("full"))
+            return None
+
+        page.run = run
+        return page, demandes
+
+    def test_le_bouton_analyse_ce_qui_a_change(self):
+        win = self.window()
+        win.go_to("Dashboard")
+        page, demandes = self._demandes(win)
+        page._scan_button.click()
+        self.assertEqual(demandes, [False])
+
+    def test_ctrl_r_analyse_ce_qui_a_change(self):
+        from PyQt6.QtGui import QAction, QKeySequence
+
+        win = self.window()
+        win.go_to("Dashboard")
+        page, demandes = self._demandes(win)
+        actions = [a for a in win.findChildren(QAction)
+                   if a.shortcut() == QKeySequence("Ctrl+R")]
+        self.assertEqual(len(actions), 1)
+        actions[0].trigger()
+        self.assertEqual(demandes, [False])
+
+    def test_le_bandeau_analyse_ce_qui_a_change(self):
+        win = self.window()
+        win.go_to("Dashboard")
+        page, demandes = self._demandes(win)
+        page._next_target = "@scan"
+        page._next_button.click()
+        self.assertEqual(demandes, [False])
+
+    def test_tout_reanalyser_relit_toute_la_carte(self):
+        from PyQt6.QtWidgets import QAbstractButton
+
+        win = self.window()
+        win.go_to("Dashboard")
+        page, demandes = self._demandes(win)
+        win.go_to("Settings")
+        _APP.processEvents()
+        boutons = [b for b in win._pages["Settings"].findChildren(
+            QAbstractButton) if b.text() == "Tout réanalyser"]
+        self.assertEqual(len(boutons), 1)
+        boutons[0].click()
+        _APP.processEvents()
+        self.assertEqual(demandes, [True])
+        self.assertEqual(type(win._stack.currentWidget()).__name__,
+                         "DashboardPage")
+
+
+class TestEcouteMuette(MainWindowCase):
+    """Sans sortie audio (l'AppImage sans ``libportaudio2``), le lecteur
+    « joue » en silence pour que l'interface suive. Rien ne le disait : le
+    curseur avançait, on n'entendait rien, sans un mot."""
+
+    def setUp(self):
+        super().setUp()
+        from delugeapp.core import audio_out
+
+        self.audio_out = audio_out
+        self.player = audio_out.Player()
+        self.player._backend = "none"
+        self.ctx.player = self.player
+        self._probleme = audio_out._SD_PROBLEM
+        self._sd = audio_out._sd
+
+    def tearDown(self):
+        self.audio_out._SD_PROBLEM, self.audio_out._sd = (self._probleme,
+                                                          self._sd)
+        self.player.stop()
+        super().tearDown()
+
+    def test_un_clic_sur_ecouter_dit_pourquoi_rien_ne_s_entend(self):
+        from unittest import mock
+
+        self.audio_out._sd = None
+        self.audio_out._SD_PROBLEM = ("PortAudio library not found")
+        win = self.window()
+        win.go_to("Samples")
+        page = win._pages["Samples"]
+        page.focus_on("SAMPLES/DRUMS/Kick/k.wav")
+        with mock.patch.object(self.audio_out.sys, "platform", "linux"):
+            page._play_button.click()
+            win._tick()
+            self.assertEqual(self.player.silent_plays, 1)
+            self.assertEqual(win._playing.text(), "● lecture muette")
+            self.assertIn("libportaudio2", win._playing.toolTip())
+            self.assertIn("libportaudio2", win.statusBar().currentMessage())
+
+            # La sauvegarde passe avant : la carte en a une ici.
+            miroir = Path(self._tmp.name) / "miroir"
+            miroir.mkdir()
+            self.ctx.settings.card_backup = str(miroir)
+            win.go_to("Dashboard")
+            accueil = win._pages["Dashboard"]
+            accueil.refresh()
+            self.assertTrue(accueil._next_card.isVisible())
+            self.assertIn("muettes", accueil._next_text.text())
+            accueil._next_button.click()
+            self.assertIs(win._stack.currentWidget(), win._pages["Settings"])
+            reglages = win._pages["Settings"]
+            _pump(50)           # Qt montre la page bâtie au tour suivant
+            self.assertTrue(reglages._silence_label.isVisibleTo(reglages))
+            self.assertIn("libportaudio2", reglages._silence_label.text())
+
+    def test_les_raisons(self):
+        from unittest import mock
+
+        self.audio_out._sd = None
+        self.audio_out._SD_PROBLEM = "absent"
+        self.assertIn("pip install sounddevice", self.player.silence_reason())
+        self.audio_out._SD_PROBLEM = "PortAudio library not found"
+        with mock.patch.object(self.audio_out.sys, "platform", "darwin"):
+            self.assertIn("PortAudio library not found",
+                          self.player.silence_reason())
+        self.player._backend = "winsound"
+        self.assertEqual(self.player.silence_reason(), "")
+
+
+class TestFirmwareDuDeluge(MainWindowCase):
+    """Outils ▸ Firmware du Deluge… : la dernière version cherchée sur
+    demande, puis la carte préparée — l'ancien .bin rangé, rien de flashé."""
+
+    def _attendre(self, condition):
+        for _ in range(250):
+            _pump(20)
+            if condition():
+                return True
+        return False
+
+    def test_preparer_la_carte_depuis_le_menu(self):
+        from unittest import mock
+
+        from PyQt6.QtGui import QAction
+
+        from delugeapp.core import firmware
+        from delugeapp.ui import firmwaredialog
+
+        (self.root / "deluge-c1_2_1.bin").write_bytes(b"a" * 300000)
+        self.sd.invalidate_cache()
+        version = firmware.FirmwareRelease(
+            "1.3.0", "v1.3.0", "deluge-c1_3_0.bin", "https://github.com/x",
+            "https://github.com/x/v1.3.0")
+        contenu = b"b" * 400000
+        vus: list[str] = []
+
+        def piloter(dialogue):
+            self.assertIn("deluge-c1_2_1.bin", dialogue.state.text())
+            self.assertFalse(dialogue.prepare_button.isEnabled())
+            dialogue.check_button.click()
+            self.assertTrue(self._attendre(
+                dialogue.prepare_button.isEnabled))
+            vus.append(dialogue.answer.text())
+            dialogue.prepare_button.click()
+            self.assertTrue(self._attendre(
+                lambda: "SHIFT" in dialogue.answer.text()))
+            vus.append(dialogue.answer.text())
+            return 0
+
+        win = self.window()
+        action = next(a for a in win.findChildren(QAction)
+                      if a.text() == "Firmware du Deluge…")
+        with mock.patch.object(firmware, "latest_release",
+                               return_value=version), \
+                mock.patch.object(firmware, "download",
+                                  return_value=contenu), \
+                mock.patch.object(firmwaredialog.FirmwareDialog, "exec",
+                                  piloter):
+            action.trigger()
+        self.assertEqual(len(vus), 2)
+        self.assertIn("1.3.0", vus[0])
+        self.assertIn("1.2.1", vus[0])
+        self.assertEqual([p.name for p in self.sd.firmware_files()],
+                         ["deluge-c1_3_0.bin"])
+        self.assertEqual((self.root / "deluge-c1_3_0.bin").read_bytes(),
+                         contenu)
+        ranges = list((self.root / "_BACKUP").glob("firmware-*/*.bin"))
+        self.assertEqual([p.name for p in ranges], ["deluge-c1_2_1.bin"])
+
+    def test_sans_accord_rien_n_est_ecrit(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        from delugeapp.core import firmware
+        from delugeapp.ui.firmwaredialog import FirmwareDialog
+
+        self.answer = QMessageBox.StandardButton.No
+        dialogue = FirmwareDialog(self.ctx)
+        dialogue.release = firmware.FirmwareRelease(
+            "1.3.0", "v1.3.0", "deluge-c1_3_0.bin", "https://github.com/x", "")
+        dialogue.prepare_button.setEnabled(True)
+        with mock.patch.object(firmware, "download",
+                               return_value=b"b" * 400000):
+            dialogue.prepare_button.click()
+            self.assertTrue(self._attendre(
+                lambda: "Rien n'a été écrit" in dialogue.answer.text()))
+        self.assertEqual(self.sd.firmware_files(), [])
+
+    def test_une_version_deja_installee_ne_se_prepare_pas(self):
+        from unittest import mock
+
+        from delugeapp.core import firmware
+        from delugeapp.ui.firmwaredialog import FirmwareDialog
+
+        (self.root / "deluge-c1_3_0.bin").write_bytes(b"a" * 300000)
+        self.sd.invalidate_cache()
+        dialogue = FirmwareDialog(self.ctx)
+        with mock.patch.object(firmware, "latest_release",
+                               return_value=firmware.FirmwareRelease(
+                                   "1.3.0", "v1.3.0", "v1.3.0.zip",
+                                   "https://github.com/x", "")):
+            dialogue.check_button.click()
+            self.assertTrue(self._attendre(
+                lambda: "déjà" in dialogue.answer.text()))
+        self.assertFalse(dialogue.prepare_button.isEnabled())
+
+
+class TestSignalerEtNouvelleVersion(MainWindowCase):
+    """Aide ▸ Signaler un problème…, Aide ▸ Rechercher une nouvelle version."""
+
+    def _action(self, win, libelle):
+        from PyQt6.QtGui import QAction
+
+        trouvees = [a for a in win.findChildren(QAction)
+                    if a.text() == libelle]
+        self.assertEqual(len(trouvees), 1, libelle)
+        return trouvees[0]
+
+    def test_le_rapport_se_relit_et_ne_montre_pas_le_dossier_personnel(self):
+        from unittest import mock
+
+        from delugeapp import config as config_mod
+        from delugeapp.ui import report
+
+        journal = Path(self._tmp.name) / "app.log"
+        journal.write_text("ERREUR dans %s\\app.log\n"
+                           % Path.home(), encoding="utf-8")
+        vus = []
+
+        def ouvrir(dialogue):
+            vus.append(dialogue.text.toPlainText())
+            with mock.patch("PyQt6.QtGui.QDesktopServices.openUrl") as web:
+                dialogue.open_button.click()
+            vus.append(web.call_args[0][0].toString())
+            return 1
+
+        win = self.window()
+        with mock.patch.object(config_mod, "LOG_PATH", journal), \
+                mock.patch.object(report.ReportDialog, "exec", ouvrir):
+            self._action(win, "Signaler un problème…").trigger()
+        texte, adresse = vus
+        self.assertIn("Noctiluca", texte)
+        self.assertIn("ERREUR dans ~", texte)
+        self.assertNotIn(str(Path.home()), texte)
+        self.assertTrue(adresse.startswith(
+            "https://github.com/Blackminou29/noctiluca/issues/new?"))
+        self.assertEqual(_APP.clipboard().text(), texte)
+
+    def test_la_recherche_dit_qu_une_version_est_disponible(self):
+        from unittest import mock
+
+        from delugeapp.core import updates
+
+        win = self.window()
+        questions = []
+        self.mw.QMessageBox.question = staticmethod(
+            lambda _p, _t, texte, *a, **k: questions.append(texte)
+            or self.mw.QMessageBox.StandardButton.No)
+        with mock.patch.object(updates, "latest_release",
+                               return_value=updates.Release(
+                                   "9.9.9", "https://github.com/x")):
+            self._action(win, "Rechercher une nouvelle version").trigger()
+            for _ in range(40):
+                _pump(25)
+                win._tick()
+                if questions:
+                    break
+        self.assertTrue(questions and "9.9.9" in questions[0], questions)
+        self.assertTrue(self.ctx.settings.last_update_check)
+
+    def test_rien_ne_part_sans_la_case(self):
+        from unittest import mock
+
+        from delugeapp.core import updates
+
+        with mock.patch.object(updates, "latest_release") as lecture:
+            win = self.window()
+            _pump(50)
+            win._tick()
+        self.assertFalse(self.ctx.settings.check_updates)
+        lecture.assert_not_called()
+        self.assertIsNone(getattr(win, "_update_timer", None))
+
+
 class TestMainWindowPersistance(MainWindowCase):
     """Géométrie, page courante et barre latérale d'une session à l'autre."""
 
@@ -2469,16 +2911,20 @@ class TestPreparationDeLEcoute(MainWindowCase):
 
     def test_fermee_avant_son_depart_la_preparation_ne_part_pas(self):
         """Elle attend que la page soit installée ; la fenêtre fermée
-        entre-temps, elle ne part plus."""
+        entre-temps, elle ne part plus — même quand sa minuterie sonne après.
+
+        Le délai était de 300 ms : sous la charge de la suite complète, bâtir
+        l'atelier les dépassait parfois avant la fermeture, et le test
+        échouait sans défaut du code (deux fois, les 7 et 8 novembre)."""
         from unittest import mock
 
-        with mock.patch.object(self.tasks, "PREPARATION_DELAY_MS", 300):
+        with mock.patch.object(self.tasks, "PREPARATION_DELAY_MS", 1500):
             win = self.window()
             win.go_to("Atelier")
             _pump(50)
             win.close()
             _APP.processEvents()
-            _pump(400)
+            _pump(1600)                     # la minuterie sonne, fenêtre close
         self.assertEqual(self.appels, [])
         self.assertNotIn("thread", self.tasks._PREPARATION)
 
@@ -2514,12 +2960,17 @@ class TestPointDEntree(unittest.TestCase):
         import logging
 
         import main as entry
+        from delugeapp import i18n
 
         self.entry = entry
         self._tmp = tempfile.TemporaryDirectory()
         self.home = Path(self._tmp.name)
         self._added: list = []
         self._log_level = logging.getLogger().level
+        # ``_build_context`` prend la langue des réglages, comme au démarrage :
+        # sans réglages, l'anglais d'une installation neuve. Les tests qui
+        # suivent s'affichent en français.
+        self.addCleanup(i18n.set_language, i18n.language())
 
     def tearDown(self):
         import logging
@@ -2786,6 +3237,46 @@ class TestPointDEntree(unittest.TestCase):
                             for ligne in journal.output))
         self.assertEqual(len(vues), 1)
         self.assertIn("erreur inattendue", vues[0].lower())
+
+    def test_la_fenetre_d_erreur_mene_au_rapport(self):
+        """[Signaler ce problème…] ouvre le rapport, la trace dedans ; [OK]
+        ne l'ouvre pas."""
+        import sys
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        from delugeapp.ui import report
+
+        rapports: list[str] = []
+
+        def cliquer(texte):
+            def exec_(box):
+                bouton = next(b for b in box.buttons() if texte in b.text())
+                bouton.click()
+                return 0
+            return exec_
+
+        sauvegarde = sys.excepthook
+        boite = mock.patch.object(report.ReportDialog, "exec", lambda d: (
+            rapports.append(d.text.toPlainText()) or 0))
+        boite.start()
+        try:
+            self.entry._install_excepthook()
+            for texte in ("OK", "Signaler"):
+                with mock.patch.object(QMessageBox, "exec", cliquer(texte)), \
+                        self.assertLogs("delugeapp", level="CRITICAL"):
+                    try:
+                        raise ValueError("erreur volontaire %s" % texte)
+                    except ValueError:
+                        sys.excepthook(*sys.exc_info())
+        finally:
+            sys.excepthook = sauvegarde
+            boite.stop()
+
+        self.assertEqual(len(rapports), 1)
+        self.assertIn("ValueError: erreur volontaire Signaler", rapports[0])
+        self.assertIn("Traceback", rapports[0])
 
     def test_hook_laisse_passer_ctrl_c(self):
         import sys
@@ -3114,6 +3605,110 @@ class TestSamplesPageProcess(SampleFixUICase):
         crete = 20.0 * np.log10(max(float(np.max(np.abs(data))), 1e-9))
         self.assertAlmostEqual(crete, -6.0, delta=0.3, msg=str(messages))
         self.assertTrue(any("corrig" in m for m in messages), messages)
+
+    def test_annuler_un_traitement_remet_l_original(self):
+        """``samplefix.restore`` n'avait pas de bouton (REPRISE §3 tritricies).
+
+        Le bouton remet les originaux ; la version remplacée reste dans
+        ``_BACKUP``, et le traitement annulé ne se propose plus.
+        """
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QInputDialog
+
+        from delugeapp.core import samplefix
+
+        cible = self.root / "SAMPLES/DRUMS/Kick/stereo.wav"
+        avant = cible.read_bytes()
+        result = samplefix.plan_mono(self.sd, self.lib).apply(self.sd,
+                                                              self.lib)
+        self.assertNotEqual(cible.read_bytes(), avant)
+        traite = cible.read_bytes()
+
+        page = self._page()
+        proposes: list = []
+
+        def choisir(_parent, _titre, _texte, libelles, *_a, **_k):
+            proposes.extend(libelles)
+            return libelles[0], True
+
+        with mock.patch.object(QInputDialog, "getItem", choisir):
+            page._undo_fix_button.click()
+            self.attendre(3000)
+        self.assertEqual(len(proposes), 1)
+        self.assertEqual(cible.read_bytes(), avant)
+        gardes = list((self.root / "_BACKUP").glob(
+            "avant-annulation-*/SAMPLES/DRUMS/Kick/stereo.wav"))
+        self.assertEqual([g.read_bytes() for g in gardes], [traite])
+        self.assertEqual(samplefix.fix_backups(self.sd), [])
+        self.assertTrue(Path(self.sd.abs(result.backup_dir + "-annule"))
+                        .is_dir())
+
+    def test_sans_traitement_rien_a_annuler(self):
+        page = self._page()
+        page._undo_fix_button.click()      # une information, rien d'écrit
+        self.assertFalse((self.root / "_BACKUP").exists())
+
+    def test_une_table_d_onde_depuis_un_son_tenu(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
+        t = np.linspace(0, 1.5, 66150, endpoint=False, dtype=np.float32)
+        wav.write(self.root / "SAMPLES/DRUMS/Kick/tenu.wav",
+                  (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32),
+                  44100)
+        from delugeapp.core import scan as scan_mod
+
+        scan_mod.scan_card(self.sd, self.lib, compute_hash=False)
+        page = self._page()
+        page._clear_filters()
+        rang = next(i for i in range(page._model.rowCount())
+                    if page._model.row_at(i)["rel"].endswith("tenu.wav"))
+        page._table.selectRow(page._proxy.mapFromSource(
+            page._model.index(rang, 0)).row())
+        self.assertTrue(page._wavetable_button.isEnabled())
+        with mock.patch.object(QInputDialog, "getText",
+                               return_value=("TENU", True)), \
+                mock.patch.object(QMessageBox, "question",
+                                  return_value=QMessageBox.StandardButton.Yes):
+            page._wavetable_button.click()
+        ecrit = self.root / "SAMPLES/WAVETABLES/TENU.wav"
+        self.assertTrue(ecrit.is_file())
+        self.assertIsNotNone(self.lib.get("sample",
+                                          "SAMPLES/WAVETABLES/TENU.wav"))
+
+    def test_creer_un_instrument_depuis_un_dossier(self):
+        """164 multi-échantillons de la carte ne servaient à rien."""
+        from unittest import mock
+
+        from delugeapp.core import scan as scan_mod
+        from delugeapp.core.model import SynthPreset
+        from delugeapp.ui.pages.samples import InstrumentDialog
+
+        dossier = self.root / "SAMPLES/MULTISAMPLES/Orgue"
+        dossier.mkdir(parents=True)
+        t = np.linspace(0, 0.5, 22050, endpoint=False, dtype=np.float32)
+        for nom, freq in (("Orgue C4.wav", 261.63), ("Orgue G4.wav", 392.0)):
+            wav.write(dossier / nom, (0.5 * np.sin(2 * np.pi * freq * t))
+                      .astype(np.float32), 44100)
+        scan_mod.scan_card(self.sd, self.lib, compute_hash=False)
+        page = self._page()
+        page._folder = "SAMPLES/MULTISAMPLES/Orgue"
+
+        def creer(dialogue):
+            self.assertEqual(dialogue._table.rowCount(), 2)
+            dialogue._create.click()
+            return 1
+
+        with mock.patch.object(InstrumentDialog, "exec", creer):
+            page._instrument_button.click()
+            self.attendre(4000)
+        ecrit = self.root / "SYNTHS/Multi/Orgue.XML"
+        self.assertTrue(ecrit.is_file())
+        self.assertEqual([r.transpose for r in SynthPreset.load(ecrit)
+                          .sound.osc1.ranges], [0, -7])
+        self.assertIsNotNone(self.lib.get("synth", "SYNTHS/Multi/Orgue.XML"))
 
     def test_la_page_annonce_que_la_carte_a_change(self):
         """``cardModified`` existe, et le mainwindow le branche par son nom."""
@@ -4359,6 +4954,54 @@ class TestPetitEcran(MainWindowCase):
                              "%s : %d colonnes sur %d à 1440 px"
                              % (cle, grand[cle][0], grand[cle][1]))
 
+    def test_l_etape_clips_tient_dans_sa_largeur(self):
+        """À 980 px, le panneau des clips n'a que 470 px ; la rangée
+        « Nouveau clip… Clip en MIDI… » en demandait 556, la rangée
+        euclidienne 592, et le panneau — sans défilement horizontal — perdait
+        sa droite : grille, légende et boutons coupés."""
+        from PyQt6.QtWidgets import QScrollArea
+
+        self.ctx.settings.interface_level = "avance"
+        win = self.window()
+        win.resize(980, 640)
+        win.go_to("Atelier")
+        atelier = win._pages["Atelier"]
+        atelier._genre_buttons["house"].click()
+        atelier._compose_button.click()
+        atelier.show_step(2)
+        zone = atelier._clip_list.parentWidget()
+        while not isinstance(zone, QScrollArea):
+            zone = zone.parentWidget()
+        for partie in ("Batterie", "Basse"):
+            rang = next(i for i, t in enumerate(atelier._project.tracks)
+                        if t.part == partie)
+            atelier._track_list.setCurrentRow(rang)
+            for _ in range(6):
+                _APP.processEvents()
+            self.assertLessEqual(zone.widget().minimumSizeHint().width(),
+                                 zone.viewport().width(), partie)
+
+    def test_une_rangee_souple_passe_a_la_ligne(self):
+        from PyQt6.QtWidgets import QWidget
+
+        from delugeapp.ui.widgets.common import RangeeSouple
+
+        hote = QWidget()
+        rangee = RangeeSouple(hote)
+        # Des widgets nus : le thème donne aux boutons 34 px au moins.
+        boutons = [QWidget() for _ in range(4)]
+        for bouton in boutons:
+            bouton.setFixedSize(100, 30)
+            rangee.addWidget(bouton)
+        self.assertEqual(rangee.minimumSize().width(), 100)
+        self.assertEqual(rangee.heightForWidth(500), 30)        # une ligne
+        self.assertEqual(rangee.heightForWidth(250), 30 + 6 + 30)
+        self.assertEqual(rangee.heightForWidth(100), 4 * 30 + 3 * 6)
+        boutons[3].hide()
+        self.assertEqual(rangee.heightForWidth(250), 30 + 6 + 30)
+        boutons[2].hide()
+        self.assertEqual(rangee.heightForWidth(250), 30)
+
     def test_la_barre_d_actions_se_replie_au_lieu_d_etre_coupee(self):
         """À 1 180 px, la page Échantillons affichait « Dans l'explorat ».
 
@@ -5445,12 +6088,34 @@ class TestMorceauxDepuisLesOutils(MainWindowCase):
         self._morceau()
 
     def test_un_nom_pris_n_est_jamais_remplace(self):
+        """Sauf accord : depuis le 7 novembre 2026, un morceau que l'atelier
+        a écrit et que rien n'a changé peut être remplacé — l'application le
+        demande. Répondre « Non » garde la règle d'avant."""
+        from PyQt6.QtWidgets import QMessageBox
+
         win = self.window()
         atelier = self._atelier(win)
         self._composer(atelier)
         self._clic(atelier._write_button)
         premier = (self.root / "SONGS" / "Essai.XML").read_bytes()
-        self._clic(atelier._write_button)
+        titres: list = []
+
+        def repondre(_parent, titre, *_a, **_k):
+            titres.append(titre)
+            return (QMessageBox.StandardButton.No
+                    if titre == "Remplacer le morceau ?"
+                    else QMessageBox.StandardButton.Yes)
+
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QInputDialog
+
+        with mock.patch.object(QInputDialog, "getText",
+                               return_value=("Essai", True)), \
+                mock.patch.object(QMessageBox, "question", repondre):
+            atelier._write_button.click()
+            _APP.processEvents()
+        self.assertIn("Remplacer le morceau ?", titres)
         self.assertEqual((self.root / "SONGS" / "Essai.XML").read_bytes(),
                          premier)
         self._morceau("Essai 2")
@@ -6431,7 +7096,7 @@ class TestEnvoyerAuDelugeFenetre(MainWindowCase):
         self.assertTrue(depose)
         self.assertFalse(win._drop_veil.isVisible())
         self.assertTrue(_attendre_les_fils(
-            lambda: (self.root / "SYNTHS" / "Amb Air.XML").is_file()))
+            lambda: (self.root / "SYNTHS" / "TJ Pack" / "Amb Air.XML").is_file()))
         self.assertTrue((self.root / "SAMPLES" / "TJ Pack" / "TJ SAMPLES"
                          / "TJ Kick" / "00-KICK.wav").is_file())
         self.assertFalse(list(self.root.rglob("._*")))
@@ -6439,7 +7104,7 @@ class TestEnvoyerAuDelugeFenetre(MainWindowCase):
         self.assertEqual(plans[0].junk, 2)
         # L'index le voit sans nouvelle analyse complète.
         self.assertTrue(_attendre_les_fils(
-            lambda: "SYNTHS/Amb Air.XML" in self.lib.known_files("synth")))
+            lambda: "SYNTHS/TJ Pack/Amb Air.XML" in self.lib.known_files("synth")))
 
     def test_annuler_ne_copie_rien(self):
         self._dialogue(False)
@@ -6503,7 +7168,7 @@ class TestEnvoyerAuDelugeFenetre(MainWindowCase):
                                lambda *a, **k: str(self.pack)):
             action.trigger()
             self.assertTrue(_attendre_les_fils(
-                lambda: (self.root / "SYNTHS" / "Amb Air.XML").is_file()))
+                lambda: (self.root / "SYNTHS" / "TJ Pack" / "Amb Air.XML").is_file()))
 
     def test_la_page_echantillons_envoie_dans_le_dossier_choisi(self):
         from unittest import mock
@@ -6589,13 +7254,13 @@ class TestLeDelugeEtLePC(CarteUsbCase):
             accepte, _voile, detail, _depose = _deposer(win, pack)
             self.assertIn("par le câble USB", detail)
             self.assertTrue(self._attendre(
-                lambda: (self.carte / "SYNTHS" / "Amb Air.XML").is_file()
+                lambda: (self.carte / "SYNTHS" / "TJ Pack" / "Amb Air.XML").is_file()
                 and not travail.busy and not travail.pending))
         self.assertTrue((self.carte / "SAMPLES" / "TJ Pack" / "TJ SAMPLES"
                          / "TJ Kick" / "00-KICK.wav").is_file())
         dernier = travail.exchanges(1)[0]
-        self.assertIn("SYNTHS/Amb Air.XML", dernier.sent)
-        self.assertTrue(any("envoyé : SYNTHS/Amb Air.XML" in ligne
+        self.assertIn("SYNTHS/TJ Pack/Amb Air.XML", dernier.sent)
+        self.assertTrue(any("envoyé : SYNTHS/TJ Pack/Amb Air.XML" in ligne
                             for ligne in journal.output), journal.output)
         self.assertNotIn("À ENVOYER", win._card_button._haut)
 
@@ -8599,6 +9264,237 @@ class TestEditeurDansLesPages(AtelierCase):
         self.assertEqual(len(page._history), historique + 1)
         self.assertEqual(page._preset.sound.display("lpfFrequency"), 50)
         self.assertTrue(messages[-1].startswith("Son retouché"))
+
+
+class TestLAtelierGardeLeTravail(AtelierCase):
+    """Ce que l'atelier ne perd plus (améliorations du 7 novembre 2026).
+
+    Défaire un geste, revenir à un son essayé, corriger une note, retrouver
+    le morceau après une fermeture, remplacer une version qu'il a écrite :
+    tout se fait en cliquant, comme l'utilisateur.
+    """
+
+    def _synthe(self, page):
+        self._onglet(page, 1)
+        return self._piste(page, "Basse", page._track_list)
+
+    def test_defaire_et_refaire_un_autre_son(self):
+        page = self._page()
+        self._composer(page)
+        piste = self._synthe(page)
+        avant = piste.preset.name
+        self.assertFalse(page._redo_button.isEnabled())
+        self._clic(page._other_sound_button)
+        apres = page._track().preset.name
+        self.assertNotEqual(apres, avant)
+        self.assertIn("autre son", page._undo_button.toolTip())
+
+        self._clic(page._undo_button)
+        self.assertEqual(page._track().preset.name, avant)
+        self.assertEqual(page._track().part, "Basse")
+        self.assertIn("Défait", self.messages[-1])
+        self._clic(page._redo_button)
+        self.assertEqual(page._track().preset.name, apres)
+
+    def test_ctrl_z_defait_une_piste_retiree(self):
+        from PyQt6.QtTest import QTest
+
+        page = self._page()
+        projet = self._composer(page)
+        pistes = len(projet.tracks)
+        self._synthe(page)
+        self._clic(page._remove_track_button)
+        self.assertEqual(len(page._project.tracks), pistes - 1)
+        page.setFocus()
+        QTest.keyClick(page, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        _APP.processEvents()
+        self.assertEqual(len(page._project.tracks), pistes)
+
+    def test_defaire_une_recomposition_rend_le_morceau(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        page = self._page()
+        premier = self._composer(page)
+        noms = [t.preset.name for t in premier.tracks if t.preset]
+        self._onglet(page, 0)
+        page._seed.setValue(page._seed.value() + 7)
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            self._clic(page._compose_button)
+        self.assertIsNot(page._project, premier)
+        self._clic(page._undo_button)
+        self.assertEqual([t.preset.name for t in page._project.tracks
+                          if t.preset], noms)
+
+    def test_un_son_essaye_se_reprend(self):
+        """Trente « Autre son » d'affilée, le 23 octobre : le bon était
+        perdu au clic suivant."""
+        page = self._page()
+        self._composer(page)
+        piste = self._synthe(page)
+        self.assertFalse(page._history_host.isVisibleTo(page))
+        premier = piste.preset.name
+        self._clic(page._other_sound_button)
+        self._clic(page._other_sound_button)
+        self.assertTrue(page._history_host.isVisibleTo(page))
+        self.assertEqual(page._history_box.count(), 2)
+        # Le plus récent en tête : le premier son est le second de la liste.
+        page._history_box.setCurrentIndex(1)
+        self.assertIn(premier, page._history_box.currentText())
+        actuel = page._track().preset.name
+        self._clic(page._history_button)
+        self.assertEqual(page._track().preset.name, premier)
+        # Le son remplacé rejoint la liste, et se défait comme le reste.
+        self.assertIn(actuel, page._history_box.itemText(0))
+        self._clic(page._undo_button)
+        self.assertEqual(page._track().preset.name, actuel)
+
+    def test_les_notes_d_un_synthe_se_dessinent(self):
+        page = self._page()
+        self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Basse", page._track_list)
+        clip = page._clip()
+        self.assertIsNotNone(clip)
+        vue = page._clip_view
+        self.assertTrue(vue.is_editable())
+        occupees = {(int(e.note), s) for e in clip.events
+                    for s in range(int(e.start),
+                                   int(e.start + e.length) or 1)}
+        note, pas = next((n, s) for s in range(clip.steps)
+                         for n in range(*vue._note_range)
+                         if (n, s) not in occupees)
+        avant = clip.note_count
+
+        from PyQt6.QtTest import QTest
+
+        def cliquer(n, s):
+            centre = vue.note_center(n, s).toPoint()
+            QTest.mouseClick(vue, Qt.MouseButton.LeftButton,
+                             Qt.KeyboardModifier.NoModifier, centre)
+            _APP.processEvents()
+
+        cliquer(note, pas)
+        self.assertEqual(clip.note_count, avant + 1)
+        self.assertIn("note ajoutée", self.messages[-1])
+        self.assertTrue(any(int(e.note) == note and int(e.start) == pas
+                            for e in piste.clip(clip.key).events))
+        cliquer(note, pas)
+        self.assertEqual(clip.note_count, avant)
+        self.assertIn("note retirée", self.messages[-1])
+
+    def test_le_morceau_revient_apres_la_fermeture(self):
+        from delugeapp.ui.pages.atelier import AtelierPage, draft_state
+
+        page = self._page()
+        projet = self._composer(page)
+        self._onglet(page, 3)
+        page._song_name.setText("MON ESSAI")
+        page.save_draft()
+        etat = draft_state()
+        self.assertIsNotNone(etat)
+        self.assertEqual(etat["step"], "Structure")
+
+        seconde = self.open(AtelierPage)
+        self.assertIsNotNone(seconde._project)
+        self.assertEqual([t.part for t in seconde._project.tracks],
+                         [t.part for t in projet.tracks])
+        self.assertEqual(seconde.current_step(), 3)
+        self.assertEqual(seconde._song_name.text(), "MON ESSAI")
+
+    def test_un_brouillon_illisible_est_mis_de_cote(self):
+        from delugeapp.ui.pages.atelier import AtelierPage, draft_paths
+
+        donnees, _fiche = draft_paths()
+        donnees.parent.mkdir(parents=True, exist_ok=True)
+        donnees.write_bytes(b"pas un brouillon")
+        page = self.open(AtelierPage)
+        self.assertIsNone(page._project)
+        self.assertFalse(donnees.exists())
+        self.assertTrue(donnees.with_name(donnees.name + ".illisible")
+                        .exists())
+
+    def test_la_fenetre_garde_le_morceau_en_se_fermant(self):
+        """Fermer l'application — ou changer de langue — le perdait."""
+        from delugeapp.ui import mainwindow as mw
+        from delugeapp.ui.pages.atelier import draft_paths
+
+        class Fenetre(MainWindowCase):
+            def runTest(self):
+                pass
+
+        fenetre_cas = Fenetre()
+        fenetre_cas.setUp()
+        try:
+            win = fenetre_cas.window()
+            win.go_to("Atelier")
+            page = win._pages["Atelier"]
+            self._clic(page._genre_buttons["house"])
+            self._clic(page._compose_button)
+            donnees, _fiche = draft_paths()
+            donnees.unlink(missing_ok=True)
+            win.close()
+            self.assertTrue(donnees.is_file())
+            self.assertIsInstance(win, mw.MainWindow)
+        finally:
+            fenetre_cas.tearDown()
+
+    def test_une_version_ecrite_par_l_atelier_se_remplace(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
+        page = self._page()
+        self._composer(page)
+        chemin = self._ecrire(page, "REPRISE")
+        premier = chemin.read_bytes()
+        self.assertIn("SONGS/REPRISE.XML", page._project.written)
+
+        # Une retouche, puis la même écriture : la question vient, Oui.
+        self._synthe(page)
+        self._clic(page._other_sound_button)
+        questions = []
+
+        def repondre(_parent, titre, *_a, **_k):
+            questions.append(titre)
+            return QMessageBox.StandardButton.Yes
+
+        with mock.patch.object(QInputDialog, "getText",
+                               return_value=("REPRISE", True)), \
+                mock.patch.object(QMessageBox, "question", repondre):
+            self._clic(page._write_button)
+        self.assertIn("Remplacer le morceau ?", questions)
+        self.assertNotIn("REPRISE 2.XML", self._morceaux())
+        self.assertNotEqual(chemin.read_bytes(), premier)
+        gardes = list((self.root / "_BACKUP").glob(
+            "remplaces-*/SONGS/REPRISE.XML"))
+        self.assertEqual([g.read_bytes() for g in gardes], [premier])
+
+    def test_un_morceau_change_sur_la_machine_ne_se_remplace_pas(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
+        page = self._page()
+        self._composer(page)
+        chemin = self._ecrire(page, "MACHINE")
+        # Le Deluge l'a réenregistré : il n'est plus celui de l'atelier.
+        chemin.write_bytes(chemin.read_bytes() + b"\n")
+        questions = []
+
+        def repondre(_parent, titre, *_a, **_k):
+            questions.append(titre)
+            return QMessageBox.StandardButton.Yes
+
+        with mock.patch.object(QInputDialog, "getText",
+                               return_value=("MACHINE", True)), \
+                mock.patch.object(QMessageBox, "question", repondre):
+            self._clic(page._write_button)
+        self.assertNotIn("Remplacer le morceau ?", questions)
+        self.assertIn("MACHINE 2.XML", self._morceaux())
+        self.assertTrue(chemin.read_bytes().endswith(b"\n"))
 
 
 # --------------------------------------------------------------------------- #

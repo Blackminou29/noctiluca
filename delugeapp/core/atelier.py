@@ -30,7 +30,9 @@ preset.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
+import pickle
 import random
 import re
 import xml.etree.ElementTree as ET
@@ -53,7 +55,8 @@ __all__ = [
     "live_notes", "listen_sounds", "insertion_plan", "clone_project",
     "edit_sound", "FEELS", "feels_for", "toggle_hit", "groove_clip",
     "add_euclid", "fullest_section", "arrangement_parts", "export_midi",
-    "part_for", "use_preset", "use_kit",
+    "part_for", "use_preset", "use_kit", "toggle_note", "dump_draft",
+    "load_draft", "DRAFT_FORMAT",
 ]
 
 #: Natures de piste, comme sur le Deluge.
@@ -231,6 +234,11 @@ class Project:
     song_name: str = ""
     #: Disposition et version du morceau importé (``songinsert``).
     song_firmware: str = ""
+    #: Morceaux que l'atelier a écrits : chemin -> empreinte SHA-256 du
+    #: fichier tel qu'il l'a laissé. Tant que la carte garde ce fichier à
+    #: l'octet près, l'atelier peut le remplacer par une nouvelle version au
+    #: lieu de numéroter (``songwriter.write_song(replace=…)``).
+    written: dict[str, str] = field(default_factory=dict)
     _next_uid: int = 1
 
     def track(self, uid: int) -> AtelierTrack | None:
@@ -540,6 +548,47 @@ def toggle_hit(project: Project, uid: int, key: str, row: str, step: int,
                                                               int(velocity)))))
         hits.sort(key=lambda s: float(s.pos))
     return not present
+
+
+def toggle_note(project: Project, uid: int, key: str, note: int, step: int,
+                length: float = 2.0, velocity: int = 90) -> bool:
+    """Ajoute ou retire une note dans un clip de synthé, à la case ``step``
+    de la hauteur ``note``. Rend vrai si une note y est désormais.
+
+    Un clic sur une note la retire, où qu'on la touche. Une note neuve dure
+    une croche (``length`` pas), raccourcie s'il le faut pour ne pas
+    chevaucher la suivante de même hauteur — le Deluge ignore une note qui
+    chevauche la précédente sur sa rangée. Sur une piste monophonique (CV),
+    les notes qu'elle recouvre sont retirées.
+    """
+    track = project.track(uid)
+    clip = track.clip(key) if track is not None else None
+    if clip is None or track.is_drums or clip.pattern is not None:
+        raise ValueError(tr("clip inconnu"))
+    if clip.existing is not None:
+        raise ValueError(tr("ce clip est déjà sur le Deluge"))
+    step, note = int(step), int(note)
+    if not 0 <= step < clip.steps or not 0 <= note <= 127:
+        raise ValueError(tr("case hors du clip"))
+    touched = [e for e in clip.events if int(e.note) == note
+               and float(e.start) <= step < float(e.start) + float(e.length)]
+    if touched:
+        for event in touched:
+            clip.events.remove(event)
+        return False
+    end = min(float(step) + max(0.25, float(length)), float(clip.steps))
+    for event in clip.events:
+        if int(event.note) == note and step < float(event.start) < end:
+            end = float(event.start)
+    if track.mono:
+        clip.events[:] = [e for e in clip.events
+                          if float(e.start) + float(e.length) <= step
+                          or float(e.start) >= end]
+    clip.events.append(NoteEvent(start=float(step), length=end - step,
+                                 note=note,
+                                 velocity=max(1, min(100, int(velocity)))))
+    clip.events.sort(key=lambda e: (float(e.start), int(e.note)))
+    return True
 
 
 def groove_clip(project: Project, uid: int, key: str, groove: str,
@@ -1630,3 +1679,74 @@ def insertion_plan(project: Project, sd, lib=None, name: str = ""):
 def clone_project(project: Project) -> Project:
     """Copie indépendante (pour annuler, ou pour essayer)."""
     return copy.deepcopy(project)
+
+
+# --------------------------------------------------------------------------- #
+# Le brouillon : le morceau en cours survit à la fermeture
+# --------------------------------------------------------------------------- #
+
+#: Version du brouillon. Un brouillon d'une autre version n'est pas repris.
+DRAFT_FORMAT = 1
+
+
+def dump_draft(project: Project, meta: dict | None = None) -> bytes:
+    """Le projet tel quel, pour le reprendre au prochain lancement.
+
+    ``pickle`` plutôt qu'un format écrit à la main : un projet porte des
+    presets et des kits entiers, leurs documents XML compris, et rien ne doit
+    s'en perdre — un son retouché, un kit dont on a changé trois rangées. Le
+    fichier ne se lit que depuis le dossier de configuration de
+    l'application, qui l'a écrit.
+    """
+    return pickle.dumps({"format": DRAFT_FORMAT, "meta": dict(meta or {}),
+                         "project": project},
+                        protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_draft(data: bytes) -> tuple[Project, dict]:
+    """Le projet d'un brouillon, et ce qu'on avait noté avec lui.
+
+    Lève ``ValueError`` sur un brouillon illisible ou d'une autre version.
+    Un champ ajouté au code depuis l'écriture du brouillon reçoit sa valeur
+    par défaut (:func:`_fill_defaults`) : ``pickle`` ne passe pas par le
+    constructeur.
+    """
+    try:
+        payload = pickle.loads(data)
+    except Exception as exc:  # noqa: BLE001 - classe disparue, octets abîmés
+        raise ValueError(str(exc) or type(exc).__name__) from exc
+    if not isinstance(payload, dict) \
+            or payload.get("format") != DRAFT_FORMAT \
+            or not isinstance(payload.get("project"), Project):
+        raise ValueError(tr("brouillon d'une autre version"))
+    project = payload["project"]
+    _fill_defaults(project)
+    return project, dict(payload.get("meta") or {})
+
+
+def _fill_defaults(root) -> None:
+    """Donne leur valeur par défaut aux champs absents des dataclasses."""
+    seen: set[int] = set()
+    pile = [root]
+    while pile:
+        obj = pile.pop()
+        if id(obj) in seen or isinstance(obj, (str, bytes, int, float,
+                                               ET.Element)):
+            continue
+        seen.add(id(obj))
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            etat = getattr(obj, "__dict__", None)
+            if etat is None:           # dataclass à ``__slots__``
+                continue
+            for champ in dataclasses.fields(obj):
+                if champ.name in etat:
+                    continue
+                if champ.default is not dataclasses.MISSING:
+                    setattr(obj, champ.name, copy.copy(champ.default))
+                elif champ.default_factory is not dataclasses.MISSING:
+                    setattr(obj, champ.name, champ.default_factory())
+            pile.extend(etat.values())
+        elif isinstance(obj, dict):
+            pile.extend(obj.values())
+        elif isinstance(obj, (list, tuple, set)):
+            pile.extend(obj)

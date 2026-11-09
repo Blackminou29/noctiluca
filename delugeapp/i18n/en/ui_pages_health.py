@@ -133,6 +133,8 @@ TEXTS = {
         "No broken reference can be relinked automatically.",
     "Réparation des références": "Repairing references",
     "%d échantillon(s), %s au total": "%d sample(s), %s in total",
+    "%d enregistrement(s) du Deluge laissé(s) en place":
+        "%d Deluge recording(s) left in place",
     "Aucun échantillon inutilisé.": "No unused sample.",
     "Archivage des échantillons inutilisés": "Archiving unused samples",
     "(archive)": "(archive)",

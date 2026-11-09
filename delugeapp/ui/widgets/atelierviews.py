@@ -224,11 +224,17 @@ class ClipView(QWidget):
     Une batterie se dessine à la souris quand la vue est modifiable
     (:meth:`set_clip` avec ``editable``) : un clic sur une case émet
     :attr:`hitToggled` avec la rangée et le pas, et la page allume ou éteint
-    le coup.
+    le coup. Un clip de synthé aussi : :attr:`noteToggled` donne la hauteur
+    et le pas, et la page ajoute la note ou retire celle qu'on a touchée.
     """
 
     #: Un clic dans la grille d'une batterie : (rangée, pas).
     hitToggled = pyqtSignal(str, int)
+    #: Un clic dans la grille d'un synthé : (note MIDI, pas).
+    noteToggled = pyqtSignal(int, int)
+
+    #: Hauteurs montrées au moins, pour un clip de synthé qu'on dessine.
+    EDIT_SPAN = 24
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -242,6 +248,11 @@ class ClipView(QWidget):
         self._empty = (tr("Aucun clip choisi"),
                        tr("Choisissez une piste et un de ses clips"))
         self._playhead: float | None = None
+        #: Plage de hauteurs d'un clip de synthé qu'on dessine : gardée d'un
+        #: clic à l'autre, sans quoi la grille sautait dès qu'on retirait la
+        #: note la plus haute.
+        self._note_range: tuple[int, int] | None = None
+        self._clip_id: int | None = None
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -261,9 +272,10 @@ class ClipView(QWidget):
         le haut ; une vue modifiable les montre toutes, même sans coup, pour
         qu'on puisse en ajouter."""
         self._color = color or GOLD
-        self._editable = bool(editable) and clip is not None \
-            and clip.pattern is not None
+        self._editable = bool(editable) and clip is not None
         self._hover = None
+        meme = clip is not None and id(clip) == self._clip_id
+        self._clip_id = id(clip) if clip is not None else None
         if clip is None:
             self._events, self._pattern, self._rows = [], None, []
             self._steps = 16
@@ -278,12 +290,61 @@ class ClipView(QWidget):
                 self._rows = names
             else:
                 self._rows = []
+                self._note_range = self._span_for(
+                    self._note_range if meme and self._editable else None)
         self.setCursor(Qt.CursorShape.PointingHandCursor if self._editable
                        else Qt.CursorShape.ArrowCursor)
         self.update()
 
     def is_editable(self) -> bool:
         return self._editable
+
+    def _span_for(self, kept: tuple[int, int] | None) -> tuple[int, int]:
+        """Les hauteurs que montre un clip de synthé : celles de ses notes,
+        une de plus de part et d'autre ; deux octaves au moins quand on le
+        dessine, autour de ses notes ou du do 4 d'un clip vide."""
+        notes = [int(e.note) for e in self._events]
+        if notes:
+            low, high = min(notes), max(notes)
+        else:
+            low = high = 60
+        minimum = self.EDIT_SPAN if self._editable else 12
+        if high - low < minimum - 1:
+            centre = (high + low) // 2
+            low, high = centre - minimum // 2, centre + minimum // 2
+        low, high = max(0, low - 1), min(127, high + 1)
+        if kept is not None:
+            low, high = min(low, kept[0]), max(high, kept[1])
+        return low, high
+
+    def _note_geometry(self) -> tuple[QRectF, QRectF, float, float, int]:
+        """``(zone, grille, largeur d'un pas, hauteur d'une note, plus basse
+        note)`` d'un clip de synthé."""
+        area = QRectF(self.rect()).adjusted(11, 11, -11, -11)
+        low, high = self._note_range or self._span_for(None)
+        label_w = min(46.0, area.width() * 0.09)
+        grid = area.adjusted(label_w, 0, 0, 0)
+        return (area, grid, grid.width() / float(self._steps),
+                grid.height() / float(high - low + 1), low)
+
+    def note_at(self, x: float, y: float) -> tuple[int, int] | None:
+        """La case d'un synthé sous un point : ``(note, pas)``."""
+        if self._pattern is not None or self._clip_id is None:
+            return None
+        _area, grid, cell_w, row_h, low = self._note_geometry()
+        if not grid.contains(QPointF(x, y)) or cell_w <= 0 or row_h <= 0:
+            return None
+        col = int((x - grid.left()) // cell_w)
+        note = low + int((grid.bottom() - y) // row_h)
+        if not 0 <= col < self._steps:
+            return None
+        return note, col
+
+    def note_center(self, note: int, step: int) -> QPointF:
+        """Le centre de la case ``(note, step)`` — pour viser un clic."""
+        _area, grid, cell_w, row_h, low = self._note_geometry()
+        return QPointF(grid.left() + (int(step) + 0.5) * cell_w,
+                       grid.bottom() - (int(note) - low + 0.5) * row_h)
 
     def rows(self) -> list[str]:
         """Les rangées d'une batterie, du bas vers le haut."""
@@ -321,7 +382,9 @@ class ClipView(QWidget):
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - API Qt
         if not self._editable:
             return
-        case = self.cell_at(event.position().x(), event.position().y())
+        x, y = event.position().x(), event.position().y()
+        case = self.cell_at(x, y) if self._pattern is not None \
+            else self.note_at(x, y)
         if case != self._hover:
             self._hover = case
             self.update()
@@ -334,9 +397,15 @@ class ClipView(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
         if self._editable and event.button() == Qt.MouseButton.LeftButton:
-            case = self.cell_at(event.position().x(), event.position().y())
-            if case is not None:
-                self.hitToggled.emit(case[0], case[1])
+            x, y = event.position().x(), event.position().y()
+            if self._pattern is not None:
+                case = self.cell_at(x, y)
+                if case is not None:
+                    self.hitToggled.emit(case[0], case[1])
+            else:
+                case = self.note_at(x, y)
+                if case is not None:
+                    self.noteToggled.emit(case[0], case[1])
         super().mouseReleaseEvent(event)
 
     def set_playhead(self, step: float | None) -> None:
@@ -356,7 +425,7 @@ class ClipView(QWidget):
             p.setPen(QPen(QColor(BORDER), 1))
             p.setBrush(QColor(PANEL_LO))
             p.drawRoundedRect(area, 12, 12)
-            if self.is_empty() and not (self._editable and self._rows):
+            if self.is_empty() and not self._editable:
                 self._paint_empty(p, area)
             elif self._pattern is not None:
                 self._paint_drums(p, area.adjusted(10, 10, -10, -10))
@@ -433,12 +502,7 @@ class ClipView(QWidget):
         self._paint_playhead(p, grid, cell_w)
 
     def _paint_notes(self, p: QPainter, area: QRectF) -> None:
-        notes = [int(e.note) for e in self._events]
-        low, high = min(notes), max(notes)
-        if high - low < 11:
-            centre = (high + low) // 2
-            low, high = centre - 6, centre + 6
-        low, high = low - 1, high + 1
+        low, high = self._note_range or self._span_for(None)
         span = high - low + 1
         label_w = min(46.0, area.width() * 0.09)
         grid = area.adjusted(label_w, 0, 0, 0)
@@ -461,6 +525,21 @@ class ClipView(QWidget):
                            | Qt.AlignmentFlag.AlignVCenter,
                            note_to_name(note))
         self._grid(p, grid, cell_w)
+        if self._editable:
+            # Un trait par demi-ton : de quoi viser une hauteur à la souris.
+            p.setPen(QPen(QColor(mix(PANEL_LO, GREY, 0.25)), 1))
+            for note in range(low + 1, high + 1):
+                y = grid.bottom() - (note - low) * row_h
+                p.drawLine(QPointF(grid.left(), y), QPointF(grid.right(), y))
+        if self._editable and self._hover is not None \
+                and isinstance(self._hover[0], int):
+            note, col = self._hover
+            top = grid.bottom() - (int(note) - low + 1) * row_h
+            p.setPen(QPen(QColor(GOLD), 1.4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(grid.left() + col * cell_w + 1, top + 1,
+                                     max(3.0, cell_w - 2),
+                                     max(3.0, row_h - 2)), 3, 3)
         for event in self._events:
             top = grid.bottom() - (int(event.note) - low + 1) * row_h
             rect = QRectF(grid.left() + float(event.start) * cell_w + 1,

@@ -25,6 +25,7 @@ Deux points qui ne sont pas de simples détails d'assemblage :
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings, Qt, QTimer
@@ -53,6 +54,7 @@ from . import icons, tasks
 from .theme import (
     GOLD,
     GREY,
+    PAD_AMBER,
     PAD_GREEN,
     apply_theme,
     page_color,
@@ -208,6 +210,16 @@ class MainWindow(QMainWindow):
         self.restart_requested = False
         #: Les entrées du menu Langue, par code.
         self._language_actions: dict[str, QAction] = {}
+        # Un morceau laissé dans l'atelier à la dernière séance : l'accueil
+        # propose de le reprendre avant même que l'atelier soit ouvert.
+        if getattr(ctx, "atelier_state", None) is None:
+            try:
+                from .pages.atelier import draft_state
+
+                ctx.atelier_state = draft_state()
+            except Exception:  # noqa: BLE001 - une fiche abîmée ne bloque rien
+                log.debug("fiche du brouillon de l'atelier illisible",
+                          exc_info=True)
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(icons.app_icon(256))
@@ -251,6 +263,22 @@ class MainWindow(QMainWindow):
 
         self._restore_state()
         self._fit_header(self.width())
+        #: Réponse de la vérification de version, posée par son fil :
+        #: ``(demandée, version ou None)`` ; relevée par :meth:`_tick`.
+        self._update_answer = None
+        #: La première écoute muette a-t-elle été expliquée ?
+        self._silence_told = False
+        if getattr(ctx.settings, "check_updates", False):
+            from ..core import updates
+
+            if updates.due(ctx.settings.last_update_check):
+                # Une minuterie de la fenêtre, branchée sur une méthode : une
+                # fermeture la débranche (voir la minuterie du brouillon de
+                # l'atelier).
+                self._update_timer = QTimer(self)
+                self._update_timer.setSingleShot(True)
+                self._update_timer.timeout.connect(self._auto_update_check)
+                self._update_timer.start(4000)
         # Le choix de la carte se fait après l'affichage, pour que la fenêtre
         # soit visible derrière la boîte de dialogue.
         QTimer.singleShot(150, self._check_card)
@@ -832,9 +860,21 @@ class MainWindow(QMainWindow):
         try:
             player = self.ctx.player
             playing = bool(player is not None and player.is_playing)
-            self._playing.setText(tr("● lecture") if playing else "")
+            # Sans sortie audio, la lecture avance en silence : l'indicateur
+            # le dit, et la première fois la barre d'état dit pourquoi.
+            muette = playing and not player.available
+            self._playing.setText(tr("● lecture muette") if muette
+                                  else tr("● lecture") if playing else "")
             self._playing.setStyleSheet(
-                f"color: {PAD_GREEN};" if playing else "")
+                f"color: {PAD_AMBER};" if muette
+                else f"color: {PAD_GREEN};" if playing else "")
+            self._playing.setToolTip(player.silence_reason() if muette else "")
+            silences = getattr(player, "silent_plays", 0) if player else 0
+            if silences and not getattr(self, "_silence_told", False):
+                self._silence_told = True
+                self.statusBar().showMessage(
+                    tr("Rien ne s'entend : %s.") % player.silence_reason(),
+                    15000)
             self._play_button.set_icon_name("stop" if playing else "play")
             self._play_button.set_state(PAD_GREEN if playing else GREY,
                                         playing)
@@ -845,6 +885,9 @@ class MainWindow(QMainWindow):
                 self._progress.set_busy(True)
 
             self._poll_midi()
+            if self._update_answer is not None:
+                answer, self._update_answer = self._update_answer, None
+                self._update_known(*answer)
         except Exception as exc:  # noqa: BLE001 - un indicateur ne casse rien
             log.debug("barre d'état : %s", exc)
 
@@ -975,6 +1018,8 @@ class MainWindow(QMainWindow):
                          self.open_live_window, "Ctrl+D")
         self._add_action(tools_menu, tr("Synchroniser avec le Deluge"),
                          self.sync_deluge, "Ctrl+Shift+D")
+        self._add_action(tools_menu, tr("Firmware du Deluge…"),
+                         self.open_firmware)
         tools_menu.addSeparator()
         self._level_action = self._add_action(
             tools_menu, tr("Mode avancé"), self.toggle_level, "Ctrl+E")
@@ -992,6 +1037,11 @@ class MainWindow(QMainWindow):
         help_menu.addSeparator()
         self._add_action(help_menu, tr("Raccourcis clavier"),
                          self._show_shortcuts)
+        help_menu.addSeparator()
+        self._add_action(help_menu, tr("Signaler un problème…"),
+                         self.report_problem)
+        self._add_action(help_menu, tr("Rechercher une nouvelle version"),
+                         lambda: self.check_for_update(manual=True))
         self._add_action(help_menu, tr("À propos"), self._show_about)
 
     def _build_language_menu(self, bar) -> None:
@@ -1147,6 +1197,8 @@ class MainWindow(QMainWindow):
             "cardChanged": self._card_changed,
             "accentChanged": self._accent_changed,
             "resetIndexRequested": self.refresh_all,
+            "fullScanRequested": lambda: self._safely(
+                lambda: self.scan_card(full=True)),
             "openInGenerator": self._open_in_generator,
             "liveRequested": self.open_live_window,
             "sendRequested": self.send_to_deluge,
@@ -1278,13 +1330,17 @@ class MainWindow(QMainWindow):
 
     # -- actions ------------------------------------------------------------ #
 
-    def scan_card(self) -> None:
-        """Lance l'analyse depuis le tableau de bord, qui la porte déjà."""
+    def scan_card(self, full: bool = False) -> None:
+        """Lance l'analyse depuis le tableau de bord, qui la porte déjà.
+
+        Incrémentale (Ctrl+R, menu Fichier) ; ``full`` relit toute la carte
+        (Réglages ▸ [Tout réanalyser]).
+        """
         self.go_to("Dashboard")
         page = self._pages.get("Dashboard")
         starter = getattr(page, "_start_scan", None)
         if callable(starter):
-            starter()
+            starter(full=bool(full))
 
     def toggle_play(self) -> None:
         """Arrête la lecture en cours, ou relance l'écoute de la page."""
@@ -1568,6 +1624,8 @@ class MainWindow(QMainWindow):
             (tr("Ctrl+Maj+D"), tr("Synchroniser avec le Deluge")),
             ("Ctrl+D", tr("Deluge en direct")),
             ("Ctrl+B", tr("Replier la barre latérale")),
+            ("Ctrl+Z, Ctrl+Y", tr("Dans l'atelier : défaire, puis refaire "
+                                  "le dernier geste")),
             (tr("Espace"), tr("Écouter / arrêter")),
             ("Ctrl+1 … Ctrl+0", tr("Aller à la page correspondante, de "
                                    "l'accueil à la santé de la carte")),
@@ -1582,6 +1640,75 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, tr("Raccourcis clavier"),
             f"<table style='border-collapse:collapse'>{body}</table>")
+
+    # -- signaler un problème, nouvelles versions ------------------------ #
+
+    def open_firmware(self) -> None:
+        """Préparer la carte pour une nouvelle version du firmware."""
+        from .firmwaredialog import FirmwareDialog
+
+        FirmwareDialog(self.ctx, self).exec()
+
+    def report_problem(self) -> None:
+        """Le rapport à relire, puis la page des tickets sur GitHub."""
+        from ..config import LOG_PATH
+        from .report import ReportDialog
+
+        ReportDialog(self.ctx, LOG_PATH, self).exec()
+
+    def check_for_update(self, manual: bool = True) -> None:
+        """Lit la dernière version publiée, dans un fil : le réseau peut
+        être lent, ou absent. Rien ne part sans qu'on l'ait demandé — le
+        menu, ou la case des réglages."""
+        import threading
+
+        from ..core import updates
+
+        self.ctx.settings.last_update_check = datetime.now().isoformat(
+            timespec="seconds")
+        self._safely(self.ctx.save)
+        if manual:
+            self.statusBar().showMessage(
+                tr("Recherche d'une nouvelle version…"), 5000)
+
+        def lire() -> None:
+            self._update_answer = (manual, updates.latest_release())
+
+        threading.Thread(target=lire, name="versions", daemon=True).start()
+
+    def _auto_update_check(self) -> None:
+        self._safely(lambda: self.check_for_update(manual=False))
+
+    def _update_known(self, manual: bool, release) -> None:
+        from ..core import updates
+
+        if release is not None and updates.is_newer(release.version):
+            self._safely(lambda: self._announce_update(release))
+        elif manual and release is None:
+            QMessageBox.information(
+                self, tr("Nouvelle version"),
+                tr("La page des versions n'a pas répondu : pas de réseau, "
+                   "ou GitHub indisponible. Réessayez plus tard."))
+        elif manual:
+            QMessageBox.information(
+                self, tr("Nouvelle version"),
+                tr("Vous avez la dernière version : %s %s.")
+                % (APP_NAME, __version__))
+
+    def _announce_update(self, release) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        self.statusBar().showMessage(
+            tr("%s %s est disponible.") % (APP_NAME, release.version), 15000)
+        answer = QMessageBox.question(
+            self, tr("Nouvelle version"),
+            tr("%s %s est disponible (vous avez la %s). Ouvrir sa page de "
+               "téléchargement ?") % (APP_NAME, release.version, __version__),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(release.url))
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -1681,6 +1808,12 @@ class MainWindow(QMainWindow):
 
         self._ticker.stop()
         self._link_timer.stop()
+        # Le morceau de l'atelier, tel qu'on le laisse : il revient au
+        # prochain lancement — après un changement de langue aussi.
+        atelier_page = self._pages.get("Atelier")
+        if atelier_page is not None and getattr(atelier_page, "_built",
+                                                False):
+            atelier_page.save_draft()
         if self._live_window is not None:
             self._live_window.close()
         if self._manual_window is not None:

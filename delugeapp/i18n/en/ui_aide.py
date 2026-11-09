@@ -2,6 +2,36 @@
 """Anglais de ``delugeapp/ui/aide.py`` : ce que fait chaque commande."""
 
 TEXTS = {
+    "Au démarrage, au plus une fois par jour, lit sur GitHub le numéro de la "
+    "dernière version, et vous prévient si elle est plus récente. Rien "
+    "d'autre ne part sur le réseau":
+        "At start-up, at most once a day, reads the number of the latest "
+        "version on GitHub, and tells you if it is newer. Nothing else goes "
+        "out on the network",
+    "**Écrit sur la carte.** Tire du son choisi une table d'onde — une "
+    "période prélevée 64 fois, du début à la fin — et l'écrit dans "
+    "SAMPLES/WAVETABLES, après votre accord":
+        "**Writes to the card.** Draws a wavetable from the chosen sound — one "
+        "period taken 64 times, from start to end — and writes it into "
+        "SAMPLES/WAVETABLES, after your go-ahead",
+    "**Écrit sur la carte.** Pose le son sur le premier pad libre des "
+    "favoris d'échantillons du Deluge — ou l'en retire —, après votre accord":
+        "**Writes to the card.** Puts the sound on the first free pad of the "
+        "Deluge's sample favourites — or takes it off —, after your go-ahead",
+    "Fait des sons d'un dossier un preset multi-échantillon : une tranche du "
+    "clavier par son, la hauteur lue dans le nom ou à l'écoute. Le plan est "
+    "montré avant d'écrire dans SYNTHS":
+        "Turns a folder's sounds into a multisample preset: one keyboard "
+        "range per sound, the pitch read from the name or by listening. The "
+        "plan is shown before writing into SYNTHS",
+    "Les sons que la piste a eus avant celui-ci, du plus récent au plus "
+    "ancien : ce que « Autre son » a remplacé n'est pas perdu":
+        "The sounds the track had before this one, newest first: what "
+        "“Another sound” replaced is not lost",
+    "Rend à la piste le son choisi dans la liste d'à côté ; le son actuel y "
+    "prend sa place":
+        "Gives the track back the sound chosen in the list next to it; the "
+        "current sound takes its place there",
     "Le nom est demandé et le plan montré avant d'écrire ; aucun fichier "
     "existant n'est remplacé":
         "You are asked for a name and shown the plan before anything is "
@@ -321,6 +351,28 @@ TEXTS = {
     "faudra relancer une analyse":
         "Empties the application's index. **The card is not touched**; you "
         "will need to run a scan again",
+    "Relit chaque fichier de la carte, même ceux qui n'ont pas changé, et "
+    "refait empreintes et mesures. La carte n'est que lue ; [Analyser la "
+    "carte] suffit d'ordinaire":
+        "Reads every file of the card again, even unchanged ones, and redoes "
+        "fingerprints and measurements. The card is only read; [Scan card] "
+        "is usually enough",
+    "Le nom d'une étiquette à poser sur ce son — « sombre », « à garder », "
+    "« live »… Entrée l'ajoute ; elle reste sur l'ordinateur, pas sur la "
+    "carte":
+        "The name of a tag to put on this sound — “dark”, “keeper”, "
+        "“live”… Enter adds it; it stays on the computer, not on the card",
+    "Pose l'étiquette écrite à côté sur le son choisi":
+        "Puts the tag typed next to it on the chosen sound",
+    "**Écrase des fichiers.** Remet les originaux d'un traitement précédent, "
+    "gardés dans _BACKUP ; la version actuelle y est mise de côté avant":
+        "**Overwrites files.** Puts back the originals of an earlier "
+        "treatment, kept in _BACKUP; the current version is set aside there "
+        "first",
+    "Ne montre que les sons qui portent une étiquette ; il apparaît dès que "
+    "vous en avez posé une":
+        "Shows only the sounds that carry a tag; it appears as soon as you "
+        "have put one",
     "Garde-fou : aucune écriture sur la carte sans une question préalable":
         "Safeguard: nothing is written to the card without asking first",
     "Garde-fou : chaque XML réécrit laisse une copie .bak datée à côté de lui":
@@ -550,6 +602,16 @@ TEXTS = {
         "Opens the chosen song in the studio: its tracks, clips and "
         "sections become the project's, and the studio completes it "
         "without rewriting it. Nothing is changed",
+    "Calcule le morceau entier sur l'ordinateur, sur son arrangement et "
+    "avec les sons de chaque clip, puis le joue. Rien n'est écrit":
+        "Computes the whole song on the computer, along its arrangement and "
+        "with each clip's sounds, then plays it. Nothing is written",
+    "Calcule le clip choisi comme la machine le joue, sur toute sa boucle, "
+    "puis le joue. Un double-clic sur un clip fait de même":
+        "Computes the chosen clip the way the machine plays it, over its "
+        "whole loop, then plays it. Double-clicking a clip does the same",
+    "Arrête l'écoute, et le calcul s'il tourne encore":
+        "Stops the playback, and the computation if it is still running",
     "Le son rejoint le morceau de l'atelier, à la piste de son rôle — "
     "la basse pour une basse, les accords pour une nappe —, ou le "
     "prochain morceau s'il n'y en a pas : vous l'entendez en "

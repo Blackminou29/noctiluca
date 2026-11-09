@@ -558,8 +558,23 @@ class GeneratorPage(Page):
             role=self._role.currentData() or "bass",
             seed=int(self._seed.value()),
             mode=self._mode.currentData() or "",
+            wavetables=self._wavetables(),
             **{key: slider.value() / 100.0
                for key, slider in self._macros.items()})
+
+    def _wavetables(self) -> list[str]:
+        """Les tables d'onde de la carte (``SAMPLES/WAVETABLES``) : un genre
+        qui emploie ce moteur peut alors s'en servir."""
+        from ...core import wavetable
+
+        if not self.ctx.has_card:
+            return []
+        try:
+            rows = self.lib.search_samples(folder=wavetable.FOLDER,
+                                           limit=500)
+        except Exception:  # noqa: BLE001 - sans index, pas de table
+            return []
+        return sorted(r["rel"] for r in rows)
 
     # -- génération --------------------------------------------------------- #
 

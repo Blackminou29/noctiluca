@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .i18n import N_, normalize, tr, untranslated
+from .i18n import FIRST_RUN, N_, normalize, tr, untranslated
 
 if TYPE_CHECKING:  # pragma: no cover - uniquement pour les annotations
     from delugeapp.core.audio_out import Player
@@ -323,7 +323,9 @@ class Settings:
     always_backup_before_write: bool = True
     backup_dir: str = ""
     theme_accent: str = "#C79A22"
-    language: str = "fr"
+    #: L'anglais pour une installation neuve (``i18n.FIRST_RUN``) ; le choix
+    #: du menu Langue s'enregistre ici.
+    language: str = FIRST_RUN
     scan_hash: bool = True
     scan_analyze: bool = False
     #: Au démarrage, relire les fichiers de la carte modifiés depuis la
@@ -361,6 +363,14 @@ class Settings:
     #: venu commence par l'essentiel, la bascule est dans la barre du haut.
     interface_level: str = "simple"
 
+    # -- les nouvelles versions ---------------------------------------------
+    #: Regarder une fois par jour, au démarrage, s'il existe une version plus
+    #: récente. **Décoché par défaut** : rien ne part sur le réseau sans
+    #: qu'on l'ait demandé.
+    check_updates: bool = False
+    #: Date de la dernière vérification (ISO).
+    last_update_check: str = ""
+
     @property
     def advanced(self) -> bool:
         """Vrai si l'interface montre tous les réglages."""
@@ -393,6 +403,8 @@ class Settings:
             "card_backup": self.card_backup,
             "auto_sync": bool(self.auto_sync),
             "interface_level": normalize_level(self.interface_level),
+            "check_updates": bool(self.check_updates),
+            "last_update_check": self.last_update_check,
         }
 
     @classmethod
@@ -440,6 +452,9 @@ class Settings:
         s.card_backup = _as_str(g("card_backup"), s.card_backup)
         s.auto_sync = _as_bool(g("auto_sync"), s.auto_sync)
         s.interface_level = normalize_level(g("interface_level"))
+        s.check_updates = _as_bool(g("check_updates"), s.check_updates)
+        s.last_update_check = _as_str(g("last_update_check"),
+                                      s.last_update_check)
         return s
 
     # -- confort ----------------------------------------------------------

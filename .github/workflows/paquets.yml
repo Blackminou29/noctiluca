@@ -12,6 +12,9 @@
 #
 # Chaque paquet passe l'autovérification (--self-test) avant d'être gardé ;
 # son rapport est joint à l'exécution, même en cas d'échec.
+#
+# La suite de tests tourne aussi, sur les trois systèmes (job « tests ») :
+# elle signale, elle ne bloque pas.
 
 name: Paquets
 
@@ -27,6 +30,36 @@ on:
       - ".github/FUNDING.yml"
 
 jobs:
+  # La suite complète sur les trois systèmes. Sans Mac ni Linux sous la main,
+  # c'est ici qu'elle y tourne pour la première fois (7 novembre 2026). Elle
+  # ne bloque pas les paquets : un échec se voit dans l'onglet Actions, sans
+  # empêcher une version.
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Bibliothèques du système
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libportaudio2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libegl1 fonts-dejavu-core
+      - name: Dépendances
+        run: python -m pip install -r packaging/requirements-construction.txt
+      - name: Suite de tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -X faulthandler -m unittest discover -s tests
+
   windows:
     runs-on: windows-2022
     steps:
@@ -126,8 +159,8 @@ jobs:
           body: |
             **Windows 10 / 11** : `Noctiluca-…-windows-x64-setup.exe` · **macOS** (puce Apple / Apple silicon) : `…-macos-arm64.dmg` · **Linux** : `…-linux-x86_64.AppImage`
 
-            Gratuit, sans compte. Le lien MIDI avec le Deluge branché n'existe que sous Windows. Paquets non signés : au premier lancement, Windows (*Informations complémentaires ▸ Exécuter quand même*) ou macOS (*Réglages Système ▸ Confidentialité et sécurité ▸ Ouvrir quand même*) demandent une confirmation.
+            Gratuit, sans compte. Le lien MIDI avec le Deluge branché n'existe que sous Windows. Paquets non signés : au premier lancement, Windows (*Informations complémentaires ▸ Exécuter quand même*) ou macOS (*Réglages Système ▸ Confidentialité et sécurité ▸ Ouvrir quand même*) demandent une confirmation. L'interface démarre en anglais : *Language ▸ Français*.
 
-            *Free, no account. The live MIDI link with a connected Deluge is Windows-only. The packages are unsigned: Windows (More info ▸ Run anyway) or macOS (System Settings ▸ Privacy & Security ▸ Open Anyway) ask for confirmation on first launch. The interface starts in French: Langue ▸ English.*
+            *Free, no account. The live MIDI link with a connected Deluge is Windows-only. The packages are unsigned: Windows (More info ▸ Run anyway) or macOS (System Settings ▸ Privacy & Security ▸ Open Anyway) ask for confirmation on first launch. The interface starts in English; French is in Language ▸ Français.*
 
             ☕ Noctiluca vous plaît ? [Offrez un café à son auteur sur Ko-fi](https://ko-fi.com/frenchfries29) · *Enjoying Noctiluca? [Buy its author a coffee](https://ko-fi.com/frenchfries29).*

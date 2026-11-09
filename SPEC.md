@@ -2982,7 +2982,9 @@ def build_song(song, choices, *, name, sd=None, lib=None, genre="", bars=8,
 def read_routes(sd, rel) -> list[LiveRoute];  def propose_channels(routes, avoid, keep_existing=True)
 def plan_live(sd, rel, routes, name="", follow=None) -> LivePlan
 def verify_live(original, plan) -> str;       def write_live(sd, plan, apply=False) -> SongWrite
-def setup_steps(daw="ableton") -> list[str]
+def setup_steps(daw="ableton", platform=None) -> list[str]   # + l'horloge sous Windows
+# daw.py — ce qu'un instrument écoute sur la machine (9 novembre 2026)
+def listened_channel(el, kind) -> int | None   # DawTrack.listens ; le .als route vers le Deluge
 ```
 
 **Mesuré.**
@@ -3064,13 +3066,164 @@ une installation factice, et un test lit le vrai Live s'il est là.
   12.4d1 ») ; noms, couleurs, scènes, clips, arrangement, repères et formes d'onde à leur
   place, 108 BPM.
 
-**Pas encore mesuré** : l'écriture de « MIDI To : Deluge, canal N » dans un `.als` — le Live
-de l'utilisateur, pas encore autorisé, n'enregistre pas (« Sauvegarde et exportation sont
-désactivées »), et aucun set livré avec Live ne route vers un appareil extérieur.
-Ses réglages : sortie « Deluge » en « Piste » (cochée le 4 novembre, à sa demande de
-prendre la main sur Live), « Sync » laissée éteinte.
+**« MIDI To », mesuré le 9 novembre 2026** sur un set que Live (autorisé depuis) a
+enregistré après un routage à la main : `MidiTrack/DeviceChain/MidiOutputRouting` porte
+`Target` = `MidiOut/External.Dev:Deluge{16D0-0CE2-0-out-0}/N` (identifiant USB du Deluge,
+premier port, canal N compté depuis 0), `UpperDisplayString` = « Deluge »,
+`LowerDisplayString` = « Ch. N+1 » (`dawals.DELUGE_OUT`). Une piste dont l'instrument
+**écoute un canal sur la machine** (`daw.listened_channel` : `inputMidiChannel` d'un synthé,
+canal commun des `midiInput` des sons d'un kit — un kit à l'écoute en entier ne compte pas,
+ses notes General MIDI ne le joueraient pas) sort sur ce canal (`DawTrack.listens`, que
+`channel` reprend, dans tous les formats) et son `.als` est routé ; une note apprise d'un
+son de kit l'emporte sur General MIDI (`daw._drum_map`). Exporter la copie « DAW » donne donc
+un set qui joue le Deluge sans réglage : **vérifié sur la machine** (« Cool1 DAW », trois
+pistes, Live 12.4.16 Lite, Windows 11). L'identifiant n'est mesuré que sous Windows.
+
+**L'horloge, mesurée le même jour.** Les notes de Live passent ; son horloge, son Start et son
+Stop, non — ni ceux d'un script par `winmm`. Le pilote USB MIDI 2 de Windows (`usbmidi2.inf`,
+Windows MIDI Services) code un octet temps réel avec le CIN 0x5 tant que le drapeau
+`Feature_Servicing_MIDI2USBSystemRealTimeCin` n'est pas actif (`Device.cpp` de
+microsoft/MIDI), et `MidiEngine::checkIncomingUsbMidi` traite tout CIN < 8 hors 2 et 3 comme
+un morceau de SysEx. Le sens inverse marche : le Deluge (Clock ▸ Output) envoie Start,
+horloge et Stop sur ses câbles 1 et 2, et Live suit avec Sync en entrée et **EXT** allumé
+(tant qu'EXT est allumé, le bouton Play de Live ne fait rien). `dawlive.setup_steps` ajoute
+la mise en garde sous Windows (`_WINDOWS_CLOCK`, « firmware 1.3 »). Un firmware corrigé
+(CIN 0x5 ≥ 0xF8 pris comme temps réel) a été compilé et vérifié sur la machine le même jour :
+Live mène, le Deluge suit (REPRISE §3 duoquinquagies). Réglages de Live laissés : entrée
+« Deluge » en Piste et Sync, sortie « Deluge » en Piste.
 
 **Non vérifié sur la machine** : le chargement d'une copie « DAW » et son jeu depuis Live.
+
+---
+
+### 4.43 `delugeapp/core/multisample.py` — un instrument depuis un dossier (7 novembre 2026)
+
+```python
+note_from_name(stem) -> (int | None, int | None, tuple[int, int] | None)
+    # (note en « C4 = 60 », note certaine si un numéro MIDI l'accompagne,
+    #  plage de vélocités écrite après la note)
+plan_instrument(sd, folder, name="", detect=True) -> InstrumentPlan
+build_presets(plan) -> list[SynthPreset]        # un par couche de vélocité
+write_instruments(sd, plan, folder="Multi", apply=False) -> InstrumentWrite
+default_name(folder) -> str ; note_label(note) -> str   # 60 = « C3 »
+```
+
+Ce qui est repris du firmware 1.3.0 (`sample_browser.cpp`, `sample_holder_for_voice.cpp`) :
+tranches à mi-chemin (`rangeTopNote = (note + suivante) // 2`, la dernière sans note haute),
+second échantillon d'une même note écarté, `transpose = 60 − note`, zone et points de boucle
+du bloc `smpl` (`sampleBeenSet`), mode de lecture (`loadAllSamplesInFolder`), et « tous la
+même note dans le fichier : on l'oublie ». Ce qui est ajouté : la hauteur **lue dans le nom**
+(numéro MIDI > nom de note > bloc `smpl` > écoute), la convention d'octave décidée à l'écoute
+de 8 fichiers (« C4 = 60 » à défaut), les couches de vélocité — une tranche du Deluge n'a pas
+de vélocité, donc un preset par couche. Vérifié contre `rephazer/1. Lite Piano` (fait par la
+machine) : tranches 14/16 identiques, zones 14/16 (les deux autres rognées à la main), mode
+identique. Écrit dans `SYNTHS/Multi`, nom pris numéroté.
+
+### 4.44 `delugeapp/core/favourites.py` — les favoris du Deluge
+
+`SETTINGS/FAVOURITES/<CATÉGORIE>_Bank<N>.xml`, 16 banques de 16 pads
+(`favourite_manager.cpp`) ; `<favourite position colour instrumentPresetFolder />`, ce dernier
+étant le **chemin complet** du fichier ; couleur par défaut 4. Format lu dans le code : les
+banques de la carte étaient vides. `read`, `favourite_of`, `plan_add` (premier pad libre,
+banque par banque), `plan_remove`, `write(…, apply)` (banque réécrite entière, l'ancienne
+dans `_BACKUP/favoris-…`), `import_samples(sd, lib)` (appelé en fin d'analyse ; ne retire
+jamais un favori de l'application).
+
+### 4.45 `delugeapp/core/wavetable.py` — des tables d'onde
+
+Cycle de 2 048 par défaut, ou bloc `clm ` « `<!>2048` » (`audio_file.cpp`, sept octets lus) ;
+plusieurs cycles en puissance de deux (`wave_table.cpp`). `from_sound(data, sr)` : 64 périodes
+prélevées sur la partie sonore d'un son tenu (hauteur par `estimate_root_note`), départ au
+passage par zéro montant, rééchantillonnées sur 2 048 points, recentrées, −1 dBFS.
+`write_wavetable(sd, rel, name, apply)` → `SAMPLES/WAVETABLES/<nom>.wav`, 16 bits, bloc
+`clm `. `synthgen.GenOptions.wavetables` : avec des tables, le moteur *wavetable* d'un genre
+devient tirable (tirages nommés « table A/B », rien ne change sans tables). L'écoute
+(`render._wavetable_cycle`) joue le cycle de la position au départ de la note, bouclé —
+**approché** : ni bandes limitées ni parcours de la position.
+
+### 4.46 `delugeapp/core/updates.py` — une version plus récente ?
+
+`latest_release(timeout, opener) -> Release | None` (API publique des versions GitHub, rien
+d'autre envoyé que le `User-Agent`), `is_newer`, `due` (une fois par jour). Jamais appelé sans
+demande : Aide ▸ Rechercher une nouvelle version, ou `Settings.check_updates`, **faux** par
+défaut.
+
+### 4.47 Ce qui a changé dans les modules existants (7 novembre 2026)
+
+* `dxml.FIRMWARE_QUIRKS` : le nom d'un contrôleur MIDI appris en octets 0xFF (effacé avant le
+  décodage) et les balises numériques du `<performanceView>` de la bêta 1.3 (renommées
+  `<n8>`) ne sont plus des réparations ; `health.BENIGN_REPAIRS` les écarte, note par note.
+* `scan` : `SONG_READER = "3"`, `PRESET_READER = "2"` (relecture unique) ; l'incrémentale
+  mesure les sons restés sans mesures acoustiques (`Library.unanalyzed_samples`) ;
+  `ANALYSIS_WORKERS` fils pour l'analyse acoustique (8 au plus ; 117 s → 47 s sur la carte) ;
+  `index_samples`.
+* `analysis.estimate_root_note` : autocorrélation par FFT, premier pic à 95 % du plus haut
+  (`ROOT_PEAK_SHARE`) — 943 notes exactes sur 1 073 au lieu de 908.
+* `organize.RECORDING_DIRS`, `is_recording` : `SAMPLES/CLIPS`, `RECORD`, `RESAMPLE`, `EXPORTS`
+  hors de l'archivage des inutilisés et de leur décompte.
+* `samplefix.fix_backups`, `restore` garde la version remplacée (`_BACKUP/avant-annulation-…`)
+  et marque la sauvegarde remise (`-annule`).
+* `songwriter.write_song(…, replace="", expected_sha="")` : remplace un morceau **que l'atelier
+  a écrit**, si son empreinte SHA-256 est toujours celle laissée ; l'ancien dans
+  `_BACKUP/remplaces-…`. `file_sha256`.
+* `atelier.Project.written` (chemin → empreinte), `toggle_note`, `dump_draft` / `load_draft`
+  (`pickle`, `DRAFT_FORMAT = 1`, champs ajoutés depuis remplis par `_fill_defaults`).
+* `render._sample_source` : la note choisit sa tranche (`Source::getRange`), et c'est la
+  transposition de la tranche qui joue — un multi-échantillon s'entendait en dent de scie.
+
+### 4.48 `delugeapp/core/firmware.py` — préparer une mise à jour du firmware (8 novembre 2026)
+
+`latest_release(timeout, opener) -> FirmwareRelease | None` : la plus récente version **stable**
+(ni brouillon ni pre-release) de `SynthstromAudible/DelugeFirmware`, son fichier — un
+`deluge*.bin`, sinon le `.zip`, jamais le `.elf`. `download(release)` (taille vérifiée),
+`firmware_from(data, name)` : l'unique `deluge*.bin` d'une archive, `__MACOSX/` et `._*`
+écartés, CRC vérifié, taille dans `SAFE_SIZE` (256 Kio – 3 Mio : le guide craint pour les
+Deluge 7 segments au-delà de 3,5 Mo). `plan_install(sd, name, data) -> FirmwarePlan` (n'écrit
+rien), `install(sd, plan)` : anciens `.bin` rangés dans `_BACKUP/firmware-…` (que la
+synchronisation ignore), nouveau écrit par `.noct-tmp` puis renommé. `version_of` (« 1.3.0 »
+de « deluge-c1_3_0.bin », « c1.3.0 », « release_1_2_1 »), `is_newer`, `card_version`.
+**Ne flashe jamais** ; aucune requête sans demande. Mesuré : `v1.3.0.zip` contient
+`v1.3.0/deluge-c1_3_0.bin`, identique à celui de la carte de l'utilisateur.
+
+### 4.49 Ce qui a changé dans les modules existants (8 novembre 2026)
+
+* **Noms courts de FAT** — `sdcard.short_name_basis`, `short_name_matches`,
+  `short_name_target`, `is_short_name` (règles de `create_name`/`gen_numname` de FatFs) ;
+  `resolve_sample` rapporte « CB1-BD~1.WAV » au seul nom long possible, sans se fier aux noms
+  courts de Windows. `scan._links` range la référence sous le chemin réel (`Library.replace_links`
+  accepte `(référence, manquante, chemin réel)`) ; `PRESET_READER = "3"`, `SONG_READER = "4"`.
+  `deps.relink_many` réécrit aussi une référence par nom court quand le fichier part
+  (`_short_name_new`) ; `samplefix.song_locked_samples` et `retarget_zones` la suivent.
+* **Sidechain** (`sidechain.cpp`, `Sound::render`, `renderReverb`) — `dsp.sidechain_blocks`,
+  `sidechain_rate` (synchronisée : `réglage · BPM · 2^(4+niveau) / 165 375`),
+  `combine_hit_strengths` ; `model.Sound.side_chain_send` (`sideChainSend`, lu et écrit s'il
+  n'est pas nul) ; `render.render_parts(…, sidechain_hits=None)` : chaque note d'un son qui
+  envoie est un coup, la source module `volumePostReverbSend` (désormais destination connue),
+  la réverbération suit le câble du son le plus réverbéré (réglage « auto »).
+  `daw.sidechain_hits(song)` : les coups du morceau entier, donnés à chaque piste rendue seule.
+* **LFO 1 global** — `render._lfo1_phase` : la voix prend le LFO 1 là où il en est depuis le
+  début du morceau (s'il module quelque chose et qu'il est périodique), à 1/16ᵉ de cycle
+  (`LFO1_PHASE_STEPS`) ; coût mesuré : +41 % sur un morceau entier de l'atelier.
+* **Glissé en fréquence** — `render._glide_octaves`, `dsp.decay4` (`Voice::render`).
+* `daw.render_clip`, `render_mix`, `DawSong.clip_order` (l'ordre de la page Morceaux) ;
+  `render_stems` partage `_track_audio`.
+* `audio_out.Player.silence_reason()`, `silent_plays` : pourquoi rien ne s'entend.
+
+### 4.50 Ce qui a changé après les essais sur la machine (9 novembre 2026)
+
+* **Instrument multi-échantillon** — `multisample.RELEASE` : la relâche de l'enveloppe 1 au
+  réglage 8 (0,5 s, `8 × 85 899 345 − 2³¹`), celle du piano multi-échantillon que REPHAZER a
+  bâti sur la machine ; à 0, la note s'éteignait sèchement au relâcher (essai du Steinway).
+* **Envoi au Deluge** — un fichier d'un pack qui tomberait à la racine d'un dossier de la carte
+  (`SYNTHS/`, `KITS/`…) va dans un dossier au nom du pack (`Found.pack`, `card_name`) ; un
+  fichier identique déjà ailleurs sur la carte n'est pas recopié (`_by_size`, `_twin`, hors
+  dossiers « _ ») et les presets du pack le citent là (« déjà sur la carte, identique : … »).
+* **Vers le DAW** — `daw.listened_channel`, `_drum_inputs`, `DawTrack.listens` ; `_drum_map`
+  garde les notes apprises ; `dawals.DELUGE_OUT`, `_route_to_deluge` ; le lisez-moi le dit
+  (§4.42).
+* **Jouer ensemble** — `dawlive.setup_steps(daw, platform)` : Live suit le Deluge par EXT, le
+  set exporté de la copie est déjà routé, et sous Windows l'horloge du DAW ne passe pas
+  (`_WINDOWS_CLOCK`, §4.42).
 
 ---
 
@@ -3877,8 +4030,11 @@ filtres et dossier qui le cacheraient.
 **Choisir.** Le menu « Langue », entre « Outils » et « Aide », propose « Français » et
 « English », chacun écrit dans sa propre langue : qui ne lit pas la langue affichée doit
 retrouver la sienne. La langue retenue est cochée. Le choix est enregistré tout de suite
-(`Settings.language`, `"fr"` ou `"en"`, normalisé à la lecture — l'inconnu donne le
-français), puis une question, **posée dans les deux langues**, propose de redémarrer :
+(`Settings.language`, `"fr"` ou `"en"`, normalisé à la lecture — l'inconnu donne
+l'anglais), puis une question, **posée dans les deux langues**, propose de redémarrer.
+**Une installation neuve démarre en anglais** (`i18n.FIRST_RUN`, demandé le 9 novembre
+2026 : la plupart de ceux qui téléchargent l'application sont anglophones) ; `i18n.DEFAULT`
+reste le français, langue des textes du code et clé des traductions. À la question :
 
 - « Oui » : `MainWindow.restart()` ferme la fenêtre comme à l'ordinaire (question si un
   traitement tourne, état et page gardés, fils arrêtés, contexte fermé) et lève
@@ -4214,6 +4370,59 @@ Trois onglets :
 
 À 980 × 640, les colonnes de droite défilent au lieu d'écraser leurs cartes (rendu vérifié
 en PNG, français et anglais).
+
+### 5.32 Ce que l'atelier garde (7 novembre 2026)
+
+* **Défaire, refaire** : `_checkpoint(geste)` garde un clone du projet (2 ms) avant chaque
+  geste qui le change — composer, ouvrir, pistes, sons, coups, notes, clips, cases, sections,
+  tempo et noms (fusionnés à 1,5 s) ; 60 au plus. Boutons [Défaire], [Refaire] dans l'en-tête,
+  Ctrl+Z / Ctrl+Y sur la page (un champ de texte garde les siens). Défaire ne défait pas
+  `Project.written`.
+* **Sons essayés** : chaque son remplacé (autre son, kit, carte, retouche, variante, son venu
+  d'une autre page) rejoint une liste par piste, hors du projet (40 au plus) ; [Reprendre ce
+  son].
+* **Notes d'un synthé** : `ClipView.noteToggled(note, pas)` ; plage gardée d'un clic à l'autre,
+  deux octaves au moins, un trait par demi-ton.
+* **Brouillon** : `atelier/brouillon.pickle` et sa fiche JSON dans le dossier de configuration,
+  écrits 0,8 s après un geste (minuterie branchée sur la **méthode** — par `guard`, elle tirait
+  sur une page détruite : plantage de la suite), à l'écriture d'un morceau et à la fermeture ;
+  repris à la construction de la page ; l'accueil lit la fiche (`draft_state`). Un brouillon
+  illisible devient `.illisible`.
+* **Remplacer** : `export_song(…, written=)` propose [Oui] remplacer / [Non] numéroter /
+  [Annuler] quand le nom désigne un morceau écrit par l'atelier et inchangé.
+
+### 5.33 Échantillons : étiquettes, annulation, instrument, table d'onde, favoris
+
+`_tag_edit` + `_tag_add` (Entrée ou bouton, complétion), `_tag_filter` (visible dès qu'une
+étiquette existe) ; `_undo_fix_button` (avancé) ; `_instrument_button` → `InstrumentDialog`
+(plan dans un fil) ; `_wavetable_button` (avancé, un son) ; `_deluge_fav_button` dans
+l'aperçu. La liste « Inutilisés » de la Santé écarte les prises du Deluge.
+
+### 5.34 Aide et réglages
+
+Aide ▸ [Signaler un problème…] (`ui/report.py` : rapport éditable, dossier personnel → `~`,
+copié, page « New issue » ouverte ; rien n'est envoyé par l'application) ; Aide ▸
+[Rechercher une nouvelle version] ; Réglages ▸ À propos ▸ [Vérifier une fois par jour s'il
+existe une nouvelle version] (décochée). Réglages ▸ Analyse ▸ [Tout réanalyser] ; le bouton,
+Ctrl+R et le bandeau font une analyse **incrémentale** (`_start_scan(full=False)`).
+
+### 5.35 Ce qui s'est ajouté le 8 novembre 2026
+
+* **Morceaux** : `_listen_song_button` (en-tête), `_listen_clip_button` et `_stop_button`
+  (onglet Clips), double-clic et Espace (`_listen`) ; le calcul part dans un fil
+  (`daw.render_clip`, `render_mix`), un calcul dépassé ou arrêté ne joue pas (`_ecoute`).
+* **Outils ▸ Firmware du Deluge…** (`ui/firmwaredialog.py`) : versions de la machine et de la
+  carte, [Chercher la dernière version], [Préparer la carte…] (téléchargement, plan, accord,
+  pose), puis les trois gestes qui restent sur la machine.
+* **Écoute muette** : l'indicateur de lecture devient « ● lecture muette » (ambre, la raison en
+  infobulle), la barre d'état le dit à la première écoute, l'accueil en fait sa suggestion et
+  Réglages ▸ Écoute l'affiche (`_silence_label`).
+* **Fenêtre d'erreur** (`main._install_excepthook`) : [Signaler ce problème…] ouvre le rapport,
+  la trace dedans (`ReportDialog(…, detail=…)`).
+* `widgets.common.RangeeSouple` : une rangée qui passe à la ligne ; les rangées de l'étape
+  Clips de l'atelier en sont faites — à 980 px, le panneau (470 px) perdait sa droite.
+
+---
 
 ## 6. Contraintes de robustesse
 

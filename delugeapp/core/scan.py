@@ -8,15 +8,18 @@ Trois exigences gouvernent ce module (cf. SPEC §4.9 et §6.2) :
   message d'erreur, et l'analyse continue ;
 * **rester interruptible** — ``should_stop`` est consulté à chaque fichier ;
 * **rester rapide** — les en-têtes audio sont lus seuls (pas les données), les
-  empreintes sont calculées sur 128 Kio au lieu du fichier entier, et le mode
-  incrémental saute tout ce dont la taille et la date n'ont pas changé.
+  empreintes sont calculées sur 128 Kio au lieu du fichier entier, le mode
+  incrémental saute tout ce dont la taille et la date n'ont pas changé, et
+  l'analyse acoustique tourne sur plusieurs fils (:data:`ANALYSIS_WORKERS`).
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +43,12 @@ MIN_BPM_SECONDS = 4.0
 #: Seuils de confiance au-dessous desquels la mesure n'est pas enregistrée.
 MIN_BPM_CONFIDENCE = 0.4
 MIN_KEY_CONFIDENCE = 0.35
+
+#: Fils de l'analyse acoustique. Mesuré le 7 novembre 2026 sur 300 sons de la
+#: carte (24 cœurs) : 15,2 s sur un fil, 5,1 s sur 4, 3,8 s sur 8, et rien de
+#: mieux au-delà (3,9 s sur 12) — numpy lâche le verrou de Python dans ses
+#: calculs. Résultats identiques. Une analyse complète prenait 117 s.
+ANALYSIS_WORKERS = max(1, min(8, (os.cpu_count() or 2) - 1))
 
 
 @dataclass
@@ -205,10 +214,45 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
                   should_stop: Callable[[], bool] | None) -> bool:
     """Indexe les échantillons. Retourne ``False`` si l'analyse est interrompue."""
     known = {} if full else lib.known_files("sample")
+    # Inchangés mais jamais mesurés : l'analyse acoustique a été cochée après
+    # la première lecture. Ils sont relus comme des fichiers neufs.
+    unmeasured = lib.unanalyzed_samples() if analyze and not full else set()
     total = len(paths)
+    # Les mesures acoustiques partent sur des fils ; leur ligne n'entre dans
+    # l'index qu'une fois mesurée. Au plus deux fichiers par fil en vol : un
+    # fichier décodé pèse jusqu'à 6 Mio.
+    pool = ThreadPoolExecutor(ANALYSIS_WORKERS,
+                              thread_name_prefix="analyse") \
+        if analyze and ANALYSIS_WORKERS > 1 else None
+    pending: list[tuple[dict, Future]] = []
+
+    def _rentrer(tout: bool = False) -> None:
+        while pending and (tout or len(pending) >= 2 * ANALYSIS_WORKERS
+                           or pending[0][1].done()):
+            row, mesure = pending.pop(0)
+            row.update(mesure.result())
+            lib.upsert_sample(row)
+            result.samples += 1
+
+    try:
+        return _scan_sample_files(sd, lib, paths, known, unmeasured, total,
+                                  compute_hash, analyze, full, result,
+                                  progress, should_stop, pool, pending,
+                                  _rentrer)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _scan_sample_files(sd, lib, paths, known, unmeasured, total,
+                       compute_hash, analyze, full, result, progress,
+                       should_stop, pool, pending, rentrer) -> bool:
+    """Le corps de :func:`_scan_samples`, autour de son groupe de fils."""
     lib.begin()
     for i, path in enumerate(paths, 1):
         if should_stop is not None and should_stop():
+            # Les mesures en vol sont abandonnées : leurs fichiers, absents
+            # de l'index, seront relus à la prochaine analyse.
             lib.commit()
             return False
         rel = sd.rel(path)
@@ -218,7 +262,7 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
             result.errors.append(tr("%s : %s") % (rel, exc))
             continue
 
-        if not full and _unchanged(known, rel, st):
+        if not full and _unchanged(known, rel, st) and rel not in unmeasured:
             result.skipped += 1
             result.samples += 1
             if i % 200 == 0:
@@ -258,17 +302,22 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
         row["hash_full"] = ""
         row["hash"] = file_hash(path, quick=True) if compute_hash else ""
 
-        if analyze and info.ok and info.frames > 0:
-            row.update(_analyze_sample(path, result, rel))
-
-        lib.upsert_sample(row)
-        result.samples += 1
+        if analyze and info.ok and info.frames > 0 and pool is not None:
+            pending.append((row, pool.submit(_analyze_sample, path, result,
+                                             rel)))
+            rentrer()
+        else:
+            if analyze and info.ok and info.frames > 0:
+                row.update(_analyze_sample(path, result, rel))
+            lib.upsert_sample(row)
+            result.samples += 1
 
         if i % 50 == 0:
             lib.commit()
             lib.begin()
             _emit(progress, "samples", i, total,
                   tr("Échantillons — %s") % path.name)
+    rentrer(tout=True)
     lib.commit()
     _emit(progress, "samples", total, total, tr("Échantillons analysés"))
     return True
@@ -277,9 +326,9 @@ def _scan_samples(sd: SDCard, lib: Library, paths: list[Path], *,
 def _analyze_sample(path: Path, result: ScanResult, rel: str) -> dict:
     """Mesures acoustiques d'un échantillon (coûteux : option ``analyze``).
 
-    ``analysis`` n'est pas encore écrit à ce stade du projet : on se limite
-    donc aux mesures que ``wav`` permet déjà, et l'import est protégé pour que
-    l'arrivée du module enrichisse automatiquement l'analyse.
+    Niveaux, descripteurs spectraux, tempo et tonalité, par
+    :mod:`delugeapp.core.analysis`. Chaque mesure qui échoue est sautée seule :
+    un fichier étrange garde au moins sa crête et sa moyenne.
     """
     out: dict = {}
     try:
@@ -295,10 +344,7 @@ def _analyze_sample(path: Path, result: ScanResult, rel: str) -> dict:
     out["peak"] = float(np.max(np.abs(data)))
     out["rms"] = float(np.sqrt(np.mean(np.square(data, dtype=np.float64))))
 
-    try:
-        from . import analysis  # noqa: PLC0415 - optionnel tant que non écrit
-    except ImportError:
-        return out
+    from . import analysis  # noqa: PLC0415 - numpy n'est chargé qu'ici
 
     # Offset continu et écrêtage : ce sont les deux défauts qu'un producteur
     # veut connaître avant de charger l'échantillon dans un morceau. La page
@@ -381,12 +427,47 @@ def _sample_category(rel: str) -> str:
 # Presets, kits, morceaux
 # --------------------------------------------------------------------------- #
 
+#: Version de la lecture des presets et des kits, comme :data:`SONG_READER` :
+#: le 7 novembre 2026, le nom en octets 0xFF d'un contrôleur MIDI appris
+#: cessait de passer pour un dégât (``dxml.FIRMWARE_QUIRKS``) ; les presets
+#: déjà indexés gardaient leur ancienne note de réparation. « 3 » : le
+#: 8 novembre, une référence par nom court de FAT (« CB1-BD~1.WAV ») est
+#: rangée sous le nom long qu'elle désigne (:func:`_links`).
+PRESET_READER = "3"
+
+
+def _links(sd: SDCard, refs) -> list[tuple[str, bool, str]]:
+    """``(référence, manquante, chemin réel)`` de chaque échantillon cité.
+
+    Le chemin réel ne diffère de la référence que pour un nom court de FAT :
+    sans lui, l'échantillon qu'un kit d'usine cite ainsi passait pour
+    inutilisé, et l'archivage des inutilisés le proposait au déplacement.
+    """
+    out = []
+    for ref in refs:
+        path = sd.resolve_sample(ref)
+        real = ref
+        if path is not None and "~" in ref:
+            try:
+                real = path.relative_to(sd.root).as_posix()
+            except ValueError:
+                pass
+        out.append((ref, path is None, real))
+    return out
+
+
 def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
                   full: bool, result: ScanResult,
                   progress: Callable[[ScanProgress], None] | None,
-                  should_stop: Callable[[], bool] | None) -> bool:
-    """Indexe les presets de synthé (``kind='synth'``) ou les kits."""
-    known = {} if full else lib.known_files(kind)
+                  should_stop: Callable[[], bool] | None,
+                  mark_reader: bool = True) -> bool:
+    """Indexe les presets de synthé (``kind='synth'``) ou les kits.
+
+    ``mark_reader`` : comme pour :func:`_scan_songs`, avec
+    :data:`PRESET_READER`.
+    """
+    relire = lib.get_meta(kind + "_reader") != PRESET_READER
+    known = {} if (full or relire) else lib.known_files(kind)
     total = len(paths)
     label = "Presets" if kind == "synth" else "Kits"
     lib.begin()
@@ -449,7 +530,7 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
                 if kit.doc is not None:
                     row["repaired"] = " ; ".join(kit.doc.repaired)
             row["uses_samples"] = 1 if refs else 0
-            samples = [(ref, sd.resolve_sample(ref) is None) for ref in refs]
+            samples = _links(sd, refs)
         except Exception as exc:  # noqa: BLE001 - 14 % des XML sont abîmés
             row.update({"ok": 0, "error": f"{type(exc).__name__}: {exc}"})
             result.errors.append(tr("%s : %s") % (rel, exc))
@@ -466,6 +547,8 @@ def _scan_presets(sd: SDCard, lib: Library, paths: list[Path], kind: str, *,
             lib.begin()
             _emit(progress, kind, i, total, f"{label} — {path.name}")
     lib.commit()
+    if mark_reader:
+        lib.set_meta(kind + "_reader", PRESET_READER)
     _emit(progress, kind, total, total, tr("%s analysés") % label)
     return True
 
@@ -522,7 +605,18 @@ def index_presets(sd: SDCard, lib: Library, paths: list[Path]) -> None:
     for kind, group in (("synth", synths), ("kit", kits)):
         if group:
             _scan_presets(sd, lib, group, kind, full=True, result=result,
-                          progress=None, should_stop=None)
+                          progress=None, should_stop=None, mark_reader=False)
+    lib.recompute_usage()
+
+
+def index_samples(sd: SDCard, lib: Library, paths: list[Path]) -> None:
+    """Indexe tout de suite des échantillons qu'on vient d'écrire — une table
+    d'onde, par exemple —, sans mesures acoustiques : la prochaine analyse
+    les fera."""
+    result = ScanResult()
+    _scan_samples(sd, lib, [Path(p) for p in paths or ()],
+                  compute_hash=True, analyze=False, full=True, result=result,
+                  progress=None, should_stop=None)
     lib.recompute_usage()
 
 
@@ -544,8 +638,10 @@ def index_songs(sd: SDCard, lib: Library, paths: list[Path]) -> None:
 #: indexés sont relus une fois, même inchangés : le 14 octobre 2026, leur
 #: nombre de mesures était faux d'un facteur 2 à 4 (résolution des notes,
 #: voir ``model.ticks_per_bar``), et l'analyse incrémentale ne relit pas un
-#: fichier qui n'a pas bougé.
-SONG_READER = "2"
+#: fichier qui n'a pas bougé. « 3 » : le 7 novembre 2026, les formes que le
+#: firmware écrit lui-même (``dxml.FIRMWARE_QUIRKS``) ne passent plus pour des
+#: réparations. « 4 » : les noms courts de FAT (voir :data:`PRESET_READER`).
+SONG_READER = "4"
 
 
 def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
@@ -597,8 +693,7 @@ def _scan_songs(sd: SDCard, lib: Library, paths: list[Path], *, full: bool,
                 "instruments": stats["instruments"],
                 "preview": song.preview,
             })
-            samples = [(ref, sd.resolve_sample(ref) is None)
-                       for ref in song.sample_paths()]
+            samples = _links(sd, song.sample_paths())
             if song.doc is not None:
                 row["repaired"] = " ; ".join(song.doc.repaired)
         except Exception as exc:  # noqa: BLE001
@@ -724,6 +819,14 @@ def scan_card(sd: SDCard, lib: Library, *, compute_hash: bool = True,
                 result.errors.append(tr("Vérification des doublons : %s")
                                      % exc)
         if not result.stopped:
+            # Les favoris d'échantillons posés sur la machine deviennent ceux
+            # de l'application (``SETTINGS/FAVOURITES``) ; aucun n'est retiré.
+            try:
+                from . import favourites
+
+                favourites.import_samples(sd, lib)
+            except Exception:  # noqa: BLE001 - un favori n'arrête rien
+                log.exception("favoris du Deluge non repris")
             lib.set_meta("last_scan", datetime.now().isoformat(timespec="seconds"))
             lib.set_meta("last_scan_root", str(sd.root))
             # Le drapeau ne se lève qu'au terme d'une analyse complète ET

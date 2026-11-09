@@ -36,7 +36,8 @@ from __future__ import annotations
 import re
 import threading
 
-__all__ = ["LANGUAGES", "DEFAULT", "N_", "tr", "untranslated", "sources",
+__all__ = ["LANGUAGES", "DEFAULT", "FIRST_RUN", "N_", "tr", "untranslated",
+           "sources",
            "set_language", "language", "is_english", "normalize",
            "catalogue", "decimal", "integer", "clock", "day_month",
            "full_date", "plural", "tr_stored"]
@@ -46,8 +47,14 @@ __all__ = ["LANGUAGES", "DEFAULT", "N_", "tr", "untranslated", "sources",
 LANGUAGES: tuple[tuple[str, str], ...] = (("fr", "Français"),
                                           ("en", "English"))
 
-#: Langue au premier démarrage, et quand le réglage est illisible.
+#: La langue des textes du code, clés de toutes les traductions : dans
+#: cette langue, :func:`tr` rend le texte tel quel.
 DEFAULT = "fr"
+
+#: La langue d'une installation neuve, et celle qu'on prend quand le réglage
+#: est illisible : l'anglais, celle de la plupart de ceux qui téléchargent
+#: l'application (demandé le 9 novembre 2026).
+FIRST_RUN = "en"
 
 _lang = DEFAULT
 _english: dict[str, str] | None = None
@@ -56,9 +63,10 @@ _verrou = threading.Lock()
 
 
 def normalize(code: object) -> str:
-    """Un code de langue connu : ``"EN "`` → ``"en"``, l'inconnu → défaut."""
+    """Un code de langue connu : ``"EN "`` → ``"en"``, l'inconnu →
+    :data:`FIRST_RUN`."""
     texte = str(code or "").strip().lower()[:2]
-    return texte if texte in dict(LANGUAGES) else DEFAULT
+    return texte if texte in dict(LANGUAGES) else FIRST_RUN
 
 
 def set_language(code: object) -> str:

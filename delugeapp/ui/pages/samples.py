@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -33,7 +34,9 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QSlider,
     QSpinBox,
@@ -48,7 +51,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ...core import samplefix, similarity, slicer, wav
+from ...core import multisample, samplefix, similarity, slicer, wav
+from ...core.sdcard import safe_deluge_name
 from ...i18n import N_, decimal, integer, tr
 from ..theme import GREY, PAD, category_color
 from ..widgets.common import (
@@ -553,6 +557,150 @@ class SliceDialog(QDialog):
         self.written = dossier
 
 
+class InstrumentDialog(QDialog):
+    """Un instrument multi-échantillon, bâti depuis un dossier.
+
+    Le plan vient de :func:`multisample.plan_instrument` ; rien n'est écrit
+    avant « Créer l'instrument », et l'écriture demande encore son accord.
+    """
+
+    def __init__(self, ctx, plan, parent=None) -> None:
+        super().__init__(parent)
+        self.ctx = ctx
+        self.plan = plan
+        self.written: list[str] = []
+        self.setWindowTitle(tr("Créer un instrument — %s")
+                            % Path(plan.folder).name)
+        self.resize(820, 560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(PAD, PAD, PAD, PAD)
+        layout.setSpacing(8)
+
+        intro = QLabel(tr(
+            "Chaque son du dossier devient une tranche du clavier, jusqu'à "
+            "mi-chemin du suivant — comme le Deluge le ferait. La hauteur vient "
+            "du nom du fichier quand il la donne (« A1 », « C#3 »), sinon de "
+            "l'écoute. Une couche de vélocité devient un preset : le Deluge "
+            "n'en joue qu'une par tranche."))
+        intro.setWordWrap(True)
+        intro.setProperty("role", "subtitle")
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        self._name = QLineEdit(plan.name)
+        self._name.setToolTip(tr("Le nom du preset ; une couche de vélocité "
+                                 "y ajoute la sienne"))
+        form.addRow(tr("Nom :"), self._name)
+        self._folder = QLineEdit(multisample.DEFAULT_FOLDER)
+        self._folder.setToolTip(tr("Le sous-dossier de SYNTHS où l'écrire"))
+        form.addRow(tr("Dossier dans SYNTHS :"), self._folder)
+        layout.addLayout(form)
+
+        self._summary = QLabel("\n".join(plan.lines()))
+        self._summary.setWordWrap(True)
+        layout.addWidget(self._summary)
+
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(
+            [tr("Fichier"), tr("Note"), tr("Lue dans"), tr("Jusqu'à"),
+             tr("Preset")])
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch)
+        for layer in plan.layers:
+            for sample, top in layer.ranges:
+                rang = self._table.rowCount()
+                self._table.insertRow(rang)
+                for col, texte in enumerate((
+                        Path(sample.rel).name,
+                        multisample.note_label(sample.note),
+                        tr(sample.source),
+                        multisample.note_label(top) if top < 127 else "—",
+                        layer.name)):
+                    self._table.setItem(rang, col, QTableWidgetItem(texte))
+        layout.addWidget(self._table, 1)
+
+        buttons = QDialogButtonBox()
+        self._create = buttons.addButton(
+            tr("Créer l'instrument"), QDialogButtonBox.ButtonRole.AcceptRole)
+        self._create.setObjectName("Primary")
+        self._create.setToolTip(tr(
+            "Écrit le ou les presets dans SYNTHS, après votre accord ; aucun "
+            "fichier n'est remplacé, les échantillons ne sont pas touchés"))
+        self._create.setEnabled(bool(plan))
+        self._listen = buttons.addButton(
+            tr("Écouter"), QDialogButtonBox.ButtonRole.ActionRole)
+        self._listen.setToolTip(tr("Joue l'instrument sur l'ordinateur : une "
+                                   "gamme de do, sur toute son étendue"))
+        self._listen.setEnabled(bool(plan))
+        buttons.addButton(tr("Fermer"), QDialogButtonBox.ButtonRole.RejectRole)
+        self._create.clicked.connect(self._do_create)
+        self._listen.clicked.connect(self._do_listen)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _plan(self):
+        self.plan.name = self._name.text().strip() or self.plan.name
+        for layer in self.plan.layers:
+            suffixe = " %d-%d" % layer.velocity if layer.velocity is not None \
+                and len(self.plan.layers) > 1 else ""
+            layer.name = safe_deluge_name(self.plan.name + suffixe)
+        return self.plan
+
+    def _do_listen(self) -> None:
+        presets = multisample.build_presets(self._plan())
+        if not presets or self.ctx.player is None:
+            return
+        from ...core import render
+
+        sound = presets[0].sound
+        layer = self.plan.layers[0]
+        notes = [n for n in range(layer.low, layer.high + 1, 12)][:6] \
+            or [60]
+        morceaux = [render.render_sound(sound, note=n, seconds=0.9,
+                                        sd=self.ctx.sd) for n in notes]
+        import numpy as np
+
+        try:
+            self.ctx.player.play_array(np.concatenate(morceaux), 44100)
+        except Exception as exc:  # noqa: BLE001 - audio indisponible
+            log.debug("écoute de l'instrument impossible : %s", exc)
+
+    def _do_create(self) -> None:
+        card = self.ctx.sd_or_warn(self, write=True)
+        if card is None:
+            return
+        plan = self._plan()
+        dossier = self._folder.text().strip().strip("/") \
+            or multisample.DEFAULT_FOLDER
+        essai = multisample.write_instruments(card, plan, dossier)
+        if essai.error:
+            QMessageBox.warning(self, tr("Créer un instrument"), essai.error)
+            return
+        if getattr(self.ctx.settings, "confirm_writes", True):
+            reponse = QMessageBox.question(
+                self, tr("Créer l'instrument"),
+                tr("Écrire sur la carte :%s%s%sAucun fichier existant n'est "
+                   "remplacé.") % (NL + NL, NL.join(essai.rels), NL + NL),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if reponse != QMessageBox.StandardButton.Yes:
+                return
+        fait = multisample.write_instruments(card, plan, dossier, apply=True)
+        if not fait.applied:
+            QMessageBox.warning(self, tr("Créer un instrument"), fait.error)
+            return
+        try:
+            from ...core.scan import index_presets
+
+            index_presets(card, self.ctx.lib, [card.abs(r) for r in fait.rels])
+        except Exception:  # noqa: BLE001 - l'index se rattrapera
+            log.exception("indexation de l'instrument impossible")
+        self.written = list(fait.rels)
+        self.accept()
+
+
 class SamplesPage(Page):
     """Bibliothèque d'échantillons."""
 
@@ -623,11 +771,32 @@ class SamplesPage(Page):
         self._process_button.clicked.connect(self.guard(self._process))
         actions.addWidget(self._process_button)
 
+        self._undo_fix_button = avance(tool_button(
+            tr("Annuler un traitement…"), "backup",
+            tr("Remettre les originaux gardés par un traitement précédent")))
+        self._undo_fix_button.clicked.connect(self.guard(self._undo_fix))
+        actions.addWidget(self._undo_fix_button)
+
         self._slice_button = tool_button(
             tr("Découper…"), "grid",
             tr("Découper une boucle en kit : un pad par tranche"))
         self._slice_button.clicked.connect(self.guard(self._slice))
         actions.addWidget(self._slice_button)
+
+        # 164 fichiers de MULTISAMPLES ne servaient à rien sur la carte de
+        # l'utilisateur : de quoi en faire des instruments.
+        self._instrument_button = tool_button(
+            tr("Créer un instrument…"), "synth",
+            tr("Un preset multi-échantillon avec les sons du dossier"))
+        self._instrument_button.clicked.connect(self.guard(self._instrument))
+        actions.addWidget(self._instrument_button)
+
+        self._wavetable_button = avance(tool_button(
+            tr("Table d'onde…"), "wave",
+            tr("Une table d'onde pour le moteur wavetable du Deluge, tirée "
+               "du son choisi")))
+        self._wavetable_button.clicked.connect(self.guard(self._wavetable))
+        actions.addWidget(self._wavetable_button)
 
         self._similar_button = tool_button(
             tr("Sons proches"), "search",
@@ -700,6 +869,14 @@ class SamplesPage(Page):
         self._only_fav = QCheckBox(tr("Favoris"))
         self._only_fav.toggled.connect(self.guard(lambda _c: self._reload()))
         row.addWidget(self._only_fav)
+
+        # Visible dès qu'une étiquette existe : ``_fill_tag_filter`` en décide.
+        self._tag_filter = QComboBox()
+        self._tag_filter.addItem(tr("Toutes étiquettes"), "")
+        self._tag_filter.activated.connect(
+            self.guard(lambda _i: self._reload()))
+        self._tag_filter.setVisible(False)
+        row.addWidget(self._tag_filter, 1)
 
         self._only_missing = QCheckBox(tr("Manquants"))
         self._only_missing.setToolTip(
@@ -796,6 +973,17 @@ class SamplesPage(Page):
         self._fav.toggled.connect(self.guard(self._set_favorite))
         side.addWidget(self._fav)
 
+        # Les favoris du Deluge : un pad de son navigateur d'échantillons.
+        self._deluge_fav = QLabel("")
+        self._deluge_fav.setProperty("role", "subtitle")
+        self._deluge_fav.setWordWrap(True)
+        side.addWidget(self._deluge_fav)
+        self._deluge_fav_button = tool_button(tr("Sur un pad du Deluge"),
+                                              "star")
+        self._deluge_fav_button.clicked.connect(
+            self.guard(self._toggle_deluge_favourite))
+        side.addWidget(self._deluge_fav_button)
+
         tags_label = QLabel(tr("Étiquettes"))
         tags_label.setProperty("role", "subtitle")
         side.addWidget(tags_label)
@@ -804,6 +992,20 @@ class SamplesPage(Page):
         tags_host = QWidget()
         tags_host.setLayout(self._tags_row)
         side.addWidget(tags_host)
+
+        # Les étiquettes ne s'ajoutaient de nulle part : ``add_tag`` existait,
+        # sans champ ni bouton pour l'appeler.
+        tag_row = QHBoxLayout()
+        tag_row.setSpacing(4)
+        self._tag_edit = QLineEdit()
+        self._tag_edit.setPlaceholderText(tr("Nouvelle étiquette…"))
+        self._tag_edit.returnPressed.connect(
+            self.guard(self._add_tag_from_edit))
+        tag_row.addWidget(self._tag_edit, 1)
+        self._tag_add = tool_button(tr("Ajouter"), "tag")
+        self._tag_add.clicked.connect(self.guard(self._add_tag_from_edit))
+        tag_row.addWidget(self._tag_add)
+        side.addLayout(tag_row)
 
         self._usage = QLabel("")
         self._usage.setProperty("role", "subtitle")
@@ -952,6 +1154,7 @@ class SamplesPage(Page):
                 only_unused=self._only_unused.isChecked(),
                 only_missing=self._only_missing.isChecked(),
                 favorite=self._only_fav.isChecked(),
+                tag=self._tag_filter.currentData() or "",
                 limit=100000)
         except Exception:  # noqa: BLE001
             log.exception("recherche d'échantillons en échec")
@@ -1110,6 +1313,7 @@ class SamplesPage(Page):
                 (self._play_button, 1, None),
                 (self._process_button, 1, None),
                 (self._slice_button, 1, 1),
+                (self._wavetable_button, 1, 1),
                 (self._similar_button, 1, 1)):
             assez = combien >= mini and (maxi is None or combien <= maxi)
             bouton.setEnabled(bool(assez))
@@ -1185,6 +1389,7 @@ class SamplesPage(Page):
         self._fav.setChecked(bool(rating.get("favorite")))
         self._fav.blockSignals(False)
         self._fill_tags(rel)
+        self._show_deluge_favourite(rel)
 
         count = row["used_count"] if "used_count" in row.keys() else 0
         if count:
@@ -1305,11 +1510,81 @@ class SamplesPage(Page):
             return
         self.lib.set_rating("sample", self._current, favorite=bool(checked))
 
+    def _show_deluge_favourite(self, rel: str) -> None:
+        """Dit si le son est sur un pad de favori du Deluge."""
+        from ...core import favourites
+
+        fav = favourites.favourite_of(self.sd, "SAMPLES", rel) \
+            if self.sd is not None and rel else None
+        if fav is not None:
+            self._deluge_fav.setText(tr("Sur le Deluge : banque %d, pad %d.")
+                                     % (fav.bank + 1, fav.position + 1))
+            self._deluge_fav_button.setText(tr("Retirer du pad du Deluge"))
+        else:
+            self._deluge_fav.setText("")
+            self._deluge_fav_button.setText(tr("Sur un pad du Deluge"))
+        self._deluge_fav.setVisible(fav is not None)
+        self._deluge_fav_button.setEnabled(bool(rel))
+
+    def _toggle_deluge_favourite(self) -> None:
+        """Pose le son sur le premier pad libre des favoris du Deluge, ou
+        l'en retire — après accord : la banque est réécrite."""
+        from ...core import favourites
+
+        rel = self._current
+        if not rel:
+            return
+        card = self.writable_card()
+        if card is None:
+            return
+        retirer = favourites.plan_remove(card, "SAMPLES", rel)
+        ajout = None if retirer is not None else \
+            favourites.plan_add(card, "SAMPLES", rel)
+        if retirer is None and ajout is None:
+            self.say(tr("Les 256 pads de favoris du Deluge sont pris."))
+            return
+        fav = retirer or ajout
+        try:
+            banque = favourites.write(card, "SAMPLES", add=ajout,
+                                      remove=retirer)
+        except ValueError as exc:
+            self.say(tr("Favori impossible : %s.") % exc)
+            return
+        texte = (tr("« %s » quitte le pad %d de la banque %d des favoris "
+                    "d'échantillons du Deluge.") if retirer is not None else
+                 tr("« %s » va sur le pad %d de la banque %d des favoris "
+                    "d'échantillons du Deluge.")) % (
+            Path(rel).name, fav.position + 1, fav.bank + 1)
+        texte += NL + NL + tr(
+            "%s est réécrit ; l'ancienne version est gardée dans _BACKUP. "
+            "Si le navigateur d'échantillons du Deluge est ouvert, quittez-le "
+            "avant l'envoi : il réécrit cette banque au moindre pad "
+            "changé.") % banque
+        if getattr(self.ctx.settings, "confirm_writes", True):
+            reponse = QMessageBox.question(
+                self, tr("Favoris du Deluge"), texte + NL + NL
+                + tr("Continuer ?"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reponse != QMessageBox.StandardButton.Yes:
+                return
+        favourites.write(card, "SAMPLES", add=ajout, remove=retirer,
+                         apply=True)
+        if ajout is not None:
+            self.lib.set_rating("sample", rel, favorite=True)
+            self._fav.blockSignals(True)
+            self._fav.setChecked(True)
+            self._fav.blockSignals(False)
+        self._show_deluge_favourite(rel)
+        self.say(tr("Favoris du Deluge mis à jour : %s.") % banque)
+        self.cardModified.emit()
+
     def _remove_tag(self, name: str) -> None:
         if not self._current:
             return
         self.lib.remove_tag("sample", self._current, name)
         self._fill_tags(self._current)
+        self._fill_tag_filter()
 
     def add_tag(self, name: str) -> None:
         """Ajoute une étiquette à l'échantillon courant."""
@@ -1318,6 +1593,40 @@ class SamplesPage(Page):
         self.lib.add_tag("sample", self._current, name.strip(),
                          category_color(name.strip()))
         self._fill_tags(self._current)
+        self._fill_tag_filter()
+
+    def _add_tag_from_edit(self) -> None:
+        """Le champ « Nouvelle étiquette… » : Entrée ou [Ajouter]."""
+        name = self._tag_edit.text().strip()
+        if not name:
+            return
+        if not self._current:
+            self.say(tr("Choisissez d'abord un échantillon."))
+            return
+        self.add_tag(name)
+        self._tag_edit.clear()
+        self.say(tr("Étiquette « %s » ajoutée.") % name)
+
+    def _fill_tag_filter(self) -> None:
+        """Le filtre par étiquette, et les étiquettes que propose le champ."""
+        current = self._tag_filter.currentData() or ""
+        try:
+            tags = [(name, n) for name, _color, n in self.lib.all_tags() if n]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("étiquettes indisponibles : %s", exc)
+            tags = []
+        self._tag_filter.blockSignals(True)
+        self._tag_filter.clear()
+        self._tag_filter.addItem(tr("Toutes étiquettes"), "")
+        for name, count in tags:
+            self._tag_filter.addItem(f"{name} ({count})", name)
+        index = self._tag_filter.findData(current)
+        self._tag_filter.setCurrentIndex(max(0, index))
+        self._tag_filter.blockSignals(False)
+        self._tag_filter.setVisible(bool(tags))
+        completer = QCompleter([name for name, _n in tags], self._tag_edit)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._tag_edit.setCompleter(completer)
 
     # -- rafraîchissement --------------------------------------------------- #
 
@@ -1349,6 +1658,96 @@ class SamplesPage(Page):
             self.say(tr("Découpage écrit : %s") % dialog.written)
             self.cardModified.emit()
             self._reload()
+
+    # -- une table d'onde --------------------------------------------------- #
+
+    def _wavetable(self) -> None:
+        """Une table d'onde tirée du son choisi, après son nom et l'accord."""
+        from ...core import wavetable
+
+        card = self.writable_card()
+        rows = self._selected_rows()
+        if card is None or len(rows) != 1:
+            return
+        rel = rows[0]["rel"]
+        nom, ok = QInputDialog.getText(
+            self, tr("Table d'onde"),
+            tr("Nom de la table, dans %s :") % wavetable.FOLDER,
+            QLineEdit.EchoMode.Normal, Path(rel).stem)
+        if not ok or not nom.strip():
+            return
+        cible, erreur = wavetable.write_wavetable(card, rel, nom.strip())
+        if erreur:
+            self.say(tr("Table d'onde impossible : %s.") % erreur)
+            return
+        if getattr(self.ctx.settings, "confirm_writes", True):
+            reponse = QMessageBox.question(
+                self, tr("Table d'onde"),
+                tr("Écrire %s : %d cycles de %d échantillons, prélevés du "
+                   "début à la fin de « %s ». Aucun fichier existant n'est "
+                   "remplacé.%sContinuer ?") % (
+                    cible, wavetable.DEFAULT_CYCLES, wavetable.CYCLE_SIZE,
+                    Path(rel).name, NL + NL),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if reponse != QMessageBox.StandardButton.Yes:
+                return
+        ecrit, erreur = wavetable.write_wavetable(card, rel, nom.strip(),
+                                                  apply=True)
+        if erreur:
+            self.say(tr("Table d'onde impossible : %s.") % erreur)
+            return
+        from ...core.scan import index_samples
+
+        index_samples(card, self.lib, [card.abs(ecrit)])
+        self.say(tr("Table d'onde écrite : %s. Sur le Deluge, choisissez-la "
+                    "pour un oscillateur de type WAVETABLE ; le générateur "
+                    "s'en sert aussi.") % ecrit)
+        self.cardModified.emit()
+
+    # -- un instrument multi-échantillon ------------------------------------ #
+
+    def _instrument_folder(self) -> str:
+        """Le dossier choisi dans l'arbre, sinon celui du son choisi."""
+        if self._folder and self._folder.upper().startswith("SAMPLES"):
+            return self._folder
+        if self._current:
+            return str(Path(self._current).parent).replace("\\", "/")
+        return ""
+
+    def _instrument(self) -> None:
+        card = self.card_or_warn()
+        if card is None:
+            return
+        dossier = self._instrument_folder()
+        if not dossier:
+            QMessageBox.information(
+                self, tr("Créer un instrument"),
+                tr("Choisissez un dossier dans l'arbre, ou un des sons du "
+                   "dossier dans la liste."))
+            return
+        self.say(tr("Lecture des hauteurs de %s…") % dossier)
+        self.run(multisample.plan_instrument, card, dossier,
+                 on_result=self.guard(self._instrument_ready),
+                 on_error=self.guard(
+                     lambda m: self.say(tr("Échec : %s") % m)),
+                 title=tr("Hauteurs des sons"))
+
+    def _instrument_ready(self, plan) -> None:
+        if plan is None:
+            return
+        if not plan:
+            QMessageBox.information(
+                self, tr("Créer un instrument"),
+                tr("Aucun son de %s dont la hauteur soit connue : ni dans son "
+                   "nom, ni à l'écoute.") % plan.folder)
+            return
+        dialog = InstrumentDialog(self.ctx, plan, self)
+        dialog.exec()
+        if dialog.written:
+            self.say(tr("Instrument écrit : %s. Il se charge sur le Deluge "
+                        "comme tout preset.") % ", ".join(dialog.written))
+            self.cardModified.emit()
 
     # -- traitement par lot ------------------------------------------------- #
 
@@ -1389,6 +1788,63 @@ class SamplesPage(Page):
                      lambda m: self.say(tr("Échec : %s") % m)),
                  title=tr("Traitement"))
 
+    def _undo_fix(self) -> None:
+        """Remet les originaux d'un traitement : choix, compte, accord."""
+        card = self.writable_card()
+        if card is None:
+            return
+        sauvegardes = samplefix.fix_backups(card)
+        if not sauvegardes:
+            QMessageBox.information(
+                self, tr("Annuler un traitement"),
+                tr("Aucun traitement à annuler : les originaux d'un "
+                   "traitement sont gardés dans _BACKUP, à la racine de la "
+                   "carte, et il n'y en a pas."))
+            return
+        from datetime import datetime
+
+        libelles = [tr("%s — %d fichier(s)") % (
+            datetime.fromtimestamp(s.when).strftime("%d/%m/%Y %H:%M"),
+            s.files) for s in sauvegardes]
+        choix, ok = QInputDialog.getItem(
+            self, tr("Annuler un traitement"),
+            tr("Traitement dont remettre les originaux :"), libelles, 0,
+            False)
+        if not ok or choix not in libelles:
+            return
+        sauvegarde = sauvegardes[libelles.index(choix)]
+        reponse = QMessageBox.question(
+            self, tr("Annuler un traitement"),
+            tr("%d fichier(s) vont être remis tels qu'avant ce traitement. "
+               "Leur version actuelle est gardée dans _BACKUP.%sContinuer ?")
+            % (sauvegarde.files, NL + NL),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reponse != QMessageBox.StandardButton.Yes:
+            return
+        self.say(tr("Remise des originaux…"))
+        self.run(samplefix.restore, card, sauvegarde.rel, self.lib, True,
+                 on_result=self.guard(self._undo_fix_done),
+                 on_error=self.guard(
+                     lambda m: self.say(tr("Échec : %s") % m)),
+                 title=tr("Annulation d'un traitement"))
+
+    def _undo_fix_done(self, result) -> None:
+        if not result:
+            return
+        nombre, erreurs = result
+        if erreurs:
+            QMessageBox.warning(
+                self, tr("Annulation partielle"),
+                tr("%d fichier(s) remis, %d en échec :%s%s")
+                % (nombre - len(erreurs), len(erreurs), NL + NL,
+                   NL.join(erreurs[:12])))
+        else:
+            self.say(tr("%d fichier(s) remis tels qu'avant le traitement.")
+                     % nombre)
+        self.cardModified.emit()
+        self._reload()
+
     def _do_process(self, plan, card, progress=None, should_stop=None):
         return plan.apply(card, self.lib, progress=progress,
                           should_stop=should_stop)
@@ -1413,6 +1869,7 @@ class SamplesPage(Page):
 
     def _refresh(self) -> None:
         self._fill_categories()
+        self._fill_tag_filter()
         self._fill_tree()
         self._reload()
 

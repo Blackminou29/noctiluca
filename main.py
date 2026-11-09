@@ -120,7 +120,7 @@ def _choose_language() -> str:
 
         return i18n.set_language(load_settings().language)
     except Exception:  # noqa: BLE001 - des réglages illisibles : le défaut
-        return i18n.set_language(i18n.DEFAULT)
+        return i18n.set_language(i18n.FIRST_RUN)
 
 
 def _log_reprises(log: logging.Logger) -> None:
@@ -168,11 +168,31 @@ def _install_excepthook() -> None:
                 "échoué. Le détail est dans le journal."))
             box.setInformativeText(f"{kind.__name__} : {value}")
             box.setDetailedText(detail)
+            signaler = box.addButton(tr("Signaler ce problème…"),
+                                     QMessageBox.ButtonRole.ActionRole)
+            signaler.setToolTip(tr("Ouvre le rapport, détail de l'erreur "
+                                   "compris, à relire avant tout envoi"))
+            box.setDefaultButton(box.addButton(QMessageBox.StandardButton.Ok))
             box.exec()
+            if box.clickedButton() is signaler:
+                _report_error(detail)
         except Exception:  # noqa: BLE001 - on ne fait pas d'erreur sur l'erreur
             log.exception("affichage de l'erreur impossible")
 
     sys.excepthook = handler
+
+
+def _report_error(detail: str) -> None:
+    """Le rapport d'Aide ▸ Signaler un problème, l'erreur déjà dedans."""
+    from PyQt6.QtWidgets import QApplication
+
+    from delugeapp.config import LOG_PATH
+    from delugeapp.ui.report import ReportDialog
+
+    fenetre = next((w for w in QApplication.topLevelWidgets()
+                    if getattr(w, "ctx", None) is not None), None)
+    ReportDialog(getattr(fenetre, "ctx", None), LOG_PATH, fenetre,
+                 detail=detail).exec()
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -714,16 +714,24 @@ class HealthPage(Page):
     def _fill_unused(self) -> None:
         from ..widgets.common import human_duration
 
+        from ...core import organize
+
         self._unused.setRowCount(0)
         try:
             rows = self.lib.unused_samples()
         except Exception as exc:  # noqa: BLE001
             log.debug("inutilisés indisponibles : %s", exc)
             return
+        # Les prises du Deluge restent hors de la liste, comme de l'archivage.
+        prises = [r for r in rows if organize.is_recording(r["rel"])]
+        rows = [r for r in rows if not organize.is_recording(r["rel"])]
         total = sum(r["size"] or 0 for r in rows)
-        self._unused_total.setText(
-            tr("%d échantillon(s), %s au total") % (len(rows),
-                                                   human_size(total)))
+        texte = tr("%d échantillon(s), %s au total") % (len(rows),
+                                                        human_size(total))
+        if prises:
+            texte += " — " + tr("%d enregistrement(s) du Deluge laissé(s) "
+                                "en place") % len(prises)
+        self._unused_total.setText(texte)
         for row in rows[:5000]:
             index = self._unused.rowCount()
             self._unused.insertRow(index)

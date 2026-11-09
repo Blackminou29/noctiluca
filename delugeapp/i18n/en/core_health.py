@@ -82,9 +82,12 @@ TEXTS = {
     "Échantillons jamais utilisés": "Samples never used",
     "%d échantillon(s) (%.0f Mio) ne sont cités par aucun preset, kit ni "
     "morceau de cette carte. Ce n'est pas un défaut : votre bibliothèque peut "
-    "contenir des sons en réserve.":
+    "contenir des sons en réserve. Ce que le Deluge enregistre lui-même "
+    "(SAMPLES/RECORD, RESAMPLE, CLIPS, EXPORTS) n'est pas compté.":
         "%d sample(s) (%.0f MiB) are used by no preset, kit or song on this "
-        "card. This is not a fault: your library may hold sounds in reserve.",
+        "card. This is not a fault: your library may hold sounds in reserve. "
+        "What the Deluge records itself (SAMPLES/RECORD, RESAMPLE, CLIPS, "
+        "EXPORTS) is not counted.",
     "Les archiver dans un dossier à part s'il faut libérer de la place.":
         "Archive them into a separate folder if space needs freeing.",
     "Échantillons en double": "Duplicate samples",
@@ -106,13 +109,18 @@ TEXTS = {
     "Fichiers XML réparés à la lecture": "XML files repaired when read",
     "Ces fichiers comportent des anomalies de syntaxe (caractères illégaux, "
     "« & » non échappé, balises mal fermées) que le lecteur a contournées. "
-    "Le Deluge, lui, peut les refuser.":
+    "Le Deluge, lui, peut les refuser. Ce que le firmware écrit lui-même "
+    "n'est pas compté ici.":
         "These files have syntax problems (illegal characters, unescaped "
         "“&”, badly closed tags) that the reader worked around. The Deluge "
-        "may refuse them.",
-    "Réenregistrer ces presets depuis l'application pour obtenir un XML "
-    "propre.":
-        "Save these presets again from the application to get clean XML.",
+        "may refuse them. What the firmware writes itself is not counted "
+        "here.",
+    "Vérifier qu'ils se chargent sur le Deluge. S'il refuse un preset, "
+    "[Dupliquer], sur la page Presets, en écrit une copie au XML propre ; un "
+    "morceau n'est jamais réécrit par l'application.":
+        "Check that they load on the Deluge. If it refuses a preset, "
+        "[Duplicate], on the Presets page, writes a copy with clean XML; a "
+        "song is never rewritten by the application.",
     "Noms de fichiers problématiques": "Problematic file names",
     "Caractères interdits par FAT32, nom terminé par un point ou une espace, "
     "accents : autant de noms que le Deluge peut afficher de travers ou "

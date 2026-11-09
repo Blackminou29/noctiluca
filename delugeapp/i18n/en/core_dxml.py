@@ -11,6 +11,10 @@ TEXTS = {
         "characters forbidden by XML 1.0 removed",
     "%d '&' non échappé(s) corrigé(s)": "%d unescaped '&' fixed",
     "octets non UTF-8 remplacés": "non-UTF-8 bytes replaced",
+    "nom d'appareil MIDI en octets 0xFF, écrit par le firmware":
+        "MIDI device name in 0xFF bytes, written by the firmware",
+    "balises numériques de la bêta 1.3 (performanceView) renommées":
+        "numeric tags of the 1.3 beta (performanceView) renamed",
     "document multi-racines enveloppé dans <%s>":
         "multi-root document wrapped in <%s>",
     "%d attribut(s) dupliqué(s) supprimé(s)":

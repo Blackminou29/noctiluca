@@ -84,7 +84,17 @@ KNOWN_DESTINATIONS = (
     "carrier1Feedback", "carrier2Feedback", "env1Attack", "env1Decay",
     "env1Sustain", "env1Release", "env2Attack", "env2Decay", "env2Sustain",
     "env2Release", "volumePostFX",
+    # Seul le sidechain y mène (``Sound::render``) : le volume après l'envoi
+    # vers la réverbération, que la grosse caisse fait pomper.
+    "volumePostReverbSend",
 )
+
+#: Les noms de la source *sidechain* dans les câbles : « compressor » avant
+#: le firmware communautaire 1.1, et encore dans les fichiers de la 1.3.
+SIDECHAIN_SOURCES = ("compressor", "sidechain")
+
+#: ``compressorShape`` d'usine (``ModControllableAudio``).
+SIDECHAIN_SHAPE = -601295438
 
 #: Tempo supposé pour l'aperçu d'un LFO synchronisé : un preset n'a pas de
 #: tempo, c'est le morceau qui le donne.
@@ -588,6 +598,93 @@ def _load_sample(sd: SDCard | None, osc) -> tuple[np.ndarray, int] | None:
     return data, file_sr
 
 
+class _Tranche:
+    """La tranche d'un multi-échantillon jouée par une note, sous la forme
+    d'un oscillateur : ce que lisent :func:`_load_sample` et la voix."""
+
+    __slots__ = ("file_name", "zone", "reversed", "transpose", "cents")
+
+    def __init__(self, osc, rng) -> None:
+        self.file_name = rng.file_name
+        self.zone = rng.zone
+        self.reversed = osc.reversed
+        self.transpose = rng.transpose
+        self.cents = rng.cents
+
+
+class _Fichier:
+    """Un fichier lu tel quel, pour :func:`_load_sample`."""
+
+    __slots__ = ("file_name", "zone", "reversed")
+
+    def __init__(self, file_name: str) -> None:
+        self.file_name = file_name
+        self.zone = None
+        self.reversed = 0
+
+
+def _wavetable_cycle(sd, osc, position: int):
+    """Le cycle d'une table d'onde que joue un oscillateur, bouclé :
+    ``(données, fréquence)`` pour :func:`_sample_wave`, ou ``None``.
+
+    **Approché** : le firmware lit des bandes limitées et glisse d'un cycle à
+    l'autre avec la position ; ici, le cycle de la position au départ de la
+    note, sans modulation. C'est mieux que la dent de scie d'avant, et la
+    hauteur est juste : la fréquence rendue fait tenir un cycle dans une
+    période du do 3.
+    """
+    from . import wavetable
+
+    if sd is None or not osc.file_name:
+        return None
+    lu = _load_sample(sd, _Fichier(osc.file_name))
+    path = sd.resolve_sample(osc.file_name)
+    if lu is None or path is None:
+        return None
+    data, _sr = lu
+    if data.ndim == 2:
+        data = data.mean(axis=1)
+    taille = wavetable.cycle_size_of(path)
+    cycles = max(1, data.size // max(1, taille))
+    if data.size < taille:
+        taille, cycles = data.size, 1
+    part = (int(position) + 2 ** 31) / float(2 ** 32)
+    k = min(cycles - 1, max(0, int(round(part * (cycles - 1)))))
+    cycle = np.asarray(data[k * taille:(k + 1) * taille], dtype=np.float64)
+    if cycle.size < 8:
+        return None
+    # Le cycle rééchantillonné à la période du do 3 sur 44,1 kHz, soixante-
+    # quatre fois : lu comme un échantillon enregistré à cette hauteur. Lu
+    # tel quel à 2 048 points par période, il demandait un incrément douze
+    # fois trop grand, que la lecture refusait.
+    periodes = 64
+    total = int(round(periodes * ENGINE_RATE / 261.6255653))
+    pas = periodes * cycle.size / float(total)
+    x = (np.arange(total) * pas) % cycle.size
+    boucle = np.interp(x, np.arange(cycle.size + 1),
+                       np.append(cycle, cycle[0]))
+    return np.ascontiguousarray(boucle, dtype=np.float32), ENGINE_RATE
+
+
+def _sample_source(osc, note: int):
+    """Ce que joue un oscillateur ``sample`` pour cette note.
+
+    Un multi-échantillon n'a pas de ``fileName`` à lui : sans cela, il
+    s'entendait en dent de scie sur l'ordinateur (7 novembre 2026). Comme
+    le firmware (``Source::getRange``) : la première tranche dont la note
+    haute atteint la note — la dernière au-delà —, et c'est **sa**
+    transposition qui joue, pas celle de l'oscillateur
+    (``Voice::calculatePhaseIncrements``).
+    """
+    ranges = list(getattr(osc, "ranges", None) or ())
+    if not ranges:
+        return osc
+    for rng in ranges[:-1]:
+        if int(rng.top_note) >= int(note):
+            return _Tranche(osc, rng)
+    return _Tranche(osc, ranges[-1])
+
+
 def _sample_wave(data: np.ndarray, increments: np.ndarray, n: int,
                  loop: bool) -> np.ndarray:
     """Lecture à vitesse variable, un incrément par bloc
@@ -641,12 +738,62 @@ _WAVE_KINDS = ("sine", "triangle", "square", "saw", "analogSaw",
                "analogSquare")
 
 
+#: Formes du LFO qui ont une phase : le hasard (``sah``) et la marche
+#: aléatoire (``rwalk``) n'en ont pas qu'on puisse reprendre.
+PERIODIC_LFOS = ("sine", "triangle", "saw", "square")
+
+#: Précision de la phase du LFO 1 reprise par une voix : 1/16ᵉ de cycle
+#: (11° d'écart au plus), soit 16 voix au plus pour une même note — le
+#: rendu partagé reste possible. À 64, « ATELIER DEEP HOUSE » entier
+#: passait de 21 à 29 s de calcul.
+LFO1_PHASE_STEPS = 16
+
+
+def _lfo_increment(sound: Sound, lfo, key: str, bpm: float,
+                   static: "_Patch | None" = None) -> float:
+    """L'avance de phase d'un LFO par échantillon : calée sur le tempo s'il
+    est synchronisé, sinon sa vitesse et les câbles constants de la note."""
+    if getattr(lfo, "sync_level", 0):
+        hz = synced_hz(lfo.sync_level, bpm)
+        return hz * dsp.Q32 / ENGINE_RATE
+    return float(_final_exp(sound, key, static or _Patch(), 1)[0])
+
+
+def _glide_octaves(semitones: float, t: np.ndarray,
+                   glide: float) -> np.ndarray:
+    """Ce que le glissé ajoute à la hauteur, en octaves, aux instants ``t``
+    d'une note qui part ``semitones`` plus haut (``Voice::render``) : le
+    firmware glisse **en fréquence** — le pas de phase va de ``rapport`` à
+    1 le long de ``getDecay4`` —, pas en demi-tons."""
+    pos = np.clip(np.asarray(t, dtype=np.float64) / glide, 0.0, 1.0) \
+        * 8388608.0
+    env = np.array([dsp.decay4(p) for p in np.atleast_1d(pos)]) / dsp.Q31
+    rapport = 2.0 ** (float(semitones) / 12.0)
+    return np.log2(1.0 + env * (rapport - 1.0))
+
+
+def _lfo1_phase(sound: Sound, start: int, bpm: float) -> int | None:
+    """La phase du LFO 1 global à l'échantillon ``start`` du morceau, s'il
+    module quelque chose et qu'il est périodique ; ``None`` sinon (la voix
+    le prend à sa phase de départ). Arrondie à :data:`LFO1_PHASE_STEPS`."""
+    lfo = sound.lfo1
+    if lfo.type not in PERIODIC_LFOS \
+            or not any(c.source == "lfo1" for c in sound.patch_cables):
+        return None
+    inc = int(_lfo_increment(sound, lfo, "lfo1Rate", bpm))
+    phase = (dsp.lfo_start_phase(lfo.type, False)
+             + inc * dsp.BLOCK * (int(start) // dsp.BLOCK)) & dsp.MASK32
+    pas = (1 << 32) // LFO1_PHASE_STEPS
+    return (int(round(phase / pas)) % LFO1_PHASE_STEPS) * pas
+
+
 def _render_voice(sound: Sound, note: int, n: int, gate: float,
                   velocity: float, sd: SDCard | None, bpm: float,
-                  glide_from: float, rng: np.random.Generator
-                  ) -> np.ndarray:
+                  glide_from: float, rng: np.random.Generator,
+                  lfo1_phase: int | None = None) -> np.ndarray:
     """Une note du son (``Voice::render``), ``(2, n)`` à l'échelle entière,
-    avant les effets du son."""
+    avant les effets du son. ``lfo1_phase`` : là où en est le LFO 1 global
+    quand la note part (:func:`_lfo1_phase`)."""
     block = dsp.BLOCK
     nb = -(-n // block)
     osc1, osc2 = sound.osc1, sound.osc2
@@ -687,18 +834,17 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
         envelopes[index] = values
 
     # -- LFO ------------------------------------------------------------- #
-    def lfo_increment(lfo, key):
-        if getattr(lfo, "sync_level", 0):
-            hz = synced_hz(lfo.sync_level, bpm)
-            return hz * dsp.Q32 / ENGINE_RATE
-        return float(_final_exp(sound, key, static, 1)[0])
-
-    lfo1 = dsp.lfo_blocks(sound.lfo1.type, np.full(nb, lfo_increment(
-        sound.lfo1, "lfo1Rate")), dsp.lfo_start_phase(sound.lfo1.type, False),
-        rng)
-    lfo2 = dsp.lfo_blocks(sound.lfo2.type, np.full(nb, lfo_increment(
-        sound.lfo2, "lfo2Rate")), dsp.lfo_start_phase(sound.lfo2.type, True),
-        rng)
+    # Le LFO 1 est global : il court d'une note à l'autre, et la voix le
+    # prend là où il en est (``lfo1_phase``). Le LFO 2 repart à chaque note.
+    lfo1 = dsp.lfo_blocks(
+        sound.lfo1.type,
+        np.full(nb, _lfo_increment(sound, sound.lfo1, "lfo1Rate", bpm,
+                                   static)),
+        dsp.lfo_start_phase(sound.lfo1.type, False) if lfo1_phase is None
+        else int(lfo1_phase), rng)
+    lfo2 = dsp.lfo_blocks(sound.lfo2.type, np.full(nb, _lfo_increment(
+        sound, sound.lfo2, "lfo2Rate", bpm, static)),
+        dsp.lfo_start_phase(sound.lfo2.type, True), rng)
 
     sources = dict(constants)
     sources.update({
@@ -716,8 +862,7 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
         glide = laws.glide_seconds(porta)
         if glide > 0:
             t = np.arange(nb, dtype=np.float64) * block / ENGINE_RATE
-            pitch_oct = pitch_oct + float(glide_from) / 12.0 * (
-                1.0 - laws.attack_curve(t / glide))
+            pitch_oct = pitch_oct + _glide_octaves(glide_from, t, glide)
 
     # -- amplitude et filtres ------------------------------------------- #
     instant = attack1 > 245632
@@ -864,17 +1009,36 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
                     amp_blocks = np.floor(volume_s / 16.0)
                 amp = _ramp(amp_blocks, n, amp_blocks[0] if instant else 0.0,
                             jumps)
-                sample = _load_sample(sd, osc) if osc.is_sample else None
+                # Une table d'onde est lue par cycles, plus bas : prise pour
+                # un échantillon, elle sonnait à 21 Hz (sa période de 2 048
+                # points).
+                lu = osc.is_sample and osc.type != "wavetable"
+                source = _sample_source(osc, note + int(sound.transpose)) \
+                    if lu else osc
+                sample = _load_sample(sd, source) if lu else None
                 if sample is not None:
                     data, file_sr = sample
                     loop = int(getattr(osc, "loop_mode", 0)) == 2
                     base = dsp.sample_increment(
-                        note + int(sound.transpose) + int(osc.transpose),
+                        note + int(sound.transpose) + int(source.transpose),
                         file_sr)
-                    for u, incs in enumerate(tuned(base, osc.cents,
+                    for u, incs in enumerate(tuned(base, source.cents,
                                                    osc_oct[s])):
                         add(4.0 * amp * _sample_wave(data, incs, n, loop), u)
                     continue
+                if osc.type == "wavetable":
+                    table = _wavetable_cycle(
+                        sd, osc, sound.params.get(
+                            "osc%sWavetablePosition" % letter, 0))
+                    if table is not None:
+                        data, fake_sr = table
+                        base = dsp.sample_increment(
+                            note + int(sound.transpose) + int(osc.transpose),
+                            fake_sr)
+                        for u, incs in enumerate(tuned(base, osc.cents,
+                                                       osc_oct[s])):
+                            add(amp * _sample_wave(data, incs, n, True), u)
+                        continue
                 kind = osc_kind(osc)
                 if kind is None:
                     continue
@@ -1010,8 +1174,36 @@ def _raw(sound: Sound, key: str, default: int) -> float:
         return float(default)
 
 
+def _sidechain_cable(sound: Sound) -> int:
+    """La force brute du câble sidechain → volume post-envoi, 0 sans câble."""
+    for cable in sound.patch_cables:
+        if cable.source in SIDECHAIN_SOURCES \
+                and param_of_destination(cable.destination) \
+                == "volumePostReverbSend":
+            return int(cable.amount)
+    return 0
+
+
+def _sidechain_source(sound: Sound, hits, bpm: float) -> np.ndarray | None:
+    """La source *sidechain* du son, −1..0 par bloc, ou ``None`` s'il ne
+    s'en sert pas ou si aucun coup ne tombe (``SideChain::render``)."""
+    if not any(c.source in SIDECHAIN_SOURCES for c in sound.patch_cables) \
+            or not any(hits):
+        return None
+    shape = sound.param("compressorShape",
+                        sound.param("sidechainCompressorShape",
+                                    SIDECHAIN_SHAPE))
+    level = int(getattr(sound, "comp_sync_level", 0) or 0)
+    values = dsp.sidechain_blocks(
+        hits, dsp.sidechain_rate(sound.comp_attack, level, bpm),
+        dsp.sidechain_rate(sound.comp_release, level, bpm), shape,
+        instant=int(sound.comp_attack) == dsp.SIDECHAIN_INSTANT_ATTACK)
+    return values / dsp.Q31
+
+
 def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
-                 limit_feedback: bool) -> tuple[np.ndarray, np.ndarray]:
+                 limit_feedback: bool, side: np.ndarray | None = None
+                 ) -> tuple[np.ndarray, np.ndarray]:
     """Les effets du son entier, voix additionnées (``Sound::render``) :
     panoramique, réduction, mod FX, égaliseur, delay, puis l'envoi vers la
     réverbération et le volume post-effets. Les modulations s'y prennent au
@@ -1019,6 +1211,9 @@ def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
 
     :param limit_feedback: le Deluge borne la rétroaction du delay à 0,94
         hors lecture d'un clip — l'audition d'un preset.
+    :param side: la source *sidechain* du son par bloc
+        (:func:`_sidechain_source`) : elle module le volume d'après l'envoi
+        vers la réverbération — le pompage.
     """
     rest = {"velocity": 0.0, "note": 0.0, "random": 0.0, "aftertouch": 0.0}
     mod = _patch(sound, rest, only=set(rest))
@@ -1034,6 +1229,18 @@ def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
     post_fx = float(_final_volume(sound, "volumePostFX", mod, 1, 40.0)[0])
     post_reverb = float(_final_volume(sound, "volumePostReverbSend", mod,
                                       1)[0])
+    if side is not None:
+        ducked = _patch(sound, {s: side for s in SIDECHAIN_SOURCES},
+                        only=set(SIDECHAIN_SOURCES))
+        if "volumePostReverbSend" in ducked:
+            pumped = _Patch()
+            pumped.factors["volumePostReverbSend"] = \
+                mod.factor("volumePostReverbSend") \
+                * ducked.factor("volumePostReverbSend")
+            blocks = _final_volume(sound, "volumePostReverbSend", pumped,
+                                   len(side))
+            # Comme toute amplitude du firmware : une rampe dans le bloc.
+            post_reverb = _ramp(blocks, n, float(blocks[0]))
     reverb_amount = float(_final_volume(sound, "reverbAmount", mod, 1, 0.0)[0])
 
     out, post_fx = dsp.bitcrush_srr(out, _raw(sound, "bitCrush", INT32_MIN),
@@ -1269,7 +1476,8 @@ def render_preview(preset: SynthPreset, notes: list[int] | None = None,
             if count <= 0:
                 continue
             voice = _render_voice(sound, note, count, 0.6 * length / count,
-                                  0.85, sd, PREVIEW_BPM, 0.0, rng)
+                                  0.85, sd, PREVIEW_BPM, 0.0, rng,
+                                  _lfo1_phase(sound, start, PREVIEW_BPM))
             voices[:, start:start + count] += voice
         dry, send = _sound_chain(sound, voices, PREVIEW_BPM, True)
         mixed = dry + dsp.reverb(send, PREVIEW_REVERB)
@@ -1326,7 +1534,7 @@ def _run_all(tasks: list, should_stop=None) -> list | None:
 
 def _voice_task(sound: Sound, key: tuple, note: int, count: int,
                 gate: float, velocity: float, sd: SDCard | None,
-                tempo: float, glide: float):
+                tempo: float, glide: float, lfo1_phase: int | None = None):
     """Le calcul d'une voix de :func:`render_parts`, pour :func:`_run_all`.
 
     Son hasard (phases de départ, gigue du filtre, *random*) lui est propre,
@@ -1336,17 +1544,67 @@ def _voice_task(sound: Sound, key: tuple, note: int, count: int,
         rng = np.random.default_rng((_graine(sound.name), _graine(repr(key))))
         try:
             return _render_voice(sound, note, count, gate, velocity, sd,
-                                 tempo, glide, rng)
+                                 tempo, glide, rng, lfo1_phase)
         except Exception as exc:  # noqa: BLE001
             log.exception("note impossible à rendre : %s", exc)
             return np.zeros((2, count))
     return task
 
 
+def _sidechain_hits(parts: dict, sounds: dict, n: int, step_s: float,
+                    external=None) -> list[int]:
+    """Les coups de sidechain, combinés par bloc : chaque note d'un son qui
+    en envoie (``Sound::noteOn`` → ``registerSideChainHit``), ou les coups
+    ``(secondes, force)`` donnés de l'extérieur — ceux du morceau entier,
+    quand une piste se rend seule."""
+    hits = [0] * (-(-n // dsp.BLOCK))
+
+    def hit(sample: int, strength: int) -> None:
+        b = sample // dsp.BLOCK
+        if 0 <= b < len(hits) and strength:
+            hits[b] = dsp.combine_hit_strengths(hits[b], strength)
+
+    if external is not None:
+        for seconds, strength in external:
+            hit(int(float(seconds) * ENGINE_RATE), int(strength))
+        return hits
+    for name, events in (parts or {}).items():
+        send = int(getattr((sounds or {}).get(name), "side_chain_send", 0)
+                   or 0)
+        for event in events if send else ():
+            hit(int(float(event.start) * step_s * ENGINE_RATE), send)
+    return hits
+
+
+def _reverb_ducking(plans, hits, bpm: float, n: int) -> np.ndarray | None:
+    """Le pompage de la réverbération (``renderReverb``), réglage « auto » :
+    elle suit le câble sidechain du son le plus réverbéré
+    (``updateReverbParams``) ; ``None`` si ce son n'en a pas."""
+    plus = None
+    for _name, sound, placed in plans:
+        quantite = int(sound.param("reverbAmount", INT32_MIN))
+        if placed and quantite > INT32_MIN and (
+                plus is None or quantite > int(plus.param("reverbAmount",
+                                                           INT32_MIN))):
+            plus = sound
+    if plus is None:
+        return None
+    force = _sidechain_cable(plus)
+    side = _sidechain_source(plus, hits, bpm) if force else None
+    if side is None:
+        return None
+    # ``positivePatchedValue = (s·V >> 32) + 2²⁹`` ; le volume de sortie,
+    # ``(p >> 15)·(p >> 14)``, vaut 2²⁹ au repos.
+    p = side * dsp.Q31 * float(force) / dsp.Q32 + float(1 << 29)
+    gain = np.floor(p / 32768.0) * np.floor(p / 16384.0) / float(1 << 29)
+    return np.repeat(gain, dsp.BLOCK)[:n]
+
+
 def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                  sr: int = 44100, sd: SDCard | None = None,
                  tail: float = 0.8, should_stop=None,
-                 normalize: bool = True) -> np.ndarray | None:
+                 normalize: bool = True,
+                 sidechain_hits=None) -> np.ndarray | None:
     """Rend des parties d'accompagnement, chacune avec son son.
 
     :param parts: ``{nom: [NoteEvent]}`` (cf. :mod:`delugeapp.core.accomp`),
@@ -1373,6 +1631,13 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     qu'un rendu redonne le même son à l'échantillon près.
     ``normalize=False`` laisse la crête telle quelle (:func:`mix` ramène
     le mélange avec la batterie).
+
+    **Le sidechain** : chaque note d'un son qui en envoie
+    (``sideChainSend``) est un coup ; les sons câblés depuis la source
+    *sidechain* baissent leur volume d'après l'envoi, et la réverbération
+    suit le plus réverbéré d'entre eux. ``sidechain_hits`` — ``[(secondes,
+    force)]`` — remplace les coups des parties : ceux du morceau entier,
+    quand une piste se rend seule (:mod:`.daw`).
     """
     from .accomp import total_steps
 
@@ -1415,8 +1680,11 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
             glide = 0.0
             if glides and previous is not None:
                 glide = float(int(previous.note) - int(event.note))
+            # Le LFO 1 court d'une note à l'autre : deux notes égales à
+            # deux phases du LFO ne sonnent pas pareil.
+            phase1 = _lfo1_phase(sound, start, tempo)
             key = (int(event.note), round(held, 3), round(seconds, 2),
-                   int(event.velocity) // 5, glide)
+                   int(event.velocity) // 5, glide, phase1)
             voice_key = (name, key)
             count = jobs.get(voice_key)
             if count is None:
@@ -1427,7 +1695,7 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                     # ``NoteEvent.velocity`` est un pourcentage : 100 % joue
                     # la vélocité 127.
                     max(1.0, min(100.0, float(event.velocity))) / 100.0,
-                    sd, tempo, glide))
+                    sd, tempo, glide, phase1))
             previous = event
             if start >= n:
                 continue
@@ -1447,6 +1715,7 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     if rendered is None:
         return None
     voices = {keys[i]: voice for i, voice in zip(order, rendered)}
+    hits = _sidechain_hits(parts, sounds, n, step_s, sidechain_hits)
 
     # -- chaque son entier dans ses effets ------------------------------ #
     def chain(name, sound, placed):
@@ -1459,7 +1728,8 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                     chunk[:, -fade:] *= np.linspace(1.0, 0.0, fade)[None, :]
                 mixed[:, start:end] += chunk
             try:
-                return _sound_chain(sound, mixed, tempo, False)
+                return _sound_chain(sound, mixed, tempo, False,
+                                    _sidechain_source(sound, hits, tempo))
             except Exception as exc:  # noqa: BLE001
                 log.exception("effets impossibles pour %s : %s", name, exc)
                 return None
@@ -1474,7 +1744,11 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
         if result is not None:
             dry_total += result[0]
             send_total += result[1]
-    mixed = dry_total + dsp.reverb(send_total, PREVIEW_REVERB)
+    reverberation = dsp.reverb(send_total, PREVIEW_REVERB)
+    ducking = _reverb_ducking(plans, hits, tempo, n)
+    if ducking is not None:
+        reverberation = reverberation * ducking[None, :]
+    mixed = dry_total + reverberation
     out = _resampled(dsp.output_stage(mixed).T, frames).astype(np.float32)
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if normalize and peak > 0.98:

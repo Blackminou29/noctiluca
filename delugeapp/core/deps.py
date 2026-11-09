@@ -21,6 +21,7 @@ modification retournent la liste de ce qu'elles feraient (cf. SPEC §0.2).
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -31,7 +32,8 @@ from ..i18n import tr
 from . import dxml
 from .db import Library
 from .model import Song
-from .sdcard import SDCard, norm_rel
+from .sdcard import (SDCard, is_short_name, norm_rel, short_name_basis,
+                     short_name_target)
 
 log = logging.getLogger(__name__)
 
@@ -361,6 +363,54 @@ def find_replacement(sd: SDCard, missing_rel: str, lib: Library,
     return out[:20]
 
 
+def _short_name_needles(key: str) -> set[bytes]:
+    """Débuts possibles des noms courts que FAT a pu donner au fichier
+    ``key`` (« cb1-bd~ » pour « CB1-bdrum1.wav »), pour le filtre rapide."""
+    body, _ext, lossy = short_name_basis(Path(key).name)
+    if not lossy or not body:
+        return set()
+    longest = min(len(body), 6)
+    return {(body[:k] + "~").lower().encode("utf-8", "replace")
+            for k in range(max(1, longest - 4), longest + 1)}
+
+
+def _moved_by_folder(table: dict[str, str]) -> dict[str, list[str]]:
+    """Noms des fichiers déplacés, par dossier d'origine (clés normalisées)."""
+    out: dict[str, list[str]] = {}
+    for key in table:
+        folder, _, name = key.rpartition("/")
+        out.setdefault(folder, []).append(name)
+    return out
+
+
+def _short_name_new(sd: SDCard, value: str, table: dict[str, str],
+                    moved: dict[str, list[str]]) -> str | None:
+    """Le nouveau chemin du fichier déplacé que ``value`` cite par son nom
+    court de FAT, s'il ne peut désigner aucun autre fichier du dossier.
+
+    Les fichiers sont déjà déplacés quand les références sont réécrites : le
+    nom court ne mène plus à rien sur le disque, il se rapproche des anciens
+    noms. Les fichiers restés dans le dossier comptent aussi, pour ne jamais
+    rediriger une référence qui pouvait en désigner un autre.
+    """
+    folder, _, name = norm_rel(value).rpartition("/")
+    if not is_short_name(name) or folder not in moved:
+        return None
+    names = list(moved[folder])
+    path = sd.resolve_sample(folder) if folder else sd.root
+    if path is not None and path.is_dir():
+        try:
+            with os.scandir(path) as it:
+                names += [e.name for e in it
+                          if norm_rel(f"{folder}/{e.name}") not in table]
+        except OSError:
+            return None
+    target = short_name_target(name, names)
+    if target is None:
+        return None
+    return table.get(norm_rel(f"{folder}/{target}"))
+
+
 def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
                 progress: Callable[[str], None] | None = None,
                 failures: list[str] | None = None,
@@ -394,12 +444,15 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
     # Noms de fichiers recherchés, pour écarter vite les XML non concernés.
     # Le nom figure parfois échappé dans le XML (``&amp;``) : on cherche les
     # deux formes, sinon ces fichiers n'étaient jamais réécrits.
+    # Un fichier peut aussi être cité par son nom court de FAT.
     needles: set[bytes] = set()
     for key in table:
         name = Path(key).name
         if name:
             for form in (name, _xml_escaped(name)):
                 needles.add(form.encode("utf-8", "replace").lower())
+            needles |= _short_name_needles(key)
+    moved = _moved_by_folder(table)
 
     def _fail(text: str) -> None:
         if failures is not None:
@@ -432,7 +485,8 @@ def relink_many(sd: SDCard, mapping: dict[str, str], apply: bool = False,
             value = dxml.get(node, FILENAME_KEY)
             if not value:
                 continue
-            new_rel = table.get(norm_rel(value))
+            new_rel = (table.get(norm_rel(value))
+                       or _short_name_new(sd, value, table, moved))
             if not new_rel:
                 continue
             dialect = ("elem" if dxml.get_child(node, FILENAME_KEY) is not None

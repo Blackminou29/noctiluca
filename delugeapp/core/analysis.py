@@ -27,8 +27,10 @@ Aucune fonction ne lève : un signal vide ou absurde donne une valeur neutre.
   vraie difficulté de l'exercice : elles ont les mêmes notes et seule une
   tonique nettement posée les sépare. Un morceau modal ou atonal donne une
   confiance basse — c'est le signal qu'il ne faut pas s'y fier.
-* :func:`estimate_root_note` — classe de hauteur correcte sur **92 %** des
-  1 026 échantillons de la carte dont le nom indique la note. L'octave, elle,
+* :func:`estimate_root_note` — classe de hauteur correcte sur **95 %** des
+  1 073 échantillons de la carte dont le nom indique la note (1 021 ; 92 %
+  sur 1 026 à la première mesure), note exacte sur 88 % à la convention du
+  dossier près (943). L'octave, elle,
   dépend de la convention de la banque : ``Bassoon`` et ``Cello`` nomment
   leurs fichiers une octave au-dessus de la notation scientifique, là où
   ``Church Organ`` la respecte.
@@ -504,12 +506,27 @@ def detect_key(data: np.ndarray, sr: int) -> tuple[str, float]:
         return "", 0.0
 
 
+#: Part du plus haut pic d'autocorrélation qu'atteint le premier pic retenu
+#: (:func:`estimate_root_note`) : 0,95, le meilleur des seuils mesurés sur la
+#: carte (0,80 : 940 notes exactes ; 0,85 : 929 ; 0,90 : 932 ; 0,95 : 943).
+ROOT_PEAK_SHARE = 0.95
+
+
 def estimate_root_note(data: np.ndarray, sr: int) -> int | None:
     """Note MIDI de la fondamentale, ou ``None`` si indéterminable.
 
     Autocorrélation du signal, qui résiste mieux qu'un simple pic spectral aux
     sons dont l'harmonique est plus forte que la fondamentale — cas courant
     des basses et des pianos échantillonnés.
+
+    Le 7 novembre 2026, mesuré sur les 1 073 sons de la carte dont le nom dit
+    la note : le **premier** pic qui atteint 95 % du plus haut, et non le plus
+    haut, donne 943 notes exactes au lieu de 908 — un multiple de la période
+    est aussi corrélé que la période, et l'ancienne règle prenait parfois le
+    cinquième sous-harmonique (28 demi-tons trop bas sur deux sons de
+    ``REPHAZER X-SELECTED/1``). Et l'autocorrélation passe par la FFT :
+    ``np.correlate`` sur deux secondes de son est quadratique — 13 s pour
+    les 1 073 sons, au lieu de plus d'un quart d'heure.
     """
     try:
         arr, sr = _prepare(data, sr)
@@ -521,9 +538,14 @@ def estimate_root_note(data: np.ndarray, sr: int) -> int | None:
         segment = segment[:sr * 2]
         if segment.size < 2048:
             return None
-        segment = segment - float(np.mean(segment))
+        segment = (segment - float(np.mean(segment))).astype(np.float64)
 
-        corr = np.correlate(segment, segment, mode="full")[segment.size - 1:]
+        # Autocorrélation par la FFT, complétée de zéros : égale à
+        # ``np.correlate(…, mode="full")``, à l'arrondi près.
+        n = segment.size
+        taille = 1 << int(np.ceil(np.log2(2 * n - 1)))
+        spectre = np.fft.rfft(segment, taille)
+        corr = np.fft.irfft(spectre * np.conj(spectre), taille)[:n]
         if corr.size < 4 or corr[0] <= 0:
             return None
         corr = corr / corr[0]
@@ -537,6 +559,12 @@ def estimate_root_note(data: np.ndarray, sr: int) -> int | None:
         best = int(np.argmax(window))
         if float(window[best]) < 0.25:       # trop peu périodique : bruit
             return None
+        cible = ROOT_PEAK_SHARE * float(window[best])
+        for i in range(1, best + 1):
+            if window[i] >= cible and window[i] >= window[i - 1] \
+                    and (i + 1 >= window.size or window[i] >= window[i + 1]):
+                best = i
+                break
         freq = sr / float(best + lag_min)
         if not 20.0 <= freq <= 5000.0:
             return None

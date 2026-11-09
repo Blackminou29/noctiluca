@@ -47,6 +47,20 @@ OP_KINDS = ("move", "rename", "delete", "mkdir", "relink")
 #: Dossier d'accueil des échantillons inutilisés.
 DEFAULT_UNUSED_DIR = "_UNUSED"
 
+#: Là où le firmware range ce qu'il enregistre : clips audio, enregistrements,
+#: rééchantillonnages, exports de pistes (``audioRecordingFolderNames``,
+#: ``storage/audio/audio_file_manager.h``, 1.3.0). Aucun preset ne les cite,
+#: et ce sont pourtant des prises de l'utilisateur : l'archivage des
+#: inutilisés les laisse en place.
+RECORDING_DIRS = ("SAMPLES/CLIPS", "SAMPLES/RECORD", "SAMPLES/RESAMPLE",
+                  "SAMPLES/EXPORTS")
+
+
+def is_recording(rel: str) -> bool:
+    """Vrai pour un fichier rangé dans un dossier d'enregistrement du Deluge."""
+    rel = norm_rel(rel)
+    return any(rel.startswith(norm_rel(d) + "/") for d in RECORDING_DIRS)
+
 #: Critères de conservation pour la déduplication.
 KEEP_STRATEGIES = ("shortest_path", "longest_path", "most_used", "oldest",
                    "newest")
@@ -677,6 +691,8 @@ def plan_archive_unused(sd: SDCard, lib: Library,
     base = str(dest or DEFAULT_UNUSED_DIR).strip("/") or DEFAULT_UNUSED_DIR
     for row in lib.unused_samples():
         rel = row["rel"]
+        if is_recording(rel):
+            continue
         path = sd.resolve_sample(rel)
         if path is None:
             continue

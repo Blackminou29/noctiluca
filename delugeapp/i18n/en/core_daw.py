@@ -33,6 +33,12 @@ TEXTS = {
     "posez-les toutes au début du morceau.":
         "The Deluge tracks are the ones the machine exported itself: place "
         "them all at the start of the song.",
+    "Dans le set Live, les pistes dont le son écoute un canal sur le Deluge "
+    "sortent déjà vers lui, sur ce canal (« MIDI To ») : chargez le morceau "
+    "sur la machine, Live le joue.":
+        "In the Live set, the tracks whose sound listens to a channel on the "
+        "Deluge already output to it, on that channel (\"MIDI To\"): load the "
+        "song on the machine, and Live plays it.",
     "Pour l'ouvrir :": "To open it:",
     "Rangée %d": "Row %d",
     "Reaper": "Reaper",

@@ -236,6 +236,13 @@ TEXTS = {
         "of a second. Without it, what the application shows may predate "
         "your latest changes.",
     "Réinitialiser l'index": "Reset the index",
+    "Tout réanalyser": "Rescan everything",
+    "Vérifier une fois par jour s'il existe une nouvelle version":
+        "Check once a day whether a new version exists",
+    "Relit tous les fichiers de la carte, même ceux qui n'ont pas changé : "
+    "quelques minutes avec l'analyse acoustique.":
+        "Reads every file of the card again, even unchanged ones: a few "
+        "minutes with acoustic analysis.",
     "Vide l'index SQLite. Les étiquettes, notes et favoris sont conservés.":
         "Empties the SQLite index. Tags, ratings and favourites are kept.",
     "L'index de la carte va être vidé, puis reconstruit à la prochaine "
@@ -290,4 +297,6 @@ TEXTS = {
         "the top bar does the same  (Ctrl+E).",
     "Simple": "Simple",
     "Avancé": "Advanced",
+    "Les écoutes resteront muettes : %s.":
+        "Listening will stay silent: %s.",
 }

@@ -1814,6 +1814,13 @@ def saturate(x: np.ndarray, clipping: int,
 # Enveloppes et LFO
 # --------------------------------------------------------------------------- #
 
+def decay4(pos: float) -> float:
+    """``getDecay4(pos, 23)``, sur 2³¹ : 2³¹ à 0, 0 à 2²³."""
+    if pos >= 8388608:
+        return 0.0
+    return _decay_table("decayTableSmall4", pos)
+
+
 def _decay_table(name: str, pos: float) -> float:
     """``getDecay4``/``getDecay8`` : la table lue en ``pos`` (23 bits),
     rendue sur 2³¹."""
@@ -1823,6 +1830,120 @@ def _decay_table(name: str, pos: float) -> float:
         return float(tab[256]) * 32768.0
     frac = int(pos) & 32767
     return (tab[index] * (32768 - frac) + tab[index + 1] * frac)
+
+
+# --------------------------------------------------------------------------- #
+# Sidechain
+# --------------------------------------------------------------------------- #
+
+#: ``ONE_Q31`` du firmware.
+ONE_Q31 = 2147483647
+
+#: ``attackRateTable[0] << 2`` : une attaque « tout en bas » saute droit au
+#: relâchement (``SideChain::render``).
+SIDECHAIN_INSTANT_ATTACK = 262144 << 2
+
+
+def combine_hit_strengths(a: int, b: int) -> int:
+    """``combineHitStrengths`` : à mi-chemin du plus fort et de la somme
+    (« plutôt que Pythagore, pour gagner du calcul »)."""
+    total = min((int(a) & 0xFFFFFFFF) + (int(b) & 0xFFFFFFFF), ONE_Q31)
+    return (max(int(a), int(b)) >> 1) + (total >> 1)
+
+
+def sidechain_rate(raw: int, sync_level: int, bpm: float) -> int:
+    """La vitesse d'attaque ou de relâchement du sidechain, par échantillon
+    (``getActualAttackRate``/``getActualReleaseRate``). Synchronisée, elle
+    suit le tempo : ``réglage · BPM · 2^(4 + niveau) / 165 375``, ``niveau``
+    tel que le fichier l'écrit — la grandeur des tics du morceau, qui entre
+    dans l'inverse du temps par tic et dans la conversion du niveau,
+    s'annule."""
+    level = int(sync_level or 0)
+    if level <= 0 or bpm <= 0:
+        return int(raw)
+    return int(float(raw) * float(bpm) * 2.0 ** (4 + level) / 165375.0)
+
+
+def _mul32(a: int, b: int) -> int:
+    """``multiply_32x32_rshift32``."""
+    return (int(a) * int(b)) >> 32
+
+
+def sidechain_blocks(hits, attack: int, release: int, shape: int,
+                     instant: bool = False) -> np.ndarray:
+    """``SideChain::render``, bloc par bloc : la valeur de la source
+    *sidechain* (−2³¹ au plus creux, 0 au repos).
+
+    :param hits: force du coup reçu au début de chaque bloc (0 : aucun),
+        coups d'un même bloc déjà combinés (:func:`combine_hit_strengths`).
+    :param attack: vitesse d'attaque par échantillon (:func:`sidechain_rate`).
+    :param release: vitesse de relâchement par échantillon.
+    :param shape: le réglage ``compressorShape`` du son, brut.
+    :param instant: l'attaque est « tout en bas » (réglage brut égal à
+        :data:`SIDECHAIN_INSTANT_ATTACK`).
+
+    Recopié ligne à ligne, ``goto`` compris : une boucle Python d'environ
+    70 000 blocs pour trois minutes, quelques dizaines de millisecondes.
+    """
+    decay4 = table("decayTableSmall4")
+    decay8 = table("decayTableSmall8")
+
+    def get_decay(tab, pos: int) -> int:
+        index = pos >> 15
+        if index >= 256:
+            return int(tab[256]) * 32768
+        frac = pos & 32767
+        return int(tab[index]) * (32768 - frac) + int(tab[index + 1]) * frac
+
+    off, attacking, releasing = 0, 1, 2
+    status, pos, last = off, 0, ONE_Q31
+    offset = height = 0
+    positive_shape = (int(shape) + 2147483648) & 0xFFFFFFFF
+    n = BLOCK
+    out = np.empty(len(hits))
+    for b, hit in enumerate(hits):
+        to_release = False
+        if hit:
+            new_offset = ONE_Q31 - int(hit)
+            # Seul un coup qui creuse davantage compte.
+            if new_offset < last:
+                offset = new_offset
+                if instant:
+                    to_release = True
+                else:
+                    status = attacking
+                    height = last - offset
+                    pos = 0
+        if status == attacking and not to_release:
+            pos += n * attack
+            if pos >= 8388608:
+                to_release = True
+            else:
+                last = (_mul32(height, ONE_Q31 - get_decay(decay4,
+                                                           8388608 - pos))
+                        << 1) + offset
+        if to_release:
+            pos = 0
+            status = releasing
+            height = ONE_Q31 - offset
+        if status == releasing:
+            pos += n * release
+            if pos >= 8388608:
+                status = off
+                last = ONE_Q31
+            else:
+                curvedness = (positive_shape >> 15) - (pos >> 7)
+                if curvedness < 0:
+                    pre = pos << 8
+                else:
+                    curvedness = min(curvedness, 65536)
+                    pre = (65536 - curvedness) * (pos >> 8) \
+                        + (get_decay(decay8, 8388608 - pos) >> 16) * curvedness
+                last = ONE_Q31 - height + (_mul32(pre, height) << 1)
+        elif status == off:
+            last = ONE_Q31
+        out[b] = last - ONE_Q31
+    return out
 
 
 class Envelope:

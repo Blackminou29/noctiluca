@@ -102,11 +102,14 @@ class DawTrack:
         ``(indice de la rangée, nom)``.
     :param scenes: scène → indice du clip qui y joue.
     :param audio: la piste audio rendue, si elle existe.
+    :param listens: le canal (0–15) que l'instrument écoute sur la machine,
+        s'il en écoute un (:func:`listened_channel`) ; ``channel`` le reprend.
     """
 
     name: str
     kind: str = "synth"
     channel: int = 0
+    listens: int | None = None
     clips: list[DawClip] = field(default_factory=list)
     placements: list[Placement] = field(default_factory=list)
     scenes: dict[int, int] = field(default_factory=dict)
@@ -149,6 +152,10 @@ class DawSong:
     scenes: list[DawScene] = field(default_factory=list)
     markers: list[tuple[float, str]] = field(default_factory=list)
     arranged: bool = False
+    #: Les clips lus, dans l'ordre de ``Song.clips + Song.arrangement_clips``
+    #: — celui de la page Morceaux : ``(piste, clip)``, ou ``None`` pour un
+    #: clip sans piste reconnue.
+    clip_order: list = field(default_factory=list)
 
     @property
     def length(self) -> float:
@@ -252,21 +259,75 @@ def _track_name(el: ET.Element, kind: str) -> str:
             or tr("Piste"))
 
 
+def _drum_inputs(el: ET.Element) -> tuple[int | None, dict[int, int]]:
+    """Ce qu'écoutent les sons d'un kit sur la machine : le canal qui leur est
+    commun et la note apprise de chaque rangée sur ce canal (``<midiInput
+    channel note />``).
+
+    ``(None, {})`` si les sons n'écoutent rien, s'ils écoutent plusieurs
+    canaux, ou si le kit entier écoute un canal (``MIDIInput``) : il passe
+    alors avant ses sons (``Kit::offerReceivedNote``), rangée par rangée
+    depuis sa note de base, et les notes General MIDI ne le jouent plus.
+    """
+    if dxml.get_child(el, "MIDIInput") is not None:
+        return None, {}
+    sources = dxml.get_child(el, "soundSources")
+    sons = [s for s in (list(sources) if sources is not None else [])
+            if s.tag == "sound"]
+    appris: dict[int, tuple[int, int]] = {}
+    for index, son in enumerate(sons):
+        entree = dxml.get_child(son, "midiInput")
+        if entree is not None:
+            appris[index] = (_int(dxml.get(entree, "channel"), -1),
+                             _int(dxml.get(entree, "note"), -1))
+    canaux = {c for c, _n in appris.values() if 0 <= c <= 15}
+    if len(canaux) != 1:
+        return None, {}
+    canal = canaux.pop()
+    notes: dict[int, int] = {}
+    for index, (c, n) in appris.items():
+        if c == canal and 0 <= n <= 127 and n not in notes.values():
+            notes[index] = n
+    return canal, notes
+
+
+def listened_channel(el: ET.Element, kind: str) -> int | None:
+    """Le canal (0–15) qu'un instrument du morceau écoute sur la machine :
+    ``inputMidiChannel`` pour un synthé, le canal commun de ses sons pour un
+    kit (:func:`_drum_inputs`) ; ``None`` sinon — une zone MPE, une piste
+    MIDI, CV ou audio n'écoutent pas de canal (:mod:`.dawlive`)."""
+    if kind == "synth":
+        canal = _int(dxml.get(el, "inputMidiChannel"), -1)
+        return canal if 0 <= canal <= 15 else None
+    if kind == "kit":
+        return _drum_inputs(el)[0]
+    return None
+
+
 def _drum_map(el: ET.Element) -> dict[int, tuple[int, int, str]]:
-    """Rangée du kit → ``(hauteur, indice, nom)``."""
+    """Rangée du kit → ``(hauteur, indice, nom)``.
+
+    Une note apprise sur la machine (:func:`_drum_inputs`) l'emporte sur la
+    note General MIDI : le DAW joue alors chaque son là où le Deluge
+    l'écoute, et les autres sons évitent ces notes.
+    """
     sources = dxml.get_child(el, "soundSources")
     out: dict[int, tuple[int, int, str]] = {}
-    used: set[int] = set()
     if sources is None:
         return out
+    appris = _drum_inputs(el)[1]
+    used: set[int] = set(appris.values())
     for index, sound in enumerate(s for s in sources if s.tag == "sound"):
         nom = dxml.get(sound, "name") or ""
         rel = ""
         osc = dxml.get_child(sound, "osc1")
         if osc is not None:
             rel = dxml.get(osc, "fileName") or ""
-        pitch = drum_pitch(nom, rel, used)
-        used.add(pitch)
+        if index in appris:
+            pitch = appris[index]
+        else:
+            pitch = drum_pitch(nom, rel, used)
+            used.add(pitch)
         out[index] = (pitch, index, nom or Path(rel).stem or
                       tr("Rangée %d") % (index + 1))
     return out
@@ -327,6 +388,11 @@ def from_deluge(path: Path, name: str = "") -> DawSong:
             track.channel = max(0, min(15, _int(dxml.get(el, "channel"))))
         if kind == "kit":
             track.drums = {p: (i, n) for p, i, n in _drum_map(el).values()}
+        # Un instrument qui écoute un canal sur la machine (une copie
+        # « DAW », :mod:`.dawlive`) sort sur ce canal : le DAW le joue.
+        track.listens = listened_channel(el, kind)
+        if track.listens is not None:
+            track.channel = track.listens
         key = _instrument_key(el)
         if key in by_key:
             continue
@@ -353,6 +419,7 @@ def from_deluge(path: Path, name: str = "") -> DawSong:
                 continue
             track = by_key.get(_clip_key(clip, el))
             if track is None:
+                daw.clip_order.append(None)
                 continue
             drums = None
             if track.kind == "kit":
@@ -365,6 +432,7 @@ def from_deluge(path: Path, name: str = "") -> DawSong:
             track.clips.append(daw_clip)
             index = len(track.clips) - 1
             codes[code] = (track, index)
+            daw.clip_order.append((daw.tracks.index(track), index))
             if base == 0:
                 sections.setdefault(clip.section, 0)
                 sections[clip.section] = max(sections[clip.section],
@@ -459,6 +527,163 @@ def clip_sound(track: DawTrack, clip: DawClip):
 # Pistes audio : chaque piste rendue comme la machine la joue
 # --------------------------------------------------------------------------- #
 
+def _sounding_tracks(song: DawSong) -> list[DawTrack]:
+    """Les pistes que la machine fait sonner : synthés et kits joués."""
+    return [t for t in song.tracks if t.kind in ("synth", "kit")
+            and t.has_notes and t.placements]
+
+
+def sidechain_hits(song: DawSong) -> list[tuple[float, int]]:
+    """Les coups de sidechain du morceau entier, ``(secondes, force)`` :
+    chaque note d'un son qui en envoie — un synthé, ou la rangée d'un kit,
+    souvent la grosse caisse. Une piste rendue seule en a besoin : ce qui la
+    fait pomper joue sur une autre."""
+    out: list[tuple[float, int]] = []
+    for track in _sounding_tracks(song):
+        for ci, clip in enumerate(track.clips):
+            son = clip_sound(track, clip)
+            if son is None:
+                continue
+            for _debut, n in _expanded(track, ci):
+                if track.kind == "kit":
+                    rang = track.drums.get(n.pitch)
+                    if rang is None or rang[0] >= len(son.rows):
+                        continue
+                    force = son.rows[rang[0]].sound.side_chain_send
+                else:
+                    force = son.side_chain_send
+                if force:
+                    out.append((song.seconds(n.start), int(force)))
+    out.sort()
+    return out
+
+
+def _clip_audio(song: DawSong, track: DawTrack, clip: DawClip,
+                notes: list[tuple[float, DawNote]], sd, should_stop=None,
+                hits=None):
+    """Le rendu de ``notes`` (début absolu, note) jouées par le son de
+    ``clip``, posé au début du morceau ; ``None`` si rien ne sonne.
+    ``hits`` : les coups de sidechain du morceau (:func:`sidechain_hits`) ;
+    sans eux, ceux du clip seul."""
+    import numpy as np
+
+    from . import render
+    from .accomp import NoteEvent
+
+    son = clip_sound(track, clip)
+    if not notes or son is None:
+        return None
+    if track.kind == "kit":
+        parts: dict[str, list] = {}
+        sons: dict[str, object] = {}
+        for _debut, n in notes:
+            rang = track.drums.get(n.pitch)
+            if rang is None or rang[0] >= len(son.rows):
+                continue
+            cle = "%02d" % rang[0]
+            sons[cle] = son.rows[rang[0]].sound
+            parts.setdefault(cle, []).append(NoteEvent(
+                n.start * 4.0, n.length * 4.0, 60,
+                max(1, round(n.velocity / 127.0 * 100))))
+        gain = render.kit_gain(son)
+    else:
+        parts = {"son": [NoteEvent(n.start * 4.0, n.length * 4.0, n.pitch,
+                                   max(1, round(n.velocity / 127.0 * 100)))
+                         for _d, n in notes]}
+        sons = {"son": son}
+        gain = 1.0
+    if not parts:
+        return None
+    audio = render.render_parts(parts, sons, bpm=song.bpm, sr=44100, sd=sd,
+                                normalize=False, should_stop=should_stop,
+                                sidechain_hits=hits)
+    if audio is None:
+        return None
+    return np.asarray(audio, dtype=np.float64) * gain
+
+
+def _mix_into(total, audio):
+    """``total + audio``, le plus court complété de silence."""
+    import numpy as np
+
+    if audio is None:
+        return total
+    if total is None:
+        return audio
+    if audio.shape[0] > total.shape[0]:
+        total = np.vstack([total, np.zeros(
+            (audio.shape[0] - total.shape[0], total.shape[1]))])
+    total[:audio.shape[0]] += audio
+    return total
+
+
+def _track_audio(song: DawSong, track: DawTrack, sd, should_stop=None,
+                 hits=None):
+    """Toute une piste sur l'arrangement, chaque clip avec ses réglages."""
+    total = None
+    for ci, clip in enumerate(track.clips):
+        if should_stop is not None and should_stop():
+            break
+        total = _mix_into(total, _clip_audio(song, track, clip,
+                                             _expanded(track, ci), sd,
+                                             should_stop, hits))
+    return total
+
+
+def _contained(audio):
+    """Sous 0 dBFS : la machine écrêterait, le rendu garde sa forme."""
+    import numpy as np
+
+    crete = float(np.max(np.abs(audio))) if audio.size else 0.0
+    return audio * (0.999 / crete) if crete > 0.999 else audio
+
+
+def render_clip(song: DawSong, track_index: int, clip_index: int, sd,
+                should_stop=None):
+    """Un clip joué une fois, sur toute sa longueur de boucle, comme la
+    machine le joue (stéréo, 44,1 kHz) ; ``None`` s'il ne sonne pas — clip
+    vide, piste MIDI, CV ou audio."""
+    import numpy as np
+
+    track = song.tracks[track_index]
+    if track.kind not in ("synth", "kit"):
+        return None
+    clip = track.clips[clip_index]
+    notes = [(n.start, n) for n in clip.notes if n.start < clip.length]
+    audio = _clip_audio(song, track, clip, notes, sd, should_stop)
+    if audio is None:
+        return None
+    # La boucle entière : le silence de fin compte autant que les notes.
+    trames = int(round(song.seconds(clip.length) * 44100))
+    if audio.shape[0] < trames:
+        audio = np.vstack([audio, np.zeros((trames - audio.shape[0],
+                                            audio.shape[1]))])
+    return _contained(audio).astype(np.float32)
+
+
+def render_mix(song: DawSong, sd, progress=None, should_stop=None):
+    """Le morceau entier, toutes pistes mêlées, sur son arrangement : la
+    somme des pistes de :func:`render_stems`, sans fichier écrit.
+
+    :param progress: ``progress(fait, total, nom)``.
+    """
+    import numpy as np
+
+    cibles = _sounding_tracks(song)
+    coups = sidechain_hits(song)
+    total = None
+    for numero, track in enumerate(cibles):
+        if should_stop is not None and should_stop():
+            return None
+        if progress is not None:
+            progress(numero, len(cibles), track.name)
+        total = _mix_into(total, _track_audio(song, track, sd, should_stop,
+                                              coups))
+    if total is None or (should_stop is not None and should_stop()):
+        return None
+    return _contained(total).astype(np.float32)
+
+
 def render_stems(song: DawSong, sd, folder: Path, progress=None,
                  should_stop=None) -> list[Path]:
     """Rend, dans ``folder``, une piste audio par piste de synthé ou de kit
@@ -475,70 +700,25 @@ def render_stems(song: DawSong, sd, folder: Path, progress=None,
     """
     import numpy as np
 
-    from . import render, wav
-    from .accomp import NoteEvent
+    from . import wav
 
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    cibles = [t for t in song.tracks if t.kind in ("synth", "kit")
-              and t.has_notes and t.placements]
+    cibles = _sounding_tracks(song)
+    coups = sidechain_hits(song)
     faits: list[Path] = []
     for numero, track in enumerate(cibles):
         if should_stop is not None and should_stop():
             break
         if progress is not None:
             progress(numero, len(cibles), track.name)
-        total = None
-        for ci, clip in enumerate(track.clips):
-            if should_stop is not None and should_stop():
-                break
-            notes = _expanded(track, ci)
-            son = clip_sound(track, clip)
-            if not notes or son is None:
-                continue
-            if track.kind == "kit":
-                parts: dict[str, list] = {}
-                sons: dict[str, object] = {}
-                for _debut, n in notes:
-                    rang = track.drums.get(n.pitch)
-                    if rang is None or rang[0] >= len(son.rows):
-                        continue
-                    cle = "%02d" % rang[0]
-                    sons[cle] = son.rows[rang[0]].sound
-                    parts.setdefault(cle, []).append(NoteEvent(
-                        n.start * 4.0, n.length * 4.0, 60,
-                        max(1, round(n.velocity / 127.0 * 100))))
-                gain = render.kit_gain(son)
-            else:
-                parts = {"son": [NoteEvent(n.start * 4.0, n.length * 4.0,
-                                           n.pitch,
-                                           max(1, round(n.velocity / 127.0
-                                                        * 100)))
-                                 for _d, n in notes]}
-                sons = {"son": son}
-                gain = 1.0
-            audio = render.render_parts(parts, sons, bpm=song.bpm, sr=44100,
-                                        sd=sd, normalize=False,
-                                        should_stop=should_stop)
-            if audio is None:
-                continue
-            audio = np.asarray(audio, dtype=np.float64) * gain
-            if total is None:
-                total = audio
-            else:
-                if audio.shape[0] > total.shape[0]:
-                    total = np.vstack([total, np.zeros(
-                        (audio.shape[0] - total.shape[0], 2))])
-                total[:audio.shape[0]] += audio
+        total = _track_audio(song, track, sd, should_stop, coups)
         if total is None:
             continue
         cible = folder / ("%02d %s.wav" % (song.tracks.index(track) + 1,
                                             safe_file_name(track.name)))
-        crete = float(np.max(np.abs(total))) if total.size else 0.0
-        if crete > 0.999:
-            # La machine écrêterait ; la piste, elle, garde sa forme.
-            total = total * (0.999 / crete)
-        wav.write(cible, total.astype(np.float32), 44100, bit_depth=24)
+        wav.write(cible, _contained(total).astype(np.float32), 44100,
+                  bit_depth=24)
         track.audio = cible
         faits.append(cible)
     if progress is not None:
@@ -1026,6 +1206,12 @@ def write_readme(song: DawSong, path: Path, files: list[str]) -> Path:
         lignes += ["", tr("Les pistes du Deluge sont celles que la machine a "
                           "exportées elle-même : posez-les toutes au début "
                           "du morceau.")]
+    if any(f.endswith(".als") for f in files) \
+            and any(t.listens is not None for t in song.tracks):
+        lignes += ["", tr("Dans le set Live, les pistes dont le son écoute "
+                          "un canal sur le Deluge sortent déjà vers lui, sur "
+                          "ce canal (« MIDI To ») : chargez le morceau sur la "
+                          "machine, Live le joue.")]
     lignes += ["", tr("Pour l'ouvrir :")]
     for daw, comment in _HOW_TO:
         lignes.append("  — %s : %s" % (tr(daw), tr(comment)))

@@ -3,6 +3,8 @@
 échantillons."""
 
 TEXTS = {
+    "%s : version actuelle non sauvegardée, laissée en place":
+        "%s: current version not backed up, left in place",
     "%s → mono": "%s → mono",
     "stéréo": "stereo",
     "%d canaux": "%d channels",

@@ -516,11 +516,12 @@ _DAW_STEPS = {
     "ableton": (
         N_("Live ▸ Préférences ▸ Link, Tempo & MIDI : sur le port du Deluge, "
            "cochez Piste en entrée et en sortie."),
-        N_("Pour que le Deluge suive le tempo de Live : cochez aussi Sync en "
-           "sortie ; pour que Live suive le Deluge : Sync en entrée, et "
-           "réglez Live sur l'horloge externe (bouton EXT)."),
+        N_("Pour que Live suive le Deluge : cochez aussi Sync en entrée, puis "
+           "allumez le bouton EXT, en haut à gauche de Live. Pour que le "
+           "Deluge suive Live : Sync en sortie."),
         N_("Pour chaque piste du tableau : une piste MIDI dans Live, « MIDI "
-           "To » sur le Deluge, et le canal indiqué."),
+           "To » sur le Deluge, et le canal indiqué. Le set Live exporté de "
+           "cette copie (Vers le DAW) est déjà réglé ainsi."),
     ),
     "autre": (
         N_("Dans les réglages MIDI du DAW, activez le port du Deluge en "
@@ -539,7 +540,29 @@ _DELUGE_STEPS = (
 )
 
 
-def setup_steps(daw: str = "ableton") -> list[str]:
-    """Ce qu'il reste à régler, sur le Deluge puis dans le DAW."""
-    return [tr(s) for s in _DELUGE_STEPS] + [
+#: Mesuré le 9 novembre 2026 (Windows 11, pilote USB MIDI 2 de Windows) : le
+#: Deluge joue les notes de Live mais ignore son horloge. Le pilote envoie
+#: l'horloge, Start et Stop sous le code USB 0x5 au lieu de 0xF
+#: (``Device.cpp`` de microsoft/MIDI ; le correctif attend son drapeau
+#: ``Feature_Servicing_MIDI2USBSystemRealTimeCin``), et le firmware prend un
+#: code inférieur à 8, hors 2 et 3, pour un morceau de SysEx
+#: (``MidiEngine::checkIncomingUsbMidi``). L'horloge du Deluge vers le PC,
+#: elle, passe. Un firmware corrigé (accepter aussi le CIN 0x5) a été compilé,
+#: installé et vérifié le même jour, prêt à être proposé au dépôt officiel.
+_WINDOWS_CLOCK = N_(
+    "Sous Windows 11, le firmware 1.3 du Deluge ne suit pas l'horloge d'un "
+    "DAW : le pilote MIDI de Windows l'envoie sous une forme que ce firmware "
+    "écarte. Faites mener le Deluge (Clock ▸ Output) et suivre le DAW.")
+
+
+def setup_steps(daw: str = "ableton", platform: str | None = None
+                ) -> list[str]:
+    """Ce qu'il reste à régler, sur le Deluge puis dans le DAW ; sous
+    Windows, la mise en garde sur l'horloge (:data:`_WINDOWS_CLOCK`)."""
+    import sys
+
+    etapes = [tr(s) for s in _DELUGE_STEPS] + [
         tr(s) for s in _DAW_STEPS.get(daw, _DAW_STEPS["autre"])]
+    if (platform or sys.platform) == "win32":
+        etapes.append(tr(_WINDOWS_CLOCK))
+    return etapes

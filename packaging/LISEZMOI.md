@@ -116,6 +116,18 @@ Réglages Système ▸ Confidentialité et sécurité. Les deux scripts savent s
   (voir l'en-tête de `construire-macos.sh`). Ces deux chemins n'ont pas encore
   été essayés : faute de certificat, rien n'a pu l'être.
 
+Pour Windows, un certificat sans frais existe pour les projets libres : la
+fondation **SignPath** signe gratuitement le code des projets open source
+publiés sur GitHub, après une demande où l'auteur présente le projet (à
+vérifier sur signpath.org avant de compter dessus : les conditions ont pu
+changer). La signature se fait alors dans le workflow GitHub, par leur
+action, et non plus sur ce PC. La demande ne peut venir que de l'auteur.
+
+**Avant chaque version**, à essayer sur un PC qui a déjà la précédente :
+l'installation par-dessus (réglages et copie de travail gardés), le refus
+quand l'application est ouverte, les raccourcis, puis la désinstallation —
+aucun de ces quatre n'a encore été essayé.
+
 **Le lien MIDI n'existe que sous Windows.** `core/midiport.py` parle à
 `winmm.dll`. Sous macOS et Linux, tout ce qui passe par le câble — écran
 recopié, carte lue par USB, jeu en direct, pont vers le DAW joué par le

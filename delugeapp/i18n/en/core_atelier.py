@@ -44,4 +44,6 @@ TEXTS = {
     "rien à ajouter : le projet ne contient que ce que le morceau a déjà":
         "nothing to add: the project only holds what the song already has",
     "case hors du clip": "cell outside the clip",
+    "ce clip est déjà sur le Deluge": "this clip is already on the Deluge",
+    "brouillon d'une autre version": "draft from another version",
 }

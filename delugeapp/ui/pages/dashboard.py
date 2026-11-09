@@ -431,6 +431,16 @@ class DashboardPage(Page):
                     tr("Mettre à jour la sauvegarde"), "@backup", "backup",
                     page_color("Health"))
 
+        # Sans sortie audio, chaque écoute « joue » en silence : sous Linux,
+        # l'AppImage sans le paquet libportaudio2.
+        lecteur = getattr(self.ctx, "player", None)
+        silence = lecteur.silence_reason() if lecteur is not None else ""
+        if silence:
+            return (tr("Les écoutes de l'ordinateur resteront muettes : %s.")
+                    % silence,
+                    tr("Voir l'écoute"), "Settings", "wave",
+                    page_color("Settings"))
+
         absents = anomalies.get("MISSING_SAMPLE")
         if absents is not None and absents.count:
             return (tr("%d échantillon(s) réclamé(s) par des presets sont "
@@ -731,7 +741,12 @@ class DashboardPage(Page):
             tr("Analyser la carte"), "refresh",
             tr("Relit la carte et met l'index à jour  (Ctrl+R)"),
             color=self.color)
-        self._scan_button.clicked.connect(self.guard(self._start_scan))
+        # Une lambda, pas la méthode : ``guard`` transmettrait le booléen de
+        # ``clicked`` au paramètre ``full``. Le bouton ne faisait une analyse
+        # incrémentale que par ce hasard, quand Ctrl+R relisait tout (117 s
+        # sur la carte de l'utilisateur, 5 novembre 2026).
+        self._scan_button.clicked.connect(
+            self.guard(lambda: self._start_scan()))
         row.addWidget(self._scan_button)
 
         self._stop_button = tool_button(tr("Arrêter"), "stop",
@@ -804,8 +819,13 @@ class DashboardPage(Page):
         self._start_scan(full=False)
         return self._worker is not None
 
-    def _start_scan(self, full: bool = True) -> None:
-        """Lance l'analyse de la carte dans un fil séparé."""
+    def _start_scan(self, full: bool = False) -> None:
+        """Lance l'analyse de la carte dans un fil séparé.
+
+        Incrémentale par défaut, comme le promet le manuel : seuls les
+        fichiers changés sont relus. ``full`` relit tout — Réglages ▸ Analyse
+        de la carte ▸ [Tout réanalyser].
+        """
         card = self.card_or_warn()
         if card is None:
             return

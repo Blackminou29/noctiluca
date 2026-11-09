@@ -89,6 +89,112 @@ TEXTS = {
     "Ouvrir le dossier contenant le fichier":
         "Open the folder containing the file",
     "Traiter…": "Process…",
+    "Table d'onde…": "Wavetable…",
+    "Une table d'onde pour le moteur wavetable du Deluge, tirée du son "
+    "choisi":
+        "A wavetable for the Deluge's wavetable engine, drawn from the chosen "
+        "sound",
+    "Table d'onde": "Wavetable",
+    "Nom de la table, dans %s :": "Name of the table, in %s:",
+    "Table d'onde impossible : %s.": "Wavetable not possible: %s.",
+    "Écrire %s : %d cycles de %d échantillons, prélevés du début à la fin de "
+    "« %s ». Aucun fichier existant n'est remplacé.%sContinuer ?":
+        "Write %s: %d cycles of %d samples, taken from start to end of “%s”. "
+        "No existing file is replaced.%sContinue?",
+    "Table d'onde écrite : %s. Sur le Deluge, choisissez-la pour un "
+    "oscillateur de type WAVETABLE ; le générateur s'en sert aussi.":
+        "Wavetable written: %s. On the Deluge, choose it for an oscillator of "
+        "type WAVETABLE; the generator uses it too.",
+    "Sur un pad du Deluge": "On a Deluge pad",
+    "Retirer du pad du Deluge": "Take off the Deluge pad",
+    "Sur le Deluge : banque %d, pad %d.": "On the Deluge: bank %d, pad %d.",
+    "Les 256 pads de favoris du Deluge sont pris.":
+        "All 256 favourite pads of the Deluge are taken.",
+    "Favori impossible : %s.": "Favourite not possible: %s.",
+    "« %s » quitte le pad %d de la banque %d des favoris d'échantillons du "
+    "Deluge.":
+        "“%s” leaves pad %d of bank %d of the Deluge's sample favourites.",
+    "« %s » va sur le pad %d de la banque %d des favoris d'échantillons du "
+    "Deluge.":
+        "“%s” goes onto pad %d of bank %d of the Deluge's sample favourites.",
+    "%s est réécrit ; l'ancienne version est gardée dans _BACKUP. Si le "
+    "navigateur d'échantillons du Deluge est ouvert, quittez-le avant "
+    "l'envoi : il réécrit cette banque au moindre pad changé.":
+        "%s is rewritten; the old version is kept in _BACKUP. If the "
+        "Deluge's sample browser is open, leave it before sending: it "
+        "rewrites this bank at the slightest pad change.",
+    "Favoris du Deluge": "Deluge favourites",
+    "Continuer ?": "Continue?",
+    "Favoris du Deluge mis à jour : %s.": "Deluge favourites updated: %s.",
+    "Créer un instrument — %s": "Create an instrument — %s",
+    "Chaque son du dossier devient une tranche du clavier, jusqu'à "
+    "mi-chemin du suivant — comme le Deluge le ferait. La hauteur vient du "
+    "nom du fichier quand il la donne (« A1 », « C#3 »), sinon de l'écoute. "
+    "Une couche de vélocité devient un preset : le Deluge n'en joue qu'une "
+    "par tranche.":
+        "Each sound of the folder becomes a range of the keyboard, up to "
+        "halfway to the next one — as the Deluge would do it. The pitch comes "
+        "from the file name when it gives it (“A1”, “C#3”), otherwise from "
+        "listening. A velocity layer becomes a preset: the Deluge plays only "
+        "one per range.",
+    "Le nom du preset ; une couche de vélocité y ajoute la sienne":
+        "The preset's name; a velocity layer adds its own",
+    "Nom :": "Name:",
+    "Le sous-dossier de SYNTHS où l'écrire":
+        "The SYNTHS subfolder to write it into",
+    "Dossier dans SYNTHS :": "Folder in SYNTHS:",
+    "Lue dans": "Read from",
+    "Jusqu'à": "Up to",
+    "Preset": "Preset",
+    "Créer l'instrument": "Create the instrument",
+    "Écrit le ou les presets dans SYNTHS, après votre accord ; aucun fichier "
+    "n'est remplacé, les échantillons ne sont pas touchés":
+        "Writes the preset(s) into SYNTHS, after your go-ahead; no file is "
+        "replaced, the samples are not touched",
+    "Joue l'instrument sur l'ordinateur : une gamme de do, sur toute son "
+    "étendue":
+        "Plays the instrument on the computer: a scale of Cs, over its whole "
+        "span",
+    "Créer un instrument": "Create an instrument",
+    "Écrire sur la carte :%s%s%sAucun fichier existant n'est remplacé.":
+        "Write to the card:%s%s%sNo existing file is replaced.",
+    "Créer un instrument…": "Create an instrument…",
+    "Un preset multi-échantillon avec les sons du dossier":
+        "A multisample preset with the folder's sounds",
+    "Choisissez un dossier dans l'arbre, ou un des sons du dossier dans la "
+    "liste.":
+        "Choose a folder in the tree, or one of the folder's sounds in the "
+        "list.",
+    "Lecture des hauteurs de %s…": "Reading the pitches of %s…",
+    "Hauteurs des sons": "Pitches of the sounds",
+    "Aucun son de %s dont la hauteur soit connue : ni dans son nom, ni à "
+    "l'écoute.":
+        "No sound of %s whose pitch is known: neither in its name nor by "
+        "listening.",
+    "Instrument écrit : %s. Il se charge sur le Deluge comme tout preset.":
+        "Instrument written: %s. It loads on the Deluge like any preset.",
+    "Annuler un traitement…": "Undo a treatment…",
+    "Remettre les originaux gardés par un traitement précédent":
+        "Put back the originals kept by an earlier treatment",
+    "Annuler un traitement": "Undo a treatment",
+    "Aucun traitement à annuler : les originaux d'un traitement sont gardés "
+    "dans _BACKUP, à la racine de la carte, et il n'y en a pas.":
+        "No treatment to undo: the originals of a treatment are kept in "
+        "_BACKUP, at the root of the card, and there are none.",
+    "%s — %d fichier(s)": "%s — %d file(s)",
+    "Traitement dont remettre les originaux :":
+        "Treatment whose originals to put back:",
+    "%d fichier(s) vont être remis tels qu'avant ce traitement. Leur version "
+    "actuelle est gardée dans _BACKUP.%sContinuer ?":
+        "%d file(s) will be put back as they were before this treatment. "
+        "Their current version is kept in _BACKUP.%sContinue?",
+    "Remise des originaux…": "Putting the originals back…",
+    "Annulation d'un traitement": "Undoing a treatment",
+    "Annulation partielle": "Partial undo",
+    "%d fichier(s) remis, %d en échec :%s%s":
+        "%d file(s) put back, %d failed:%s%s",
+    "%d fichier(s) remis tels qu'avant le traitement.":
+        "%d file(s) put back as they were before the treatment.",
     "Mono, normalisation, rééchantillonnage, fondus… sur la sélection":
         "Mono, normalisation, resampling, fades… on the selection",
     "Découper…": "Slice…",
@@ -104,6 +210,11 @@ TEXTS = {
     "Échantillons qu'aucun preset, kit ni morceau ne cite":
         "Samples that no preset, kit or song uses",
     "Favoris": "Favourites",
+    "Toutes étiquettes": "All tags",
+    "Nouvelle étiquette…": "New tag…",
+    "Ajouter": "Add",
+    "Choisissez d'abord un échantillon.": "Choose a sample first.",
+    "Étiquette « %s » ajoutée.": "Tag “%s” added.",
     "Manquants": "Missing",
     "Fichiers réclamés par un preset mais absents de la carte":
         "Files a preset asks for but that are missing from the card",

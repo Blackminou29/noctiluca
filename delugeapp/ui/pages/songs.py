@@ -16,6 +16,7 @@ signale.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -40,6 +41,7 @@ from ..widgets.common import (
     Card,
     ElidedLabel,
     KeyValueTable,
+    RangeeSouple,
     RowTableModel,
     SearchBar,
     configure_table,
@@ -100,6 +102,10 @@ class SongsPage(Page):
         self._proxy = None
         self._song = None
         self._current = ""
+        #: Le rendu en cours, et son numéro : un rendu dépassé par une
+        #: nouvelle demande, ou arrêté, ne joue pas.
+        self._render = None
+        self._ecoute = 0
 
     # -- construction ------------------------------------------------------- #
 
@@ -120,6 +126,16 @@ class SongsPage(Page):
                                         "atelier", primary=True)
         self._open_button.clicked.connect(self.guard(self._open_in_atelier))
         actions.addWidget(self._open_button)
+
+        # Écouter avant d'ouvrir : le même calcul que l'atelier, sur
+        # l'ordinateur, la page restant en lecture seule.
+        self._listen_song_button = tool_button(
+            tr("Écouter le morceau"), "play",
+            tr("Calculer le morceau entier sur l'ordinateur, sur son "
+               "arrangement, puis le jouer"))
+        self._listen_song_button.clicked.connect(
+            self.guard(self._listen_song))
+        actions.addWidget(self._listen_song_button)
 
         export = avance(tool_button(tr("Clip en MIDI"), "export",
                                     tr("Exporter le clip sélectionné en "
@@ -208,18 +224,43 @@ class SongsPage(Page):
         return host
 
     def _build_clips_tab(self) -> QWidget:
+        host = QWidget()
+        column = QVBoxLayout(host)
+        column.setContentsMargins(0, 6, 0, 0)
+        column.setSpacing(6)
+        line = RangeeSouple()
+        self._listen_clip_button = tool_button(
+            tr("Écouter le clip"), "play",
+            tr("Calculer le clip choisi comme la machine le joue, puis le "
+               "jouer (double-clic sur un clip : de même)"))
+        self._listen_clip_button.clicked.connect(self.guard(self._listen_clip))
+        line.addWidget(self._listen_clip_button)
+        self._stop_button = tool_button(tr("Arrêter"), "stop",
+                                        tr("Arrêter l'écoute ou le calcul "
+                                           "en cours"))
+        self._stop_button.clicked.connect(self.guard(self._stop))
+        line.addWidget(self._stop_button)
+        column.addLayout(line)
         self._clips = QTableWidget(0, 5)
+        self._clips.itemDoubleClicked.connect(
+            self.guard(lambda _i: self._listen_clip()))
         self._clips.setHorizontalHeaderLabels(
             [tr("Clip"), tr("Preset"), tr("Mesures"), tr("Notes"),
              tr("Section")])
-        self._clips.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch)
+        # Les colonnes à leur contenu, le preset prend le reste : à 980 px,
+        # leurs largeurs par défaut ne lui laissaient rien (« ese »).
+        entete = self._clips.horizontalHeader()
+        for colonne in (0, 2, 3, 4):
+            entete.setSectionResizeMode(
+                colonne, QHeaderView.ResizeMode.ResizeToContents)
+        entete.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._clips.verticalHeader().setVisible(False)
         self._clips.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
         self._clips.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
-        return self._clips
+        column.addWidget(self._clips, 1)
+        return host
 
     def _build_instruments_tab(self) -> QWidget:
         self._instruments = QTableWidget(0, 4)
@@ -436,6 +477,100 @@ class SongsPage(Page):
             state.setForeground(Qt.GlobalColor.green if present
                                 else Qt.GlobalColor.red)
             self._samples.setItem(index, 1, state)
+
+    # -- écoute ------------------------------------------------------------- #
+
+    def _listen_clip(self) -> None:
+        """Le clip choisi, calculé comme la machine le joue."""
+        if self._song is None or self.sd is None:
+            self.say(tr("Aucun morceau sélectionné."))
+            return
+        row = self._clips.currentRow()
+        if row < 0:
+            self.say(tr("Choisissez un clip dans l'onglet « Clips »."))
+            return
+        self._start_render(self._render_clip, row, tr("Rendu du clip"))
+
+    def _listen(self) -> None:
+        """Espace : le clip choisi, sinon le morceau entier."""
+        if self._clips.currentRow() >= 0:
+            self._listen_clip()
+        else:
+            self._listen_song()
+
+    def _listen_song(self) -> None:
+        """Le morceau entier, sur son arrangement."""
+        if self._song is None or self.sd is None:
+            self.say(tr("Aucun morceau sélectionné."))
+            return
+        self._start_render(self._render_song, None, tr("Rendu du morceau"))
+
+    def _start_render(self, fn, row, title: str) -> None:
+        if self.player is None:
+            self.say(tr("Aucune sortie audio disponible."))
+            return
+        self._stop()
+        self._ecoute += 1
+        self.say(title + "…")
+        self._render = self.run(
+            fn, self.sd, self._current, row,
+            on_result=self.guard(partial(self._play_rendered, self._ecoute)),
+            on_error=self.guard(lambda m: self.say(
+                tr("Rendu impossible : %s") % m)),
+            title=title)
+
+    @staticmethod
+    def _render_clip(sd, rel, row, should_stop=None):
+        from ...core import daw
+
+        song = daw.from_deluge(sd.abs(rel))
+        if not 0 <= row < len(song.clip_order) or song.clip_order[row] is None:
+            return None
+        piste, clip = song.clip_order[row]
+        return daw.render_clip(song, piste, clip, sd, should_stop=should_stop)
+
+    @staticmethod
+    def _render_song(sd, rel, _row, progress=None, should_stop=None):
+        from ...core import daw
+
+        def avance_(fait, total, nom):
+            if progress is not None and nom:
+                progress(tr("Rendu de %s (%d/%d)") % (nom, fait + 1, total))
+
+        song = daw.from_deluge(sd.abs(rel))
+        return daw.render_mix(song, sd, progress=avance_,
+                              should_stop=should_stop)
+
+    def _play_rendered(self, ecoute: int, audio) -> None:
+        if ecoute != self._ecoute:
+            return                      # dépassé, ou arrêté
+        self._render = None
+        if audio is None:
+            self.say(tr("Rien ne sonne ici : clip vide, ou piste MIDI, CV ou "
+                        "audio, que le Deluge seul fait jouer."))
+            return
+        try:
+            self.player.set_volume(self.ctx.settings.preview_volume)
+            self.player.play_array(audio, 44100)
+            self.say(tr("Lecture…"))
+        except Exception as exc:  # noqa: BLE001 - audio indisponible
+            log.debug("lecture impossible : %s", exc)
+            self.say(tr("Lecture impossible : %s") % exc)
+
+    def _stop(self) -> None:
+        """Arrête la lecture, et le calcul s'il tourne encore."""
+        self._ecoute += 1
+        if self._render is not None:
+            try:
+                self._render.cancel()
+            except RuntimeError:        # le fil a déjà fini
+                pass
+            self._render = None
+        if self.player is not None:
+            try:
+                self.player.stop()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("arrêt impossible : %s", exc)
 
     # -- actions ------------------------------------------------------------ #
 

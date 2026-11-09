@@ -43,8 +43,12 @@ machine fait en chargeant un preset ancien (:func:`upgrade_sound`,
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
+import os
 import re
+import shutil
+import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -1452,6 +1456,10 @@ class SongWrite:
     lines: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     error: str = ""
+    #: Écriture par-dessus un morceau que l'atelier avait écrit : où la
+    #: version remplacée a été mise de côté (``_BACKUP/remplaces-…``).
+    replaced: bool = False
+    kept: str = ""
 
     @property
     def ok(self) -> bool:
@@ -1486,20 +1494,49 @@ def free_song_name(sd: SDCard, name: str) -> str:
     return rel
 
 
-def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
+def file_sha256(path: Path) -> str:
+    """Empreinte complète d'un fichier, ``""`` s'il est illisible."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as stream:
+            for bloc in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(bloc)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def write_song(sd: SDCard, spec: SongSpec, apply: bool = False,
+               replace: str = "", expected_sha: str = "") -> SongWrite:
     """Écrit le morceau dans ``SONGS`` — **simule** sans ``apply``.
 
     Le nom est assaini pour la carte, et numéroté s'il est pris : aucun
-    fichier existant n'est jamais remplacé. Le résultat donne le plan
-    (instruments, clips, échantillons absents) que l'interface montre avant
-    de confirmer.
+    fichier existant n'est remplacé. Le résultat donne le plan (instruments,
+    clips, échantillons absents) que l'interface montre avant de confirmer.
+
+    Une seule exception, demandée par l'utilisateur le 7 novembre 2026 (il
+    écrivait, écoutait, supprimait et réécrivait « ATELIER DEEP HOUSE » sept
+    fois) : ``replace`` désigne un morceau **que l'atelier a écrit**, et
+    ``expected_sha`` l'empreinte qu'il lui a laissée. Si le fichier l'a
+    toujours — la machine ne l'a pas réenregistré —, la nouvelle version
+    prend sa place, et l'ancienne est mise de côté dans ``_BACKUP``. Sinon
+    rien n'est écrit.
     """
     result = SongWrite()
-    try:
-        rel = free_song_name(sd, spec.name)
-    except ValueError as exc:
-        result.error = str(exc)
-        return result
+    if replace:
+        rel = replace
+        current = sd.abs(rel)
+        if not expected_sha or file_sha256(current) != expected_sha:
+            result.error = tr("%s a changé depuis que l'atelier l'a écrit : "
+                              "rien n'est remplacé") % rel
+            return result
+        result.replaced = True
+    else:
+        try:
+            rel = free_song_name(sd, spec.name)
+        except ValueError as exc:
+            result.error = str(exc)
+            return result
     problems = check_name(Path(rel).stem)
     if problems:
         result.error = " ".join(problems)
@@ -1507,7 +1544,7 @@ def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
     result.rel = rel
     missing = [s for s in spec.samples if sd.resolve_sample(s) is None]
     result.missing = missing
-    result.lines = _plan_lines(spec, rel, missing)
+    result.lines = _plan_lines(spec, rel, missing, result.replaced)
     try:
         doc = build(spec)
     except ValueError as exc:
@@ -1517,7 +1554,28 @@ def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
         return result
     sd.require_writable()
     target = sd.abs(rel)
-    if target.exists():
+    if result.replaced:
+        # La preuve est refaite au dernier moment : le Deluge a pu
+        # réenregistrer le morceau depuis la simulation.
+        if file_sha256(target) != expected_sha:
+            result.error = tr("%s a changé depuis que l'atelier l'a écrit : "
+                              "rien n'est remplacé") % rel
+            return result
+        from .samplefix import BACKUP_ROOT
+
+        kept = sd.abs("%s/remplaces-%s" % (BACKUP_ROOT,
+                                           time.strftime("%Y-%m-%d_%H%M%S")))
+        kept = kept / Path(rel)
+        try:
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, kept)
+            os.remove(target)
+        except OSError as exc:
+            result.error = tr("ancienne version non mise de côté (%s) : rien "
+                              "n'est remplacé") % exc
+            return result
+        result.kept = sd.rel(kept)
+    elif target.exists():
         # Créé entre la simulation et l'écriture : on ne remplace rien.
         result.error = tr("%s existe déjà : rien n'a été écrit") % rel
         return result
@@ -1535,8 +1593,11 @@ def write_song(sd: SDCard, spec: SongSpec, apply: bool = False) -> SongWrite:
     return result
 
 
-def _plan_lines(spec: SongSpec, rel: str, missing: list[str]) -> list[str]:
-    lines = [tr("Nouveau fichier : %s") % rel,
+def _plan_lines(spec: SongSpec, rel: str, missing: list[str],
+                replaced: bool = False) -> list[str]:
+    lines = [tr("Remplace %s, écrit par l'atelier et inchangé depuis ; "
+                "l'ancienne version est gardée dans _BACKUP") % rel
+             if replaced else tr("Nouveau fichier : %s") % rel,
              tr("Tempo : %g BPM — %d instrument(s), %d clip(s)")
              % (round(float(spec.bpm), 2), len(spec.tracks),
                 len(spec.clips))]

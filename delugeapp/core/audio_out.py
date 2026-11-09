@@ -18,6 +18,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -25,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..i18n import tr
 from . import wav
 
 log = logging.getLogger(__name__)
@@ -33,13 +35,20 @@ __all__ = ["Player"]
 
 # --- Dépendances optionnelles ---------------------------------------------
 
+#: Pourquoi ``sounddevice`` n'a pas pu se charger : ``"absent"`` (paquet
+#: non installé), le message de l'erreur (PortAudio introuvable, le cas de
+#: l'AppImage sans ``libportaudio2``), ou ``""``.
+_SD_PROBLEM = ""
+
 try:                                    # pilote audio temps réel (optionnel)
     import sounddevice as _sd
 except ImportError:
     _sd = None
+    _SD_PROBLEM = "absent"
 except Exception as _exc:               # PortAudio absent ou DLL illisible
     log.info("sounddevice indisponible : %s", _exc)
     _sd = None
+    _SD_PROBLEM = str(_exc) or type(_exc).__name__
 
 try:                                    # repli Windows
     import winsound as _winsound
@@ -109,6 +118,8 @@ class Player:
         self._duration = 0.0
         self._tmp_files: list[Path] = []
         self._max_ch_cache: dict[int | None, int] = {}
+        #: Lectures jouées en silence, faute de sortie audio.
+        self.silent_plays = 0
         self._backend = self._pick_backend()
         atexit.register(self._shutdown)
 
@@ -135,6 +146,26 @@ class Player:
     def available(self) -> bool:
         """Vrai si un son peut réellement être entendu."""
         return self._backend != "none"
+
+    def silence_reason(self) -> str:
+        """Pourquoi rien ne s'entend, avec le remède ; ``""`` si le son sort.
+
+        Sans sortie, la lecture « joue » en silence pour que l'interface
+        suive : c'est cette phrase qui le dit à l'utilisateur.
+        """
+        if self.available:
+            return ""
+        if _sd is None and _SD_PROBLEM == "absent":
+            return tr("le paquet Python sounddevice n'est pas installé "
+                      "(pip install sounddevice)")
+        if _sd is None and _SD_PROBLEM:
+            if sys.platform.startswith("linux"):
+                return tr("la bibliothèque PortAudio manque : installez le "
+                          "paquet libportaudio2 (sudo apt install "
+                          "libportaudio2), puis relancez l'application")
+            return tr("la bibliothèque PortAudio n'a pas pu être chargée "
+                      "(%s)") % _SD_PROBLEM
+        return tr("aucune sortie audio n'a été trouvée sur cet ordinateur")
 
     @property
     def backend(self) -> str:
@@ -508,8 +539,13 @@ class Player:
     # -- backend silencieux -------------------------------------------------
 
     def _start_silent(self, duration: float, loop: bool) -> None:
-        """Simule une lecture : non bloquante, position cohérente, aucun son."""
+        """Simule une lecture : non bloquante, position cohérente, aucun son.
+
+        Chaque lecture muette est comptée (:attr:`silent_plays`) : la fenêtre
+        principale le lit, et dit pourquoi rien ne s'entend.
+        """
         with self._state_lock:
+            self.silent_plays += 1
             self._data = None
             self._pos = 0
             self._loop = bool(loop)

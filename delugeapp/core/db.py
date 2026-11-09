@@ -542,7 +542,10 @@ class Library:
                       dsts: list[tuple[str, bool]]) -> None:
         """Remplace les dépendances déclarées par un fichier source.
 
-        ``dsts`` est une liste de ``(chemin_echantillon, manquant)``.
+        ``dsts`` est une liste de ``(chemin_echantillon, manquant)``, ou de
+        ``(chemin_echantillon, manquant, chemin_reel)`` : la clé de
+        rapprochement est alors prise du chemin réel (un nom court de FAT
+        désigne un fichier au nom long).
         """
         src_rel = str(src_rel or "").replace("\\", "/").strip("/")
         try:
@@ -553,8 +556,10 @@ class Library:
                 self.con.executemany(
                     "INSERT INTO links(src_kind, src_rel, dst_rel, dst_norm, "
                     "missing) VALUES (?, ?, ?, ?, ?)",
-                    [(src_kind, src_rel, dst, norm_rel(dst), 1 if missing else 0)
-                     for dst, missing in dsts])
+                    [(src_kind, src_rel, dst[0],
+                      norm_rel(dst[2] if len(dst) > 2 else dst[0]),
+                      1 if dst[1] else 0)
+                     for dst in dsts])
         except sqlite3.Error as exc:
             log.debug("écriture des dépendances de %r impossible : %s",
                       src_rel, exc)
@@ -678,6 +683,22 @@ class Library:
             log.debug("lecture de l'index (%s) impossible : %s", kind, exc)
             return {}
         return {r["rel"]: (r["size"] or 0, r["mtime"] or 0.0) for r in rows}
+
+    def unanalyzed_samples(self) -> set[str]:
+        """Échantillons lisibles que l'analyse acoustique n'a jamais mesurés.
+
+        Cocher l'analyse acoustique après une première lecture ne servait à
+        rien sans « Tout réanalyser » : l'analyse incrémentale sautait les
+        fichiers inchangés, donc restés sans mesures. Elle les reprend.
+        """
+        try:
+            rows = self.con.execute(
+                "SELECT rel FROM samples WHERE ok = 1 AND frames > 0 "
+                "AND peak IS NULL").fetchall()
+        except sqlite3.Error as exc:
+            log.debug("lecture de l'index impossible : %s", exc)
+            return set()
+        return {r["rel"] for r in rows}
 
     # -- recherche ---------------------------------------------------------- #
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import organize
+from . import dxml, organize
 from ..i18n import N_, decimal, tr, tr_stored, untranslated
 from .db import Library
 from .organize import Plan
@@ -77,7 +77,11 @@ STANDARD_EMPTY_OK = frozenset({
 
 #: Réparations XML qui ne dénotent aucune corruption : le firmware 2.x écrit
 #: normalement plusieurs racines dans un même fichier (cf. SPEC §1.3).
-BENIGN_REPAIRS = untranslated(("multi-racines",))
+#: Réparations qui ne disent rien de mal du fichier : la forme normale du
+#: firmware 2.x, et deux formes que le firmware 1.x écrit lui-même
+#: (``dxml.FIRMWARE_QUIRKS``) — signalées, elles bloquaient la note de
+#: l'utilisateur à 92 avec un conseil impossible pour un morceau.
+BENIGN_REPAIRS = untranslated(("multi-racines",)) + dxml.FIRMWARE_QUIRKS
 
 
 #: **Tous les codes d'anomalie que ce module peut émettre.**
@@ -416,7 +420,10 @@ def _check_missing(lib: Library) -> Issue | None:
 
 
 def _check_orphans(lib: Library) -> Issue | None:
-    rows = lib.unused_samples()
+    # Les prises de la machine (RECORD, RESAMPLE…) ne sont citées par rien,
+    # et l'archivage les laisse en place : elles ne sont pas comptées.
+    rows = [r for r in lib.unused_samples()
+            if not organize.is_recording(r["rel"])]
     if not rows:
         return None
     total = sum(r["size"] or 0 for r in rows)
@@ -425,7 +432,9 @@ def _check_orphans(lib: Library) -> Issue | None:
         tr("Échantillons jamais utilisés"),
         tr("%d échantillon(s) (%.0f Mio) ne sont cités par aucun preset, kit "
            "ni morceau de cette carte. Ce n'est pas un défaut : votre "
-           "bibliothèque peut contenir des sons en réserve.")
+           "bibliothèque peut contenir des sons en réserve. Ce que le "
+           "Deluge enregistre lui-même (SAMPLES/RECORD, RESAMPLE, CLIPS, "
+           "EXPORTS) n'est pas compté.")
         % (len(rows), total / 2 ** 20),
         items=[r["rel"] for r in rows[:MAX_ITEMS]],
         fix=tr("Les archiver dans un dossier à part s'il faut libérer de la "
@@ -492,10 +501,14 @@ def _check_repaired(lib: Library) -> Issue | None:
                 f"SELECT rel, repaired FROM {table} "
                 f"WHERE repaired IS NOT NULL AND repaired <> ''").fetchall()
             for row in rows:
-                note = row["repaired"]
-                if any(benign in note for benign in BENIGN_REPAIRS):
-                    continue
-                items.append(f"{row['rel']} — {tr_stored(note)}")
+                # Une note par réparation : seules les bénignes s'écartent,
+                # un fichier multi-racines au « & » non échappé reste signalé.
+                real = [part for part in row["repaired"].split(" ; ")
+                        if part and not any(benign in part
+                                            for benign in BENIGN_REPAIRS)]
+                if real:
+                    items.append("%s — %s" % (row["rel"],
+                                              tr_stored(" ; ".join(real))))
     except Exception as exc:  # noqa: BLE001
         log.debug("lecture des réparations impossible : %s", exc)
         return None
@@ -506,10 +519,13 @@ def _check_repaired(lib: Library) -> Issue | None:
         tr("Fichiers XML réparés à la lecture"),
         tr("Ces fichiers comportent des anomalies de syntaxe (caractères "
            "illégaux, « & » non échappé, balises mal fermées) que le lecteur "
-           "a contournées. Le Deluge, lui, peut les refuser."),
+           "a contournées. Le Deluge, lui, peut les refuser. Ce que le "
+           "firmware écrit lui-même n'est pas compté ici."),
         items=sorted(items)[:MAX_ITEMS],
-        fix=tr("Réenregistrer ces presets depuis l'application pour obtenir "
-               "un XML propre."),
+        fix=tr("Vérifier qu'ils se chargent sur le Deluge. S'il refuse un "
+               "preset, [Dupliquer], sur la page Presets, en écrit une copie "
+               "au XML propre ; un morceau n'est jamais réécrit par "
+               "l'application."),
     )
 
 

@@ -81,6 +81,32 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                          "pleine dans l'aperçu"),
         "@_fav": N_("Marque ce son comme favori ; le filtre « Favoris » "
                     "au-dessus s'en sert"),
+        "@_tag_edit": N_("Le nom d'une étiquette à poser sur ce son — "
+                         "« sombre », « à garder », « live »… Entrée "
+                         "l'ajoute ; elle reste sur l'ordinateur, pas sur "
+                         "la carte"),
+        "@_tag_add": N_("Pose l'étiquette écrite à côté sur le son choisi"),
+        "@_wavetable_button": N_("**Écrit sur la carte.** Tire du son choisi "
+                                 "une table d'onde — une période prélevée "
+                                 "64 fois, du début à la fin — et l'écrit "
+                                 "dans SAMPLES/WAVETABLES, après votre "
+                                 "accord"),
+        "@_instrument_button": N_("Fait des sons d'un dossier un preset "
+                                  "multi-échantillon : une tranche du clavier "
+                                  "par son, la hauteur lue dans le nom ou à "
+                                  "l'écoute. Le plan est montré avant "
+                                  "d'écrire dans SYNTHS"),
+        "@_deluge_fav_button": N_("**Écrit sur la carte.** Pose le son sur le "
+                                  "premier pad libre des favoris "
+                                  "d'échantillons du Deluge — ou l'en "
+                                  "retire —, après votre accord"),
+        "@_undo_fix_button": N_("**Écrase des fichiers.** Remet les "
+                                "originaux d'un traitement précédent, gardés "
+                                "dans _BACKUP ; la version actuelle y est "
+                                "mise de côté avant"),
+        "@_tag_filter": N_("Ne montre que les sons qui portent une "
+                           "étiquette ; il apparaît dès que vous en avez "
+                           "posé une"),
         "@_only_unused": N_("Ne montre que les sons qu'aucun preset, kit ni "
                             "morceau n'utilise — candidats au rangement"),
         "@_only_missing": N_("Ne montre que les fichiers réclamés par un "
@@ -137,6 +163,14 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                             "pistes, ses clips et ses sections deviennent ceux "
                             "du projet, et l'atelier le complète sans le "
                             "réécrire. Rien n'est modifié"),
+        "@_listen_song_button": N_("Calcule le morceau entier sur "
+                                   "l'ordinateur, sur son arrangement et avec "
+                                   "les sons de chaque clip, puis le joue. "
+                                   "Rien n'est écrit"),
+        "@_listen_clip_button": N_("Calcule le clip choisi comme la machine le "
+                                   "joue, sur toute sa boucle, puis le joue. "
+                                   "Un double-clic sur un clip fait de même"),
+        "@_stop_button": N_("Arrête l'écoute, et le calcul s'il tourne encore"),
         "@_search": N_("Filtre les morceaux sur leur nom"),
         "Clip en MIDI": N_("Écrit le clip choisi dans un fichier .mid, à "
                            "l'endroit que vous choisirez"),
@@ -288,6 +322,11 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
 
     # ---------------------------------------------------------------- #
     "Atelier": {
+        "@_history_box": N_("Les sons que la piste a eus avant celui-ci, du "
+                            "plus récent au plus ancien : ce que « Autre "
+                            "son » a remplacé n'est pas perdu"),
+        "@_history_button": N_("Rend à la piste le son choisi dans la liste "
+                               "d'à côté ; le son actuel y prend sa place"),
         "@_compose_button": N_("Fabrique un morceau neuf dans le style "
                                "choisi : une piste par partie cochée, un "
                                "premier clip chacune, et la structure du "
@@ -554,6 +593,14 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "Réinitialiser l'index": N_("Vide l'index de l'application. **La "
                                     "carte n'est pas touchée** ; il faudra "
                                     "relancer une analyse"),
+        "@_check_updates": N_("Au démarrage, au plus une fois par jour, lit "
+                              "sur GitHub le numéro de la dernière version, "
+                              "et vous prévient si elle est plus récente. "
+                              "Rien d'autre ne part sur le réseau"),
+        "Tout réanalyser": N_("Relit chaque fichier de la carte, même ceux "
+                              "qui n'ont pas changé, et refait empreintes et "
+                              "mesures. La carte n'est que lue ; [Analyser la "
+                              "carte] suffit d'ordinaire"),
         "@_confirm": N_("Garde-fou : aucune écriture sur la carte sans une "
                         "question préalable"),
         "@_backup": N_("Garde-fou : chaque XML réécrit laisse une copie .bak "

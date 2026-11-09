@@ -178,11 +178,15 @@ class TestLeCatalogueSuitLeCode(unittest.TestCase):
 
 class TestLaLangue(LangueCase):
 
-    def test_un_code_de_langue_inconnu_donne_le_francais(self):
+    def test_un_code_de_langue_inconnu_donne_l_anglais(self):
+        """L'anglais, langue d'une installation neuve (9 novembre 2026) ;
+        le français reste la langue des textes du code."""
         self.assertEqual(i18n.normalize("EN "), "en")
         self.assertEqual(i18n.normalize("English"), "en")
-        self.assertEqual(i18n.normalize("de"), "fr")
-        self.assertEqual(i18n.normalize(None), "fr")
+        self.assertEqual(i18n.normalize("FR"), "fr")
+        self.assertEqual(i18n.normalize("de"), "en")
+        self.assertEqual(i18n.normalize(None), "en")
+        self.assertEqual((i18n.DEFAULT, i18n.FIRST_RUN), ("fr", "en"))
 
     def test_tr_suit_la_langue_choisie(self):
         self.assertEqual(i18n.tr("Quitter"), "Quitter")
@@ -411,8 +415,29 @@ class TestLeLanceur(LangueCase):
             with mock.patch.object(config, "SETTINGS_PATH", chemin):
                 self.assertEqual(lanceur._choose_language(), "en")
             self.assertEqual(i18n.language(), "en")
+            chemin.write_text('{"language": "fr"}', encoding="utf-8")
+            with mock.patch.object(config, "SETTINGS_PATH", chemin):
+                self.assertEqual(lanceur._choose_language(), "fr")
             chemin.write_text('{"language": "klingon"}', encoding="utf-8")
             with mock.patch.object(config, "SETTINGS_PATH", chemin):
+                self.assertEqual(lanceur._choose_language(), "en")
+
+    def test_une_installation_neuve_demarre_en_anglais(self):
+        """Pas encore de réglages : l'anglais, comme la plupart de ceux qui
+        téléchargent l'application. Qui a choisi le français le garde."""
+        import main as lanceur
+        from delugeapp import config
+
+        self.assertEqual(config.Settings().language, "en")
+        with tempfile.TemporaryDirectory() as dossier:
+            chemin = Path(dossier) / "settings.json"
+            with mock.patch.object(config, "SETTINGS_PATH", chemin):
+                self.assertFalse(chemin.exists())
+                self.assertEqual(lanceur._choose_language(), "en")
+                self.assertEqual(i18n.language(), "en")
+                reglages = config.load_settings()
+                reglages.language = "fr"
+                config.save_settings(reglages)
                 self.assertEqual(lanceur._choose_language(), "fr")
 
     def test_l_aide_de_la_ligne_de_commande_parle_la_langue(self):

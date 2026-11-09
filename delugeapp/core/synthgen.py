@@ -206,6 +206,10 @@ class GenOptions:
     complexity: float = 0.5
     mode: str = ""
     use_samples: list[str] = field(default_factory=list)
+    #: Tables d'onde de la carte (``SAMPLES/WAVETABLES``) : avec elles, le
+    #: moteur *wavetable* d'un genre qui l'emploie devient jouable. Sans
+    #: elles, rien ne change au tirage.
+    wavetables: list[str] = field(default_factory=list)
     name: str = ""
     #: Graine propre d'un aspect du son (:data:`FACETS`), à la place de
     #: ``seed`` : c'est ainsi qu'une variante tire un autre filtre en gardant
@@ -435,8 +439,10 @@ def _apply_oscillators(sound: Sound, profile: GenreProfile, opts: GenOptions,
         # Sans échantillon fourni, écarter d'emblée les formes qui en
         # réclament un : les tirer puis les corriger ensuite donnerait un son
         # qui ne ressemble plus au profil du genre.
+        tables = [t for t in (opts.wavetables or []) if t]
         playable = [(name, weight) for name, weight in profile.osc_types
-                    if name not in _SILENT_OSC_TYPES]
+                    if name not in _SILENT_OSC_TYPES
+                    or (name == "wavetable" and tables)]
         first = _pick(tirage("osc 1"), playable, "saw")
         if first in _ANALOG_VARIANT and tirage("analogique").random() \
                 < _ANALOG_CHANCE:
@@ -446,6 +452,14 @@ def _apply_oscillators(sound: Sound, profile: GenreProfile, opts: GenOptions,
         r = tirage("osc 2")
         second = first if r.random() < 0.45 else _pick(r, playable, "square")
         sound.osc2 = Osc(type=second)
+        for osc, aspect in untranslated(((sound.osc1, "table A"),
+                                         (sound.osc2, "table B"))):
+            if osc.type == "wavetable":
+                choix = tirage(aspect)
+                osc.file_name = tables[choix.randrange(len(tables))]
+                sound.set_param("osc%sWavetablePosition"
+                                % ("A" if osc is sound.osc1 else "B"),
+                                _disp(_span(choix, (0, 50))))
 
     sound.set_param("oscAVolume", _disp(_span(tirage("niveau A"), (40, 50), 0.8)))
 

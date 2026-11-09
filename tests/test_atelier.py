@@ -1211,5 +1211,128 @@ class TestLesReglagesDuSon(CarteCase):
         self.assertEqual([v.label for v in out], [autre.label])
 
 
+
+# --------------------------------------------------------------------------- #
+# Ce que l'atelier garde (7 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+class TestLAtelierGardeLeTravail(CarteCase):
+    """Les notes dessinées, le brouillon, la version qu'on remplace."""
+
+    def _basse(self, projet):
+        piste = next(t for t in projet.tracks if t.part == "Basse")
+        return piste, piste.clips[0]
+
+    def test_une_note_s_ajoute_puis_se_retire(self):
+        projet = atelier.new_project(atelier.Style(genre="techno", seed=4))
+        piste, clip = self._basse(projet)
+        clip.events[:] = []
+        self.assertTrue(atelier.toggle_note(projet, piste.uid, clip.key,
+                                            45, 3))
+        self.assertEqual([(e.start, e.length, e.note) for e in clip.events],
+                         [(3.0, 2.0, 45)])
+        # Un clic sur la note, à son second pas, la retire.
+        self.assertFalse(atelier.toggle_note(projet, piste.uid, clip.key,
+                                             45, 4))
+        self.assertEqual(clip.events, [])
+
+    def test_une_note_neuve_ne_chevauche_pas_la_suivante(self):
+        """Le Deluge ignore une note qui chevauche la précédente sur sa
+        rangée : la neuve s'arrête où la suivante commence."""
+        projet = atelier.new_project(atelier.Style(genre="techno", seed=4))
+        piste, clip = self._basse(projet)
+        clip.events[:] = [accomp.NoteEvent(5.0, 1.0, 45, 90)]
+        atelier.toggle_note(projet, piste.uid, clip.key, 45, 4)
+        self.assertEqual(sorted((e.start, e.length) for e in clip.events),
+                         [(4.0, 1.0), (5.0, 1.0)])
+
+    def test_une_piste_cv_reste_monophonique(self):
+        projet = atelier.new_project(atelier.Style(genre="techno", seed=4))
+        piste = atelier.add_track(projet, "cv", "Basse")
+        clip = piste.clips[0]
+        clip.events[:] = [accomp.NoteEvent(2.0, 4.0, 40, 90),
+                          accomp.NoteEvent(8.0, 1.0, 43, 90)]
+        atelier.toggle_note(projet, piste.uid, clip.key, 48, 3)
+        self.assertEqual(sorted((e.start, e.note) for e in clip.events),
+                         [(3.0, 48), (8.0, 43)])
+
+    def test_un_clip_du_deluge_ne_se_dessine_pas(self):
+        projet = atelier.new_project(atelier.Style(genre="techno", seed=4))
+        piste, clip = self._basse(projet)
+        clip.existing = 0
+        with self.assertRaises(ValueError):
+            atelier.toggle_note(projet, piste.uid, clip.key, 45, 0)
+
+    def test_le_brouillon_rend_le_projet_entier(self):
+        projet = atelier.new_project(atelier.Style(genre="house", seed=5),
+                                     sd=self.sd, lib=self.lib)
+        projet.written["SONGS/X.XML"] = "ab" * 32
+        repris, meta = atelier.load_draft(
+            atelier.dump_draft(projet, {"step": "Clips"}))
+        self.assertEqual(meta, {"step": "Clips"})
+        self.assertEqual(repris.written, projet.written)
+        self.assertEqual([t.part for t in repris.tracks],
+                         [t.part for t in projet.tracks])
+        batterie = next(t for t in repris.tracks if t.is_drums)
+        self.assertEqual([r.file_name for r in batterie.kit.rows],
+                         [r.file_name for r in next(
+                             t for t in projet.tracks if t.is_drums).kit.rows])
+        self.assertEqual(
+            atelier.to_song_spec(repris, "A", sd=self.sd, lib=self.lib).bpm,
+            atelier.to_song_spec(projet, "A", sd=self.sd, lib=self.lib).bpm)
+
+    def test_un_brouillon_d_avant_un_champ_neuf_se_relit(self):
+        """``pickle`` ne passe pas par le constructeur : un champ ajouté au
+        code depuis restait absent, et la première lecture levait."""
+        projet = atelier.new_project(atelier.Style(genre="house", seed=5))
+        del projet.__dict__["written"]
+        del projet.sections[0].__dict__["cells"]
+        repris, _meta = atelier.load_draft(atelier.dump_draft(projet))
+        self.assertEqual(repris.written, {})
+        self.assertEqual(repris.sections[0].cells, {})
+
+    def test_un_brouillon_abime_est_refuse(self):
+        for octets in (b"", b"pas un brouillon",
+                       __import__("pickle").dumps({"format": 99})):
+            with self.subTest(octets=octets[:12]):
+                with self.assertRaises(ValueError):
+                    atelier.load_draft(octets)
+
+    def test_seul_un_morceau_inchange_se_remplace(self):
+        projet = atelier.new_project(atelier.Style(genre="house", seed=5),
+                                     sd=self.sd, lib=self.lib)
+        spec = atelier.to_song_spec(projet, "REMPLACE", sd=self.sd,
+                                    lib=self.lib)
+        premier = songwriter.write_song(self.sd, spec, apply=True)
+        self.assertTrue(premier.applied)
+        cible = self.sd.abs(premier.rel)
+        empreinte = songwriter.file_sha256(cible)
+        ancien = cible.read_bytes()
+
+        # Une empreinte fausse : rien n'est remplacé, rien n'est écrit.
+        refus = songwriter.write_song(self.sd, spec, apply=True,
+                                      replace=premier.rel,
+                                      expected_sha="0" * 64)
+        self.assertFalse(refus.applied)
+        self.assertEqual(cible.read_bytes(), ancien)
+
+        projet.style.bpm = 131
+        spec = atelier.to_song_spec(projet, "REMPLACE", sd=self.sd,
+                                    lib=self.lib)
+        plan = songwriter.write_song(self.sd, spec, replace=premier.rel,
+                                     expected_sha=empreinte)
+        self.assertTrue(plan.ok)
+        self.assertIn("_BACKUP", plan.text())
+        fait = songwriter.write_song(self.sd, spec, apply=True,
+                                     replace=premier.rel,
+                                     expected_sha=empreinte)
+        self.assertTrue(fait.applied, fait.error)
+        self.assertEqual(fait.rel, premier.rel)
+        self.assertNotEqual(cible.read_bytes(), ancien)
+        self.assertEqual(self.sd.abs(fait.kept).read_bytes(), ancien)
+        self.assertEqual(sorted(p.name for p in (self.root / "SONGS")
+                                .iterdir()), ["REMPLACE.XML"])
+
+
 if __name__ == "__main__":
     unittest.main()

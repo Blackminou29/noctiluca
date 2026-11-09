@@ -28,9 +28,9 @@ L'application s'adresse autant à qui découvre le Deluge qu'au producteur aguer
 ## Ce qu'elle ne fait pas {#ce-quelle-ne-fait-pas}
 
 - Elle **ne remplace pas le séquenceur** du Deluge : l'atelier compose, vous choisissez, variez et dessinez la batterie ; le jeu note à note reste celui de la machine.
-- Elle **ne réécrit jamais un morceau** existant : le format est trop riche pour qu'une relecture-réécriture soit sûre. Elle en crée de nouveaux, à côté.
+- Elle **ne réécrit jamais un morceau** existant : le format est trop riche pour qu'une relecture-réécriture soit sûre. Elle en crée de nouveaux, à côté. Seule exception, à votre demande : une version que l'atelier a écrite lui-même et que rien n'a changée depuis (voir [Le Deluge](#atelier-ecrire)).
 - Elle **ne peut pas charger un preset sur la machine à distance** : aucun message MIDI ne le permet. Le Deluge joue toujours l'instrument sélectionné sur lui.
-- Elle n'a besoin **ni d'Internet, ni d'un compte** : tout se passe sur votre ordinateur.
+- Elle n'a besoin **ni d'Internet, ni d'un compte** : tout se passe sur votre ordinateur. Elle ne va sur le réseau que si vous le lui demandez : pour savoir s'il existe une nouvelle version d'elle-même, ou pour chercher et télécharger le firmware du Deluge ([Mettre le firmware à jour](#firmware)).
 
 ## La règle d'or {#regle-dor}
 
@@ -208,7 +208,7 @@ Une analyse, un traitement d'échantillons, une sauvegarde, une synchronisation 
 
 ## Changer de langue {#langue}
 
-Le menu **Langue** propose « Français » et « English », chacun écrit dans sa langue. Le choix est retenu aussitôt, puis l'application propose de redémarrer — la question est posée dans les deux langues. Refuser garde le choix pour le prochain démarrage.
+Au premier lancement, l'application s'ouvre en anglais. Le menu **Langue** (« Language » en anglais) propose « Français » et « English », chacun écrit dans sa langue. Le choix est retenu aussitôt, puis l'application propose de redémarrer — la question est posée dans les deux langues. Refuser garde le choix pour le prochain démarrage.
 
 !!! pro Ce que l'application écrit prend la langue du moment
     Les noms qu'elle donne à ce qu'elle écrit — clips d'un morceau, pistes d'un fichier MIDI, dossiers d'un rangement — suivent la langue de l'interface au moment de l'écriture : « Accords » en français, « Chords » en anglais. Ce qui est déjà sur la carte ne change pas.
@@ -257,6 +257,8 @@ Deux options, dans Réglages ▸ Analyse de la carte — en mode avancé —, d�
 Les écritures de l'application mettent l'index à jour d'elles-mêmes, comme les fichiers reçus du Deluge. Relancez l'analyse quand la carte a changé **hors de l'application** : des fichiers copiés à la main sur une carte glissée dans le PC, par exemple. En cas de doute, elle ne coûte rien : ce qui n'a pas changé n'est pas relu.
 
 [Réinitialiser l'index], dans les réglages en mode avancé, vide l'index pour le reconstruire à la prochaine analyse. La carte n'est pas touchée, et vos notes, favoris et étiquettes sont conservés.
+
+[Tout réanalyser], à côté, relit au contraire **chaque** fichier, même inchangé, et refait empreintes et mesures : quelques minutes avec l'analyse acoustique. On n'en a presque jamais besoin — une analyse ordinaire mesure aussi les sons restés sans mesures, si vous avez coché l'analyse acoustique après coup.
 
 # Premiers pas en dix minutes {#premiers-pas icone=play}
 
@@ -370,11 +372,12 @@ L'en-tête porte trois commandes, valables à toute étape :
 - [Ouvrir un morceau du Deluge…] ouvre un morceau de la carte dans l'atelier (voir [Ouvrir un morceau du Deluge, et le compléter](#atelier-completer)) ;
 - [Écouter un extrait] joue huit mesures du passage le plus plein du morceau, toutes pistes ensemble ;
 - [Arrêter] coupe l'écoute. [[Espace]] fait de même, et relance l'écoute de ce que montre l'étape : le son, le clip, la section — aux deux autres, un extrait du morceau, ou ses accords tant qu'il n'est pas composé.
+- [Défaire] revient sur le dernier geste — un son changé, un coup dessiné, un clip supprimé, une piste ou une section retirée, et même un morceau recomposé —, [Refaire] le rejoue. [[Ctrl+Z]] et [[Ctrl+Y]] font de même ; l'infobulle de chaque bouton dit quel geste il défait. Ce qui est déjà écrit sur la carte, lui, ne se défait pas.
 
 Son sous-titre dit le morceau en cours : son genre, sa tonalité, sa longueur et sa durée. Jusqu'à l'écriture, **rien n'est écrit sur la carte** : l'atelier compose même sans carte, et ne la demande que pour écrire, ou pour bâtir un kit avec vos échantillons.
 
 !!! astuce Reprendre où l'on en était
-    L'accueil s'en souvient : sa porte [Créer un morceau] devient [Reprendre le morceau], qui ramène à l'étape où vous étiez.
+    L'accueil s'en souvient : sa porte [Créer un morceau] devient [Reprendre le morceau], qui ramène à l'étape où vous étiez. Le morceau en cours survit aussi à la fermeture de l'application, et au changement de langue qui la relance : il est gardé sur l'ordinateur, et l'atelier le rouvre au lancement suivant, à la même étape.
 
 ## 1. Le style {#atelier-style}
 
@@ -409,7 +412,7 @@ Le morceau composé, le bouton devient [Recomposer le morceau] : il remplace le 
 À gauche, la colonne **Pistes**, commune aux sons et aux clips, chaque piste à la couleur de sa partie. À droite, le son de la piste choisie, son nom et sa description.
 
 - [Écouter le son] le joue — sur le Deluge si l'écoute y est réglée, sinon calculé par l'ordinateur comme le Deluge le calcule ; une batterie joue son premier clip.
-- [Autre son] en tire un autre du même style pour un synthé ; pour une batterie, un autre kit bâti dans votre bibliothèque.
+- [Autre son] en tire un autre du même style pour un synthé ; pour une batterie, un autre kit bâti dans votre bibliothèque. Le son remplacé n'est pas perdu : il rejoint la liste des **sons essayés**, sous les boutons — le plus récent en tête —, et [Reprendre ce son] le rend à la piste.
 - [Choisir sur la carte…] prend pour la piste un preset ou un kit de la carte, choisi dans l'index.
 - [Modifier le son…], en mode avancé, ouvre l'éditeur du son (voir [Modifier un son à la main](#atelier-modifier-son)).
 - Une piste MIDI ou CV montre son **canal**, qui se change ici.
@@ -442,7 +445,7 @@ Dans **Modulations**, chaque ligne relie une source à un réglage, avec une pro
 
 Une piste a ses clips, nommés A, B, C… : la liste dit d'où vient chacun — généré, variation d'un autre, ou repris du morceau d'origine — et sa longueur. Dessous, le clip lui-même : les rangées d'une batterie, de bas en haut, ou les notes d'un synthé sur leur hauteur. Une ligne dit combien il a de notes et dans quelles sections il joue.
 
-**La batterie se dessine à la souris** : un clic dans la grille allume un coup, un second l'éteint. La grille montre toujours la grosse caisse, la caisse claire, le clap et les deux charleys, même sans coup : de quoi ajouter un clap là où il manque. Un clip repris du morceau d'origine ne se dessine pas : variez-le, la variation est un clip neuf.
+**La batterie se dessine à la souris** : un clic dans la grille allume un coup, un second l'éteint. La grille montre toujours la grosse caisse, la caisse claire, le clap et les deux charleys, même sans coup : de quoi ajouter un clap là où il manque. **Les notes d'un synthé aussi** : un clic sur une case vide pose une note d'une croche à cette hauteur, un clic sur une note la retire — une fausse note se corrige sans refaire le clip. Un clip repris du morceau d'origine ne se dessine pas : variez-le, la variation est un clip neuf.
 
 - [Écouter le clip] le joue sur l'ordinateur, avec le son de sa piste.
 - [Varier] ouvre le menu des variations ; la variation choisie s'**ajoute** à la piste comme un clip neuf, l'original reste.
@@ -496,6 +499,8 @@ Une ligne résume le tout : le nombre de sections, de mesures, la durée et le t
 ## 5. Le Deluge {#atelier-ecrire}
 
 La dernière étape écrit le morceau. **Nom du morceau** propose un nom — celui du genre, ou celui du morceau d'origine —, que vous changez à votre gré ; il est assaini pour la carte, et numéroté s'il est déjà pris.
+
+Une exception : si ce nom est celui d'un morceau **que l'atelier a écrit**, et que ni vous ni le Deluge ne l'avez changé depuis, l'application propose de le **remplacer** par la nouvelle version — [Oui] — plutôt que d'en écrire une seconde à côté — [Non]. L'ancienne est gardée dans `_BACKUP`, à la racine de la carte. Un morceau enregistré sur la machine, lui, n'est jamais remplacé.
 
 [Écrire le morceau] en fait un morceau du Deluge, dans `SONGS` : une section du Deluge par section du projet, chacune avec ses clips et son nombre de répétitions, et l'arrangement complet pour la vue SONG. Les synthés y portent leur son ; la batterie, un kit bâti avec vos échantillons, ou celui que vous avez choisi ; les pistes MIDI et CV, leur canal. Le parcours est celui de tout [morceau écrit](#parcours-morceau) : le nom, le plan, puis l'écriture d'un fichier neuf. Une ligne dit ensuite ce qui est écrit, et [Voir dans Morceaux] l'ouvre sur la page Morceaux.
 
@@ -570,7 +575,7 @@ Au centre, le son obtenu : son nom et sa description, sa forme d'onde et son spe
     Un oscillateur muet, un filtre fermé, une enveloppe sans attaque ni tenue sont rattrapés avant l'écriture.
 
 !!! retenir L'écoute de l'ordinateur refait les calculs du Deluge
-    Formes d'onde, filtres, saturation, FM, effets, réverbération et niveaux : l'ordinateur reprend, étage par étage, ce que calcule le firmware de la machine (1.3). Un decay de 13 dure 1,8 seconde ici comme sur le Deluge, une basse au filtre fermé reste sombre, un son poussé sature au même endroit. Restent approchés la lecture des échantillons, plus simple, et le LFO 1, qui repart à chaque note ; pour l'entendre tel quel, faites-le jouer par la machine : [Essayer dans l'atelier], puis écrivez le morceau.
+    Formes d'onde, filtres, saturation, FM, effets, réverbération et niveaux : l'ordinateur reprend, étage par étage, ce que calcule le firmware de la machine (1.3). Un decay de 13 dure 1,8 seconde ici comme sur le Deluge, une basse au filtre fermé reste sombre, un son poussé sature au même endroit. Le LFO 1 court d'une note à l'autre, comme sur la machine, et le glissé suit la fréquence. Restent approchés la lecture des échantillons, plus simple, et l'étirement ; pour l'entendre tel quel, faites-le jouer par la machine : [Essayer dans l'atelier], puis écrivez le morceau.
 
 ## Variations, historique, fondu {#variations}
 
@@ -664,6 +669,7 @@ Un clic sur un en-tête trie la colonne. Un clic sur une ligne choisit le son et
 - [Toutes durées] isole les sons par longueur : très courts (moins d'une demi-seconde), courts, moyens, longs (plus de dix secondes).
 - [Inutilisés] ne montre que les sons qu'aucun preset, kit ni morceau ne cite.
 - [Favoris] ne montre que les sons marqués comme favoris.
+- [Toutes étiquettes] ne garde que les sons d'une étiquette ; ce filtre apparaît dès que vous en avez posé une.
 - [Manquants] ne montre que les fichiers réclamés par un preset mais absents de la carte.
 
 ## L'arbre des dossiers {#arbre}
@@ -676,10 +682,11 @@ En bas : le nom et le chemin du son, sa **forme d'onde**, et une fiche — duré
 
 - la **Note**, de une à cinq étoiles ;
 - la case [Favori], que le filtre [Favoris] utilise ;
-- ses **étiquettes**, s'il en a — la croix d'une étiquette la retire ;
+- [Sur un pad du Deluge] pose le son sur le premier pad libre des **favoris d'échantillons de la machine** — la rangée de pads de son navigateur, seize par banque, seize banques ; une ligne dit alors lesquels. Sur un son qui y est déjà, le bouton devient [Retirer du pad du Deluge]. Le fichier de la banque est réécrit après votre accord, l'ancien gardé dans `_BACKUP`. Quittez le navigateur d'échantillons du Deluge avant l'envoi : il réécrit cette banque au moindre pad changé. Dans l'autre sens, les favoris posés sur la machine deviennent des favoris de l'application à chaque analyse ;
+- ses **étiquettes** — la croix d'une étiquette la retire ; tapez-en une nouvelle dans le champ « Nouvelle étiquette… », puis [[Entrée]] ou [Ajouter] : « sombre », « à garder », « live »… Les étiquettes déjà posées sont proposées pendant la frappe ;
 - combien de fichiers de la carte l'utilisent.
 
-!!! retenir Notes et favoris restent sur l'ordinateur
+!!! retenir Notes, favoris et étiquettes restent sur l'ordinateur
     Ils sont gardés dans l'index de l'application, pas sur la carte : le Deluge ne les voit pas, et une réinitialisation de l'index les conserve.
 
 ## Écouter {#ecouter-echantillon}
@@ -708,6 +715,8 @@ En mode avancé, [Dans l'explorateur] ouvre le dossier du son dans l'Explorateur
 
 Les originaux sont mis de côté dans le dossier `_BACKUP` à la racine de la carte, à l'octet près. Sur la copie de travail, ce dossier reste sur l'ordinateur et ne part pas sur le Deluge.
 
+[Annuler un traitement…], à côté, remet ces originaux : choisissez le traitement dans la liste — sa date et son nombre de fichiers —, l'application annonce combien de sons seront remis, puis attend votre accord. La version que l'on remplace est d'abord gardée dans `_BACKUP` ; les bornes des presets recalées par un rééchantillonnage reprennent leur échelle d'origine.
+
 !!! pro L'écrêtage ne se répare pas
     Baisser le niveau d'un son écrêté rend de la marge pour le mixage ; les sommets rabotés à l'enregistrement, eux, ne reviennent pas.
 
@@ -732,6 +741,27 @@ Trois façons de conclure :
 - [Écrire en morceau] écrit dans `SONGS` un morceau neuf : le kit des tranches, et un clip qui rejoue la boucle tranche par tranche, chacune à sa place.
 
 [Fermer] quitte sans rien écrire.
+
+## Créer un instrument… {#instrument}
+
+Un dossier de notes — un piano échantillonné, une guitare jouée note à note — n'est rien sur le Deluge tant qu'aucun preset ne les joue. [Créer un instrument…] en fait un **preset multi-échantillon** : chaque son devient une tranche du clavier, qui va jusqu'à mi-chemin du son suivant, comme le Deluge le fait quand on charge un dossier sur la machine. Choisissez le dossier dans l'arbre — ou un de ses sons dans la liste —, puis cliquez. Relâchée, une note s'éteint en une demi-seconde (relâche 8) : le son neuf du Deluge la couperait net.
+
+La hauteur de chaque son vient, dans l'ordre :
+
+- d'un **numéro MIDI** écrit dans son nom, à côté de la note (« (C#3)_61 ») ;
+- du **nom de la note** (« A1 », « Db4 », « C#3 »). Les banques ne comptent pas toutes les octaves de la même façon : le Deluge appelle « C3 » le do 60, la plupart des banques « C4 ». L'application écoute quelques fichiers pour trancher, et le dit ;
+- du bloc `smpl` du fichier, sauf si tous les sons y portent la même note — le Deluge s'en méfie, l'application aussi ;
+- de l'**écoute** du son.
+
+Une **couche de vélocité** écrite dans le nom (« A1-97-127 ») devient un preset à part : une tranche du Deluge n'a qu'une note haute, pas de vélocité. Deux sons sur la même note : le second est écarté, et la fenêtre le dit.
+
+La fenêtre montre chaque tranche — le fichier, sa note, d'où elle vient, jusqu'où elle va — et propose un **nom** et un **dossier** dans `SYNTHS` (`Multi` par défaut). [Écouter] joue l'instrument sur l'ordinateur, un do par octave. [Créer l'instrument] montre les fichiers à écrire et attend votre accord ; aucun fichier n'est remplacé, et les échantillons ne sont pas touchés.
+
+## Table d'onde… {#table-onde}
+
+En mode avancé, [Table d'onde…] tire du son choisi une **table d'onde** pour le moteur WAVETABLE du Deluge : une période du son, prélevée soixante-quatre fois du début à la fin, chacune sur 2 048 points — ce qu'attend le firmware. Choisissez un son **tenu** : une nappe, une voix, une note qui évolue ; un son sans hauteur nette est refusé. La table part dans `SAMPLES/WAVETABLES`, sous le nom donné, après votre accord ; rien n'est remplacé.
+
+Sur le Deluge, choisissez-la pour un oscillateur de type WAVETABLE, et parcourez-la avec sa position (OSC ▸ WAVE-INDEX). Partez d'un son à **un seul** fichier : sur un instrument multi-échantillon, la machine ne met la table que dans une tranche, et les notes des autres se taisent, sans message. Le [Générateur](#generateur) s'en sert aussi, pour les genres qui emploient ce moteur. L'écoute sur l'ordinateur joue le cycle de la position réglée, sans le parcours ni le lissage de la machine : c'est une approche.
 
 ## Sons proches {#sons-proches}
 
@@ -830,6 +860,14 @@ Sous le tableau, une grille de pas : une ligne par rangée, seize pas par mesure
 
 Un preset ou un échantillon marqué « ABSENT » rendra le morceau muet par endroits sur la machine.
 
+## Écouter {#ecouter-morceau}
+
+- [Écouter le morceau] calcule le morceau entier sur l'ordinateur, sur son arrangement — ou ses sections dans l'ordre, répétées autant de fois que le morceau le dit —, avec les sons et les réglages de chaque clip, puis le joue. Le calcul prend son temps : un quart de minute environ pour un morceau de trois minutes, que la barre d'état suit piste par piste. Pour entendre vite, écoutez un clip.
+- Dans l'onglet [Clips], [Écouter le clip] joue le clip choisi sur toute sa boucle, comme la machine le joue ; un double-clic sur un clip fait de même, et [[Espace]] aussi.
+- [Arrêter] coupe l'écoute, et le calcul s'il tourne encore.
+
+L'écoute est celle de l'atelier, vérifiée contre des exports de pistes de la machine. Les pistes MIDI, CV et audio ne sonnent pas ici : seul le Deluge les fait jouer. Rien n'est écrit sur la carte.
+
 ## Ouvrir dans l'atelier {#morceau-atelier}
 
 [Ouvrir dans l'atelier] ouvre le morceau choisi dans l'[atelier](#atelier-completer) : ses pistes, ses clips et ses sections deviennent ceux du projet, que vous complétez de pistes, de clips et de sections neufs. L'atelier écrit ensuite une nouvelle version, à côté : le morceau choisi reste tel quel.
@@ -895,6 +933,12 @@ Chaque piste du Deluge peut **écouter** un canal MIDI : ce que le DAW y envoie,
 [Écrire la copie…] montre le plan, puis écrit « *morceau* DAW » dans SONGS : le morceau d'origine, octet pour octet, plus ces réglages d'écoute. Chargez-la sur le Deluge.
 
 La liste du bas dit le reste, pas à pas, pour Ableton Live ou un autre DAW : l'horloge — sur le Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Input pour suivre le DAW, Output pour le mener — puis, dans le DAW, une piste MIDI par piste du tableau, qui sort vers le Deluge sur le canal indiqué.
+
+!!! pro Un set Live déjà réglé
+    Exportez ensuite la copie elle-même ([Vers le DAW](#daw-vers), format Ableton Live) : chaque piste dont le son écoute un canal sur le Deluge sort déjà vers lui, sur ce canal — le « MIDI To » de Live est fait. Chargez la copie sur la machine, ouvrez le set : Live la joue. Un son de kit que vous aviez appris vous-même sur une autre note garde sa note, dans la copie comme dans l'export. Vérifié avec Live 12 Lite sous Windows 11 ; ailleurs, si Live ne trouve pas la sortie, choisissez « Deluge » à la main.
+
+!!! attention L'horloge sous Windows 11
+    Avec le firmware 1.3, le Deluge y joue les notes du DAW, mais ne suit pas son horloge : le pilote MIDI de Windows l'envoie sous une forme que ce firmware écarte (mesuré le 9 novembre 2026 ; un correctif du firmware a été écrit et vérifié sur la machine). Faites mener le Deluge : SETTINGS ▸ MIDI ▸ Clock ▸ Output sur ON ; dans Live, cochez Sync sur l'entrée du Deluge, puis allumez le bouton **EXT**, en haut à gauche. Live démarre alors avec la touche PLAY du Deluge — tant qu'EXT est allumé, son propre bouton Play ne fait rien.
 
 !!! astuce Aller et retour
     Un clip exporté vers le DAW puis renvoyé sur son canal rejoue les bons sons du kit : les notes sont les mêmes dans les deux sens.
@@ -968,6 +1012,8 @@ Les échantillons réclamés par un preset, un kit ou un morceau, mais absents d
 
 Les échantillons qu'aucun fichier de la carte ne cite, avec leur durée et leur taille. Ce n'est pas un défaut : une bibliothèque garde des sons en réserve. [Archiver dans _UNUSED] les **déplace** dans un dossier `_UNUSED` à la racine de la carte ; rien n'est supprimé, tout se récupère.
 
+Ce que le Deluge enregistre lui-même — `SAMPLES/RECORD`, `SAMPLES/RESAMPLE`, `SAMPLES/CLIPS`, `SAMPLES/EXPORTS` — n'est cité par aucun preset, et ce sont pourtant vos prises : ces dossiers restent hors de la liste et de l'archivage.
+
 ## Sauvegardes {#sauvegardes}
 
 Une sauvegarde copie la carte dans le **dossier des sauvegardes** (Réglages ▸ Sûreté des écritures), dans un sous-dossier daté.
@@ -1011,7 +1057,7 @@ La **Sortie audio** des écoutes (le périphérique par défaut, ou un autre), l
 
 ## Analyse de la carte {#reglages-analyse}
 
-En mode avancé, les cases [Calculer les empreintes (détection des doublons)], [Analyse acoustique (tempo, tonalité, niveaux)] et [Mettre l'index à jour au démarrage], le bouton [Réinitialiser l'index], et l'état de l'index : combien d'échantillons, presets, kits et morceaux, sa taille, la date de la dernière analyse. Voir [L'analyse et l'index](#analyse).
+En mode avancé, les cases [Calculer les empreintes (détection des doublons)], [Analyse acoustique (tempo, tonalité, niveaux)] et [Mettre l'index à jour au démarrage], les boutons [Réinitialiser l'index] et [Tout réanalyser], et l'état de l'index : combien d'échantillons, presets, kits et morceaux, sa taille, la date de la dernière analyse. Voir [L'analyse et l'index](#analyse).
 
 ## Sûreté des écritures {#reglages-surete}
 
@@ -1028,7 +1074,7 @@ Dessous, le **dossier des sauvegardes** faites depuis la page Santé ; vide, ell
 
 ## Apparence et À propos {#reglages-apparence}
 
-**Apparence** : six couleurs pour la façade — or, cyan, menthe, ambre, magenta, indigo. Elle teinte la barre du haut, les menus et les fenêtres ouvertes hors des pages ; chaque page garde sa propre couleur. **À propos** : la version, et le **dossier de configuration**, que [Ouvrir] montre dans l'Explorateur.
+**Apparence** : six couleurs pour la façade — or, cyan, menthe, ambre, magenta, indigo. Elle teinte la barre du haut, les menus et les fenêtres ouvertes hors des pages ; chaque page garde sa propre couleur. **À propos** : la version, et le **dossier de configuration**, que [Ouvrir] montre dans l'Explorateur. La case [Vérifier une fois par jour s'il existe une nouvelle version], **décochée** au départ, lit au démarrage, une fois par jour au plus, le numéro de la dernière version publiée sur GitHub, et vous prévient si elle est plus récente ; rien d'autre ne part sur le réseau. Aide ▸ [Rechercher une nouvelle version] fait la même chose sur-le-champ.
 
 @partie deluge PAD_GREEN | Le Deluge branché | La machine au bout du câble USB : sa carte, son écran, son tempo
 
@@ -1140,6 +1186,19 @@ Réglages ▸ Carte du Deluge ▸ [Choisir la sauvegarde…] désigne le dossier
 
 Avec le firmware 1.2.1, la carte ne s'ouvre pas par le câble. Glissez-la dans un lecteur de l'ordinateur et indiquez-la dans Réglages ▸ Autre emplacement de carte : l'application y travaille directement. Le lien MIDI — écoute sur la machine, écran, tempo — fonctionne quand même.
 
+## Mettre le firmware à jour {#firmware}
+
+Outils ▸ [Firmware du Deluge…] dit quelle version tourne sur la machine (Deluge branché) et quel `.bin` est à la racine de la carte. [Chercher la dernière version] lit la liste des versions publiées sur GitHub : c'est la seule requête, et elle ne part que sur ce clic. Seules les versions **stables** sont proposées, jamais les bêtas.
+
+Si la version publiée est plus récente, [Préparer la carte…] la télécharge, en sort le seul `.bin` qu'elle contient — les fichiers parasites des archives faites sur Mac sont écartés —, vérifie sa taille, montre le plan, puis, avec votre accord, pose le `.bin` à la racine et range l'ancien dans `_BACKUP/firmware-…`, qui ne part jamais vers la machine. **Rien n'est flashé** : il reste trois gestes, que le dialogue rappelle.
+
+1. Avec la copie de travail, synchronisez : le nouveau `.bin` part vers la carte, une demi-minute par le câble. Le retrait de l'ancien attend votre accord dans Réglages ▸ Carte du Deluge ▸ [Suppressions à confirmer…] : acceptez-le, le Deluge refuse de s'installer avec deux `.bin` à la racine. Avec une carte dans un lecteur, éjectez-la proprement et remettez-la dans le Deluge.
+2. Deluge éteint, maintenez SHIFT et allumez-le : il s'installe, en une minute au plus.
+3. Vérifiez : SHIFT et un appui sur SELECT, puis « Firmware Version ».
+
+!!! attention Un Deluge à afficheur 7 segments
+    Le guide de mise à jour du firmware prévient qu'un `.bin` vide, ou de 3,5 Mo et plus, peut rendre inutilisable un Deluge 7 segments au vieux chargeur de démarrage. L'application refuse tout `.bin` hors des tailles sûres ; lisez tout de même le guide, dont le dialogue donne le lien, avant d'installer.
+
 # Échanger des fichiers {#echanges icone=import}
 
 > Poser sur la carte des sons et des presets venus du PC, et en sortir ce que le Deluge a enregistré.
@@ -1160,7 +1219,8 @@ Avant toute copie, le **plan** s'affiche : où va chaque fichier, ce qui est dé
 Les règles :
 
 - un pack qui a **la forme d'une carte** (`SAMPLES`, `SYNTHS`…) garde ses chemins, que ses presets citent ;
-- **rien d'existant n'est remplacé** : un fichier identique est laissé ; un homonyme différent fait numéroter le nouveau (« Kick 2.wav ») ;
+- **rien ne se pose à la racine** d'un dossier de la carte : ce qui y tomberait va dans un dossier au nom du pack (`SYNTHS/TJontheRoad Delugetions Free Pack/…`), et les presets du pack suivent leurs sons ;
+- **rien d'existant n'est remplacé** : un fichier identique est laissé — même rangé ailleurs sur la carte, où le plan dit qu'il est déjà ; un homonyme différent fait numéroter le nouveau (« Kick 2.wav ») ;
 - les noms deviennent **transmissibles** : sans accents ni caractères interdits (« Été » devient « Ete »), et les presets du pack suivent ;
 - un fichier que le Deluge refuserait — un WAV à en-tête étendu, comme en écrivent beaucoup de logiciels — est **converti sans perte audible** ;
 - ce qui n'est pas pour le Deluge — un MP3, un fichier à quatre canaux, de la documentation — reste sur le PC, et le plan dit pourquoi.
@@ -1259,12 +1319,13 @@ Voici réunies toutes les commandes qui écrivent sur la carte. Chacune montre s
 
 | Page | Commandes |
 |---|---|
-| Échantillons | [Traiter…], [Écrire le kit], [Exporter en fichiers…], [Écrire en morceau], [Envoyer au Deluge…] |
+| Échantillons | [Traiter…], [Annuler un traitement…], [Écrire le kit], [Exporter en fichiers…], [Écrire en morceau], [Envoyer au Deluge…], [Créer un instrument…], [Table d'onde…], [Sur un pad du Deluge] |
 | Presets | [Dupliquer] |
 | Générateur | [Enregistrer dans SYNTHS], [Générer un lot dans un dossier…], [Enregistrer dans KITS] |
 | Atelier | [Écrire le morceau], [Compléter le morceau] |
 | Santé | [Corriger automatiquement], [Supprimer les doublons], [Relier automatiquement], [Archiver dans _UNUSED], [Restaurer] |
 | Réglages | [Créer la copie de travail], [Synchroniser maintenant], [Suppressions à confirmer…], [Mettre à jour la sauvegarde] — cette dernière écrit dans votre sauvegarde |
+| Outils | [Firmware du Deluge…], qui pose un `.bin` à la racine |
 
 Les pages Kits, Morceaux et Mémo, elles, n'écrivent jamais sur la carte ; [Essayer dans l'atelier] et [Utiliser dans l'atelier] non plus.
 
@@ -1287,6 +1348,7 @@ Les pages Kits, Morceaux et Mémo, elles, n'écrivent jamais sur la carte ; [Ess
 | [[Ctrl+D]] | Deluge en direct |
 | [[Ctrl+Maj+D]] | synchroniser avec le Deluge |
 | [[Ctrl+B]] | replier ou déplier la colonne de gauche |
+| [[Ctrl+Z]], [[Ctrl+Y]] | dans l'atelier, défaire le dernier geste, puis le refaire |
 | [[Espace]] | écouter, ou arrêter l'écoute |
 | [[F1]] | ce manuel, au chapitre de la page affichée |
 | [[Ctrl+Q]] | quitter |
@@ -1316,7 +1378,9 @@ Vous avez désigné un dossier qui ne contient pas au moins deux des dossiers `S
 
 ## Je n'entends rien {#pas-de-son}
 
-- Le paquet **sounddevice** est-il installé ? Sans lui, les écoutes sur l'ordinateur sont muettes.
+- La barre d'état affiche-t-elle « ● lecture muette » ? L'application n'a trouvé aucune sortie audio : l'accueil et Réglages ▸ Écoute disent pourquoi, et quoi faire.
+- **Sous Linux**, l'AppImage a besoin du paquet système `libportaudio2` (`sudo apt install libportaudio2`, puis relancez l'application).
+- Depuis les sources : le paquet Python **sounddevice** est-il installé ? Sans lui, les écoutes sur l'ordinateur sont muettes.
 - Vérifiez la **Sortie audio** et le **Volume d'aperçu** dans Réglages ▸ Écoute.
 - Si « Écouter les presets sur le Deluge » est cochée, le son sort **de la machine** : vérifiez ses réglages MIDI Follow et son volume.
 
@@ -1367,6 +1431,12 @@ Des fichiers ont été copiés sur la carte en dehors de l'application. [Analyse
 ## Où trouver le journal ? {#journal}
 
 Dans le dossier de configuration, fichier `app.log` : Réglages ▸ À propos ▸ [Ouvrir]. Une erreur imprévue s'affiche dans une boîte, et sa trace complète s'y écrit. Le journal reste en français, quelle que soit la langue : il sert au diagnostic.
+
+## Signaler un problème {#signaler}
+
+Aide ▸ [Signaler un problème…] rassemble ce qui aide à comprendre — la version, le système, la fin du journal — dans un texte que vous **relisez et modifiez** : le chemin de votre dossier personnel y est remplacé par `~`. [Copier le rapport] le met dans le presse-papiers ; [Ouvrir la page des problèmes] le copie aussi, puis ouvre la page « New issue » du dépôt sur GitHub, où vous le collez. L'application n'envoie rien elle-même.
+
+Quand une erreur imprévue ouvre la fenêtre « Erreur inattendue », son bouton [Signaler ce problème…] ouvre le même rapport, avec le détail de l'erreur déjà dedans : c'est le moment où il est le plus utile.
 
 ## L'application s'est fermée pendant un travail {#fermeture}
 

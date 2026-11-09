@@ -164,4 +164,7 @@ TEXTS = {
         "sounds, say where it is — or let the application look for it.",
     "Indiquer le dossier": "Choose the folder",
     "Détecter la carte": "Detect the card",
+    "Les écoutes de l'ordinateur resteront muettes : %s.":
+        "Listening on the computer will stay silent: %s.",
+    "Voir l'écoute": "See listening",
 }

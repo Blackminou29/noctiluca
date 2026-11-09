@@ -98,4 +98,28 @@ TEXTS = {
     "%s notes par mesure": "%s notes per bar",
     "Ouvrir dans l'atelier": "Open in the studio",
     "Choisissez d'abord un morceau.": "Choose a song first.",
+    "Écouter le morceau": "Play the song",
+    "Calculer le morceau entier sur l'ordinateur, sur son arrangement, puis "
+    "le jouer":
+        "Compute the whole song on the computer, along its arrangement, then "
+        "play it",
+    "Écouter le clip": "Play the clip",
+    "Calculer le clip choisi comme la machine le joue, puis le jouer "
+    "(double-clic sur un clip : de même)":
+        "Compute the chosen clip the way the machine plays it, then play it "
+        "(double-clicking a clip does the same)",
+    "Arrêter": "Stop",
+    "Arrêter l'écoute ou le calcul en cours":
+        "Stop the playback, or the computation under way",
+    "Rendu du clip": "Rendering the clip",
+    "Rendu du morceau": "Rendering the song",
+    "Rendu de %s (%d/%d)": "Rendering %s (%d/%d)",
+    "Rendu impossible : %s": "Rendering failed: %s",
+    "Rien ne sonne ici : clip vide, ou piste MIDI, CV ou audio, que le "
+    "Deluge seul fait jouer.":
+        "Nothing sounds here: an empty clip, or a MIDI, CV or audio track, "
+        "which only the Deluge plays.",
+    "Lecture…": "Playing…",
+    "Lecture impossible : %s": "Playback failed: %s",
+    "Aucune sortie audio disponible.": "No audio output available.",
 }

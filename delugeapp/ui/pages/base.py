@@ -417,16 +417,20 @@ class Page(QWidget):
         """
         return self.ctx.sd_or_warn(self, write=True)
 
-    def write_song(self, build: Callable, default_name: str) -> str:
+    def write_song(self, build: Callable, default_name: str,
+                   written: dict | None = None) -> str:
         """Écrit un morceau du Deluge construit par ``build(carte)``.
 
         Le parcours est celui de :func:`delugeapp.ui.songexport.export_song`
         : nom demandé, plan montré et confirmé, fichier **nouveau** dans
-        SONGS, indexé aussitôt. Rend le chemin écrit, ou ``""``.
+        SONGS, indexé aussitôt — ou, pour un morceau de ``written`` resté
+        tel quel, remplacé si l'utilisateur le veut. Rend le chemin écrit, ou
+        ``""``.
         """
         from ..songexport import export_song
 
-        rel = export_song(self, self.ctx, build, default_name, self.say)
+        rel = export_song(self, self.ctx, build, default_name, self.say,
+                          written=written)
         if rel:
             self.songWritten.emit(rel)
         return rel
@@ -538,7 +542,7 @@ class Page(QWidget):
                 valeur.blockSignals(True)
                 valeur.setChecked(False)
                 valeur.blockSignals(False)
-            elif nom in ("_category", "_duration") \
+            elif nom in ("_category", "_duration", "_tag_filter") \
                     and isinstance(valeur, QComboBox):
                 valeur.setCurrentIndex(0)
         if hasattr(self, "_folder"):

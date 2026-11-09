@@ -28,9 +28,9 @@ The application is meant as much for someone discovering the Deluge as for the s
 ## What it does not do {#ce-quelle-ne-fait-pas}
 
 - It **does not replace the Deluge's sequencer**: the studio composes, you choose, vary and draw the drums; playing note by note remains the machine's job.
-- It **never rewrites an existing song**: the format is too rich for a read-and-rewrite to be safe. It creates new ones alongside.
+- It **never rewrites an existing song**: the format is too rich for a read-and-rewrite to be safe. It creates new ones alongside. The only exception, at your request: a version the studio wrote itself and that nothing has changed since (see [The Deluge](#atelier-ecrire)).
 - It **cannot load a preset on the machine remotely**: no MIDI message allows it. The Deluge always plays the instrument selected on it.
-- It needs **neither the Internet nor an account**: everything happens on your computer.
+- It needs **neither the Internet nor an account**: everything happens on your computer. It only goes on the network if you ask it to: to find out whether a new version of itself exists, or to look up and download the Deluge firmware ([Updating the firmware](#firmware)).
 
 ## The golden rule {#regle-dor}
 
@@ -208,7 +208,7 @@ A scan, a sample treatment, a backup, a sync: anything that takes time runs in t
 
 ## Changing the language {#langue}
 
-The **Language** menu offers “Français” and “English”, each written in its own language. The choice is kept at once, then the application offers to restart — the question is asked in both languages. Declining keeps the choice for the next start.
+The application first starts in English. The **Language** menu offers “Français” and “English”, each written in its own language. The choice is kept at once, then the application offers to restart — the question is asked in both languages. Declining keeps the choice for the next start.
 
 !!! pro What the application writes takes the current language
     The names it gives to what it writes — clips of a song, tracks of a MIDI file, folders of a tidy-up — follow the interface language at the moment of writing: “Accords” in French, “Chords” in English. What is already on the card does not change.
@@ -257,6 +257,8 @@ Two options, in Settings ▸ Card scanning — in advanced mode —, decide what
 The application's own writes update the index by themselves, as do files received from the Deluge. Scan again when the card has changed **outside the application**: files copied by hand onto a card in the PC's reader, for instance. When in doubt it costs nothing: what hasn't changed is not reread.
 
 [Reset the index], in the settings in advanced mode, empties the index so it is rebuilt at the next scan. The card is not touched, and your ratings, favourites and tags are kept.
+
+[Rescan everything], next to it, does the opposite: it reads **every** file again, even unchanged ones, and redoes fingerprints and measurements — a few minutes with acoustic analysis. You will hardly ever need it: an ordinary scan also measures the sounds left without measurements, if you ticked acoustic analysis afterwards.
 
 # First steps in ten minutes {#premiers-pas icone=play}
 
@@ -370,11 +372,12 @@ The header carries three commands, valid at every step:
 - [Open a Deluge song…] opens a song from the card in the studio (see [Opening a Deluge song, and completing it](#atelier-completer));
 - [Play an excerpt] plays eight bars of the song's fullest passage, all tracks together;
 - [Stop] cuts the listening. [[Space]] does the same, and starts listening again to what the step shows: the sound, the clip, the section — at the other two, an excerpt of the song, or its chords while it is not composed yet.
+- [Undo] goes back on the last action — a sound changed, a hit drawn, a clip deleted, a track or a section removed, even a song composed again —, [Redo] replays it. [[Ctrl+Z]] and [[Ctrl+Y]] do the same; each button's tooltip says which action it undoes. What is already written to the card cannot be undone.
 
 Its subtitle names the song in progress: its genre, its key, its length and its duration. Until it is written, **nothing is written to the card**: the studio composes even without a card, and only asks for it to write, or to build a kit from your samples.
 
 !!! astuce Picking up where you left off
-    The home page remembers: its [Create a song] door becomes [Resume the song], which leads back to the step where you were.
+    The home page remembers: its [Create a song] door becomes [Resume the song], which leads back to the step where you were. The song in progress also survives closing the application, and the language change that restarts it: it is kept on the computer, and the studio opens it again at the next start, at the same step.
 
 ## 1. The style {#atelier-style}
 
@@ -409,7 +412,7 @@ Once the song is composed, the button becomes [Recompose the song]: it replaces 
 On the left, the **Tracks** column, shared by the sounds and the clips, each track in the colour of its part. On the right, the sound of the chosen track, its name and its description.
 
 - [Play the sound] plays it — on the Deluge if listening is set to it, otherwise computed by the computer the way the Deluge computes it; drums play their first clip.
-- [Another sound] draws another one in the same style for a synth; for drums, another kit built from your library.
+- [Another sound] draws another one in the same style for a synth; for drums, another kit built from your library. The replaced sound is not lost: it joins the list of **sounds tried**, under the buttons — newest first —, and [Take this sound back] gives it back to the track.
 - [Choose on the card…] takes a preset or a kit from the card for the track, chosen in the index.
 - [Edit the sound…], in advanced mode, opens the sound editor (see [Editing a sound by hand](#atelier-modifier-son)).
 - A MIDI or CV track shows its **channel**, which can be changed here.
@@ -442,7 +445,7 @@ In **Modulation**, each line links a source to a setting, with a depth from −5
 
 A track has its clips, named A, B, C…: the list says where each one comes from — generated, a variation of another, or taken from the original song — and its length. Below, the clip itself: the rows of a drum kit, from bottom to top, or a synth's notes at their pitch. A line says how many notes it has and in which sections it plays.
 
-**The drums are drawn with the mouse**: a click in the grid lights a hit, a second click turns it off. The grid always shows the kick, the snare, the clap and both hi-hats, even with no hit: enough to add a clap where one is missing. A clip taken from the original song cannot be drawn: vary it, the variation is a new clip.
+**The drums are drawn with the mouse**: a click in the grid lights a hit, a second click turns it off. The grid always shows the kick, the snare, the clap and both hi-hats, even with no hit: enough to add a clap where one is missing. **A synth's notes too**: a click on an empty cell puts an eighth note at that pitch, a click on a note removes it — a wrong note is fixed without redoing the clip. A clip taken from the original song cannot be drawn: vary it, the variation is a new clip.
 
 - [Play the clip] plays it on the computer, with its track's sound.
 - [Vary] opens the menu of variations; the chosen variation is **added** to the track as a new clip, and the original stays.
@@ -496,6 +499,8 @@ A line sums it all up: the number of sections, of bars, the duration and the tem
 ## 5. The Deluge {#atelier-ecrire}
 
 The last step writes the song. **Song name** suggests a name — the genre's, or the original song's —, which you change as you like; it is cleaned up for the card, and numbered if already taken.
+
+One exception: if that name is a song **the studio wrote**, and neither you nor the Deluge has changed it since, the application offers to **replace** it with the new version — [Yes] — rather than write a second one next to it — [No]. The old one is kept in `_BACKUP`, at the root of the card. A song saved on the machine is never replaced.
 
 [Write the song] turns it into a Deluge song, in `SONGS`: one Deluge section per project section, each with its clips and its number of repeats, and the complete arrangement for the SONG view. The synths carry their sound; the drums, a kit built from your samples, or the one you chose; the MIDI and CV tracks, their channel. The route is that of any [written song](#parcours-morceau): the name, the plan, then the writing of a new file. A line then says what was written, and [Show in Songs] opens it on the Songs page.
 
@@ -570,7 +575,7 @@ In the middle, the resulting sound: its name and description, its waveform and s
     A silent oscillator, a closed filter, an envelope with neither attack nor sustain are caught before writing.
 
 !!! retenir Listening on the computer redoes the Deluge's computations
-    Waveforms, filters, saturation, FM, effects, reverb and levels: the computer repeats, stage by stage, what the machine's firmware (1.3) computes. A decay of 13 lasts 1.8 seconds here as on the Deluge, a bass with a closed filter stays dark, a pushed sound saturates at the same point. Sample playback, which is simpler, and LFO 1, which restarts with every note, remain approximate; to hear it exactly, have the machine play it: [Try in the studio], then write the song.
+    Waveforms, filters, saturation, FM, effects, reverb and levels: the computer repeats, stage by stage, what the machine's firmware (1.3) computes. A decay of 13 lasts 1.8 seconds here as on the Deluge, a bass with a closed filter stays dark, a pushed sound saturates at the same point. LFO 1 runs on from one note to the next, as on the machine, and glide follows the frequency. Sample playback, which is simpler, and time-stretching remain approximate; to hear it exactly, have the machine play it: [Try in the studio], then write the song.
 
 ## Variations, history, morph {#variations}
 
@@ -664,6 +669,7 @@ A click on a header sorts the column. A click on a row selects the sound and sho
 - [All lengths] isolates sounds by length: very short (under half a second), short, medium, long (over ten seconds).
 - [Unused] shows only sounds that no preset, kit or song refers to.
 - [Favourites] shows only sounds marked as favourites.
+- [All tags] keeps only the sounds with one tag; this filter appears as soon as you have put one.
 - [Missing] shows only files a preset asks for but that are missing from the card.
 
 ## The folder tree {#arbre}
@@ -676,10 +682,11 @@ At the bottom: the sound's name and path, its **waveform**, and a sheet — leng
 
 - the **Rating**, from one to five stars;
 - the [Favourite] box, used by the [Favourites] filter;
-- its **tags**, if it has any — a tag's cross removes it;
+- [On a Deluge pad] puts the sound on the first free pad of the **machine's sample favourites** — the row of pads of its browser, sixteen per bank, sixteen banks; a line then says which. On a sound that is already there, the button becomes [Take off the Deluge pad]. The bank file is rewritten after your go-ahead, the old one kept in `_BACKUP`. Leave the Deluge's sample browser before sending: it rewrites this bank at the slightest pad change. The other way round, the favourites set on the machine become favourites of the application at each scan;
+- its **tags** — a tag's cross removes it; type a new one in the “New tag…” field, then [[Enter]] or [Add]: “dark”, “keeper”, “live”… Tags already in use are suggested as you type;
 - how many files on the card use it.
 
-!!! retenir Ratings and favourites stay on the computer
+!!! retenir Ratings, favourites and tags stay on the computer
     They are kept in the application's index, not on the card: the Deluge doesn't see them, and resetting the index keeps them.
 
 ## Listening {#ecouter-echantillon}
@@ -708,6 +715,8 @@ In advanced mode, [Show in Explorer] opens the sound's folder in Windows Explore
 
 The originals are set aside in the `_BACKUP` folder at the root of the card, byte for byte. On the working copy, this folder stays on the computer and doesn't go to the Deluge.
 
+[Undo a treatment…], next to it, puts these originals back: choose the treatment in the list — its date and number of files —, the application says how many sounds will be put back, then waits for your go-ahead. The version being replaced is first kept in `_BACKUP`; preset bounds shifted by a resampling go back to their original scale.
+
 !!! pro Clipping can't be repaired
     Lowering the level of a clipped sound gives back headroom for mixing; the peaks shaved off at recording time don't come back.
 
@@ -732,6 +741,27 @@ Three ways to finish:
 - [Write as a song] writes a new song into `SONGS`: the slices' kit, and a clip that replays the loop slice by slice, each in its place.
 
 [Close] leaves without writing anything.
+
+## Create an instrument… {#instrument}
+
+A folder of notes — a sampled piano, a guitar played note by note — is nothing on the Deluge until a preset plays them. [Create an instrument…] makes a **multisample preset** of it: each sound becomes a range of the keyboard, reaching halfway to the next sound, as the Deluge does when you load a folder on the machine. Choose the folder in the tree — or one of its sounds in the list —, then click. Released, a note dies away in half a second (release 8): a fresh Deluge sound would cut it dead.
+
+Each sound's pitch comes, in this order:
+
+- from a **MIDI number** written in its name, next to the note (“(C#3)_61”);
+- from the **note name** (“A1”, “Db4”, “C#3”). Libraries don't all count octaves the same way: the Deluge calls note 60 “C3”, most libraries “C4”. The application listens to a few files to decide, and says so;
+- from the file's `smpl` chunk, unless every sound carries the same note there — the Deluge distrusts that, and so does the application;
+- from **listening** to the sound.
+
+A **velocity layer** written in the name (“A1-97-127”) becomes a preset of its own: a Deluge range has a top note, not a velocity. Two sounds on the same note: the second is left out, and the window says so.
+
+The window shows each range — the file, its note, where it comes from, how far it goes — and suggests a **name** and a **folder** in `SYNTHS` (`Multi` by default). [Listen] plays the instrument on the computer, one C per octave. [Create the instrument] shows the files to write and waits for your go-ahead; no file is replaced, and the samples are not touched.
+
+## Wavetable… {#table-onde}
+
+In advanced mode, [Wavetable…] draws a **wavetable** from the chosen sound for the Deluge's WAVETABLE engine: one period of the sound, taken sixty-four times from start to end, each over 2,048 points — what the firmware expects. Choose a **held** sound: a pad, a voice, an evolving note; a sound without a clear pitch is refused. The table goes into `SAMPLES/WAVETABLES`, under the name given, after your go-ahead; nothing is replaced.
+
+On the Deluge, choose it for an oscillator of type WAVETABLE, and move through it with its position (OSC ▸ WAVE-INDEX). Start from a sound with a **single** file: on a multisample instrument, the machine puts the table in one range only, and the notes of the others stay silent, without a message. The [Generator](#generateur) uses it too, for the genres that use this engine. Listening on the computer plays the cycle at the set position, without the machine's sweep or smoothing: it is an approximation.
 
 ## Similar sounds {#sons-proches}
 
@@ -830,6 +860,14 @@ On the left, the songs: name, tempo, number of clips, notes, bars; the “Search
 
 A preset or sample marked “MISSING” will leave the song silent in places on the machine.
 
+## Listening {#ecouter-morceau}
+
+- [Play the song] computes the whole song on the computer, along its arrangement — or its sections in order, repeated as many times as the song says — with each clip's own sounds and settings, then plays it. The computation takes its time: about a quarter of a minute for a three-minute song, which the status bar follows track by track. To hear something quickly, listen to a clip.
+- In the [Clips] tab, [Play the clip] plays the chosen clip over its whole loop, the way the machine plays it; double-clicking a clip does the same, and so does [[Space]].
+- [Stop] stops the playback, and the computation if it is still running.
+
+The listening is the studio's, checked against track exports from the machine. MIDI, CV and audio tracks don't sound here: only the Deluge plays them. Nothing is written to the card.
+
 ## Open in the studio {#morceau-atelier}
 
 [Open in the studio] opens the selected song in the [studio](#atelier-completer): its tracks, its clips and its sections become the project's, which you complete with new tracks, clips and sections. The studio then writes a new version, alongside: the selected song stays as it is.
@@ -895,6 +933,12 @@ Each Deluge track can **listen** to a MIDI channel: what the DAW sends there, it
 [Write the copy…] shows the plan, then writes “*song* DAW” in SONGS: the original song, byte for byte, plus these listening settings. Load it on the Deluge.
 
 The list at the bottom says the rest, step by step, for Ableton Live or another DAW: the clock — on the Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Input to follow the DAW, Output to lead it — then, in the DAW, one MIDI track per track of the table, going out to the Deluge on the channel shown.
+
+!!! pro A Live set already set up
+    Then export the copy itself ([To the DAW](#daw-vers), Ableton Live format): each track whose sound listens to a channel on the Deluge already goes out to it, on that channel — Live's “MIDI To” is done. Load the copy on the machine, open the set: Live plays it. A kit sound you had learned yourself on another note keeps its note, in the copy as in the export. Checked with Live 12 Lite on Windows 11; elsewhere, if Live does not find the output, choose “Deluge” by hand.
+
+!!! attention The clock on Windows 11
+    With firmware 1.3, the Deluge plays the DAW's notes there, but does not follow its clock: the Windows MIDI driver sends it in a form this firmware discards (measured on 9 November 2026; a firmware fix has been written and checked on the machine). Let the Deluge lead: SETTINGS ▸ MIDI ▸ Clock ▸ Output ON; in Live, tick Sync on the Deluge input, then turn on the **EXT** button, at the top left. Live then starts with the Deluge's PLAY button — while EXT is on, its own Play button does nothing.
 
 !!! astuce There and back
     A clip exported to the DAW and sent back on its channel plays the right kit sounds again: the notes are the same both ways.
@@ -968,6 +1012,8 @@ Samples a preset, kit or song asks for but that are missing from the card — wi
 
 Samples no file on the card refers to, with their length and size. It is not a defect: a library keeps sounds in reserve. [Archive into _UNUSED] **moves** them into an `_UNUSED` folder at the root of the card; nothing is deleted, everything can be recovered.
 
+What the Deluge records itself — `SAMPLES/RECORD`, `SAMPLES/RESAMPLE`, `SAMPLES/CLIPS`, `SAMPLES/EXPORTS` — is referred to by no preset, and yet these are your takes: these folders stay out of the list and out of the archiving.
+
 ## Backups {#sauvegardes}
 
 A backup copies the card into the **backups folder** (Settings ▸ Write safety), into a dated subfolder.
@@ -1011,7 +1057,7 @@ The **Audio output** for listening (the default device, or another), the audio e
 
 ## Card scanning {#reglages-analyse}
 
-In advanced mode, the [Compute fingerprints (duplicate detection)], [Acoustic analysis (tempo, key, levels)] and [Update the index at start-up] boxes, the [Reset the index] button, and the state of the index: how many samples, presets, kits and songs, its size, the date of the last scan. See [Scanning and the index](#analyse).
+In advanced mode, the [Compute fingerprints (duplicate detection)], [Acoustic analysis (tempo, key, levels)] and [Update the index at start-up] boxes, the [Reset the index] and [Rescan everything] buttons, and the state of the index: how many samples, presets, kits and songs, its size, the date of the last scan. See [Scanning and the index](#analyse).
 
 ## Write safety {#reglages-surete}
 
@@ -1028,7 +1074,7 @@ Below, the **backups folder** for backups made from the Health page; when empty,
 
 ## Appearance and About {#reglages-apparence}
 
-**Appearance**: six colours for the front panel — gold, cyan, mint, amber, magenta, indigo. It tints the top bar, the menus and the windows opened outside the pages; each page keeps its own colour. **About**: the version, and the **configuration folder**, which [Open] shows in Explorer.
+**Appearance**: six colours for the front panel — gold, cyan, mint, amber, magenta, indigo. It tints the top bar, the menus and the windows opened outside the pages; each page keeps its own colour. **About**: the version, and the **configuration folder**, which [Open] shows in Explorer. The [Check once a day whether a new version exists] box, **unticked** at first, reads at start-up, at most once a day, the number of the latest version published on GitHub, and tells you if it is newer; nothing else goes out on the network. Help ▸ [Check for a new version] does the same right away.
 
 @partie deluge PAD_GREEN | The connected Deluge | The machine at the end of the USB cable: its card, its screen, its tempo
 
@@ -1140,6 +1186,19 @@ Settings ▸ Deluge card ▸ [Choose the backup…] designates the folder that h
 
 With firmware 1.2.1, the card doesn't open over the cable. Slide it into a reader on the computer and set it in Settings ▸ Other card location: the application works on it directly. The MIDI link — listening on the machine, screen, tempo — works anyway.
 
+## Updating the firmware {#firmware}
+
+Tools ▸ [Deluge firmware…] tells which version runs on the machine (Deluge plugged in) and which `.bin` sits at the root of the card. [Look up the latest version] reads the list of published versions on GitHub: it is the only request, and it is only sent on that click. Only **stable** versions are offered, never betas.
+
+If the published version is newer, [Prepare the card…] downloads it, takes out the single `.bin` it holds — the stray files of archives made on a Mac are set aside —, checks its size, shows the plan, then, once you agree, puts the `.bin` at the root and moves the old one into `_BACKUP/firmware-…`, which never goes to the machine. **Nothing is flashed**: three steps remain, which the dialog recalls.
+
+1. With the working copy, sync: the new `.bin` goes to the card, half a minute over the cable. Removing the old one waits for your approval in Settings ▸ Deluge card ▸ [Deletions to confirm…]: accept it, the Deluge refuses to install with two `.bin` files at the root. With a card in a reader, eject it safely and put it back in the Deluge.
+2. With the Deluge off, hold SHIFT and switch it on: it installs itself, in a minute at most.
+3. Check: SHIFT and a press on SELECT, then “Firmware Version”.
+
+!!! attention A Deluge with a 7-segment display
+    The firmware's update guide warns that an empty `.bin`, or one of 3.5 MB or more, can make a 7-segment Deluge with an old bootloader unusable. The application refuses any `.bin` outside the safe sizes; still read the guide, linked from the dialog, before installing.
+
 # Exchanging files {#echanges icone=import}
 
 > Putting sounds and presets from the PC on the card, and getting out what the Deluge has recorded.
@@ -1160,7 +1219,8 @@ Before anything is copied, the **plan** shows: where each file goes, what is alr
 The rules:
 
 - a pack **shaped like a card** (`SAMPLES`, `SYNTHS`…) keeps its paths, which its presets refer to;
-- **nothing existing is replaced**: an identical file is left alone; a different file with the same name gets the new one numbered (“Kick 2.wav”);
+- **nothing lands at the root** of a card folder: what would go there goes into a folder named after the pack (`SYNTHS/TJontheRoad Delugetions Free Pack/…`), and the pack's presets follow their sounds;
+- **nothing existing is replaced**: an identical file is left alone — even stored elsewhere on the card, where the plan says it already is; a different file with the same name gets the new one numbered (“Kick 2.wav”);
 - names become **transferable**: no accents or forbidden characters (“Été” becomes “Ete”), and the pack's presets follow;
 - a file the Deluge would refuse — a WAV with an extended header, as much software writes — is **converted with no audible loss**;
 - what isn't for the Deluge — an MP3, a four-channel file, documentation — stays on the PC, and the plan says why.
@@ -1259,12 +1319,13 @@ Here, all together, are the commands that write to the card. Each one shows its 
 
 | Page | Commands |
 |---|---|
-| Samples | [Process…], [Write the kit], [Export as files…], [Write as a song], [Send to the Deluge…] |
+| Samples | [Process…], [Undo a treatment…], [Write the kit], [Export as files…], [Write as a song], [Send to the Deluge…], [Create an instrument…], [Wavetable…], [On a Deluge pad] |
 | Presets | [Duplicate] |
 | Generator | [Save to SYNTHS], [Generate a batch into a folder…], [Save to KITS] |
 | Studio | [Write the song], [Complete the song] |
 | Health | [Fix automatically], [Delete duplicates], [Relink automatically], [Archive into _UNUSED], [Restore] |
 | Settings | [Create the working copy], [Sync now], [Deletions to confirm…], [Update the backup] — the last one writes to your backup |
+| Tools | [Deluge firmware…], which puts a `.bin` at the root |
 
 The Kits, Songs and Notebook pages, for their part, never write to the card; nor do [Try in the studio] and [Use in the studio].
 
@@ -1287,6 +1348,7 @@ The Kits, Songs and Notebook pages, for their part, never write to the card; nor
 | [[Ctrl+D]] | Deluge Live |
 | [[Ctrl+Shift+D]] | sync with the Deluge |
 | [[Ctrl+B]] | collapse or unfold the left column |
+| [[Ctrl+Z]], [[Ctrl+Y]] | in the studio, undo the last action, then redo it |
 | [[Space]] | listen, or stop listening |
 | [[F1]] | this manual, at the chapter of the page shown |
 | [[Ctrl+Q]] | quit |
@@ -1316,7 +1378,9 @@ You designated a folder that doesn't contain at least two of the `SONGS`, `SYNTH
 
 ## I can't hear anything {#pas-de-son}
 
-- Is the **sounddevice** package installed? Without it, listening on the computer is silent.
+- Does the status bar show “● playing silently”? The application found no audio output: the home page and Settings ▸ Listening say why, and what to do.
+- **On Linux**, the AppImage needs the system package `libportaudio2` (`sudo apt install libportaudio2`, then restart the application).
+- From the sources: is the Python package **sounddevice** installed? Without it, listening on the computer is silent.
 - Check the **Audio output** and the **Preview volume** in Settings ▸ Listening.
 - If “Play presets on the Deluge” is ticked, the sound comes **from the machine**: check its MIDI Follow settings and its volume.
 
@@ -1367,6 +1431,12 @@ Files were copied onto the card outside the application. [Scan card] rereads wha
 ## Where is the log? {#journal}
 
 In the configuration folder, the `app.log` file: Settings ▸ About ▸ [Open]. An unexpected error is shown in a dialog, and its full trace is written there. The log stays in French whatever the language: it is for diagnosis.
+
+## Reporting a problem {#signaler}
+
+Help ▸ [Report a problem…] gathers what helps understand — the version, the system, the end of the log — into a text that you **read and edit**: the path of your home folder is replaced by `~`. [Copy the report] puts it in the clipboard; [Open the issues page] copies it too, then opens the repository's “New issue” page on GitHub, where you paste it. The application sends nothing by itself.
+
+When an unforeseen error opens the “Unexpected error” window, its [Report this problem…] button opens the same report, with the error details already in it: that is when it helps most.
 
 ## The application closed during a task {#fermeture}
 

@@ -13,6 +13,10 @@ anomalies constatées :
 * **attributs dupliqués** dans une même balise (clips de morceaux) ;
 * **balises mal fermées** : repli sur un analyseur tolérant qui referme la pile.
 
+Deux de ces formes sont écrites par le firmware lui-même, et ne sont pas des
+dégâts (:data:`FIRMWARE_QUIRKS`) : le nom d'un contrôleur MIDI appris, en
+octets 0xFF, et les balises numériques du ``<performanceView>`` de la bêta 1.3.
+
 Deux dialectes coexistent et sont traités de façon transparente :
 
 * ``'elem'`` (firmware 2.x) : ``<osc1><type>saw</type></osc1>`` ;
@@ -128,6 +132,26 @@ _ENTITY_RE = re.compile(r"&(#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9._-]*);"
 
 _NAMED_ENTITIES = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
 
+# Deux formes que le firmware écrit lui-même, et qu'il relit sans peine : ce ne
+# sont pas des dégâts. Relevées sur la carte de l'utilisateur, le 7 novembre
+# 2026 :
+#
+# * le nom d'un contrôleur MIDI appris est enregistré en **octets 0xFF**
+#   (``<device name="\xff\xff…" vendorId="0x1235" …>``) : 4 presets et
+#   2 morceaux, dont un enregistré par la 1.3.0 ;
+# * le ``<performanceView>`` de la **bêta 1.3** range ses valeurs sous des
+#   balises numériques (``<row><8>128</8>…</row>``), ce que XML interdit. La
+#   1.3.0 définitive ne l'écrit plus : 5 morceaux enregistrés par la bêta.
+_FF_DEVICE_NAME_RE = re.compile(rb'(<device\b[^<>]*?\bname=")\xff+(")')
+_NUMERIC_TAG_RE = re.compile(r"<(?P<n>\d+)>(?P<v>[^<>]*)</(?P=n)>")
+
+#: Notes des formes ci-dessus : :mod:`.health` ne les compte pas comme des
+#: anomalies.
+FIRMWARE_QUIRKS = (
+    N_("nom d'appareil MIDI en octets 0xFF, écrit par le firmware"),
+    N_("balises numériques de la bêta 1.3 (performanceView) renommées"),
+)
+
 
 @dataclass
 class DelugeDoc:
@@ -165,6 +189,11 @@ def repair_text(raw: bytes) -> tuple[str, list[str]]:
         text = raw
     else:
         data = bytes(raw)
+        # Avant le décodage : sans quoi ces 0xFF passaient pour des octets
+        # non UTF-8, et le fichier pour abîmé.
+        data, n = _FF_DEVICE_NAME_RE.subn(rb"\1\2", data)
+        if n:
+            fixes.append(FIRMWARE_QUIRKS[0])
         if data.startswith(b"\xef\xbb\xbf"):
             data = data[3:]
             fixes.append(N_("BOM UTF-8 retiré"))
@@ -184,6 +213,14 @@ def repair_text(raw: bytes) -> tuple[str, list[str]]:
         text, n = _BARE_AMP_RE.subn("&amp;", text)
         if n:
             fixes.append(N_("%d '&' non échappé(s) corrigé(s)") % n)
+
+    # ``<8>128</8>`` devient ``<n8>128</n8>`` : un nom licite, que rien ne lit
+    # (la 1.3.0 ignore ce bloc), et le document se lit sans l'analyseur de
+    # dernier recours.
+    if "performanceView" in text:
+        text, n = _NUMERIC_TAG_RE.subn(r"<n\g<n>>\g<v></n\g<n>>", text)
+        if n:
+            fixes.append(FIRMWARE_QUIRKS[1])
 
     return text, fixes
 

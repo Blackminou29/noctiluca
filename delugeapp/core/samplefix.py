@@ -386,8 +386,14 @@ def song_locked_samples(sd: SDCard) -> dict[str, list[str]]:
             continue
         rel_song = sd.rel(path)
         for name in song.sample_paths():
-            if name:
-                out.setdefault(norm_rel(name), []).append(rel_song)
+            if not name:
+                continue
+            out.setdefault(norm_rel(name), []).append(rel_song)
+            # Cité par son nom court de FAT, le fichier porte un autre nom.
+            if "~" in name:
+                real = sd.resolve_sample(name)
+                if real is not None and norm_rel(sd.rel(real)) != norm_rel(name):
+                    out.setdefault(norm_rel(sd.rel(real)), []).append(rel_song)
     return out
 
 
@@ -457,11 +463,11 @@ def retarget_zones(sd: SDCard, ratios: dict[str, float],
                 for osc in (sound.osc1, sound.osc2):
                     if osc is None:
                         continue
-                    ratio = ratios.get(norm_rel(osc.file_name or ""))
+                    ratio = _ratio_of(sd, ratios, osc.file_name)
                     if ratio is not None:
                         moved += _retarget_zone(osc.zone, ratio)
                     for rng in osc.ranges:
-                        ratio = ratios.get(norm_rel(rng.file_name or ""))
+                        ratio = _ratio_of(sd, ratios, rng.file_name)
                         if ratio is not None:
                             moved += _retarget_zone(rng.zone, ratio)
 
@@ -478,6 +484,17 @@ def retarget_zones(sd: SDCard, ratios: dict[str, float],
                     touched.pop()
 
     return total, touched
+
+
+def _ratio_of(sd: SDCard, ratios: dict[str, float], file_name) -> float | None:
+    """Le rapport du fichier que cite ``file_name``, nom court de FAT compris
+    (« CB1-BD~1.WAV » pour « CB1-bdrum1.wav », que le fichier modifié porte)."""
+    ratio = ratios.get(norm_rel(file_name or ""))
+    if ratio is None and file_name and "~" in file_name:
+        path = sd.resolve_sample(file_name)
+        if path is not None:
+            ratio = ratios.get(norm_rel(sd.rel(path)))
+    return ratio
 
 
 def _sounds_of(obj) -> list:
@@ -559,7 +576,7 @@ def _backup(path: Path, backup_dir: Path, rel: str) -> bool:
         return False
 
 
-def _unique_backup_dir(sd: SDCard) -> Path:
+def _unique_backup_dir(sd: SDCard, prefix: str = "samplefix") -> Path:
     """Dossier de sauvegarde propre à cette exécution.
 
     L'horodatage à la seconde ne suffit pas : deux corrections lancées coup
@@ -568,12 +585,45 @@ def _unique_backup_dir(sd: SDCard) -> Path:
     """
     base = sd.abs(BACKUP_ROOT)
     stamp = time.strftime("%Y-%m-%d_%H%M%S")
-    candidate = base / ("samplefix-%s" % stamp)
+    candidate = base / ("%s-%s" % (prefix, stamp))
     suffix = 2
     while candidate.exists():
-        candidate = base / ("samplefix-%s-%d" % (stamp, suffix))
+        candidate = base / ("%s-%s-%d" % (prefix, stamp, suffix))
         suffix += 1
     return candidate
+
+
+#: Suffixe d'une sauvegarde de traitement déjà remise en place : elle reste
+#: (rien ne se perd), mais ne se propose plus à l'annulation.
+UNDONE_SUFFIX = "-annule"
+
+
+@dataclass
+class FixBackup:
+    """Une sauvegarde de traitement, que :func:`restore` sait remettre."""
+
+    rel: str
+    when: float
+    files: int
+
+
+def fix_backups(sd: SDCard) -> list[FixBackup]:
+    """Les traitements qu'on peut encore annuler, les plus récents d'abord."""
+    base = sd.abs(BACKUP_ROOT)
+    found: list[FixBackup] = []
+    try:
+        dossiers = [d for d in base.iterdir() if d.is_dir()]
+    except OSError:
+        return []
+    for dossier in dossiers:
+        if not dossier.name.startswith("samplefix-") \
+                or dossier.name.endswith(UNDONE_SUFFIX):
+            continue
+        files = sum(1 for f in dossier.rglob("*") if f.is_file())
+        if files:
+            found.append(FixBackup(sd.rel(dossier), dossier.stat().st_mtime,
+                                   files))
+    return sorted(found, key=lambda b: b.when, reverse=True)
 
 
 def _unlink(path: Path) -> None:
@@ -884,11 +934,16 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
 
     Retourne ``(nombre de fichiers, erreurs)``. Avec ``apply=False``, rien
     n'est écrit : seul le compte est retourné, pour pouvoir l'annoncer.
+
+    Rien ne se perd : la version que l'on remplace part d'abord dans
+    ``_BACKUP/avant-annulation-<date>/``, et la sauvegarde remise prend le
+    suffixe :data:`UNDONE_SUFFIX` — gardée, mais plus proposée.
     """
     base = sd.abs(backup_rel)
     if not base.is_dir():
         return 0, [tr("sauvegarde introuvable : %s") % backup_rel]
 
+    keep = _unique_backup_dir(sd, "avant-annulation") if apply else None
     count = 0
     errors: list[str] = []
     #: fichier -> trames_originales / trames_actuelles, pour défaire le
@@ -905,6 +960,11 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
         try:
             current = wav.probe(dest) if dest.is_file() else None
             original = wav.probe(src)
+            if current is not None and keep is not None \
+                    and not _backup(dest, keep, inner.as_posix()):
+                errors.append(tr("%s : version actuelle non sauvegardée, "
+                                 "laissée en place") % inner)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             if (current is not None and current.ok and original.ok
@@ -919,6 +979,11 @@ def restore(sd: SDCard, backup_rel: str, lib: Library | None = None,
     if apply and ratios:
         # Sans cela, les bornes restaient à l'échelle du fichier converti.
         retarget_zones(sd, ratios, apply=True)
+    if apply and not errors and not base.name.endswith(UNDONE_SUFFIX):
+        try:
+            base.rename(base.with_name(base.name + UNDONE_SUFFIX))
+        except OSError as exc:
+            log.debug("sauvegarde %s non marquée : %s", base, exc)
     if apply and lib is not None:
         try:
             lib.commit()

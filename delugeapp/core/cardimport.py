@@ -145,6 +145,9 @@ class Found:
     fixable: bool = False
     #: Les échantillons qu'il cite (preset, kit, morceau).
     refs: list[str] = field(default_factory=list)
+    #: Le dossier déposé dont il vient (« TJontheRoad Delugetions Free
+    #: Pack ») ; vide pour un fichier déposé seul.
+    pack: str = ""
 
 
 @dataclass
@@ -227,7 +230,8 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
     scan = ImportScan()
     compte = 0
 
-    def ajouter(chemin: Path, pack_rel: str, loose_rel: str) -> None:
+    def ajouter(chemin: Path, pack_rel: str, loose_rel: str,
+                pack: str = "") -> None:
         nonlocal compte
         compte += 1
         if progress is not None and compte % 50 == 0:
@@ -241,7 +245,8 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
         if ext in wav.DELUGE_EXT + (".aifc",):
             probleme, reparable = wav.deluge_problem(chemin)
             scan.found.append(Found(chemin, taille, "sample", pack_rel,
-                                    loose_rel, probleme, reparable))
+                                    loose_rel, probleme, reparable,
+                                    pack=pack))
         elif ext == ".xml":
             nature, refs, erreur = _read_xml(chemin)
             if erreur:
@@ -252,7 +257,7 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
                                         "réglage de la machine, non envoyé")))
             else:
                 scan.found.append(Found(chemin, taille, nature, pack_rel,
-                                        loose_rel, refs=refs))
+                                        loose_rel, refs=refs, pack=pack))
         elif ext in _OTHER_AUDIO:
             scan.ignored.append((str(chemin), tr("le Deluge ne lit que le WAV et "
                                     "l'AIFF : exportez-le en WAV depuis votre "
@@ -303,7 +308,11 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
                 pack = _pack_rel(chemin, racines)
                 vrac = "" if pack else "/".join(
                     (source.name,) + chemin.relative_to(source).parts)
-                ajouter(chemin, pack, vrac)
+                # Un dossier SAMPLES, SYNTHS… déposé seul n'est pas un pack :
+                # rien à nommer.
+                ajouter(chemin, pack, vrac,
+                        "" if source.name.upper() in CARD_DIRS
+                        else source.name)
     return scan
 
 
@@ -517,6 +526,31 @@ def _fit(rel: str) -> str:
             + (("." + ext) if ext else "")).strip("/")
 
 
+def _by_size(existants: dict[str, tuple[str, int]]
+             ) -> dict[tuple[str, int], list[str]]:
+    """Les fichiers de la carte par (dossier de la carte, taille) — de quoi
+    retrouver vite un fichier identique rangé ailleurs. Les dossiers de
+    l'application (``_UNUSED``, ``_BACKUP``…) n'en sont pas."""
+    out: dict[tuple[str, int], list[str]] = {}
+    for rel, taille in existants.values():
+        parties = rel.split("/")
+        if any(p.startswith("_") for p in parties[:-1]):
+            continue
+        out.setdefault((parties[0].upper(), int(taille)), []).append(rel)
+    return out
+
+
+def _twin(trouve: Found, rel: str, jumeaux, card_root: Path) -> str:
+    """Le chemin d'un fichier identique, octet pour octet, déjà sur la
+    carte dans le même dossier (SYNTHS, SAMPLES…), ou ``""``."""
+    dossier = rel.split("/")[0].upper()
+    for candidat in jumeaux.get((dossier, int(trouve.size)), ()):
+        if norm_rel(candidat) != norm_rel(rel) \
+                and _same_bytes(trouve.path, Path(card_root) / candidat):
+            return candidat
+    return ""
+
+
 def plan_import(scan: ImportScan, card_root: Path, dest: str = "SAMPLES",
                 existing: dict[str, tuple[str, int]] | None = None
                 ) -> ImportPlan:
@@ -540,10 +574,18 @@ def plan_import(scan: ImportScan, card_root: Path, dest: str = "SAMPLES",
     prevus: dict[str, str] = {}
     renommes: dict[str, str] = {}
     origines: dict[int, Found] = {}
+    jumeaux = _by_size(existants)
 
     for trouve in scan.found:
         if trouve.pack_rel:
             original = trouve.pack_rel
+            dossier, _, nom = original.partition("/")
+            # Rien ne se pose à la racine d'un dossier de la carte : le pack
+            # « TJontheRoad » y aurait vidé ses 36 presets, au milieu des
+            # dossiers rangés (essai du 9 novembre 2026). Un pack déjà
+            # rangé en sous-dossiers garde son rangement.
+            if trouve.pack and "/" not in nom:
+                original = "%s/%s/%s" % (dossier, card_name(trouve.pack), nom)
         else:
             haut = destination if trouve.kind == "sample" \
                 else KIND_DIRS[trouve.kind]
@@ -580,12 +622,21 @@ def plan_import(scan: ImportScan, card_root: Path, dest: str = "SAMPLES",
                 else:
                     rel = _free_name(rel, set(existants) | set(prevus))
                     raison = tr("nom déjà pris par un autre fichier déposé")
+            if action == "copy":
+                # Le même fichier, ailleurs sur la carte : le pack
+                # « TJontheRoad » y était déjà, dans SYNTHS/tj.
+                ailleurs = _twin(trouve, rel, jumeaux, card_root)
+                if ailleurs:
+                    action, rel = "same", ailleurs
+                    raison = tr("déjà sur la carte, identique : %s") % ailleurs
         if action in ("copy", "convert"):
             prevus[norm_rel(rel)] = rel
-        if trouve.pack_rel and norm_rel(rel) != norm_rel(original):
-            renommes[norm_rel(original)] = rel
+        # Les XML du pack citent le chemin du pack : il suit le fichier.
+        cite = trouve.pack_rel or original
+        if trouve.pack_rel and norm_rel(rel) != norm_rel(cite):
+            renommes[norm_rel(cite)] = rel
         item = ImportItem(trouve.path, rel, trouve.kind, trouve.size, action,
-                          raison, original)
+                          raison, cite)
         plan.items.append(item)
         origines[id(item)] = trouve
 

@@ -29,11 +29,15 @@ montrer et le faire jouer. Tout rendu audio part dans un fil.
 from __future__ import annotations
 
 import copy
+import json
 import logging
+import os
 import random
+import time
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -64,7 +68,7 @@ from ..theme import PAD, PAD_CYAN
 from ..widgets.atelierviews import (STEP_COLORS, ClipView, SectionMatrix,
                                     StepBar, part_color)
 from ..widgets.common import (Card, EmptyState, GrilleAdaptative,
-                              hint_in_list, pad_dot)
+                              RangeeSouple, hint_in_list, pad_dot)
 from ..widgets.piano import PianoKeys
 from .base import Page, avance, tool_button
 # Les curseurs du style : ceux du Générateur, avec leurs explications.
@@ -107,6 +111,53 @@ STEPS: tuple[tuple[str, str], ...] = (
 
 #: Index des étapes, pour lire le code.
 STYLE, SONS, CLIPS, STRUCTURE, DELUGE = range(5)
+
+#: Gestes que [Défaire] sait remonter.
+UNDO_LIMIT = 60
+
+#: Sons essayés gardés par piste.
+HISTORY_LIMIT = 40
+
+
+def draft_paths() -> tuple[Path, Path]:
+    """Le brouillon de l'atelier et sa fiche, dans le dossier de
+    configuration — lu à l'appel : les tests le détournent."""
+    from ... import config as config_mod
+
+    base = Path(config_mod.CONFIG_DIR) / "atelier"
+    return base / "brouillon.pickle", base / "brouillon.json"
+
+
+def _summary(genre: str, song_name: str, root: int, scale: str, bars: int,
+             tempo: float) -> str:
+    """« Genre · tonalité · durée » : l'en-tête de l'atelier et l'accueil."""
+    from ...core.units import human_duration
+
+    debut = ("« %s »" % song_name) if song_name else \
+        genres_mod.genre(genre).label
+    if bars:
+        fin = tr("%d mesures, %s") % (bars, human_duration(
+            bars * 4 * 60.0 / max(1.0, float(tempo))))
+    else:
+        fin = "%g BPM" % tempo
+    return "%s · %s · %s" % (
+        debut, theory.note_to_name(int(root), with_octave=False) + " "
+        + tr(scale), fin)
+
+
+def draft_state() -> dict | None:
+    """Ce que l'accueil dit d'un morceau laissé à la dernière séance, sans
+    relire le brouillon lui-même : sa fiche suffit."""
+    _data, fiche = draft_paths()
+    try:
+        meta = json.loads(fiche.read_text(encoding="utf-8"))
+        return {"summary": _summary(
+                    meta.get("genre", "techno"), meta.get("song_name", ""),
+                    int(meta.get("root", 57)), meta.get("scale", "mineur"),
+                    int(meta.get("bars", 0)), float(meta.get("tempo", 120))),
+                "step": meta.get("step", STEPS[0][0])}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
 
 
 class AtelierPage(Page):
@@ -158,6 +209,26 @@ class AtelierPage(Page):
         #: La dernière étape atteinte, pour la barre d'étapes.
         self._reached = 0
         self._last_written = ""
+        #: Défaire, refaire : le projet tel qu'il était avant chaque geste,
+        #: avec la vue d'alors — ``(geste, projet, (piste, clip, section,
+        #: étape))``.
+        self._undo_stack: list[tuple] = []
+        self._redo_stack: list[tuple] = []
+        self._last_gesture = ("", 0.0)
+        #: Les sons qu'une piste a eus avant le sien : ``uid -> [(nom,
+        #: son)]``, le plus récent à la fin. Hors du projet : défaire ne les
+        #: efface pas, et ils ne pèsent pas sur chaque instantané.
+        self._sound_history: dict[int, list[tuple[str, tuple]]] = {}
+        #: Le brouillon s'écrit un instant après le dernier geste.
+        self._draft_timer = QTimer(self)
+        self._draft_timer.setSingleShot(True)
+        self._draft_timer.setInterval(800)
+        # La méthode elle-même, pas ``guard`` : PyQt débranche une méthode
+        # liée quand la page est détruite, pas une fermeture. Par ``guard``,
+        # la minuterie tirait sur une page en cours de destruction — un
+        # plantage net de la suite de tests (7 novembre 2026).
+        # ``save_draft`` a son propre rempart.
+        self._draft_timer.timeout.connect(self.save_draft)
         self._live_timer = QTimer(self)
         self._live_timer.setInterval(250)
         self._live_timer.timeout.connect(self.guard(self._watch_live))
@@ -187,6 +258,21 @@ class AtelierPage(Page):
         self._stop_button = tool_button(tr("Arrêter"), "stop")
         self._stop_button.clicked.connect(self.guard(self._stop))
         actions.addWidget(self._stop_button)
+
+        self._undo_button = tool_button(tr("Défaire"), "chevron-left")
+        self._undo_button.clicked.connect(self.guard(self._undo))
+        actions.addWidget(self._undo_button)
+        self._redo_button = tool_button(tr("Refaire"), "chevron-right")
+        self._redo_button.clicked.connect(self.guard(self._redo))
+        actions.addWidget(self._redo_button)
+        # Sur la page seulement : un champ de texte qui a le clavier garde
+        # son propre Ctrl+Z.
+        for touches, geste in ((QKeySequence.StandardKey.Undo, self._undo),
+                               (QKeySequence.StandardKey.Redo, self._redo)):
+            raccourci = QShortcut(QKeySequence(touches), self)
+            raccourci.setContext(
+                Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            raccourci.activated.connect(self.guard(geste))
 
         self._steps_bar = StepBar([tr(titre) for titre, _ in STEPS])
         self._steps_bar.stepClicked.connect(self.guard(self.show_step))
@@ -224,6 +310,7 @@ class AtelierPage(Page):
         self._show_scale()
         self._step_changed(STYLE)
         self._update_actions()
+        self._load_draft()
 
     def _wrap_step(self, content: QWidget, step: int) -> QWidget:
         """Une étape, et ce qu'elle montre tant qu'il n'y a pas de morceau :
@@ -564,6 +651,21 @@ class AtelierPage(Page):
         line.addWidget(self._other_sound_button)
         line.addStretch(1)
         detail.body().addLayout(line)
+        # Les sons déjà essayés : « Autre son » remplaçait le précédent sans
+        # retour, et l'utilisateur en tirait trente à la suite (journal du
+        # 23 octobre 2026). Visibles dès qu'il y en a un.
+        line = QHBoxLayout()
+        line.setSpacing(6)
+        self._history_box = QComboBox()
+        self._history_box.setMinimumWidth(160)
+        line.addWidget(self._history_box, 1)
+        self._history_button = tool_button(tr("Reprendre ce son"), "refresh")
+        self._history_button.clicked.connect(self.guard(self._resume_sound))
+        line.addWidget(self._history_button)
+        self._history_host = QWidget()
+        self._history_host.setLayout(line)
+        self._history_host.setVisible(False)
+        detail.body().addWidget(self._history_host)
         # Deux rangées : à 980 px, quatre boutons sur une seule coupaient
         # chacun leur libellé (« Modifier le so »).
         line = QHBoxLayout()
@@ -669,14 +771,16 @@ class AtelierPage(Page):
         clips.body().addWidget(self._clip_list)
         self._clip_view = ClipView()
         self._clip_view.hitToggled.connect(self.guard(self._hit_toggled))
+        self._clip_view.noteToggled.connect(self.guard(self._note_toggled))
         clips.body().addWidget(self._clip_view, 1)
         self._clip_info = QLabel("")
         self._clip_info.setProperty("role", "subtitle")
         self._clip_info.setWordWrap(True)
         clips.body().addWidget(self._clip_info)
 
-        line = QHBoxLayout()
-        line.setSpacing(6)
+        # Des rangées souples : à 980 px, le panneau n'a que 470 px, et une
+        # rangée trop longue le poussait hors de l'écran (sa droite coupée).
+        line = RangeeSouple()
         self._listen_clip_button = tool_button(tr("Écouter le clip"), "play",
                                                primary=True)
         self._listen_clip_button.clicked.connect(
@@ -690,11 +794,9 @@ class AtelierPage(Page):
         self._live_button.setCheckable(True)
         self._live_button.clicked.connect(self.guard(self._toggle_live))
         line.addWidget(self._live_button)
-        line.addStretch(1)
         clips.body().addLayout(line)
         # Deux rangées : à 980 px, une seule coupait chaque libellé.
-        line = QHBoxLayout()
-        line.setSpacing(6)
+        line = RangeeSouple()
         self._new_clip_button = tool_button(tr("Nouveau clip"), "plus")
         self._new_clip_button.clicked.connect(self.guard(self._new_clip))
         line.addWidget(self._new_clip_button)
@@ -713,7 +815,6 @@ class AtelierPage(Page):
                                                     "export"))
         self._clip_midi_button.clicked.connect(self.guard(self._clip_to_midi))
         line.addWidget(self._clip_midi_button)
-        line.addStretch(1)
         clips.body().addLayout(line)
         clips.body().addWidget(self._build_clip_tools())
 
@@ -750,8 +851,7 @@ class AtelierPage(Page):
         rangees = QVBoxLayout(self._drum_tools)
         rangees.setContentsMargins(0, 0, 0, 0)
         rangees.setSpacing(6)
-        line = QHBoxLayout()
-        line.setSpacing(6)
+        line = RangeeSouple()           # 409 px d'un seul tenant
         line.addWidget(QLabel(tr("Groove")))
         self._groove = QComboBox()
         for name in rhythm.groove_names():
@@ -760,13 +860,13 @@ class AtelierPage(Page):
         line.addWidget(QLabel(tr("Swing")))
         self._swing = QSlider(Qt.Orientation.Horizontal)
         self._swing.setRange(0, 100)
-        line.addWidget(self._swing, 1)
+        self._swing.setMinimumWidth(110)
+        line.addWidget(self._swing)
         self._groove_button = tool_button(tr("Appliquer le groove"), "check")
         self._groove_button.clicked.connect(self.guard(self._apply_groove))
         line.addWidget(self._groove_button)
         rangees.addLayout(line)
-        line = QHBoxLayout()
-        line.setSpacing(6)
+        line = RangeeSouple()           # 592 px d'un seul tenant
         line.addWidget(QLabel(tr("Euclidien")))
         self._pulses = QSpinBox()
         self._pulses.setRange(0, 32)
@@ -785,21 +885,18 @@ class AtelierPage(Page):
         self._euclid_button = tool_button(tr("Ajouter la rangée"), "plus")
         self._euclid_button.clicked.connect(self.guard(self._add_euclid))
         line.addWidget(self._euclid_button)
-        line.addStretch(1)
         rangees.addLayout(line)
         colonne.addWidget(self._drum_tools)
 
         self._feel_tools = QWidget()
-        line = QHBoxLayout(self._feel_tools)
-        line.setContentsMargins(0, 0, 0, 0)
-        line.setSpacing(6)
+        line = RangeeSouple(self._feel_tools)
         # « Style de jeu » et non « Jeu », qui nomme déjà la polyphonie
         # d'un son dans l'éditeur : deux sens, deux mots.
         line.addWidget(QLabel(tr("Style de jeu")))
         self._feel = QComboBox()
         self._feel.activated.connect(self.guard(lambda _i:
                                                 self._feel_changed()))
-        line.addWidget(self._feel, 1)
+        line.addWidget(self._feel)
         hint = QLabel(tr("Un nouveau clip, joué ainsi"))
         hint.setProperty("role", "subtitle")
         line.addWidget(hint)
@@ -1092,15 +1189,11 @@ class AtelierPage(Page):
                 hint.setText(tr("Un morceau en cinq étapes, du style au "
                                 "Deluge"))
             return
-        if project.song_rel:
-            debut = "« %s »" % project.song_name
-        else:
-            debut = genres_mod.genre(project.style.genre).label
-        resume = "%s · %s · %s" % (
-            debut, theory.note_to_name(project.style.root, with_octave=False)
-            + " " + tr(project.style.scale),
-            self._duration_text(project) if project.sections
-            else "%g BPM" % project.style.tempo())
+        resume = _summary(project.style.genre,
+                          project.song_name if project.song_rel else "",
+                          project.style.root, project.style.scale,
+                          project.bars if project.sections else 0,
+                          project.style.tempo())
         if hint is not None:
             hint.setText(resume)
         # L'accueil propose de reprendre ce morceau, à l'étape où l'on en
@@ -1191,6 +1284,222 @@ class AtelierPage(Page):
         self._compose_button.setText(
             tr("Recomposer le morceau") if has and not project.song_rel
             else tr("Composer le morceau"))
+        self._update_undo_buttons()
+        self._fill_history()
+
+    # -- défaire, refaire -------------------------------------------------- #
+
+    def _view_state(self) -> tuple:
+        return (self._uid, self._clip_key, self._section,
+                self._tabs.currentIndex())
+
+    def _checkpoint(self, gesture: str, coalesce: bool = False) -> None:
+        """Garde le projet tel qu'il est, juste avant un geste qui le change.
+
+        ``coalesce`` : une suite rapide du même geste — le tempo qu'on fait
+        défiler, un nom qu'on tape — ne compte qu'une fois.
+        """
+        now = time.monotonic()
+        if coalesce and self._last_gesture[0] == gesture \
+                and now - self._last_gesture[1] < 1.5:
+            self._last_gesture = (gesture, now)
+            self._draft_timer.start()
+            return
+        projet = atelier.clone_project(self._project) \
+            if self._project is not None else None
+        self._undo_stack.append((gesture, projet, self._view_state()))
+        del self._undo_stack[:-UNDO_LIMIT]
+        self._redo_stack.clear()
+        self._last_gesture = (gesture, now)
+        # Le geste suit, dans le même gestionnaire : le brouillon partira
+        # après lui.
+        self._draft_timer.start()
+        self._update_undo_buttons()
+
+    def _undo(self) -> None:
+        if not self._undo_stack:
+            self.say(tr("Rien à défaire."))
+            return
+        geste, projet, vue = self._undo_stack.pop()
+        self._redo_stack.append((geste, atelier.clone_project(self._project)
+                                 if self._project is not None else None,
+                                 self._view_state()))
+        self._restore(projet, vue)
+        self.say(tr("Défait : %s.") % tr(geste))
+
+    def _redo(self) -> None:
+        if not self._redo_stack:
+            self.say(tr("Rien à refaire."))
+            return
+        geste, projet, vue = self._redo_stack.pop()
+        self._undo_stack.append((geste, atelier.clone_project(self._project)
+                                 if self._project is not None else None,
+                                 self._view_state()))
+        self._restore(projet, vue)
+        self.say(tr("Refait : %s.") % tr(geste))
+
+    def _restore(self, project, view: tuple) -> None:
+        """Remet un projet gardé, et la vue d'alors."""
+        if project is not None and self._project is not None:
+            # Ce qui est écrit sur la carte ne se défait pas.
+            project.written = dict(self._project.written)
+        self._stop()
+        self._last_gesture = ("", 0.0)
+        self._project = project
+        uid, key, section, step = view
+        if project is None or project.track(uid) is None:
+            uid = project.tracks[0].uid if project and project.tracks \
+                else None
+            key = None
+        self._uid, self._clip_key = uid, key
+        self._section = int(section or 0)
+        self._forget_variants()
+        self._refresh()
+        self.show_step(step if project is not None else STYLE)
+        self._draft_timer.start()
+
+    def _update_undo_buttons(self) -> None:
+        """Chaque bouton dit quel geste il défait ou refait."""
+        self._undo_button.setEnabled(bool(self._undo_stack))
+        self._undo_button.setToolTip(
+            tr("Défait le dernier geste : %s  (Ctrl+Z)")
+            % tr(self._undo_stack[-1][0]) if self._undo_stack
+            else tr("Aucun geste à défaire"))
+        self._redo_button.setEnabled(bool(self._redo_stack))
+        self._redo_button.setToolTip(
+            tr("Refait le geste défait : %s  (Ctrl+Y)")
+            % tr(self._redo_stack[-1][0]) if self._redo_stack
+            else tr("Aucun geste à refaire"))
+
+    # -- les sons essayés ---------------------------------------------------- #
+
+    @staticmethod
+    def _sound_name(track) -> str:
+        """De quoi reconnaître un son dans la liste : le nom d'un preset, les
+        premiers sons d'un kit (ils s'appellent tous « ATELIER »)."""
+        if track.kind == "kit" and track.kit is not None:
+            sons = [Path(r.file_name).stem for r in track.kit.rows[:3]
+                    if getattr(r, "file_name", "")]
+            return " · ".join(sons) or track.kit.name
+        preset = track.preset
+        return getattr(preset, "name", "") or tr("son sans nom")
+
+    def _remember_sound(self, track) -> None:
+        """Le son actuel de la piste rejoint ses sons essayés, juste avant
+        d'être remplacé."""
+        if track is None or track.kind not in ("synth", "kit"):
+            return
+        son = ((track.kind, track.kit, None, False) if track.kind == "kit"
+               else (track.kind, track.preset, track.options, track.edited))
+        if son[1] is None:
+            return
+        pile = self._sound_history.setdefault(track.uid, [])
+        pile.append((self._sound_name(track), son))
+        del pile[:-HISTORY_LIMIT]
+
+    def _fill_history(self) -> None:
+        track = self._track()
+        pile = self._sound_history.get(track.uid, []) if track else []
+        self._history_box.blockSignals(True)
+        self._history_box.clear()
+        for rang, (nom, _son) in enumerate(reversed(pile), 1):
+            self._history_box.addItem("%d. %s" % (rang, nom))
+        self._history_box.blockSignals(False)
+        self._history_host.setVisible(bool(pile))
+        self._history_button.setEnabled(bool(pile)
+                                        and track.existing is None)
+
+    def _resume_sound(self) -> None:
+        """Rend à la piste un des sons qu'elle a eus."""
+        track = self._track()
+        pile = self._sound_history.get(track.uid, []) if track else []
+        rang = self._history_box.currentIndex()
+        if not pile or not 0 <= rang < len(pile):
+            return
+        nom, (kind, son, options, edited) = pile[len(pile) - 1 - rang]
+        self._checkpoint(N_("son repris"))
+        self._remember_sound(track)
+        pile.remove((nom, (kind, son, options, edited)))
+        if kind == "kit":
+            track.kit = copy.deepcopy(son)
+            self._kit_tried = {}
+        else:
+            track.preset, track.options = copy.deepcopy(son), options
+            track.edited = edited
+            self._forget_variants()
+        self._fill_tracks()
+        self.say(tr("La piste reprend le son « %s ».") % nom)
+
+    # -- le brouillon -------------------------------------------------------- #
+
+    def save_draft(self) -> None:
+        """Écrit le morceau en cours, pour le reprendre au prochain lancement.
+
+        Sans cela, fermer l'application — ou changer de langue, qui la
+        relance — perdait sans un mot un morceau composé mais pas écrit.
+        """
+        self._draft_timer.stop()
+        if getattr(self.ctx, "closed", False):
+            return
+        data, fiche = draft_paths()
+        project = self._project
+        try:
+            if project is None:
+                for chemin in (data, fiche):
+                    chemin.unlink(missing_ok=True)
+                return
+            meta = {"genre": project.style.genre,
+                    "song_name": project.song_name if project.song_rel
+                    else "",
+                    "root": int(project.style.root),
+                    "scale": project.style.scale,
+                    "bars": int(project.bars if project.sections else 0),
+                    "tempo": float(project.style.tempo()),
+                    "step": STEPS[max(0, self._tabs.currentIndex())][0],
+                    "name_field": self._song_name.text(),
+                    "reached": int(self._reached),
+                    "saved": time.time()}
+            data.parent.mkdir(parents=True, exist_ok=True)
+            for chemin, octets in (
+                    (data, atelier.dump_draft(project, meta)),
+                    (fiche, json.dumps(meta, ensure_ascii=False,
+                                       indent=1).encode("utf-8"))):
+                provisoire = chemin.with_name(chemin.name + ".tmp")
+                provisoire.write_bytes(octets)
+                os.replace(provisoire, chemin)
+        except Exception:  # noqa: BLE001 - un brouillon raté ne bloque rien
+            log.exception("brouillon de l'atelier non enregistré")
+
+    def _load_draft(self) -> None:
+        """Reprend le morceau laissé à la dernière séance."""
+        if self._project is not None:
+            return
+        data, fiche = draft_paths()
+        if not data.is_file():
+            return
+        try:
+            project, meta = atelier.load_draft(data.read_bytes())
+        except (OSError, ValueError) as exc:
+            log.warning("brouillon de l'atelier illisible (%s) : mis de "
+                        "côté", exc)
+            try:
+                os.replace(data, data.with_name(data.name + ".illisible"))
+                fiche.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        self._reached = int(meta.get("reached", SONS))
+        self._set_project(project)
+        if meta.get("name_field"):
+            self._song_name.setText(str(meta["name_field"]))
+        noms = [titre for titre, _ in STEPS]
+        etape = meta.get("step", "")
+        self.show_step(noms.index(etape) if etape in noms else SONS)
+        self.say(tr("Morceau repris de votre dernière séance : %s.")
+                 % _summary(project.style.genre,
+                            project.song_name if project.song_rel else "",
+                            project.style.root, project.style.scale,
+                            project.bars, project.style.tempo()))
 
     # -- le style ---------------------------------------------------------- #
 
@@ -1236,6 +1545,8 @@ class AtelierPage(Page):
         """Le tempo s'applique tout de suite au morceau en cours : il ne
         demande rien de refaire."""
         if self._project is not None:
+            if float(self._bpm.value()) != self._project.style.tempo():
+                self._checkpoint(N_("tempo"), coalesce=True)
             self._project.style.bpm = float(self._bpm.value())
             if self._built:
                 self._update_hero()
@@ -1309,6 +1620,7 @@ class AtelierPage(Page):
                 return
         sd = self.sd if self.ctx.has_card else None
         lib = self.lib if sd is not None else None
+        self._checkpoint(N_("composition du morceau"))
         project = atelier.Project(style=style)
         project.progression = list(self._chords) if self._chords \
             else atelier._progression(style)
@@ -1331,7 +1643,12 @@ class AtelierPage(Page):
 
     def _set_project(self, project) -> None:
         self._stop()
+        if self._project is not None and project is not None:
+            # Les morceaux déjà écrits restent remplaçables.
+            for rel, sha in self._project.written.items():
+                project.written.setdefault(rel, sha)
         self._project = project
+        self._sound_history = {}
         self._uid = project.tracks[0].uid if project.tracks else None
         self._clip_key = None
         self._section = 0
@@ -1461,6 +1778,11 @@ class AtelierPage(Page):
                          "choisissez un style, puis composez.") % (
                 preset.name, tr(part).lower())
         else:
+            self._checkpoint(N_("son venu d'une autre page"))
+            cible = self._project.track(self._uid)
+            if cible is not None and cible.kind == "synth" \
+                    and cible.existing is None:
+                self._remember_sound(cible)
             track = atelier.use_preset(self._project, preset, part,
                                        uid=self._uid, options=options,
                                        edited=edited)
@@ -1487,6 +1809,11 @@ class AtelierPage(Page):
                          "morceau : choisissez un style, puis composez.") \
                 % kit.name
         else:
+            self._checkpoint(N_("kit venu d'une autre page"))
+            for piste in self._project.tracks:
+                if piste.is_drums and piste.existing is None:
+                    self._remember_sound(piste)
+                    break
             track = atelier.use_kit(self._project, kit)
             self._uid = track.uid
             self._clip_key = None
@@ -1655,6 +1982,7 @@ class AtelierPage(Page):
         if part not in atelier.parts_for_kind(kind):
             part = atelier.parts_for_kind(kind)[0]
         sd = self.sd if self.ctx.has_card else None
+        self._checkpoint(N_("piste ajoutée"))
         track = atelier.add_track(self._project, kind, part,
                                   sd=sd, lib=self.lib if sd else None,
                                   channel=self._free_channel(kind))
@@ -1675,6 +2003,7 @@ class AtelierPage(Page):
         track = self._track()
         if track is None:
             return
+        self._checkpoint(N_("piste retirée"))
         atelier.remove_track(self._project, track.uid)
         self._uid = self._project.tracks[0].uid if self._project.tracks \
             else None
@@ -1684,6 +2013,8 @@ class AtelierPage(Page):
         track = self._track()
         if track is None or track.kind not in ("midi", "cv"):
             return
+        if int(self._channel.value()) != track.channel:
+            self._checkpoint(N_("canal"), coalesce=True)
         track.channel = int(self._channel.value())
         self._fill_tracks()
 
@@ -1692,6 +2023,8 @@ class AtelierPage(Page):
         if track is None:
             return
         if track.kind == "synth":
+            self._checkpoint(N_("autre son"))
+            self._remember_sound(track)
             atelier.regenerate_sound(self._project, track.uid)
             self._forget_variants()
             self._fill_tracks()
@@ -1701,6 +2034,8 @@ class AtelierPage(Page):
                 self.say(tr("Un kit se bâtit avec les échantillons de la "
                             "carte."))
                 return
+            self._checkpoint(N_("autre kit"))
+            self._remember_sound(track)
             track.kit = atelier._build_kit(self.sd, self.lib,
                                            self._project.style,
                                            random.randrange(1 << 30))
@@ -1720,12 +2055,16 @@ class AtelierPage(Page):
         essayes = self._kit_tried.setdefault(index, set())
         essayes.add(kit.rows[index].file_name)
         self._kit_rolls += 1
+        self._checkpoint(N_("autre son pour la rangée"))
         slot = kitgen.reroll_row(
             kit, index, self.lib, genre=self._project.style.genre,
             seed="%d|%d|%d" % (self._project.style.seed, index,
                                self._kit_rolls),
             avoid=essayes)
         if slot is None:
+            # Rien n'a changé : l'instantané ne sert à rien.
+            self._undo_stack.pop()
+            self._update_undo_buttons()
             self.say(tr("La bibliothèque n'a pas d'autre son pour cette "
                         "rangée."))
             return
@@ -1757,6 +2096,8 @@ class AtelierPage(Page):
         rel = rows[labels.index(choice)]["rel"]
         from ...core.model import Kit, SynthPreset
 
+        self._checkpoint(N_("son choisi sur la carte"))
+        self._remember_sound(track)
         if kind == "kit":
             track.kit = Kit.load(card.abs(rel))
             self._kit_tried = {}
@@ -1789,6 +2130,8 @@ class AtelierPage(Page):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         changes = dialog.changes()
+        self._checkpoint(N_("son retouché"))
+        self._remember_sound(track)
         atelier.edit_sound(self._project, track.uid, dialog.edited_sound())
         # Les variantes proposées avant ne portent pas ces retouches.
         self._forget_variants()
@@ -1867,6 +2210,8 @@ class AtelierPage(Page):
         if track is None or not 0 <= row < len(self._variants):
             return
         choice = self._variants[row]
+        self._checkpoint(N_("variante adoptée"))
+        self._remember_sound(track)
         atelier.adopt_sound(self._project, track.uid, choice)
         self._fill_tracks()
         self.say(tr("La piste prend le son « %s » (%s).") % (
@@ -1899,6 +2244,7 @@ class AtelierPage(Page):
         track = self._track()
         if track is None or not atelier.feels_for(track.part):
             return
+        self._checkpoint(N_("style de jeu"))
         track.feel = str(self._feel.currentData() or "")
         bars = int(self._clip_bars.currentData() or 4)
         clip = atelier.generate_clip(self._project, track.uid, bars=bars,
@@ -1947,10 +2293,11 @@ class AtelierPage(Page):
             self._clip_info.setText("")
         else:
             rows = None
-            editable = False
+            # Une batterie se dessine, un synthé aussi ; un clip déjà sur le
+            # Deluge, non.
+            editable = clip.existing is None
             if track.is_drums:
                 rows = atelier.drum_rows(track)
-                editable = clip.existing is None
                 if editable:
                     rows = list(rows) + [r for r in BASIC_ROWS
                                          if r not in rows]
@@ -1962,9 +2309,12 @@ class AtelierPage(Page):
                                                          clip.bars)
             if clip.existing is not None:
                 text += " " + tr("Déjà dans le morceau d'origine.")
-            elif editable:
+            elif editable and track.is_drums:
                 text += " " + tr("Un clic dans la grille allume ou éteint un "
                                  "coup.")
+            elif editable:
+                text += " " + tr("Un clic dans la grille ajoute une note ; un "
+                                 "clic sur une note la retire.")
             if used:
                 text += " " + tr("Joué dans : %s.") % ", ".join(
                     tr(n) for n in used)
@@ -1983,11 +2333,30 @@ class AtelierPage(Page):
             self.say(tr("Ce clip est déjà sur le Deluge : variez-le pour en "
                         "faire un neuf, que vous pourrez dessiner."))
             return
+        self._checkpoint(N_("coup de batterie"))
         allume = atelier.toggle_hit(self._project, track.uid, clip.key,
                                     row, step)
         self._show_clip()
         self.say((tr("%s : coup ajouté au pas %d.") if allume else
                   tr("%s : coup retiré au pas %d.")) % (tr(row), step + 1))
+
+    def _note_toggled(self, note: int, step: int) -> None:
+        """Un clic dans le clip d'un synthé : une note ajoutée ou retirée."""
+        track = self._track()
+        clip = self._clip()
+        if track is None or clip is None or track.is_drums:
+            return
+        if clip.existing is not None:
+            self.say(tr("Ce clip est déjà sur le Deluge : variez-le pour en "
+                        "faire un neuf, que vous pourrez dessiner."))
+            return
+        self._checkpoint(N_("note"))
+        ajoutee = atelier.toggle_note(self._project, track.uid, clip.key,
+                                      note, step)
+        self._show_clip()
+        self.say((tr("%s : note ajoutée au pas %d.") if ajoutee else
+                  tr("%s : note retirée au pas %d."))
+                 % (theory.note_to_name(int(note)), step + 1))
 
     def _apply_groove(self) -> None:
         track = self._track()
@@ -1996,6 +2365,7 @@ class AtelierPage(Page):
             return
         groove = self._groove.currentData() or "droit"
         swing = self._swing.value() / 100.0
+        self._checkpoint(N_("groove"))
         atelier.groove_clip(self._project, track.uid, clip.key, groove, swing)
         self._show_clip()
         equivalent = rhythm.deluge_swing(groove)
@@ -2010,6 +2380,7 @@ class AtelierPage(Page):
         clip = self._clip()
         if track is None or clip is None or not track.is_drums:
             return
+        self._checkpoint(N_("rangée euclidienne"))
         nom = atelier.add_euclid(self._project, track.uid, clip.key,
                                  int(self._pulses.value()),
                                  int(self._steps.value()),
@@ -2027,6 +2398,7 @@ class AtelierPage(Page):
         if not clip.note_count:
             self.say(tr("Un clip vide ne se varie pas."))
             return
+        self._checkpoint(N_("variation du clip"))
         new = atelier.vary_clip(self._project, track.uid, clip.key, how)
         self._clip_key = new.key
         self._fill_clips()
@@ -2038,6 +2410,7 @@ class AtelierPage(Page):
         if track is None:
             return
         bars = int(self._clip_bars.currentData() or 4)
+        self._checkpoint(N_("nouveau clip"))
         clip = atelier.generate_clip(self._project, track.uid, bars=bars,
                                      seed=random.randrange(1 << 30))
         self._clip_key = clip.key
@@ -2048,6 +2421,7 @@ class AtelierPage(Page):
         clip = self._clip()
         if track is None or clip is None:
             return
+        self._checkpoint(N_("clip supprimé"))
         atelier.remove_clip(self._project, track.uid, clip.key)
         self._clip_key = None
         self._fill_clips()
@@ -2218,6 +2592,7 @@ class AtelierPage(Page):
         current = section.cells.get(uid)
         following = keys[(keys.index(current) + 1) % len(keys)] \
             if current in keys else keys[0]
+        self._checkpoint(N_("case de la structure"))
         atelier.set_cell(project, self._section, uid, following)
         self._fill_song()
 
@@ -2229,6 +2604,7 @@ class AtelierPage(Page):
         if text:
             section = project.sections[self._section]
             if text != tr(section.name):
+                self._checkpoint(N_("nom de section"), coalesce=True)
                 section.name = text
                 from ...core import sketch
 
@@ -2239,6 +2615,9 @@ class AtelierPage(Page):
         project = self._project
         if project is None or not project.sections:
             return
+        if int(self._section_bars.value()) \
+                != project.sections[self._section].bars:
+            self._checkpoint(N_("durée de section"), coalesce=True)
         project.sections[self._section].bars = int(self._section_bars.value())
         self._fill_song()
         self._update_hero()
@@ -2253,6 +2632,7 @@ class AtelierPage(Page):
         if not ok or not name.strip():
             return
         index = self._section + 1 if self._project.sections else 0
+        self._checkpoint(N_("section ajoutée"))
         atelier.add_section(self._project, name.strip(), bars=16,
                             index=index)
         if self._project.sections and index > 0:
@@ -2265,8 +2645,9 @@ class AtelierPage(Page):
         self._update_hero()
 
     def _remove_section(self) -> None:
-        if self._project is None:
+        if self._project is None or not self._project.sections:
             return
+        self._checkpoint(N_("section retirée"))
         atelier.remove_section(self._project, self._section)
         self._section = max(0, self._section - 1)
         self._fill_song()
@@ -2275,6 +2656,7 @@ class AtelierPage(Page):
     def _move_section(self, offset: int) -> None:
         if self._project is None:
             return
+        self._checkpoint(N_("section déplacée"))
         self._section = atelier.move_section(self._project, self._section,
                                              offset)
         self._fill_song()
@@ -2282,6 +2664,7 @@ class AtelierPage(Page):
     def _default_structure(self) -> None:
         if self._project is None:
             return
+        self._checkpoint(N_("structure du genre"))
         if self._project.song_rel:
             kept = [s for s in self._project.sections
                     if s.existing is not None]
@@ -2429,6 +2812,7 @@ class AtelierPage(Page):
         self._ensure_built()
         song = Song.load(card.abs(rel))
         project = atelier.from_song(song, card)
+        self._checkpoint(N_("morceau ouvert"))
         project.song_rel = rel
         project.style.genre = self._genre
         self._style_dirty = False
@@ -2523,8 +2907,13 @@ class AtelierPage(Page):
             return
         name = self._song_name.text().strip() or self._default_name(project)
         rel = self.write_song(lambda card: atelier.to_song_spec(
-            project, name, sd=card, lib=self.lib), name)
+            project, name, sd=card, lib=self.lib), name,
+            written=project.written)
         if rel:
+            from ...core import songwriter
+
+            project.written[rel] = songwriter.file_sha256(self.sd.abs(rel))
+            self.save_draft()
             self._written(rel)
 
     def _written(self, rel: str) -> None:

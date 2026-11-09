@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 5 novembre 2026 (la publication sur GitHub, §3 novoquadragies)
+**Dernière mise à jour :** 9 novembre 2026 (les essais sur la machine, §3 duoquinquagies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -35,6 +35,9 @@ morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quad
 **Le pont vers les DAW** : un morceau part vers tout DAW (MIDI, DAWproject, Reaper, pistes audio), un projet (MIDI, set Ableton Live, DAWproject, Reaper) revient en morceau, et le DAW joue les sons du Deluge, chaque piste sur son canal — voir §3 triquadragies.
 **L'application se distribue sans Python** : installateur NSIS pour Windows, image disque macOS et AppImage Linux, chaque paquet autovérifié avant d'être emballé — voir §3 octoquadragies.
 **Elle est publiée**, gratuite, sous GPL v3, avec une invitation au don sur Ko-fi : https://github.com/Blackminou29/noctiluca, où GitHub construit les trois paquets — voir §3 novoquadragies.
+**Rien ne se perd plus dans l'atelier** (défaire, sons essayés, morceau repris au lancement), **un dossier de notes devient un instrument**, l'analyse va 2,5 fois plus vite, et les fausses alertes de santé que le firmware provoquait ont disparu — voir §3 quinquagies et `ameliorations.md`.
+**Les noms courts de FAT ne trompent plus l'index**, un morceau s'écoute depuis sa page, la carte se prépare pour un nouveau firmware, et l'écoute porte le sidechain, le LFO 1 global et le glissé du firmware — voir §3 unquinquagies.
+**Les essais sur la machine sont faits** : sidechain, Steinway, table d'onde, favori, envoi d'un pack, atelier en direct, synchronisation différée, et le DAW — Live joue les sons du Deluge depuis un set déjà routé, le Deluge mène l'horloge ; celle de Live ne passait pas sous Windows 11, et un **firmware corrigé**, compilé et installé sur sa machine, la fait suivre — voir §3 duoquinquagies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -325,6 +328,372 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 duoquinquagies. Les essais sur la machine (9 novembre 2026)
+
+**La demande** : « j'ai le Deluge de branché, je suis prêt à faire les essais qui n'ont pas pu
+être faits » — les quatre groupes (sans écriture, nouveautés qui écrivent, atelier en direct,
+longs ou avec Live). Chaque note, chaque contrôleur et chaque écriture vers la machine a été
+détaillé puis accepté sur le moment ; l'application de l'utilisateur fermée avant chaque
+script qui touchait aux ports.
+
+### Vérifié sur la machine
+
+* **Noms courts de FAT** : lus par USB, les fichiers cités par `CB1-BD~1.WAV` sont ceux que
+  l'application rattache.
+* **Sidechain** : « ESSAI SIDECHAIN » écrit sur la carte, mixage exporté par la machine en vue
+  arrangeur (l'export d'un clip coupe les autres pistes) : creux de 26,3 % sur la machine,
+  26,6 % sur le PC ; retour en 235 à 240 ms des deux côtés ; écart moyen 0,6 % (RMS glissant
+  sur quatre périodes — des fenêtres de 5 ms montraient de faux creux).
+* **Favori** posé par l'application : le pad 1 du navigateur charge « 808 Kick ». Le sens
+  inverse (posé sur la machine) a été passé, à sa demande.
+* **Steinway multi-échantillon** : hauteur et timbre justes ; « la note s'éteint sèchement
+  lorsqu'on la relâche » → relâche au réglage 8 (`multisample.RELEASE`, §4.50 de la SPEC),
+  instrument remplacé : « c'est parfait ».
+* **Table d'onde** : muette sur l'oscillateur à plusieurs tranches (le firmware ne charge la
+  table que dans une tranche), juste sur un oscillateur à un seul fichier — précaution
+  ajoutée au manuel.
+* **Atelier** : un clip joué en direct sur le Deluge, puis enregistré (REC) dans le clip ; la
+  synchronisation attend la fin de la lecture et reprend au STOP.
+* **Envoi d'un pack** (77 fichiers, 299 s) : il marche, mais « les imports devraient être mis
+  dans des dossiers afin de ne pas désorganiser la carte » → dossier au nom du pack, jumeaux
+  déjà présents ailleurs reconnus (§4.50 de la SPEC) ; 36 doublons posés à la racine de
+  `SYNTHS` rangés dans `_BACKUP` puis retirés par la confirmation de l'application.
+* **DAW** : la copie « Cool1 DAW » (17 ajouts) chargée, Live joue ses trois pistes sur leurs
+  canaux appris ; le Deluge mène l'horloge et Live suit (Sync en entrée, EXT allumé). Le
+  routage « MIDI To » a été mesuré sur un set enregistré par Live, puis **écrit par l'export**
+  (`daw.listened_channel`, `dawals.DELUGE_OUT`) : le set exporté de la copie, ouvert sans
+  réglage, jouait les trois pistes.
+
+### L'horloge de Live ne passe pas sous Windows 11
+
+Ni celle de Live, ni celle d'un script (`winmm`, Start + 192 impulsions + Stop), alors que
+CLOCK ▸ IN est sur ON et qu'aucun `MIDIDevices.XML` ne coupe la réception. Cause trouvée dans
+deux codes sources : le pilote USB MIDI 2 de Windows (`usbmidi2.inf` depuis le 23 octobre)
+code un octet temps réel avec le **CIN 0x5** tant que le drapeau
+`Feature_Servicing_MIDI2USBSystemRealTimeCin` n'est pas actif (`Device.cpp` de
+microsoft/MIDI, « Some devices ignore it sent as CIN 0x5 ») ; `checkIncomingUsbMidi` prend
+tout CIN < 8 hors 2 et 3 pour du SysEx. L'inverse marche : écoute passive des trois entrées,
+PLAY sur le Deluge → Start, 450 impulsions, Stop sur « Deluge » et « MIDIIN2 », rien sur
+« MIDIIN3 ». Le mode d'emploi et le manuel le disent (« firmware 1.3 »).
+
+**Pire, lu dans `checkIncomingUsbSysex`** : un CIN 0x5 y est une fin de SysEx. Un top d'horloge
+reçu pendant un SysEx sur le même câble le termine (« F0 00 21 F8 » remis à
+`midiSysexReceived`) et la suite est perdue — les pings de l'application partent sur le
+câble 1, celui où Live envoie son horloge.
+
+### Le correctif du firmware (« je veux que le firmware accepte aussi la forme qu'envoie Windows »)
+
+* Le palliatif de Microsoft existe (rendre au Deluge l'ancien pilote « Périphérique audio
+  USB », `docs/kb/how-to-switch-between-class-drivers.md` de microsoft/MIDI) ; l'utilisateur a
+  préféré corriger le firmware.
+* `main` (279cbbc, 8 novembre) avait le même code, et aucun ticket n'existait.
+* Le correctif : dans `checkIncomingUsbMidi`, un CIN 0x5 dont l'octet est ≥ 0xF8 devient
+  temps réel (`statusType = 0x0F`, octets de bourrage à zéro) ; 0xF7 reste une fin de SysEx.
+  Vérifié d'abord sur une transcription Python des deux fonctions (`fw_patch/modele_cin5.py`
+  du dossier de travail de la session) : avant, Start, horloge et Stop perdus et SysEx
+  tronqué ; après, tout passe.
+* Compilé avec la chaîne officielle (`dbt build release`, chaîne v22 de
+  `SynthstromAudible/dbt-toolchain`, 403 Mo, empreinte publiée vide : taille comparée à
+  l'octet) **avec l'accord explicite de l'utilisateur** (un premier lancement avait été
+  refusé par la sécurité de la session). Même code sans correctif : 1 764 156 octets ;
+  avec : 1 764 284 (+128) ; l'officiel : 1 756 100 (compilation locale, étiquette
+  « 1.3.0-dev-156500e-dirty »).
+* Posé par `firmware.plan_install`/`install` dans la copie de travail (l'officiel rangé dans
+  `_BACKUP/firmware-20261109-111704`), envoyé par la synchronisation (11:18:28), ancien
+  retiré sur confirmation, flashé par l'utilisateur (SHIFT à l'allumage).
+* **Vérifié sur la machine** : un script envoie Start, deux mesures et Stop → le morceau
+  joue puis s'arrête ; 3 122 pings SysEx sur 3 122 reviennent sous 346 tops d'horloge
+  (non mesuré sur la 1.3.0 d'origine) ; **Live mène** : démarrage, changement de tempo et
+  arrêt suivis.
+* Dans `C:\Users\sebas\dfw\DelugeFirmware` : branche `cin5-sur-1.3.0` (le firmware
+  installé), branche `fix/usb-realtime-cin5` sur `main` (la proposition), mise en forme
+  vérifiée par le clang-format de la chaîne ; `PR.md` et le `.patch` à côté. **Envoyé par
+  lui** (fork par GitHub Desktop) : [#5276](https://github.com/SynthstromAudible/DelugeFirmware/pull/5276),
+  étiquettes « area: midi » et « type: fix » posées par leur robot, description acceptée ;
+  compilation, mise en forme, Clang Tidy et tests en « action_required » (un mainteneur
+  doit autoriser les vérifications d'un premier contributeur).
+
+Pièges de la compilation sous Windows : le bac à sable des commandes impose
+`NoDefaultCurrentDirectoryInExePath=1` (appeler `dbt.cmd` par son chemin complet) ;
+`dbt.cmd` cloné avec des fins de ligne Unix ; un lecteur `subst` raccourcit les chemins pour
+`cmd` mais pas pour git (`util.get_git_root` rend le vrai chemin, 245 caractères : `as`
+introuvable) et casse `Write-VolumeCache` de l'installateur de la chaîne. D'où un clone
+dans un chemin vraiment court.
+
+### Incidents
+
+1. **Le Deluge s'est figé** à la fin de l'envoi du pack (08:16) ; Windows a perdu l'appareil,
+   redémarrage nécessaire. Cause inconnue.
+2. **Ensuite, aucune note ne passait** — ni de Live, ni d'un script, sur aucun câble, avec ou
+   sans Live ouvert, après rebranchement — alors que le ping SysEx revenait en 0,4 ms et que
+   Windows acceptait chaque note (`midiOutShortMsg` à 0). Après `Restart-Service midisrv` en
+   administrateur, une note a sonné dans un morceau neuf (09:19), puis les trois de « Cool1
+   DAW » (09:22). L'essai fait juste après le redémarrage (09:16) n'a rien donné, mais un essai
+   a pu être manqué (celui de 09:22:13 l'a été) : **rien ne prouve que le service était en
+   cause.**
+3. Des rapports d'erreur Windows datés de la seconde même d'un envoi (09:08:18) : d'anciens
+   incidents de carte graphique (code 141, fichiers de septembre), renvoyés par hasard.
+4. La santé est passée de 92 à 90 (11 anomalies) : pas encore regardé.
+
+### Pièges rencontrés
+
+1. **Lire le firmware avant d'accuser la copie** : le format des canaux appris était juste
+   (`MelodicInstrument::readTagFromFile`, `Drum::readDrumTagFromFile`,
+   `LearnedMIDI::checkMatch`) ; c'est la liaison qui ne transmettait pas. Le morceau neuf
+   (SHIFT + LOAD) a séparé les deux.
+2. **Un essai à l'aveugle se rate** : annoncer l'heure de chaque note, et redemander quand
+   l'utilisateur dit « recommence ».
+3. **Live en EXT ignore son propre Play** : « rien ne se passe lorsque j'appuie sur play »
+   ne disait rien du routage. Le bouton EXT était éteint au premier essai de la partie D.
+4. Le set de l'essai était dans un dossier temporaire introuvable : recopié, sous un nom
+   distinct, à côté de ceux de l'utilisateur.
+
+### Laissé en place
+
+Sur la carte : `SONGS/Cool1 DAW.XML`, `SAMPLES/RESAMPLE/ESSAI SIDECHAIN/output_000.wav`,
+l'instrument Steinway et la table d'onde (gardés à sa demande). Sur le PC :
+`Desktop\musique\Cool1 — pour le DAW` (le set d'origine, « Cool1 route », routé à la main, et
+« Cool1 DAW - route par Noctiluca »), `C:\Users\sebas\dfw` (firmware cloné et chaîne,
+≈ 2 Go). Sur le Deluge : CLOCK ▸ OUT sur ON, **firmware 1.3.0 corrigé**. Dans Live : sortie
+« Deluge » en Piste et Sync, entrée en Piste.
+
+### L'anglais par défaut
+
+« Je veux que l'anglais soit le langage par défaut lors de l'installation… J'ai beaucoup plus
+d'utilisateurs anglophones qui téléchargent le logiciel sur GitHub. » `i18n.DEFAULT` mêlait
+deux sens : il est resté la langue des textes du code (le français, clé des traductions,
+`tr` rend le texte tel quel) ; la langue d'une installation neuve est désormais
+`i18n.FIRST_RUN = "en"` — `Settings.language` par défaut, réglage illisible ou inconnu
+(`normalize`), `main._choose_language` en cas d'erreur. Ses réglages à lui portent
+`"language": "fr"` : il reste en français. Les tests d'interface fixent `"fr"` dans leur
+contexte (ils s'affichent en français) ; un test vérifie qu'une installation neuve démarre en
+anglais et qu'un choix du français est gardé. Piège : 59 tests d'interface ont d'abord
+échoué en anglais — `TestPointDEntree` bâtit le contexte comme au démarrage
+(`main._build_context` applique la langue des réglages, sans réglages l'anglais) et ne
+remettait pas la langue ; invisible tant que le défaut était le français. Il la remet
+désormais. README (« The interface starts in English »),
+manuel (fr et en) et SPEC §5.26 suivent. L'installateur Windows était déjà bilingue, l'anglais
+en premier ; le texte des publications (`paquets.yml`) disait « The interface starts in
+French » : corrigé.
+
+### La version 1.0.1
+
+« Faire le commit et passer l'application en version 1.0.1 » : `__version__ = "1.0.1"`
+(`delugeapp/__init__.py`, que lisent les trois scripts de construction et `updates.py`), puis
+un commit de tout le travail du 7 au 9 novembre. L'étiquette `v1.0.1` se pose dans GitHub
+Desktop (*History ▸ Create Tag…*), l'envoi aussi : c'est elle qui fait construire les
+paquets et le brouillon de publication.
+
+### Vérifié
+
+* Suite complète : **1 359 tests au vert** (214 s ; 797 du cœur, 464 d'interface, 68 de
+  l'atelier, 30 de la traduction), dont 7 nouveaux ; texte anglais et manuel complets.
+* Chaque correctif essentiel **retiré** fait échouer son test : routage, canal écouté, notes
+  apprises d'un kit, mise en garde sous Windows.
+
+---
+
+## 3 unquinquagies. Le second relevé, puis tout ce qui pouvait se faire (8 novembre 2026)
+
+**Les demandes** : « trouver de nouvelles améliorations pertinentes et les inscrire dans le
+fichier ameliorations.md », puis « continuer à améliorer le logiciel et ne s'arrêter que
+lorsque tout sera entièrement fini ». Le relevé ne garde plus que ce qui attend la machine,
+une décision de l'utilisateur ou quelqu'un d'autre, chaque fois avec la raison.
+
+### D'où est venu le second relevé
+
+Aucun retour d'utilisateur (aucun ticket, aucune réponse sur le forum, 6 téléchargements), le
+journal inchangé depuis le 5 novembre : la source a été **l'audit d'usage** (§3 sexvicies),
+repris avec les noms de Noctiluca (`audit_usage.py`, copie fantôme en liens physiques, index
+copié, aucun port MIDI, aucune requête réseau). La fenêtre : 0,9 s au démarrage, chaque page
+en moins de 0,2 s, 0,02 s ensuite. Mais le diagnostic de la **copie** donnait 85, pas 92 :
+deux échantillons « absents » qui ne l'étaient pas chez lui.
+
+### Ce qui a été fait
+
+* **Noms courts de FAT** — le kit d'usine « 030 Chaz Bundick » cite `CB1-BD~1.WAV` et
+  `CB2-BD~1.WAV` ; le Deluge les trouve (`ff.c`, l. 2453, « SFN matched? »), l'application ne
+  les trouvait que par les noms courts que Windows fabrique sur sa copie de travail. Pire :
+  dans son vrai index, `CB1-bdrum1.wav` et `CB2-bdrum2.wav` étaient **comptés inutilisés**
+  (`used_count = 0`) — l'archivage des inutilisés les aurait proposés au déplacement, deux
+  rangées muettes sur la machine. Règles de `create_name`/`gen_numname` portées
+  (`sdcard.short_name_*`), référence rangée sous le nom réel, rangements et traitements qui
+  la suivent, relecture unique (`PRESET_READER` 3, `SONG_READER` 4). Copie : 85 → 92.
+* **Linux sans PortAudio** : le lecteur jouait en silence, curseur qui avance, sans un mot
+  (`player.available` n'était lu nulle part). Désormais « ● lecture muette » (ambre, raison
+  en infobulle), la barre d'état, l'accueil et Réglages ▸ Écoute disent quoi installer.
+* **La fenêtre d'erreur** mène au rapport, trace comprise ([Signaler ce problème…]).
+* **L'étape Clips à 980 px** : le panneau a 470 px, ses rangées en demandaient 556 et 592 ;
+  `RangeeSouple` (une rangée qui passe à la ligne) — minimum mesuré 435 px.
+* **Écouter depuis la page Morceaux** : un clip (0,1 à 1,6 s de calcul sur sa carte) ou le
+  morceau entier (« Calm Down », 3 min 17 : 14 à 18 s), arrêtable.
+* **Outils ▸ Firmware du Deluge…** : mesuré sur l'API et l'archive réelle (`v1.3.0.zip` →
+  `deluge-c1_3_0.bin`, identique à celui de la carte ; un `__MACOSX/…/._deluge-c1_3_0.bin`
+  piège l'extracteur naïf). Guide de mise à jour lu : un seul `.bin` à la racine, SHIFT à
+  l'allumage, danger des tailles hors norme pour les 7 segments (`SAFE_SIZE`). Rien n'est
+  flashé ; l'ancien `.bin` rangé dans `_BACKUP`, son retrait de la carte passe par les
+  suppressions à confirmer.
+* **L'écoute** : le **sidechain** porté de `sidechain.cpp` (enveloppe, synchronisation —
+  formule vérifiée à la main, la grandeur des tics s'annule —, coups combinés par
+  `combineHitStrengths`), la source vers `volumePostReverbSend` (jusque-là inconnue : ses
+  câbles étaient ignorés), la réverbération qui suit le son le plus réverbéré ; dans
+  « Calm Down », « 07 - Just Nice 3 » tombe à 45 % juste après un coup. **LFO 1 global** :
+  +41 % de calcul sur « ATELIER DEEP HOUSE » entier (chronométré en alternance, 28,0 contre
+  19,9 s). **Glissé en fréquence** (`Voice::render`).
+* Le tableau « Ce qui écrit sur la carte » du manuel avait oublié quatre commandes du
+  7 novembre : complété.
+
+### Pas fait, et pourquoi
+
+* **Étirement, SVF, « tape warble », balayage d'une table d'onde, arpégiateur** : aucun son
+  de sa carte ne s'en sert (`timeStretchEnable="0"` partout, aucun SVF, aucun warble, aucune
+  table d'onde, aucun arpège allumé) — rien d'audible chez lui, rien pour vérifier.
+* Le reste attend la machine, l'utilisateur ou un tiers : voir `ameliorations.md`.
+
+### Pièges rencontrés
+
+1. Le **test de la préparation de l'écoute** a échoué une seconde fois sous la charge de la
+   suite : 300 ms de délai, que la construction de l'atelier dépassait parfois. Délai porté à
+   1,5 s ; la preuve est la même.
+2. Deux tests d'abord **sans pouvoir de preuve** : celui du LFO global passait sans le LFO
+   global — une réverbération partagée, puis `int(2,05 × 44 100)` qui tombe un échantillon
+   trop tôt. Celui du clip d'essai supposait 384 pas par mesure (c'est deux mesures). Chaque
+   correctif essentiel a ensuite été **retiré** pour voir son test échouer.
+3. `sideChainSend` n'était pas lu par le modèle : les morceaux de l'atelier n'envoyaient rien
+   parce que rien ne le portait — il s'écrit désormais s'il n'est pas nul, comme le firmware.
+
+### Vérifié
+
+* Suite complète : **1 352 tests au vert** (272 s ; 791 du cœur, 464 d'interface, 68 de
+  l'atelier, 29 de la traduction), dont 39 nouveaux ; texte anglais et manuel complets.
+* Chaque correctif essentiel **retiré** fait échouer son test : résolution, index,
+  rangement et recalage des noms courts ; rangées souples ; sidechain (source, coups d'une
+  autre piste, réverbération) ; LFO 1 global.
+* Sur sa carte, en copie (réglages, index et copie de travail identiques avant et après) :
+  noms courts, temps d'écoute, sidechain de « Calm Down ».
+* Rendus en PNG à 980 px de l'étape Clips, basse et batterie, défilés ; de la page Morceaux
+  à 980 et 1 360 px — à 980, la colonne « Preset » de l'onglet Clips était écrasée (« ese »,
+  défaut ancien) : les autres colonnes suivent désormais leur contenu.
+
+---
+
+## 3 quinquagies. Toutes les améliorations du relevé (7 novembre 2026)
+
+**La demande** : « Recherche des améliorations que je pourrais apporter au logiciel et
+inscris-les dans un fichier », puis « effectuer toutes les améliorations ». Le relevé est
+`ameliorations.md`, à la racine ; ce qui est fait en a été retiré, il ne garde que ce qui
+reste, avec la raison. Sources du relevé : son `app.log` (10 octobre – 5 novembre), un
+diagnostic de santé sur une **copie** de son index, le code, le manuel et les « reste à
+faire » de ce document.
+
+### Ce que le journal et l'index ont montré
+
+* **Ctrl+R relisait toute la carte** : 117,4 s le 5 novembre à 14 h 14. `_start_scan(full=True)`
+  par défaut ; le bouton n'était incrémental que parce que `guard` lui transmettait le
+  `checked=False` de `clicked`, Ctrl+R et le bandeau appelaient sans argument.
+* **La note de santé bloquée à 92 depuis le 23 octobre** par un faux défaut : 11 « XML réparés »,
+  dont 5 morceaux enregistrés **par la machine** — `<performanceView>` de la bêta 1.3 aux
+  balises numériques (`<8>128</8>`), et le nom d'un contrôleur MIDI appris écrit en 32 octets
+  0xFF (`vendorId="0x1235"`, aussi dans 4 presets « boards of deluge »). L'application n'écrit
+  jamais `<device>` : c'est le firmware. Le conseil affiché (« réenregistrer depuis
+  l'application ») était impossible pour un morceau.
+* **30 kits tirés en moins de trois minutes** le 23 octobre (86 sur la soirée), chaque
+  « Autre son » effaçant le précédent ; **« ATELIER DEEP HOUSE » écrit 7 fois et supprimé
+  6 fois** entre le 22 et le 24 : écrire, écouter sur la machine, supprimer, réécrire.
+* **164 fichiers de `SAMPLES/MULTISAMPLES` (294 Mio) inutilisés** : deux couches d'un Steinway
+  (`A1-1-48.WAV`, `A1-97-127.wav`) et 5 guitares REPHAZER.
+
+### Ce qui a été fait
+
+* **Analyse** : incrémentale par tous les chemins ; [Tout réanalyser] (réglages avancés) ;
+  l'incrémentale mesure aussi les sons restés sans mesures (analyse acoustique cochée après
+  coup) ; mesures acoustiques sur 8 fils (`ANALYSIS_WORKERS`) — 300 sons : 15,2 s sur un fil,
+  5,1 sur 4, 3,8 sur 8, 3,9 sur 12, résultats identiques ; **analyse complète de sa carte
+  117 s → 47,2 s** (copie de l'index, réel intact). `SONG_READER` 3, `PRESET_READER` 2 :
+  presets, kits et morceaux relus une fois — 4,2 s sur sa carte.
+* **Santé** : `dxml.FIRMWARE_QUIRKS`, écartés note par note (un « & » à côté reste signalé) ;
+  sur sa carte, 11 → 3 vrais défauts (le kit Jonathan Snipes mal fermé, deux presets Sonic
+  Bloom aux 70 « & »). La note reste 92 : ces trois-là sont réels.
+* **Inutilisés** : `organize.RECORDING_DIRS` (`audioRecordingFolderNames` de 1.3.0 :
+  `CLIPS`, `RECORD`, `RESAMPLE`, `EXPORTS`) hors de l'archivage, du décompte et de la liste.
+* **Échantillons** : étiquettes (champ, bouton, filtre — `add_tag` n'était appelé nulle
+  part) ; [Annuler un traitement…] (`samplefix.fix_backups`, `restore` garde la version
+  remplacée) ; [Créer un instrument…] ; [Table d'onde…] ; [Sur un pad du Deluge].
+* **Atelier** : défaire/refaire (clone du projet, 2 ms, avant chaque geste ; Ctrl+Z / Ctrl+Y) ;
+  sons essayés et [Reprendre ce son] ; notes d'un synthé au clic (`toggle_note`, qui évite le
+  chevauchement que le Deluge ignore et garde le CV monophonique) ; brouillon (`pickle`,
+  37 Ko, 0,6 ms) repris au lancement, aussi après un changement de langue ; remplacement d'une
+  version écrite par l'atelier, si son SHA-256 n'a pas bougé (ancien dans
+  `_BACKUP/remplaces-…`).
+* **`core/multisample.py`** : règles de `loadAllSamplesInFolder` et `sampleBeenSet`, plus la
+  note lue dans le nom et les couches de vélocité. Contre `rephazer/1. Lite Piano`, construit
+  par la machine : tranches 14/16, zones 14/16 (les deux autres rognées à la main), mode de
+  lecture identique. Steinway : 82 et 77 tranches, convention « C4 = 60 » confirmée à
+  l'écoute.
+* **L'écoute joue enfin les multi-échantillons** (`render._sample_source`) : sans `fileName`
+  propre, ils s'entendaient en dent de scie. Les presets REPHAZER de sa carte en profitent.
+* **`estimate_root_note`** : autocorrélation par FFT et premier pic à 95 % du plus haut.
+  Mesuré sur les 1 073 sons nommés de sa carte : classe juste 1 016 → 1 021, note exacte
+  908 → 943 (seuils 0,80 : 940 ; 0,85 : 929 ; 0,90 : 932), et 13 s pour les 1 073 au lieu de
+  plus d'un quart d'heure (`np.correlate` quadratique).
+* **`core/favourites.py`**, **`core/wavetable.py`** (l'écoute d'une table : le cycle de la
+  position, approché ; la table prise pour un échantillon sonnait à 21 Hz), générateur qui
+  tire une table de `SAMPLES/WAVETABLES` quand il y en a.
+* **Diffusion** : étape `tests` du workflow sur Windows, macOS et Linux (signale, ne bloque
+  pas) ; Aide ▸ [Signaler un problème…] (`ui/report.py`) et `.github/ISSUE_TEMPLATE` ;
+  Aide ▸ [Rechercher une nouvelle version] et la case décochée de Réglages ▸ À propos
+  (`core/updates.py`) ; `CONTRIBUTING.md` (traduire, contribuer) ; signature et essais de
+  l'installateur dans `packaging/LISEZMOI.md`.
+
+### Pas fait, et pourquoi
+
+* **Le sidechain à l'écoute** : le relevé croyait que les morceaux de l'atelier l'écrivent ;
+  ils n'envoient rien (`sideChainSend` absent). Ce sont **les siens** (32 sons dans Calm Down,
+  Cool1…). Le firmware en fait une source de modulation (`modulation/sidechain/sidechain.cpp`,
+  une enveloppe par son déclenchée par les notes des autres, `Sound::render`) : un portage à
+  faire avec un export de pistes de la machine.
+* **Le MIDI hors Windows** : `python-rtmidi` contredit le principe du module, et son paquet pour
+  Python 3.13 sous Linux n'est pas assuré — la construction des trois paquets pourrait casser ;
+  les noms des ports du Deluge sur Mac et Linux ne se mesurent qu'avec la machine.
+* **Les essais sur la machine** (§6 du relevé), **l'installateur** (UAC), **la signature**
+  (SignPath, demande de l'auteur), **une troisième langue** (traducteur), **le découpage des
+  fichiers de tests** (gain faible, risque sur les garde-fous).
+* **Défaut ancien relevé, non corrigé** : à 980 px, l'étape Clips de l'atelier coupe sa grille
+  et ses boutons à droite — déjà dans `c28827d` (rendu comparé).
+
+### Pièges rencontrés
+
+1. **Une minuterie branchée par `guard` a fait planter la suite** (violation d'accès dans
+   `wrapper`, au `tearDown`) : la fermeture enveloppe la page, PyQt ne peut pas la débrancher
+   quand la page meurt. Branchée sur la méthode liée (`save_draft`, qui a son rempart), plus
+   rien ; trouvé en neutralisant tour à tour raccourcis et minuterie. Même règle pour la
+   minuterie de la vérification de version.
+2. **Six correctifs abîmés par des heredocs**, même entre `<<'EOF'` : continuations recollées,
+   `\n` cassé, chemin `r"C:\Users"` refusé. Tous repérés (`awk 'length > 101'`) et refaits ;
+   la mémoire dit désormais « aucun heredoc ».
+3. Mon premier lecteur de noms prenait **la vélocité haute pour un numéro MIDI** (« C2-1-48 » :
+   48 = 36 + 12) ; vu sur ses vrais dossiers, à blanc.
+4. Le test « un nom pris n'est jamais remplacé » fixait l'ancienne règle : il répond désormais
+   « Non » à la nouvelle question et garde sa preuve.
+5. `TestPreparationDeLEcoute.test_fermee_avant_son_depart…` a échoué **une fois** dans la suite
+   complète (course de 300 ms sous charge), jamais seul (3/3) ; la page Atelier se construit
+   en 55 ms avant comme après (rendu comparé à `HEAD`).
+
+### Vérifié
+
+* Chaque correctif essentiel **retiré** fait échouer son test : analyse par le bouton, brouillon
+  à la fermeture, champs ajoutés d'un vieux brouillon, tranche d'un multi-échantillon.
+* Sur sa carte, en lecture seule (copies de l'index, empreintes de `settings.json` et
+  `library.db` identiques avant et après) : santé, analyse complète, plans d'instrument,
+  détection de hauteur.
+* Pages rendues en PNG à 980 et 1 360 px, comparées à `HEAD` : barres d'actions repliées en
+  icônes comme avant, sons essayés, grille de notes, réglages.
+* **1 313 tests au vert** (223 s ; 763 du cœur, 453 d'interface, 68 de l'atelier, 29 de la
+  traduction), dont 53 nouveaux ; texte anglais et manuel complets (les tests de couverture
+  passent). Réglages, index et copie de travail réels intacts.
 
 ---
 

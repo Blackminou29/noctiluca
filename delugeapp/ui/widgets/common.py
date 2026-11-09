@@ -24,6 +24,8 @@ from PyQt6.QtCore import (
     QEvent,
     QObject,
     QModelIndex,
+    QPoint,
+    QRect,
     QRectF,
     QSize,
     QSortFilterProxyModel,
@@ -41,6 +43,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayout,
     QLineEdit,
     QPlainTextEdit,
     QProgressBar,
@@ -1030,6 +1033,105 @@ class RangeeAdaptative(QObject):
             if self._rangee.direction() != sens:
                 self._rangee.setDirection(sens)
         return False
+
+
+class RangeeSouple(QLayout):
+    """Une rangée de boutons qui passe à la ligne quand la place manque.
+
+    Mesuré à 980 px : dans l'étape Clips de l'atelier, la rangée « Nouveau
+    clip, durée, Supprimer le clip, Clip en MIDI… » demandait 556 px pour
+    470 offerts, et le panneau entier, sans défilement horizontal, perdait
+    sa droite — grille, légende et boutons coupés. Ici, ce qui ne tient pas
+    descend d'une ligne. Les éléments cachés ne prennent pas de place.
+    """
+
+    def __init__(self, parent=None, espacement: int = 6) -> None:
+        super().__init__(parent)
+        self._elements: list = []
+        self._espacement = int(espacement)
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, element) -> None:                 # noqa: N802 - API Qt
+        self._elements.append(element)
+
+    def count(self) -> int:
+        return len(self._elements)
+
+    def itemAt(self, index: int):                       # noqa: N802 - API Qt
+        if 0 <= index < len(self._elements):
+            return self._elements[index]
+        return None
+
+    def takeAt(self, index: int):                       # noqa: N802 - API Qt
+        if 0 <= index < len(self._elements):
+            return self._elements.pop(index)
+        return None
+
+    def expandingDirections(self):                      # noqa: N802 - API Qt
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:                # noqa: N802 - API Qt
+        return True
+
+    def heightForWidth(self, largeur: int) -> int:      # noqa: N802 - API Qt
+        return self._ranger(QRect(0, 0, largeur, 0), placer=False)
+
+    def setGeometry(self, rect) -> None:                # noqa: N802 - API Qt
+        super().setGeometry(rect)
+        self._ranger(rect, placer=True)
+
+    def sizeHint(self) -> QSize:                        # noqa: N802 - API Qt
+        """Tout sur une ligne, quand la place le permet."""
+        largeur = hauteur = 0
+        for element in self._visibles():
+            taille = element.sizeHint().expandedTo(element.minimumSize())
+            largeur += taille.width() + (self._espacement if largeur else 0)
+            hauteur = max(hauteur, taille.height())
+        marges = self.contentsMargins()
+        return QSize(largeur + marges.left() + marges.right(),
+                     hauteur + marges.top() + marges.bottom())
+
+    def minimumSize(self) -> QSize:                     # noqa: N802 - API Qt
+        """Le plus large des éléments : c'est tout ce qu'une ligne exige."""
+        taille = QSize()
+        for element in self._visibles():
+            taille = taille.expandedTo(element.minimumSize())
+        marges = self.contentsMargins()
+        return taille + QSize(marges.left() + marges.right(),
+                              marges.top() + marges.bottom())
+
+    def _visibles(self) -> list:
+        return [e for e in self._elements if not e.isEmpty()]
+
+    def _ranger(self, rect, placer: bool) -> int:
+        marges = self.contentsMargins()
+        zone = rect.adjusted(marges.left(), marges.top(),
+                             -marges.right(), -marges.bottom())
+        x, y, ligne = zone.x(), zone.y(), 0
+        en_cours: list = []         # (élément, x, taille) de la ligne
+
+        def poser() -> None:
+            # Chaque élément centré dans la hauteur de sa ligne : un libellé
+            # reste en face de la case qu'il nomme.
+            for element, gauche, taille in en_cours:
+                element.setGeometry(QRect(
+                    QPoint(gauche, y + (ligne - taille.height()) // 2), taille))
+
+        for element in self._visibles():
+            taille = element.sizeHint().expandedTo(element.minimumSize())
+            if x > zone.x() and x + taille.width() > zone.right() + 1:
+                if placer:
+                    poser()
+                en_cours = []
+                x = zone.x()
+                y += ligne + self._espacement
+                ligne = 0
+            en_cours.append((element, x, taille))
+            x += taille.width() + self._espacement
+            ligne = max(ligne, taille.height())
+        if placer:
+            poser()
+        return y + ligne - rect.y() + marges.bottom()
 
 
 class SegmentMeter(QWidget):

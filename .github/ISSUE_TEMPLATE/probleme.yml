@@ -1,0 +1,39 @@
+name: Un problème / A problem
+description: Quelque chose ne marche pas comme prévu — Something does not work as expected
+labels: ["problème"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de le signaler. Le plus simple : **Aide ▸ Signaler un problème…** dans l'application, qui prépare le rapport (version, système, fin du journal) ; collez-le ci-dessous.
+
+        *Thank you for taking the time to report it. The easiest way: **Help ▸ Report a problem…** in the application, which prepares the report (version, system, end of the log); paste it below.*
+  - type: textarea
+    id: rapport
+    attributes:
+      label: Le rapport de l'application / The application's report
+      description: Aide ▸ Signaler un problème… ▸ Copier le rapport — Help ▸ Report a problem… ▸ Copy the report
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: quoi
+    attributes:
+      label: Ce qui s'est passé / What happened
+      description: Les gestes faits, dans l'ordre, et ce que l'application a répondu — The steps taken, in order, and what the application answered
+    validations:
+      required: true
+  - type: textarea
+    id: attendu
+    attributes:
+      label: Ce que vous attendiez / What you expected
+    validations:
+      required: false
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware du Deluge / Deluge firmware
+      description: Le nom du fichier .bin à la racine de la carte, si le Deluge est en cause — The .bin file name at the root of the card, if the Deluge is involved
+      placeholder: deluge-c1_3_0.bin
+    validations:
+      required: false

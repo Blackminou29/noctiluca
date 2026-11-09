@@ -2,6 +2,22 @@
 """Anglais de ``delugeapp/ui/mainwindow.py``."""
 
 TEXTS = {
+    "Signaler un problème…": "Report a problem…",
+    "Rechercher une nouvelle version": "Check for a new version",
+    "Recherche d'une nouvelle version…": "Looking for a new version…",
+    "Nouvelle version": "New version",
+    "La page des versions n'a pas répondu : pas de réseau, ou GitHub "
+    "indisponible. Réessayez plus tard.":
+        "The releases page did not answer: no network, or GitHub "
+        "unavailable. Try again later.",
+    "Vous avez la dernière version : %s %s.":
+        "You have the latest version: %s %s.",
+    "%s %s est disponible.": "%s %s is available.",
+    "%s %s est disponible (vous avez la %s). Ouvrir sa page de "
+    "téléchargement ?":
+        "%s %s is available (you have %s). Open its download page?",
+    "Dans l'atelier : défaire, puis refaire le dernier geste":
+        "In the studio: undo, then redo the last action",
     "Emplacement de la carte — cliquez pour le changer":
         "Card location — click to change it",
     "Rechercher partout…": "Search everywhere…",
@@ -40,6 +56,8 @@ TEXTS = {
         "Expand the column and its labels  (Ctrl+B)",
     "Prêt.": "Ready.",
     "● lecture": "● playing",
+    "● lecture muette": "● playing silently",
+    "Rien ne s'entend : %s.": "Nothing can be heard: %s.",
     "sons": "samples",
     "presets": "presets",
     "kits": "kits",
@@ -87,6 +105,7 @@ TEXTS = {
     "Santé de la carte": "Card health",
     "Deluge en direct": "Deluge Live",
     "Synchroniser avec le Deluge": "Sync with the Deluge",
+    "Firmware du Deluge…": "Deluge firmware…",
     "Replier la barre latérale": "Collapse the sidebar",
     "&Aide": "&Help",
     "Raccourcis clavier": "Keyboard shortcuts",

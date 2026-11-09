@@ -81,6 +81,8 @@ class SettingsPage(Page):
     accentChanged = pyqtSignal(str)
     #: L'index doit être remis à zéro.
     resetIndexRequested = pyqtSignal()
+    #: Une analyse complète, qui relit même les fichiers inchangés.
+    fullScanRequested = pyqtSignal()
     #: Demande d'ouvrir la fenêtre « Deluge en direct ».
     liveRequested = pyqtSignal()
     #: Le niveau de l'interface a changé : « simple » ou « avance ».
@@ -491,6 +493,16 @@ class SettingsPage(Page):
         self._backend_label.setProperty("role", "subtitle")
         form.addRow(tr("Moteur"), self._backend_label)
 
+        # Sans sortie, les écoutes « jouent » en silence : la raison, et le
+        # remède, s'affichent ici.
+        silence = self.player.silence_reason() if self.player else ""
+        self._silence_label = QLabel(
+            tr("Les écoutes resteront muettes : %s.") % silence)
+        self._silence_label.setWordWrap(True)
+        self._silence_label.setStyleSheet(f"color: {PAD_AMBER};")
+        self._silence_label.setVisible(bool(silence))
+        form.addRow("", self._silence_label)
+
         volume_row = QHBoxLayout()
         self._volume = QSlider(Qt.Orientation.Horizontal)
         self._volume.setRange(0, 100)
@@ -858,6 +870,12 @@ class SettingsPage(Page):
                                "et favoris sont conservés."))
         reset.clicked.connect(self.guard(self._reset_index))
         row.addWidget(reset)
+        full = tool_button(tr("Tout réanalyser"), "refresh",
+                           tr("Relit tous les fichiers de la carte, même "
+                              "ceux qui n'ont pas changé : quelques minutes "
+                              "avec l'analyse acoustique."))
+        full.clicked.connect(self.guard(lambda: self.fullScanRequested.emit()))
+        row.addWidget(full)
         row.addStretch(1)
         body.addLayout(row)
 
@@ -1108,7 +1126,19 @@ class SettingsPage(Page):
         config_row.addWidget(open_button)
         body.addLayout(config_row)
 
+        # Décochée par défaut : l'application ne va sur le réseau que si on
+        # le lui demande.
+        self._check_updates = QCheckBox(
+            tr("Vérifier une fois par jour s'il existe une nouvelle version"))
+        self._check_updates.toggled.connect(
+            self.guard(self._apply_check_updates))
+        body.addWidget(self._check_updates)
+
         self._column.addWidget(card)
+
+    def _apply_check_updates(self, checked: bool) -> None:
+        self.ctx.settings.check_updates = bool(checked)
+        self.ctx.save()
 
     def _open_config_dir(self) -> None:
         from PyQt6.QtCore import QUrl
@@ -1128,6 +1158,10 @@ class SettingsPage(Page):
         except Exception as exc:        # noqa: BLE001 - l'état n'est qu'affiché
             log.debug("état de la carte indisponible : %s", exc)
         settings = self.ctx.settings
+
+        self._check_updates.blockSignals(True)
+        self._check_updates.setChecked(bool(settings.check_updates))
+        self._check_updates.blockSignals(False)
 
         self._path_edit.blockSignals(True)
         self._path_edit.setText(settings.sd_path)

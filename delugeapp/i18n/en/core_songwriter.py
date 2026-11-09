@@ -13,6 +13,14 @@ TEXTS = {
         "%s already exists: nothing was written",
     "écriture impossible : %s": "could not write: %s",
     "Nouveau fichier : %s": "New file: %s",
+    "Remplace %s, écrit par l'atelier et inchangé depuis ; l'ancienne "
+    "version est gardée dans _BACKUP":
+        "Replaces %s, written by the studio and unchanged since; the old "
+        "version is kept in _BACKUP",
+    "%s a changé depuis que l'atelier l'a écrit : rien n'est remplacé":
+        "%s has changed since the studio wrote it: nothing is replaced",
+    "ancienne version non mise de côté (%s) : rien n'est remplacé":
+        "old version not set aside (%s): nothing is replaced",
     "Tempo : %g BPM — %d instrument(s), %d clip(s)":
         "Tempo: %g BPM — %d instrument(s), %d clip(s)",
     "Sections : %s": "Sections: %s",

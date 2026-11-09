@@ -39,6 +39,7 @@ TEXTS = {
         "the Deluge would refuse it: %s — converted with no audible loss",
     "le Deluge le refuserait : %s": "the Deluge would refuse it: %s",
     "identique, octet pour octet": "identical, byte for byte",
+    "déjà sur la carte, identique : %s": "already on the card, identical: %s",
     "un fichier différent porte déjà ce nom sur la carte : c'est lui que les "
     "presets du pack joueront":
         "a different file already has this name on the card: it is the one "

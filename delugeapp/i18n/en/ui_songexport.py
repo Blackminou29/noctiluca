@@ -12,6 +12,18 @@ TEXTS = {
     "remplacé.":
         "Write this new file to the card? No existing file is replaced.",
     "Rien n'a été écrit.": "Nothing was written.",
+    "Remplacer le morceau ?": "Replace the song?",
+    "« %s » est le morceau que l'atelier a écrit, et ni vous ni le Deluge ne "
+    "l'avez changé depuis.\n\nOui : la nouvelle version prend sa place ; "
+    "l'ancienne est gardée dans _BACKUP.\nNon : la nouvelle version s'écrit "
+    "à côté, sous un nom numéroté.":
+        "“%s” is the song the studio wrote, and neither you nor the Deluge "
+        "has changed it since.\n\nYes: the new version takes its place; the "
+        "old one is kept in _BACKUP.\nNo: the new version is written next "
+        "to it, under a numbered name.",
+    "Remplacer ce morceau sur la carte ? L'ancienne version est gardée dans "
+    "_BACKUP.":
+        "Replace this song on the card? The old version is kept in _BACKUP.",
     "Morceau non écrit : %s.": "Song not written: %s.",
     "Morceau écrit : %s — %d échantillon(s) absent(s) de la carte. Il se "
     "charge sur le Deluge comme tout autre morceau.":

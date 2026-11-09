@@ -105,6 +105,95 @@ def norm_rel(rel: str) -> str:
     return out.lower()
 
 
+# --------------------------------------------------------------------------- #
+# Noms courts de FAT (8.3)
+# --------------------------------------------------------------------------- #
+
+#: Un nom court numéroté, tel que FAT le fabrique pour un nom long qui ne tient
+#: pas en 8.3 : « CB1-BD~1.WAV » pour « CB1-bdrum1.wav ». Le numéro est
+#: décimal (~1 à ~5), puis, après de nombreuses collisions, hexadécimal
+#: (``gen_numname`` de FatFs).
+_SHORT_NAME_RE = re.compile(
+    r"^([^~.\s]{1,7})~([0-9A-F]{1,7})(?:\.([^.\s]{1,3}))?$", re.I)
+
+
+def _short_field(text: str, limit: int) -> tuple[str, bool]:
+    """Un champ du nom court (corps ou extension) et s'il y a eu perte."""
+    out: list[str] = []
+    lossy = False
+    for ch in text:
+        if ch in " .":                       # espaces et points intérieurs ôtés
+            lossy = True
+            continue
+        if len(out) >= limit:
+            return "".join(out), True
+        if ch in "+,;=[]":
+            out.append("_")
+            lossy = True
+            continue
+        up = ch.upper()
+        if ord(ch) >= 0x80:
+            try:
+                up.encode("cp437")           # la page de code du Deluge
+            except UnicodeEncodeError:
+                up, lossy = "_", True
+        out.append(up)
+    return "".join(out), lossy
+
+
+def short_name_basis(name: str) -> tuple[str, str, bool]:
+    """Corps (8 caractères au plus), extension (3 au plus) du nom court que
+    FAT tire du nom long ``name``, et s'il a fallu en perdre — c'est alors
+    seulement que FAT le numérote. Règles de ``create_name`` dans FatFs, le
+    système de fichiers du firmware (``src/fatfs/ff.c``) : espaces et points
+    intérieurs retirés, ``+,;=[]`` changés en ``_``, minuscules relevées."""
+    lfn = name.rstrip(" .")
+    lossy = False
+    trimmed = lfn.lstrip(" ")
+    if trimmed != lfn or trimmed.startswith("."):
+        lossy = True
+    dot = trimmed.rfind(".")
+    if dot > 0:
+        body_src, ext_src = trimmed[:dot], trimmed[dot + 1:]
+    else:
+        body_src, ext_src = trimmed, ""
+    body, lost_body = _short_field(body_src, 8)
+    ext, lost_ext = _short_field(ext_src, 3)
+    return body, ext, lossy or lost_body or lost_ext
+
+
+def is_short_name(name: str) -> bool:
+    """Vrai si ``name`` a la forme d'un nom court numéroté (``XXXXXX~N.EXT``)."""
+    return bool(_SHORT_NAME_RE.match(name or ""))
+
+
+def short_name_matches(alias: str, name: str) -> bool:
+    """Vrai si FAT a pu donner le nom court ``alias`` au nom long ``name``.
+
+    Le numéro, lui, dépend de l'ordre de création des fichiers sur la carte :
+    deux noms longs qui commencent pareil répondent tous deux ici, et seul le
+    répertoire de la carte saurait les départager.
+    """
+    match = _SHORT_NAME_RE.match(alias or "")
+    if not match:
+        return False
+    prefix, tail, ext = match.group(1).upper(), match.group(2), \
+        (match.group(3) or "").upper()
+    body, long_ext, lossy = short_name_basis(name)
+    if not lossy or long_ext != ext:
+        return False
+    # Le numéro s'écrit au bout du corps, sans dépasser huit caractères.
+    cut = min(len(body), 8 - 1 - len(tail))
+    return body[:cut] == prefix
+
+
+def short_name_target(alias: str, names) -> str | None:
+    """Le seul nom de ``names`` que le nom court ``alias`` peut désigner, ou
+    ``None`` s'il n'y en a aucun, ou plusieurs (rien ne permet de choisir)."""
+    found = [n for n in names if short_name_matches(alias, n)]
+    return found[0] if len(found) == 1 else None
+
+
 def _is_ignored_dir(name: str) -> bool:
     """Vrai si ce nom de dossier doit être écarté de tout parcours."""
     low = name.lower()
@@ -393,6 +482,12 @@ class SDCard:
         La résolution est insensible à la casse, segment par segment : sans
         cela, la détection d'échantillons manquants produit des centaines de
         faux positifs (cf. SPEC §1.7).
+
+        Un segment peut aussi être un **nom court** de FAT (« CB1-BD~1.WAV »),
+        que le Deluge retrouve (``ff.c``, « SFN matched? ») : un kit d'usine
+        en cite. Il est rapporté au seul nom long qu'il peut désigner, sans
+        se fier aux noms courts que Windows fabrique de son côté — un Mac, un
+        Linux ou une simple copie n'en ont pas, ou pas les mêmes.
         """
         clean = str(rel or "").replace("\\", "/").strip("/")
         if not clean:
@@ -403,12 +498,14 @@ class SDCard:
             return None
 
         # Le chemin peut déjà être correct : un seul appel système suffit alors.
-        direct = self.abs(clean)
-        try:
-            if direct.exists():
-                return direct
-        except OSError:
-            return None
+        # Pas avec un « ~ » : Windows y répondrait par son propre nom court.
+        if "~" not in clean:
+            direct = self.abs(clean)
+            try:
+                if direct.exists():
+                    return direct
+            except OSError:
+                return None
 
         parts = [seg for seg in clean.split("/") if seg and seg != "."]
         if not parts:
@@ -416,7 +513,10 @@ class SDCard:
 
         current = ""
         for seg in parts:
-            real = self._listing(current).get(seg.lower())
+            listing = self._listing(current)
+            real = listing.get(seg.lower())
+            if real is None and is_short_name(seg):
+                real = short_name_target(seg, listing.values())
             if real is None:
                 return None
             current = f"{current}/{real}" if current else real

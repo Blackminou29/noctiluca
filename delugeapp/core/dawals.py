@@ -33,6 +33,11 @@ les premières sont gardées, l'arrangement restant complet. Mesuré sur Live
 12.4.16 Lite : un set de 9 pistes ouvre « Ce Set contient des
 fonctionnalités qui sont limitées ou indisponibles dans Ableton Live 12
 Lite. 9 pistes ; (limité à 8) » ; douze scènes passent sans avertissement.
+
+Une piste dont l'instrument écoute un canal sur la machine
+(:attr:`delugeapp.core.daw.DawTrack.listens`, une copie « DAW ») sort déjà
+vers le Deluge, sur ce canal (:data:`DELUGE_OUT`) : Live la joue sans
+réglage.
 """
 
 from __future__ import annotations
@@ -53,7 +58,7 @@ from ..i18n import tr, untranslated
 log = logging.getLogger(__name__)
 
 __all__ = ["TemplateMissing", "EDITIONS", "LiveInstall", "find_live",
-           "write_als", "template_problem"]
+           "write_als", "template_problem", "DELUGE_OUT"]
 
 #: Pistes audio et MIDI, scènes : les limites de chaque édition de Live 12,
 #: d'après le tableau d'Ableton (https://www.ableton.com/en/upgrade-live/,
@@ -82,6 +87,15 @@ _LIVE_DIRS, _PROGRAM_FILES, _RESOURCES_GLOB, _EXE_GLOB, _VERSION = \
 #: orange, ambre, jaune, vert, menthe, cyan, bleu, indigo, violet, magenta,
 #: rose — les teintes des pads du Deluge, dans leur ordre.
 _COLOURS = (14, 1, 2, 4, 6, 10, 11, 12, 13, 24, 22, 15)
+
+#: La sortie « Deluge » d'une piste MIDI, telle que Live l'enregistre :
+#: mesuré le 9 novembre 2026 sur un set routé à la main dans Live 12.4.16
+#: Lite, sous Windows 11 (pilote USB MIDI 2 de Windows) — l'identifiant USB
+#: de la machine (16D0:0CE2), son premier port (« out-0 »), puis le canal
+#: compté depuis 0 ; Live affiche « Deluge » et « Ch. 2 ». Sur un autre
+#: système, l'identifiant peut différer (non mesuré).
+DELUGE_OUT, _DELUGE_NAME, _DELUGE_CHANNEL = untranslated((
+    "MidiOut/External.Dev:Deluge{16D0-0CE2-0-out-0}/%d", "Deluge", "Ch. %d"))
 
 
 class TemplateMissing(Exception):
@@ -293,6 +307,18 @@ def _set(el: ET.Element, path: str, value) -> None:
     cible = el.find(path)
     if cible is not None:
         cible.set("Value", str(value))
+
+
+def _route_to_deluge(piste: ET.Element, canal: int) -> bool:
+    """« MIDI To » : la piste sort vers le Deluge, sur ``canal`` (0–15).
+    ``False`` si le modèle de piste n'a pas de sortie MIDI à régler."""
+    sortie = piste.find("DeviceChain/MidiOutputRouting")
+    if sortie is None or sortie.find("Target") is None:
+        return False
+    _set(sortie, "Target", DELUGE_OUT % canal)
+    _set(sortie, "UpperDisplayString", _DELUGE_NAME)
+    _set(sortie, "LowerDisplayString", _DELUGE_CHANNEL % (canal + 1))
+    return True
 
 
 def _fmt(x: float) -> str:
@@ -507,6 +533,7 @@ def write_als(song, path: Path, audio: dict[int, str] | None = None,
                        % (live.edition, plafond, total - plafond))
         entrees = entrees[:plafond]
         sons = sons[:plafond - len(entrees)]
+    routees = 0
     for rang, (index, track) in enumerate(entrees):
         piste = copy.deepcopy(modeles.midi_track)
         prochain = _renumber(piste, prochain)
@@ -516,6 +543,9 @@ def write_als(song, path: Path, audio: dict[int, str] | None = None,
         _set(piste, "Name/EffectiveName", track.name[:60])
         _set(piste, "Name/UserName", track.name[:60])
         _set(piste, "Color", couleur)
+        if getattr(track, "listens", None) is not None \
+                and _route_to_deluge(piste, track.listens):
+            routees += 1
         cases = _slots(piste, nb_scenes)
         for s, ci in track.scenes.items():
             if s < len(cases) and 0 <= ci < len(track.clips):
@@ -575,6 +605,7 @@ def write_als(song, path: Path, audio: dict[int, str] | None = None,
     tmp.replace(cible)
     if notes is not None:
         notes.extend(laisses)
-    log.info("set Live écrit : %s (%d pistes, %d scènes, Live %s %s)", cible,
-             len(entrees) + len(sons), nb_scenes, live.version, live.edition)
+    log.info("set Live écrit : %s (%d pistes, %d scènes, %d vers le Deluge, "
+             "Live %s %s)", cible, len(entrees) + len(sons), nb_scenes,
+             routees, live.version, live.edition)
     return cible

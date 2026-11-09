@@ -41,19 +41,27 @@ TEXTS = {
         "Track for input and output.",
     "Nouveau fichier : %s": "New file: %s",
     "Pour chaque piste du tableau : une piste MIDI dans Live, « MIDI To » "
-    "sur le Deluge, et le canal indiqué.":
+    "sur le Deluge, et le canal indiqué. Le set Live exporté de cette copie "
+    "(Vers le DAW) est déjà réglé ainsi.":
         "For each track in the table: a MIDI track in Live, \"MIDI To\" set "
-        "to the Deluge, and the channel shown.",
+        "to the Deluge, and the channel shown. The Live set exported from "
+        "this copy (To the DAW) is already set up that way.",
     "Pour chaque piste du tableau : une piste MIDI du DAW qui sort vers le "
     "Deluge, sur le canal indiqué.":
         "For each track in the table: a DAW MIDI track that outputs to the "
         "Deluge, on the channel shown.",
-    "Pour que le Deluge suive le tempo de Live : cochez aussi Sync en "
-    "sortie ; pour que Live suive le Deluge : Sync en entrée, et réglez "
-    "Live sur l'horloge externe (bouton EXT).":
-        "For the Deluge to follow Live's tempo: also tick Sync for output; "
-        "for Live to follow the Deluge: Sync for input, and set Live to the "
-        "external clock (EXT button).",
+    "Pour que Live suive le Deluge : cochez aussi Sync en entrée, puis "
+    "allumez le bouton EXT, en haut à gauche de Live. Pour que le Deluge "
+    "suive Live : Sync en sortie.":
+        "For Live to follow the Deluge: also tick Sync for input, then turn "
+        "on the EXT button, at the top left of Live. For the Deluge to "
+        "follow Live: Sync for output.",
+    "Sous Windows 11, le firmware 1.3 du Deluge ne suit pas l'horloge d'un "
+    "DAW : le pilote MIDI de Windows l'envoie sous une forme que ce firmware "
+    "écarte. Faites mener le Deluge (Clock ▸ Output) et suivre le DAW.":
+        "On Windows 11, the Deluge's firmware 1.3 does not follow a DAW's "
+        "clock: the Windows MIDI driver sends it in a form this firmware "
+        "discards. Let the Deluge lead (Clock ▸ Output) and the DAW follow.",
     "Pour suivre le tempo du DAW : SETTINGS ▸ MIDI ▸ Clock ▸ Input sur ON. "
     "Pour le mener : Clock ▸ Output sur ON.":
         "To follow the DAW's tempo: SETTINGS ▸ MIDI ▸ Clock ▸ Input ON. To "

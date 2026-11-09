@@ -867,6 +867,9 @@ class Sound:
     comp_sync_level: int = 6
     comp_attack: int = 327244
     comp_release: int = 936
+    #: Force du coup que chaque note envoie au sidechain (``sideChainSend``,
+    #: 0 : aucun) — la grosse caisse qui fait pomper les autres sons.
+    side_chain_send: int = 0
     firmware: str = ""
 
     # -- accès aux paramètres -------------------------------------------
@@ -909,6 +912,7 @@ class Sound:
         snd.clipping_amount = _int(el, "clippingAmount", 0)
         snd.max_voices = _int(el, "maxVoices", 0)
         snd.transpose = _int(el, "transpose", 0)
+        snd.side_chain_send = _int(el, "sideChainSend", 0)
         snd.firmware = _txt(el, "firmwareVersion", "")
 
         for attr, tag in (("osc1", "osc1"), ("osc2", "osc2")):
@@ -1004,6 +1008,9 @@ class Sound:
             _set(el, "maxVoices", self.max_voices, dialect)
         if self.transpose or _has(el, "transpose"):
             _set(el, "transpose", self.transpose, dialect)
+        # Comme le firmware (``Sound::writeToFile``) : écrit s'il n'est pas nul.
+        if self.side_chain_send or _has(el, "sideChainSend"):
+            _set(el, "sideChainSend", self.side_chain_send, dialect)
 
         self.osc1.to_xml(dxml.ensure_child(el, "osc1"), dialect)
         self.osc2.to_xml(dxml.ensure_child(el, "osc2"), dialect)

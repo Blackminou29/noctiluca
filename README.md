@@ -73,8 +73,8 @@ without showing you the plan first.
 **Download** the file for your system from the
 [Releases page](https://github.com/Blackminou29/noctiluca/releases/latest):
 the Windows installer, the macOS disk image (Apple silicon) or the Linux
-AppImage. The interface starts in French: choose **Langue ▸ English** once,
-and it stays in English. The live link with a connected Deluge (screen mirror,
+AppImage. The interface starts in English; it is also available in French
+(**Language ▸ Français**), and the choice is kept. The live link with a connected Deluge (screen mirror,
 card over USB, live play) is Windows-only; on macOS and Linux, read the card
 with a card reader. The packages are not signed: on first launch, Windows may
 show "Windows protected your PC" (*More info ▸ Run anyway*), and macOS may
@@ -377,7 +377,7 @@ de « Faire signe » reste dessous. Seul un geste sur la machine le réveille
 | **Échantillons** | `Ctrl+5` | parcourir, écouter, filtrer les 1700+ échantillons ; tempo, tonalité et catégorie détectés ; étiquettes et notes ; **traitement par lot** (mono, normalisation, rééchantillonnage, fondus) |
 | **Presets** | `Ctrl+6` | inspecter les presets de synthé : oscillateurs, filtre, enveloppes, modulations, échantillons employés ; les utiliser dans l'atelier |
 | **Kits** | `Ctrl+7` | voir les kits pad par pad, repérer les pads muets ou cassés ; les utiliser dans l'atelier |
-| **Morceaux** | `Ctrl+8` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; l'ouvrir dans l'atelier ; export MIDI et rassemblement des dépendances |
+| **Morceaux** | `Ctrl+8` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; l'écouter, clip par clip ou en entier ; l'ouvrir dans l'atelier ; export MIDI et rassemblement des dépendances |
 | **DAW** | `Ctrl+9` | le pont avec votre logiciel de musique, au choix : un morceau **vers le DAW** (set Ableton Live, MIDI, DAWproject, Reaper, pistes audio), un projet **depuis le DAW** (MIDI, set Ableton Live, DAWproject, Reaper) en nouveau morceau, ou **jouer ensemble** — le DAW joue les sons du Deluge, chaque piste sur son canal |
 | **Santé** | `Ctrl+0` | diagnostic complet, réparation guidée, rangement, sauvegarde |
 | **Réglages** | `Ctrl+,` | carte SD, audio, analyse, niveau de l'interface, apparence, sauvegardes |
@@ -479,6 +479,25 @@ occupe le double de place.
 
 ---
 
+## Un instrument depuis un dossier de notes
+
+Un piano échantillonné note par note ne joue rien tant qu'aucun preset ne le
+porte. **Créer un instrument…**, sur la page *Échantillons*, en fait un preset
+**multi-échantillon** : une tranche du clavier par son, jusqu'à mi-chemin du
+suivant, comme le Deluge le ferait. La hauteur vient du **nom** du fichier
+(« A1 », « Db4 », « (C#3)_61 ») — la convention d'octave tranchée à l'écoute —,
+sinon du fichier ou de l'écoute ; une couche de vélocité (« A1-97-127 »)
+devient un preset à part. Comparé à un preset fait par la machine, les tranches
+sont identiques sur 14 sons sur 16.
+
+En mode avancé, **Table d'onde…** tire d'un son tenu une table pour le moteur
+WAVETABLE du Deluge (64 cycles de 2 048 points) ; le Générateur s'en sert
+ensuite. Et **Sur un pad du Deluge** pose un son parmi les favoris du
+navigateur de la machine — ceux qu'on y pose reviennent en favoris dans
+l'application.
+
+---
+
 ## Retrouver un son par ressemblance
 
 Sur 1 700 échantillons, le nom et le dossier ne suffisent plus. Sélectionnez
@@ -497,7 +516,8 @@ ressemble à l'oreille, pas ce qui est rangé ensemble.
 Cette recherche demande que l'**analyse acoustique** ait tourné (une case dans
 *Réglages*). Elle allonge la première analyse d'une carte — comptez trois
 minutes pour 1 700 échantillons au lieu d'une — puis les analyses suivantes ne
-relisent que ce qui a changé.
+relisent que ce qui a changé. L'analyse acoustique tourne sur plusieurs fils :
+une carte de 1 750 sons se relit en entier en 47 s.
 
 ---
 
@@ -579,8 +599,9 @@ style**, tout ce qui crée — du choix des sons à l'arrangement —, en **cinq
    décalé, autres notes, plus ou moins de notes, réponse, octave, fin de
    phrase ; pour la batterie, ornements, roulement, cassure, demi-temps,
    montée. Toujours dans la gamme, toujours parentes de l'original. La
-   batterie **se dessine au clic** ; en mode avancé, groove, rythmes
-   euclidiens et style de jeu des accords et de la basse.
+   batterie **se dessine au clic**, les notes d'un synthé aussi ; en mode
+   avancé, groove, rythmes euclidiens et style de jeu des accords et de la
+   basse.
 4. **Structure** — une grille pistes × sections, la structure du genre en un
    clic.
 5. **Deluge** — **Écrire le morceau** : un morceau neuf, sections et
@@ -594,6 +615,13 @@ morceaux (les derniers reçus du Deluge en tête) ; *Compléter le morceau* en
 contient **octet pour octet**, plus vos pistes, vos clips et vos sections :
 le fichier est relu et la preuve refaite avant d'écrire, et l'original n'est
 jamais touché.
+
+**Rien ne se perd.** *Défaire* et *Refaire* (Ctrl+Z, Ctrl+Y) remontent chaque
+geste, jusqu'à un morceau recomposé ; les sons qu'« Autre son » a remplacés
+restent dans la liste des **sons essayés** ; le morceau en cours est gardé sur
+l'ordinateur et revient au lancement suivant. Une version écrite par l'atelier
+et restée telle quelle peut être **remplacée** au lieu d'être numérotée — à
+votre demande, l'ancienne gardée dans `_BACKUP`.
 
 ---
 
@@ -616,8 +644,11 @@ Deux garanties utiles :
   réglages (`core/paramlaws.py`) et le traitement du signal (`core/dsp.py`),
   formes d'onde, filtres en échelle, saturation, FM, effets et
   réverbération, vérifiés contre des transcriptions entières de son code.
-  Restent approchés la lecture des échantillons et le LFO 1, qui repart à
-  chaque note.
+  Le sidechain — la grosse caisse qui fait pomper les autres sons et la
+  réverbération —, le LFO 1 global et le glissé en fréquence y sont depuis
+  le 8 novembre 2026. Restent approchés l'étirement des échantillons, le
+  SVF, le « tape warble » et le balayage d'une table d'onde, dont aucun son
+  de la carte ne se sert.
 
 La même mécanique produit des kits de batterie complets, en choisissant parmi
 les échantillons de la carte ceux qui correspondent aux rôles du genre.
@@ -657,12 +688,19 @@ delugeapp/
     paramlaws.py         les lois des réglages du Deluge, lues dans son firmware
     dsp.py               son traitement du signal, porté (tables : data/)
     soundedit.py         les réglages d'un son, modifiables à la main
+    multisample.py       un instrument multi-échantillon depuis un dossier
+    wavetable.py         des tables d'onde pour le moteur WAVETABLE
+    favourites.py        les favoris du navigateur de la machine
+    updates.py           une version plus récente ? (seulement sur demande)
+    firmware.py          préparer la carte pour un nouveau firmware (sans flasher)
   ui/
     mainwindow.py        assemblage des dix pages
     theme.py icons.py    identité graphique, icônes dessinées à la main
     art.py               treillis de circuits et pads du guide, au QPainter
     tasks.py             travaux longs hors du fil de l'interface
     songexport.py        parcours commun des boutons « en morceau »
+    report.py            signaler un problème : un rapport à relire
+    firmwaredialog.py    Outils ▸ Firmware du Deluge…
     livewindow.py        « Deluge en direct » : écran, tempo, son sélectionné
     cardwork.py          la copie de travail tenue à l'image de la carte
     sendfiles.py         glisser-déposer, plan et copie vers le Deluge
@@ -672,10 +710,10 @@ delugeapp/
     widgets/             façade (écran, pads de navigation), potentiomètre,
                          enveloppe, forme d'onde, pads, piano…
 tests/
-  test_core.py           677 tests du cœur
-  test_ui.py             410 tests d'interface, dont ceux du manuel
-  test_i18n.py           29 tests de la traduction
-  test_atelier.py        60 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
+  test_core.py           797 tests du cœur
+  test_ui.py             464 tests d'interface, dont ceux du manuel
+  test_i18n.py           30 tests de la traduction
+  test_atelier.py        68 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
   deluge_simule.py       un Deluge simulé, qui répond comme la vraie machine
 SPEC.md                  contrat d'architecture : formats, règles, budgets
 ```
@@ -692,7 +730,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-1 184 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+1 359 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

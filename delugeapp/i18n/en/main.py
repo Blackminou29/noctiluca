@@ -7,6 +7,10 @@ TEXTS = {
     "mais l'action en cours a échoué. Le détail est dans le journal.":
         "An unexpected error occurred.\n\nThe application stays open, but the "
         "current action failed. The details are in the log.",
+    "Signaler ce problème…": "Report this problem…",
+    "Ouvre le rapport, détail de l'erreur compris, à relire avant tout envoi":
+        "Opens the report, error details included, to read through before "
+        "anything is sent",
     "Noctiluca — gestion de carte SD, génération de presets et outils "
     "de composition pour Synthstrom Deluge.":
         "Noctiluca — SD card management, preset generation and "
