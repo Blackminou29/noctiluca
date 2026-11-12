@@ -9536,6 +9536,1237 @@ class TestLAtelierGardeLeTravail(AtelierCase):
 
 
 # --------------------------------------------------------------------------- #
+# L'atelier : écouter en boucle, dessiner, choisir, retrouver ses morceaux
+# (10 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+class _FauxLecteur:
+    """Un lecteur audio qui note ce qu'on lui fait jouer, sans rien sortir."""
+
+    available = True
+
+    def __init__(self):
+        self.joues = []          # (trames, fréquence, en boucle)
+        self.remplaces = []      # trames échangées en place, boucle en cours
+        self.is_playing = False
+        self.lu = 0.0            # secondes « écoulées »
+        self.arrets = 0
+        self._courant = None     # (trames, en boucle) de ce qui joue
+
+    def set_volume(self, _volume):
+        pass
+
+    def play_array(self, data, sample_rate, loop=False):
+        self.joues.append((np.asarray(data), int(sample_rate), bool(loop)))
+        self._courant = (np.asarray(data), bool(loop))
+        self.is_playing = True
+
+    def replace_array(self, data, sample_rate):
+        """Comme le vrai lecteur : seulement une boucle en cours, et de
+        même durée."""
+        if not self.is_playing or self._courant is None \
+                or not self._courant[1] \
+                or np.asarray(data).shape != self._courant[0].shape:
+            return False
+        self.remplaces.append(np.asarray(data))
+        self._courant = (np.asarray(data), True)
+        return True
+
+    def stop(self):
+        self.is_playing = False
+        self._courant = None
+        self.arrets += 1
+
+    def position(self):
+        return self.lu
+
+    def silence_reason(self):
+        return ""
+
+
+class TestLeStyleSuitLeMorceau(AtelierCase):
+    """L'étape Style montre le morceau en cours, pas ses réglages d'avant.
+
+    Vu le 10 novembre 2026 sur le brouillon de l'utilisateur : un morceau de
+    deep house à 120 BPM, repris au lancement, sous une étape Style restée
+    sur « Techno, 136 BPM ». [Recomposer] aurait changé de genre, et le
+    compteur de tempo mentait.
+    """
+
+    def test_un_morceau_repris_au_lancement_montre_son_style(self):
+        from delugeapp.ui.pages.atelier import AtelierPage
+
+        page = self._page()
+        self._clic(page._genre_buttons["deep_house"])
+        page._bpm.setValue(121)
+        page._root.setCurrentIndex(2)                 # ré
+        page._scale.setCurrentIndex(page._scale.findData("dorien"))
+        self._clic(page._part_checks["Mélodie"])      # sans mélodie
+        self._clic(page._compose_button)
+        page.save_draft()
+
+        seconde = self.open(AtelierPage)
+        projet = seconde._project
+        self.assertEqual(projet.style.genre, "deep_house")
+        self.assertTrue(seconde._genre_buttons["deep_house"].isChecked())
+        self.assertFalse(seconde._genre_buttons["techno"].isChecked())
+        self.assertEqual(seconde._bpm.value(), 121)
+        self.assertEqual(projet.style.tempo(), 121)
+        self.assertEqual(seconde._root.currentIndex(), 2)
+        self.assertEqual(seconde._scale.currentData(), "dorien")
+        self.assertFalse(seconde._part_checks["Mélodie"].isChecked())
+        self.assertTrue(seconde._part_checks["Basse"].isChecked())
+        self.assertFalse(seconde._style_note.isVisibleTo(seconde))
+        # Recomposer garde donc le genre, sans qu'on y touche.
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        seconde.show_step(0)
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            self._clic(seconde._compose_button)
+        self.assertEqual(seconde._project.style.genre, "deep_house")
+        self.assertEqual(seconde._project.style.tempo(), 121)
+
+    def test_defaire_un_tempo_rend_le_compteur(self):
+        page = self._page()
+        projet = self._composer(page)
+        avant = int(projet.style.tempo())
+        self._onglet(page, 0)
+        page._bpm.setValue(avant + 9)
+        self.assertEqual(page._project.style.tempo(), avant + 9)
+        self._clic(page._undo_button)
+        self.assertEqual(page._project.style.tempo(), avant)
+        self.assertEqual(page._bpm.value(), avant)
+
+    def test_defaire_une_recomposition_rend_le_style(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        page = self._page()
+        self._composer(page, genre="house")
+        tempo = page._bpm.value()
+        self._onglet(page, 0)
+        self._clic(page._genre_buttons["dnb"])
+        # Choisir un genre prépare le morceau suivant : celui en cours garde
+        # son tempo (avant, chaque pad essayé le changeait).
+        self.assertEqual(page._project.style.tempo(), tempo)
+        self.assertEqual(page._bpm.value(), tempo)
+        self.assertIn("tempo du genre", page._style_note.text())
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            self._clic(page._compose_button)
+        self.assertEqual(page._project.style.genre, "dnb")
+        bas, haut = genres.genre("dnb").bpm
+        self.assertEqual(page._bpm.value(), int(round((bas + haut) / 2.0)))
+        self.assertEqual(page._project.style.tempo(), page._bpm.value())
+        self._clic(page._undo_button)
+        self.assertEqual(page._project.style.genre, "house")
+        self.assertTrue(page._genre_buttons["house"].isChecked())
+        self.assertEqual(page._bpm.value(), tempo)
+
+    def test_un_tempo_regle_l_emporte_sur_celui_du_genre(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        page = self._page()
+        self._composer(page, genre="house")
+        self._onglet(page, 0)
+        self._clic(page._genre_buttons["dnb"])
+        page._bpm.setValue(150)
+        self.assertNotIn("tempo du genre", page._style_note.text())
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            self._clic(page._compose_button)
+        self.assertEqual((page._project.style.genre,
+                          page._project.style.tempo()), ("dnb", 150))
+
+    def test_un_morceau_de_la_carte_prend_le_genre_choisi(self):
+        """Le fichier ne dit pas son genre : celui du pad devient le sien,
+        pour ses sons et ses clips neufs — sans toucher à son tempo."""
+        page = self._page()
+        self.assertTrue(page.open_song("SONGS/M.XML"))
+        tempo = page._project.style.tempo()
+        self._onglet(page, 0)
+        self._clic(page._genre_buttons["house"])
+        self.assertEqual(page._project.style.genre, "house")
+        self.assertEqual(page._project.style.tempo(), tempo)
+        self.assertIn("House", self.messages[-1])
+        self._clic(page._undo_button)
+        self.assertNotEqual(page._project.style.genre, "house")
+
+    def test_un_morceau_de_la_carte_donne_son_tempo(self):
+        page = self._page()
+        self._clic(page._genre_buttons["dnb"])
+        self.assertTrue(page.open_song("SONGS/M.XML"))
+        self.assertEqual(page._bpm.value(),
+                         int(round(page._project.style.tempo())))
+        self.assertEqual(page._root.currentIndex(),
+                         page._project.style.root % 12)
+        # Le genre, que le fichier ne dit pas, reste celui qu'on a choisi.
+        self.assertTrue(page._genre_buttons["dnb"].isChecked())
+
+
+class EcouteCase(AtelierCase):
+    """L'atelier, avec un lecteur qui note ce qu'on lui fait jouer."""
+
+    def setUp(self):
+        super().setUp()
+        self.lecteur = _FauxLecteur()
+        self.ctx.player = self.lecteur
+
+    def _clip_de(self, page, partie="Basse"):
+        self._onglet(page, 2)
+        piste = self._piste(page, partie, page._clip_tracks)
+        self._choisir(page._clip_list, 0)
+        return piste, page._clip()
+
+    def _joue(self):
+        """Attend le rendu, et rend ``(trames, en boucle)`` de ce qui joue."""
+        self.assertTrue(_attendre_les_fils(lambda: bool(self.lecteur.joues)),
+                        "rien n'a été joué")
+        audio, frequence, boucle = self.lecteur.joues[-1]
+        self.assertEqual(frequence, 44100)
+        return audio, boucle
+
+
+class TestLAtelierEcouteEnBoucle(EcouteCase):
+    """[En boucle], la tête de lecture, [Arrêter], [Avec le morceau]."""
+
+    def test_le_clip_tourne_en_boucle_et_en_mesure(self):
+        page = self._page()
+        projet = self._composer(page)
+        _piste, clip = self._clip_de(page)
+        self.assertTrue(page._loop_button.isChecked())
+        self._clic(page._listen_clip_button)
+        audio, boucle = self._joue()
+        self.assertTrue(boucle)
+        tempo = projet.style.tempo()
+        self.assertEqual(audio.shape[0],
+                         round(clip.bars * 4 * 60.0 / tempo * 44100))
+        # La tête de lecture suit le lecteur, dans la grille du clip.
+        self.lecteur.lu = 0.5
+        _pump(150)
+        pas = 0.5 / (60.0 / tempo / 4.0)
+        self.assertAlmostEqual(page._clip_view._playhead, pas % clip.steps,
+                               places=3)
+        # Au second tour, elle repart du début.
+        self.lecteur.lu = clip.bars * 4 * 60.0 / tempo + 0.25
+        _pump(150)
+        self.assertAlmostEqual(page._clip_view._playhead,
+                               0.25 / (60.0 / tempo / 4.0), places=2)
+        self._clic(page._stop_button)
+        self.assertFalse(self.lecteur.is_playing)
+        self.assertIsNone(page._clip_view._playhead)
+
+    def test_sans_boucle_le_clip_joue_une_fois_avec_sa_queue(self):
+        page = self._page()
+        projet = self._composer(page)
+        _piste, clip = self._clip_de(page)
+        self._clic(page._loop_button)
+        self.assertFalse(page._loop_button.isChecked())
+        self.assertEqual(self.messages[-1], "L'écoute joue une fois.")
+        # Un seul réglage : le bouton de l'étape Structure le montre aussi.
+        self.assertFalse(page._loop_section_button.isChecked())
+        self._clic(page._listen_clip_button)
+        audio, boucle = self._joue()
+        self.assertFalse(boucle)
+        mesure = round(clip.bars * 4 * 60.0 / projet.style.tempo() * 44100)
+        self.assertGreater(audio.shape[0], mesure,
+                           "la queue du son a été coupée")
+        # La dernière mesure passée, la tête de lecture s'efface.
+        self.lecteur.lu = audio.shape[0] / 44100.0 - 0.01
+        _pump(150)
+        self.assertIsNone(page._clip_view._playhead)
+
+    def test_arreter_pendant_le_calcul_ne_joue_rien(self):
+        """Avant, le son partait une seconde après qu'on l'avait arrêté."""
+        page = self._page()
+        self._composer(page)
+        self._clip_de(page)
+        self._clic(page._listen_clip_button)
+        self._clic(page._stop_button)
+        self.assertTrue(_attendre_les_fils(lambda: True))
+        _pump(100)
+        self.assertEqual(self.lecteur.joues, [])
+
+    def test_deux_ecoutes_coup_sur_coup_n_en_jouent_qu_une(self):
+        page = self._page()
+        self._composer(page)
+        self._clip_de(page)
+        self._clic(page._listen_clip_button)
+        self._clic(page._listen_clip_button)
+        self._joue()
+        self.assertTrue(_attendre_les_fils(lambda: True))
+        _pump(100)
+        self.assertEqual(len(self.lecteur.joues), 1)
+
+    def test_arreter_un_son_en_calcul_ne_joue_rien(self):
+        """Le rendu d'un son seul ne sait pas s'interrompre : il va au bout,
+        et c'est son numéro d'écoute, dépassé, qui l'empêche de jouer."""
+        page = self._page()
+        self._composer(page)
+        self._onglet(page, 1)
+        self._piste(page, "Basse", page._track_list)
+        self._clic(page._listen_sound_button)
+        self._clic(page._stop_button)
+        self.assertTrue(_attendre_les_fils(lambda: True))
+        _pump(100)
+        self.assertEqual(self.lecteur.joues, [])
+        self.assertNotIn("Rien à écouter ici.", self.messages)
+        # Deux sons demandés coup sur coup : seul le dernier joue.
+        self._clic(page._listen_sound_button)
+        self._clic(page._listen_sound_button)
+        self._joue()
+        self.assertTrue(_attendre_les_fils(lambda: True))
+        _pump(100)
+        self.assertEqual(len(self.lecteur.joues), 1)
+
+    def test_le_clip_s_ecoute_avec_le_morceau(self):
+        page = self._page()
+        self._composer(page)
+        piste, clip = self._clip_de(page)
+        self.assertFalse(page._context_button.isChecked())
+        self._clic(page._listen_clip_button)
+        seul, _boucle = self._joue()
+        self._clic(page._context_button)
+        self.assertEqual(self.messages[-1],
+                         "Le clip s'écoute avec les autres pistes du "
+                         "morceau.")
+        self._clic(page._listen_clip_button)
+        self.assertIn("avec le morceau", self.messages[-1])
+        self.assertTrue(_attendre_les_fils(
+            lambda: len(self.lecteur.joues) == 2))
+        ensemble, _frequence, boucle = self.lecteur.joues[-1]
+        self.assertTrue(boucle)
+        self.assertEqual(page._heard[:3], ("clip", piste.uid, clip.key))
+        n = min(seul.shape[0], ensemble.shape[0])
+        self.assertFalse(np.allclose(seul[:n], ensemble[:n], atol=1e-4),
+                         "les autres pistes ne s'entendent pas")
+
+    def test_la_section_montre_ou_en_est_la_lecture(self):
+        page = self._page()
+        projet = self._composer(page)
+        self._onglet(page, 3)
+        rang = next(i for i, s in enumerate(projet.sections) if s.cells)
+        self._case(page, rang, -1)
+        self._clic(page._listen_section_button)
+        audio, boucle = self._joue()
+        self.assertTrue(boucle)
+        mesures = min(8, projet.sections[rang].bars)
+        tempo = projet.style.tempo()
+        self.assertEqual(audio.shape[0],
+                         round(mesures * 4 * 60.0 / tempo * 44100))
+        self.lecteur.lu = mesures * 4 * 60.0 / tempo / 4.0
+        _pump(150)
+        colonne, part = page._matrix.playing()
+        self.assertEqual(colonne, rang)
+        self.assertAlmostEqual(part, 0.25, places=2)
+        # La lecture finie d'elle-même (Espace arrête le lecteur sans
+        # passer par la page), la tête s'efface.
+        self.lecteur.is_playing = False
+        _pump(150)
+        self.assertIsNone(page._matrix.playing())
+
+    def test_un_clip_vide_ne_lance_aucun_rendu(self):
+        page = self._page()
+        self._composer(page)
+        self._clip_de(page)
+        self._clic(page._empty_clip_button)
+        self._clic(page._listen_clip_button)
+        self.assertEqual(self.messages[-1],
+                         "Ce clip est vide : dessinez-y des notes.")
+        self.assertTrue(_attendre_les_fils(lambda: True))
+        self.assertEqual(self.lecteur.joues, [])
+
+
+class TestLaBoucleSuitCeQuOnChange(EcouteCase):
+    """Ce qu'on dessine, coupe ou dose pendant qu'une boucle tourne s'entend
+    sans la relancer : le rendu est refait, et prend la place de l'ancien à
+    la même mesure."""
+
+    def _remplace(self, nombre=1):
+        self.assertTrue(_attendre_les_fils(
+            lambda: len(self.lecteur.remplaces) >= nombre),
+            "la boucle n'a pas été rafraîchie")
+        return self.lecteur.remplaces[-1]
+
+    def test_un_coup_dessine_s_entend_sans_relancer_la_boucle(self):
+        from PyQt6.QtTest import QTest
+
+        page = self._page()
+        self._composer(page)
+        _piste, clip = self._clip_de(page, "Batterie")
+        self._clic(page._listen_clip_button)
+        avant, boucle = self._joue()
+        self.assertTrue(boucle)
+        self.assertIn("Espace", self.messages[-1])
+        vue = page._clip_view
+        libre = next(s for s in range(clip.steps)
+                     if s not in {rhythm.cell(c) for c in
+                                  clip.pattern.tracks.get("Kick", [])})
+        QTest.mouseClick(vue, Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier,
+                         vue.cell_center("Kick", libre).toPoint())
+        _APP.processEvents()
+        apres = self._remplace()
+        self.assertEqual(apres.shape, avant.shape)
+        self.assertFalse(np.allclose(apres, avant, atol=1e-4),
+                         "le coup dessiné ne s'entend pas")
+        # La boucle n'a pas été relancée, et la tête de lecture continue.
+        self.assertEqual(len(self.lecteur.joues), 1)
+        self.assertTrue(self.lecteur.is_playing)
+        self.assertEqual(page._heard[:3], ("clip", page._track().uid,
+                                           clip.key))
+
+    def test_plusieurs_gestes_rapproches_ne_font_qu_un_rendu(self):
+        """Trois notes posées coup sur coup — ou un curseur qu'on tire — ne
+        lancent qu'un calcul, un instant après le dernier geste."""
+        from unittest import mock
+
+        page = self._page()
+        self._composer(page)
+        _piste, clip = self._clip_de(page, "Basse")
+        self._clic(page._listen_clip_button)
+        self._joue()
+        notes = clip.note_count
+        with mock.patch.object(page, "_listen_clip_of",
+                               wraps=page._listen_clip_of) as rendus:
+            for pas in (1, 5, 9):
+                page._note_toggled(70, pas)
+            self.assertEqual(rendus.call_count, 0, "rendu avant la pause")
+            self._remplace()
+            self.assertEqual(rendus.call_count, 1)
+        self.assertEqual(clip.note_count, notes + 3)
+
+    def test_couper_une_piste_pendant_la_section(self):
+        from delugeapp.core import atelier
+
+        page = self._page()
+        projet = self._composer(page)
+        rang = atelier.fullest_section(projet)
+        self._onglet(page, 3)
+        self._case(page, rang, -1)
+        self._clic(page._listen_section_button)
+        avant, _boucle = self._joue()
+        page._toggle_mute(projet.tracks[0].uid)
+        apres = self._remplace()
+        self.assertEqual(apres.shape, avant.shape)
+        self.assertFalse(np.allclose(apres, avant, atol=1e-4))
+        self.assertEqual(len(self.lecteur.joues), 1)
+        self.assertEqual(page._heard[:2], ("section", rang))
+
+    def test_le_volume_se_dose_pendant_la_boucle(self):
+        page = self._page()
+        self._composer(page)
+        self._clip_de(page, "Basse")
+        self._clic(page._listen_clip_button)
+        avant, _boucle = self._joue()
+        self._onglet(page, 1)
+        page._volume.setValue(8)
+        apres = self._remplace()
+        self.assertLess(float(np.abs(apres).max()),
+                        float(np.abs(avant).max()) * 0.6)
+        self.assertEqual(len(self.lecteur.joues), 1)
+
+    def test_doubler_le_clip_relance_la_boucle_a_sa_nouvelle_longueur(self):
+        page = self._page()
+        self._composer(page)
+        _piste, clip = self._clip_de(page, "Basse")
+        self._clic(page._listen_clip_button)
+        avant, _boucle = self._joue()
+        self._clic(page._double_clip_button)
+        self.assertTrue(_attendre_les_fils(
+            lambda: len(self.lecteur.joues) == 2))
+        apres, _frequence, boucle = self.lecteur.joues[-1]
+        self.assertTrue(boucle)
+        self.assertEqual(clip.bars, 8)
+        self.assertAlmostEqual(apres.shape[0], 2 * avant.shape[0], delta=1)
+        self.assertEqual(self.lecteur.remplaces, [])
+
+    def test_tout_couper_arrete_la_boucle(self):
+        from delugeapp.core import atelier
+
+        page = self._page()
+        projet = self._composer(page)
+        rang = atelier.fullest_section(projet)
+        self._onglet(page, 3)
+        self._case(page, rang, -1)
+        self._clic(page._listen_section_button)
+        self._joue()
+        for piste in projet.tracks:
+            page._toggle_mute(piste.uid)
+        self.assertTrue(_attendre_les_fils(
+            lambda: not self.lecteur.is_playing))
+        self.assertIn("muettes", self.messages[-1])
+        self.assertIsNone(page._matrix.playing())
+
+    def test_eteindre_la_boucle_pendant_qu_elle_tourne_l_arrete(self):
+        page = self._page()
+        self._composer(page)
+        self._clip_de(page)
+        self._clic(page._listen_clip_button)
+        self._joue()
+        self._clic(page._loop_button)
+        self.assertFalse(self.lecteur.is_playing)
+        self.assertIsNone(page._heard)
+
+    def test_quitter_l_atelier_arrete_sa_boucle(self):
+        page = self._page()
+        self._composer(page)
+        self._clip_de(page)
+        self._clic(page._listen_clip_button)
+        self._joue()
+        page.hide()
+        _APP.processEvents()
+        self.assertFalse(self.lecteur.is_playing)
+
+    def test_une_ecoute_unique_n_est_pas_refaite(self):
+        """Sans boucle, un geste ne relance rien : on réécoute quand on veut."""
+        page = self._page()
+        self._composer(page)
+        _piste, clip = self._clip_de(page, "Basse")
+        self._clic(page._loop_button)
+        self._clic(page._listen_clip_button)
+        self._joue()
+        page._note_toggled(70, 3)
+        _pump(400)
+        self.assertTrue(_attendre_les_fils(lambda: True))
+        self.assertEqual((len(self.lecteur.joues), self.lecteur.remplaces),
+                         (1, []))
+
+    def test_une_section_deplacee_arrete_sa_boucle(self):
+        from delugeapp.core import atelier
+
+        page = self._page()
+        projet = self._composer(page)
+        rang = atelier.fullest_section(projet)
+        self._onglet(page, 3)
+        self._case(page, rang, -1)
+        self._clic(page._listen_section_button)
+        self._joue()
+        self._clic(page._right_button if rang < len(projet.sections) - 1
+                   else page._left_button)
+        self.assertFalse(self.lecteur.is_playing)
+
+
+class TestLAtelierMuetEtSolo(AtelierCase):
+    """Les pads d'écoute : dans la grille des sections et sous la liste des
+    pistes, un seul état."""
+
+    def _pad(self, page, rangee, bouton=Qt.MouseButton.LeftButton):
+        from PyQt6.QtTest import QTest
+
+        QTest.mouseClick(page._matrix, bouton,
+                         Qt.KeyboardModifier.NoModifier,
+                         page._matrix.label_center(rangee).toPoint())
+        _APP.processEvents()
+
+    def _ecoute(self, page):
+        """Ce que [Écouter la section] rendrait : parties et batterie."""
+        from unittest import mock
+
+        with mock.patch.object(page, "_render") as rendu:
+            self._clic(page._listen_section_button)
+        if not rendu.called:
+            return None
+        return rendu.call_args.args[0], rendu.call_args.args[1]
+
+    def _pleine(self, page):
+        from delugeapp.core import atelier
+
+        rang = atelier.fullest_section(page._project)
+        self._onglet(page, 3)
+        self._case(page, rang, -1)
+        return rang
+
+    def test_le_pad_de_la_grille_fait_taire_la_piste(self):
+        from delugeapp.core import atelier
+
+        page = self._page()
+        projet = self._composer(page)
+        self._pleine(page)
+        batterie = projet.tracks[0]
+        self.assertTrue(batterie.is_drums)
+        parties, motif = self._ecoute(page)
+        self.assertIsNotNone(motif)
+        attendues = len(parties)
+
+        self._pad(page, 0)
+        self.assertEqual(page._muted, {batterie.uid})
+        self.assertFalse(page._matrix.audible(batterie.uid))
+        self.assertIn("muette", self.messages[-1])
+        parties, motif = self._ecoute(page)
+        self.assertIsNone(motif, "la batterie muette s'entend encore")
+        self.assertEqual(len(parties), attendues)
+        # La liste des pistes le dit, et son bouton est enfoncé.
+        self._onglet(page, 1)
+        self._choisir(page._track_list, 0)
+        self.assertTrue(page._track_list.item(0).text().endswith("muette"))
+        self.assertTrue(page._mute_button.isChecked())
+        # Le morceau écrit, lui, garde sa batterie.
+        spec = atelier.to_song_spec(projet, "X", sd=self.sd, lib=self.lib)
+        self.assertEqual(len(spec.tracks), len(projet.tracks))
+        # Un second clic la rend.
+        self._clic(page._mute_button)
+        self.assertEqual(page._muted, set())
+        self.assertFalse(page._track_list.item(0).text().endswith("muette"))
+
+    def test_un_clic_droit_isole_la_piste(self):
+        from delugeapp.core import atelier
+
+        page = self._page()
+        projet = self._composer(page)
+        self._pleine(page)
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        rangee = projet.index_of(basse.uid)
+        self._pad(page, rangee, Qt.MouseButton.RightButton)
+        self.assertEqual(page._solo, basse.uid)
+        self.assertIn("seule", self.messages[-1])
+        parties, motif = self._ecoute(page)
+        self.assertIsNone(motif)
+        self.assertEqual(list(parties), [atelier._part_key(basse)])
+        # Sous un solo, toucher un autre pad rend les pistes.
+        self._pad(page, 0)
+        self.assertIsNone(page._solo)
+        self.assertEqual(page._muted, set())
+        parties, motif = self._ecoute(page)
+        self.assertIsNotNone(motif)
+
+    def test_le_bouton_solo_de_la_colonne(self):
+        page = self._page()
+        projet = self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Accords", page._clip_tracks)
+        self._clic(page._solo_button)
+        self.assertEqual(page._solo, piste.uid)
+        self.assertTrue(page._solo_button.isChecked())
+        rang = projet.index_of(piste.uid)
+        self.assertTrue(page._track_list.item(rang).text().endswith("solo"))
+        self.assertFalse(page._matrix.audible(projet.tracks[0].uid))
+        self._clic(page._solo_button)
+        self.assertIsNone(page._solo)
+
+    def test_une_section_toute_muette_le_dit(self):
+        page = self._page()
+        projet = self._composer(page)
+        self._pleine(page)
+        for rangee in range(len(projet.tracks)):
+            self._pad(page, rangee)
+        self.assertIsNone(self._ecoute(page))
+        self.assertIn("muettes", self.messages[-1])
+
+    def test_un_morceau_neuf_repart_sans_piste_muette(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        page = self._page()
+        self._composer(page)
+        self._pleine(page)
+        self._pad(page, 0)
+        self.assertTrue(page._muted)
+        self._onglet(page, 0)
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes):
+            self._clic(page._compose_button)
+        self.assertEqual(page._muted, set())
+
+
+class TestLAtelierDessineALaMain(AtelierCase):
+    """Tirer une note, forcer un coup, partir d'un clip vide ou d'une copie,
+    doubler, changer d'octave."""
+
+    def _basse(self, page):
+        self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Basse", page._clip_tracks)
+        self._choisir(page._clip_list, 0)
+        return piste, page._clip()
+
+    def test_tirer_vers_la_droite_dessine_une_note_longue(self):
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtTest import QTest
+
+        page = self._page()
+        piste, _clip = self._basse(page)
+        self._clic(page._empty_clip_button)
+        clip = page._clip()
+        self.assertEqual((clip.origin, clip.note_count), ("vide", 0))
+        vue = page._clip_view
+        self.assertTrue(vue.is_editable())
+        depart = vue.note_center(60, 2)
+        bout = vue.note_center(60, 7)
+        QTest.mousePress(vue, Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier, depart.toPoint())
+        _APP.sendEvent(vue, _mouse(QEvent.Type.MouseMove, bout.x(), bout.y()))
+        self.assertEqual(vue.dragging(), (60, 2, 7))
+        QTest.mouseRelease(vue, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.NoModifier, bout.toPoint())
+        _APP.processEvents()
+        self.assertIsNone(vue.dragging())
+        self.assertEqual([(e.start, e.length, e.note) for e in clip.events],
+                         [(2.0, 6.0, 60)])
+        self.assertIn("note de 6 pas", self.messages[-1])
+        # Un simple clic pose toujours une croche.
+        QTest.mouseClick(vue, Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier,
+                         vue.note_center(62, 10).toPoint())
+        _APP.processEvents()
+        self.assertIn((10.0, 2.0, 62),
+                      [(e.start, e.length, e.note) for e in clip.events])
+        # Chaque note est un geste : défaire retire la dernière seulement.
+        self._clic(page._undo_button)
+        self.assertEqual(page._track().uid, piste.uid)
+        self.assertEqual([(e.start, e.length, e.note)
+                          for e in page._clip().events], [(2.0, 6.0, 60)])
+
+    def test_un_clic_droit_change_la_force_d_un_coup(self):
+        from PyQt6.QtTest import QTest
+
+        page = self._page()
+        self._composer(page)
+        self._onglet(page, 2)
+        self._piste(page, "Batterie", page._clip_tracks)
+        self._choisir(page._clip_list, 0)
+        clip = page._clip()
+        coup = clip.pattern.tracks["Kick"][0]
+        case = rhythm.cell(coup)
+        coup.velocity = 100
+        vue = page._clip_view
+
+        def droit(rangee, pas):
+            QTest.mouseClick(vue, Qt.MouseButton.RightButton,
+                             Qt.KeyboardModifier.NoModifier,
+                             vue.cell_center(rangee, pas).toPoint())
+            _APP.processEvents()
+
+        droit("Kick", case)
+        self.assertEqual(coup.velocity, 70)
+        self.assertIn("coup moyen", self.messages[-1])
+        droit("Kick", case)
+        self.assertEqual(coup.velocity, 40)
+        self.assertIn("coup doux", self.messages[-1])
+        # Le coup reste là : un clic droit ne l'éteint pas.
+        self.assertIn(coup, clip.pattern.tracks["Kick"])
+        self._clic(page._undo_button)
+        self.assertEqual(page._clip().pattern.tracks["Kick"][0].velocity, 70)
+        # Sur une case vide, rien ne change et rien ne s'empile à défaire.
+        libre = next(s for s in range(clip.steps)
+                     if s not in {rhythm.cell(c)
+                                  for c in page._clip().pattern.tracks
+                                  .get("Clap", [])})
+        gestes = len(page._undo_stack)
+        droit("Clap", libre)
+        self.assertIn("Pas de coup", self.messages[-1])
+        self.assertEqual(len(page._undo_stack), gestes)
+
+    def test_un_clic_droit_change_la_force_d_une_note(self):
+        from PyQt6.QtTest import QTest
+
+        page = self._page()
+        _piste, clip = self._basse(page)
+        note = clip.events[0]
+        note.velocity = 90
+        vue = page._clip_view
+        QTest.mouseClick(vue, Qt.MouseButton.RightButton,
+                         Qt.KeyboardModifier.NoModifier,
+                         vue.note_center(int(note.note),
+                                         int(note.start)).toPoint())
+        _APP.processEvents()
+        self.assertEqual(note.velocity, 70)
+        self.assertIn("jeu moyen", self.messages[-1])
+        self.assertIn(note, clip.events, "le clic droit a retiré la note")
+
+    def test_dupliquer_puis_doubler(self):
+        page = self._page()
+        piste, clip = self._basse(page)
+        avant = len(piste.clips)
+        notes = clip.note_count
+        self._clic(page._copy_clip_button)
+        copie = page._clip()
+        self.assertEqual(len(piste.clips), avant + 1)
+        self.assertEqual((copie.parent, copie.origin, copie.note_count),
+                         (clip.key, "copie", notes))
+        self.assertIn("copie de %s" % clip.key,
+                      page._clip_list.currentItem().text())
+        self._clic(page._double_clip_button)
+        self.assertEqual((copie.bars, copie.note_count), (8, 2 * notes))
+        self.assertIn("8 mes.", page._clip_list.currentItem().text())
+        self.assertEqual(clip.bars, 4, "l'original a changé")
+        self._clic(page._double_clip_button)
+        self.assertEqual(copie.bars, 16)
+        self.assertFalse(page._double_clip_button.isEnabled(),
+                         "seize mesures : on ne double plus")
+
+    def test_une_octave_plus_bas_et_la_batterie_n_en_a_pas(self):
+        page = self._page()
+        _piste, clip = self._basse(page)
+        self.assertTrue(page._pitch_tools.isVisibleTo(page))
+        notes = [e.note for e in clip.events]
+        self._clic(page._octave_down_button)
+        self.assertEqual([e.note for e in clip.events],
+                         [n - 12 for n in notes])
+        self.assertIn("une octave plus bas", self.messages[-1])
+        self._clic(page._octave_up_button)
+        self.assertEqual([e.note for e in clip.events], notes)
+        self._piste(page, "Batterie", page._clip_tracks)
+        self.assertFalse(page._pitch_tools.isVisibleTo(page))
+
+    def test_une_octave_de_trop_le_dit_sans_rien_changer(self):
+        page = self._page()
+        _piste, clip = self._basse(page)
+        clip.events[0].note = 3
+        notes = [e.note for e in clip.events]
+        gestes = len(page._undo_stack)
+        self._clic(page._octave_down_button)
+        self.assertEqual([e.note for e in clip.events], notes)
+        self.assertTrue(self.messages[-1].startswith("Clip non déplacé"))
+        self.assertEqual(len(page._undo_stack), gestes)
+
+    def test_la_copie_d_un_clip_du_deluge_se_dessine(self):
+        """Un clip venu de la carte ne se retouche pas ; sa copie, si —
+        c'était le seul moyen manquant de le reprendre à la main."""
+        from unittest import mock
+
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtWidgets import QInputDialog
+
+        page = self._page()
+        self._composer(page)
+        self._ecrire(page)
+        with mock.patch.object(QInputDialog, "getItem",
+                               return_value=("Essai", True)):
+            self._clic(page._import_button)
+        self._onglet(page, 2)
+        piste = next(t for t in page._project.tracks if not t.is_drums
+                     and t.clips and t.clips[0].events)
+        self._choisir(page._clip_tracks,
+                      page._project.index_of(piste.uid))
+        self._choisir(page._clip_list, 0)
+        vue = page._clip_view
+        self.assertFalse(vue.is_editable())
+        self.assertFalse(page._double_clip_button.isEnabled())
+        self.assertIn("Dupliquer", page._clip_info.text())
+        self._clic(page._copy_clip_button)
+        copie = page._clip()
+        self.assertIsNone(copie.existing)
+        self.assertTrue(vue.is_editable())
+        avant = copie.note_count
+        libre = next(n for n in range(*vue._note_range)
+                     if n not in {int(e.note) for e in copie.events})
+        QTest.mouseClick(vue, Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier,
+                         vue.note_center(libre, 0).toPoint())
+        _APP.processEvents()
+        self.assertEqual(copie.note_count, avant + 1)
+
+
+class TestLAtelierStructureAuChoix(AtelierCase):
+    """Le menu d'une case, le clip ouvert depuis la grille, la section
+    dupliquée."""
+
+    def _grille(self, page):
+        projet = self._composer(page)
+        self._onglet(page, 3)
+        piste = projet.tracks[0]
+        self.assertGreaterEqual(len(piste.clips), 2)
+        return projet, piste
+
+    def test_le_menu_d_une_case_choisit_le_clip(self):
+        page = self._page()
+        projet, piste = self._grille(page)
+        menu = page.cell_menu(1, piste.uid)
+        self._widgets.append(menu)
+        actions = [a for a in menu.actions() if not a.isSeparator()]
+        libelles = [a.text() for a in actions]
+        self.assertEqual([l.split(" ")[0] for l in libelles[:len(piste.clips)]],
+                         [c.key for c in piste.clips])
+        self.assertIn("Silence", libelles)
+        actuel = projet.sections[1].cells.get(piste.uid)
+        coche = [a.text().split(" ")[0] for a in actions if a.isChecked()]
+        self.assertEqual(coche, [actuel or "Silence"])
+        # Un autre clip, d'un seul geste — le dernier de la liste, quand le
+        # clic gauche demanderait de les faire défiler tous.
+        dernier = [c.key for c in piste.clips if c.key != actuel][-1]
+        choix = next(a for a in actions
+                     if a.text().startswith(dernier + " "))
+        with self.assertNoLogs("delugeapp.ui", level="ERROR"):
+            choix.trigger()
+            _APP.processEvents()
+        self.assertEqual(projet.sections[1].cells.get(piste.uid), dernier)
+        self.assertEqual(page._section, 1)
+        # Le silence.
+        menu = page.cell_menu(1, piste.uid)
+        self._widgets.append(menu)
+        next(a for a in menu.actions() if a.text() == "Silence").trigger()
+        _APP.processEvents()
+        self.assertNotIn(piste.uid, projet.sections[1].cells)
+        self._clic(page._undo_button)
+        self.assertEqual(page._project.sections[1].cells.get(piste.uid),
+                         dernier)
+
+    def test_un_clic_droit_ouvre_le_menu_de_la_case(self):
+        from unittest import mock
+
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtWidgets import QMenu
+
+        page = self._page()
+        projet, piste = self._grille(page)
+        m = page._matrix
+        avant = dict(projet.sections[2].cells)
+        with mock.patch.object(QMenu, "exec", return_value=None) as ouvre:
+            QTest.mouseClick(m, Qt.MouseButton.RightButton,
+                             Qt.KeyboardModifier.NoModifier,
+                             QPoint(m.LABEL_W + 2 * m.COL_W + m.COL_W // 2,
+                                    m.HEAD_H + m.ROW_H // 2))
+            _APP.processEvents()
+        self.assertEqual(ouvre.call_count, 1)
+        self.assertEqual(page._section, 2)
+        # Le clic droit seul ne change rien : c'est le menu qui choisit.
+        self.assertEqual(projet.sections[2].cells, avant)
+
+    def test_ouvrir_le_clip_depuis_la_grille(self):
+        page = self._page()
+        projet, _batterie = self._grille(page)
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        rang = next(i for i, s in enumerate(projet.sections)
+                    if s.cells.get(basse.uid))
+        cle = projet.sections[rang].cells[basse.uid]
+        menu = page.cell_menu(rang, basse.uid)
+        self._widgets.append(menu)
+        voir = next(a for a in menu.actions()
+                    if a.text().startswith("Ouvrir le clip"))
+        voir.trigger()
+        _APP.processEvents()
+        self.assertEqual(page.current_step(), 2)
+        self.assertEqual((page._track().uid, page._clip().key),
+                         (basse.uid, cle))
+        self.assertEqual(page._track_list.currentRow(),
+                         projet.index_of(basse.uid))
+
+    def test_une_case_muette_n_a_pas_de_clip_a_ouvrir(self):
+        page = self._page()
+        projet, piste = self._grille(page)
+        projet.sections[0].cells.pop(piste.uid, None)
+        menu = page.cell_menu(0, piste.uid)
+        self._widgets.append(menu)
+        self.assertFalse(any(a.text().startswith("Ouvrir le clip")
+                             for a in menu.actions()))
+
+    def test_dupliquer_la_section(self):
+        page = self._page()
+        projet, _piste = self._grille(page)
+        self._case(page, 1, -1)
+        source = projet.sections[1]
+        noms = [s.name for s in projet.sections]
+        self._clic(page._copy_section_button)
+        self.assertEqual(len(projet.sections), len(noms) + 1)
+        copie = projet.sections[2]
+        self.assertEqual((copie.bars, copie.cells), (source.bars,
+                                                    source.cells))
+        self.assertNotIn(copie.name, noms)
+        self.assertEqual(page._section, 2)
+        self.assertEqual(page._section_name.text(), copie.name)
+        self.assertIn("la copie", self.messages[-1])
+        self._clic(page._undo_button)
+        self.assertEqual([s.name for s in page._project.sections], noms)
+
+
+class TestLeVolumeDUnePisteDansLAtelier(AtelierCase):
+    """Le curseur de volume de l'étape Sons."""
+
+    def test_le_curseur_regle_le_synthe_et_survit_a_un_autre_son(self):
+        from delugeapp.core import atelier
+
+        page = self._page()
+        self._composer(page)
+        self._onglet(page, 1)
+        piste = self._piste(page, "Basse", page._track_list)
+        self.assertTrue(page._volume_host.isVisibleTo(page))
+        self.assertEqual(page._volume.value(), atelier.track_volume(piste))
+        page._volume.setValue(18)
+        _APP.processEvents()
+        self.assertEqual((atelier.track_volume(piste), piste.level), (18, 18))
+        self.assertTrue(page._volume_text.text().startswith("18 · "))
+        self.assertIn("dB", page._volume_text.text())
+        # Un autre son : la piste garde le volume qu'on lui a choisi.
+        self._clic(page._other_sound_button)
+        self.assertEqual(atelier.track_volume(page._track()), 18)
+        self.assertEqual(page._volume.value(), 18)
+        # Et le geste se défait.
+        self._clic(page._undo_button)
+        self._clic(page._undo_button)
+        self.assertIsNone(page._track().level)
+        self.assertEqual(page._volume.value(),
+                         atelier.track_volume(page._track()))
+
+    def test_un_son_repris_prend_le_volume_de_la_piste(self):
+        """Le son d'avant revient de la liste des sons essayés avec son
+        propre volume : c'est celui choisi pour la piste qui vaut."""
+        from delugeapp.core import atelier
+
+        page = self._page()
+        self._composer(page)
+        self._onglet(page, 1)
+        piste = self._piste(page, "Basse", page._track_list)
+        premier = piste.preset.name
+        d_origine = atelier.track_volume(piste)
+        voulu = 18 if d_origine != 18 else 19
+        self._clic(page._other_sound_button)
+        page._volume.setValue(voulu)
+        _APP.processEvents()
+        self.assertIn(premier, page._history_box.itemText(0))
+        self._clic(page._history_button)
+        self.assertEqual(page._track().preset.name, premier)
+        self.assertEqual(atelier.track_volume(page._track()), voulu)
+        self.assertEqual(page._volume.value(), voulu)
+
+    def test_le_curseur_regle_le_kit(self):
+        from delugeapp.core import atelier, render
+
+        page = self._page()
+        projet = self._composer(page)
+        self._onglet(page, 1)
+        piste = self._piste(page, "Batterie", page._track_list)
+        if piste.kit is None:
+            self.skipTest("la carte jetable n'a pas donné de kit")
+        avant = render.kit_gain(piste.kit)
+        page._volume.setValue(20)
+        _APP.processEvents()
+        self.assertEqual(atelier.track_volume(piste), 20)
+        self.assertLess(render.kit_gain(piste.kit), avant)
+        self.assertIs(projet.track(piste.uid), piste)
+
+    def test_une_piste_midi_n_a_pas_de_curseur(self):
+        page = self._page()
+        self._composer(page, basse_midi=True)
+        self._onglet(page, 1)
+        self._piste(page, "Basse", page._track_list)
+        self.assertFalse(page._volume_host.isVisibleTo(page))
+        self._piste(page, "Accords", page._track_list)
+        self.assertTrue(page._volume_host.isVisibleTo(page))
+
+
+class TestLesRangeesDuKitSEcoutent(EcouteCase):
+    """[Écouter la rangée], et le son tiré qui s'entend aussitôt."""
+
+    def _kit(self, page):
+        self._composer(page)
+        self._onglet(page, 1)
+        piste = self._piste(page, "Batterie", page._track_list)
+        if piste.kit is None:
+            self.skipTest("la carte jetable n'a pas donné de kit")
+        return piste
+
+    def test_ecouter_la_rangee(self):
+        page = self._page()
+        self._kit(page)
+        self.assertFalse(page._listen_row_button.isEnabled())
+        self._choisir(page._kit_rows, 0)
+        self.assertTrue(page._listen_row_button.isEnabled())
+        self.assertEqual(self.lecteur.joues, [],
+                         "sans l'écoute au clic, choisir ne joue rien")
+        self._clic(page._listen_row_button)
+        audio, boucle = self._joue()
+        self.assertFalse(boucle)
+        self.assertGreater(float(np.abs(audio).max()), 0.01)
+
+    def test_choisir_une_rangee_la_joue_si_l_ecoute_au_clic_est_reglee(self):
+        page = self._page()
+        self._kit(page)
+        self.ctx.settings.autoplay = True
+        self._choisir(page._kit_rows, 0)
+        self._joue()
+
+
+class TestLesBrouillonsDansLAtelier(AtelierCase):
+    """Un morceau remplacé ou écrit rejoint les brouillons, et s'y rouvre."""
+
+    def _brouillons(self):
+        from delugeapp.core import atelierstore
+        from delugeapp.ui.pages.atelier import drafts_dir
+
+        return atelierstore.entries(drafts_dir())
+
+    def _recomposer(self, page, genre):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self._onglet(page, 0)
+        self._clic(page._genre_buttons[genre])
+        with mock.patch.object(QMessageBox, "question",
+                               return_value=QMessageBox.StandardButton.Yes
+                               ) as question:
+            self._clic(page._compose_button)
+        return question
+
+    def _ouvrir(self, page, rang=0):
+        """Ouvre la liste des brouillons et clique [Ouvrir] sur une ligne."""
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QDialog
+
+        from delugeapp.ui.draftsdialog import DraftsDialog
+
+        vus = {}
+
+        def choisir(dialogue):
+            vus["lignes"] = [dialogue._list.item(i).text()
+                             for i in range(dialogue._list.count())]
+            dialogue._list.setCurrentRow(rang)
+            _APP.processEvents()
+            vus["ouvrable"] = dialogue._open_button.isEnabled()
+            dialogue._open_button.click()
+            return (QDialog.DialogCode.Accepted if dialogue.chosen()
+                    else QDialog.DialogCode.Rejected)
+
+        with mock.patch.object(DraftsDialog, "exec", choisir):
+            self._clic(page._drafts_button)
+        return vus
+
+    def test_recomposer_range_l_ancien_morceau(self):
+        page = self._page()
+        self.assertEqual(self._brouillons(), [])
+        premier = self._composer(page, genre="techno")
+        self._onglet(page, 1)
+        self._piste(page, "Basse", page._track_list)
+        self._clic(page._other_sound_button)
+        question = self._recomposer(page, "house")
+        self.assertIn("brouillons", question.call_args.args[2])
+        fiches = self._brouillons()
+        self.assertEqual([(f.ident, f.name, f.worked) for f in fiches],
+                         [(premier.ident, "ATELIER TECHNO", True)])
+        self.assertNotEqual(page._project.ident, premier.ident)
+
+    def test_un_brouillon_se_rouvre_tel_quel(self):
+        page = self._page()
+        premier = self._composer(page, genre="techno")
+        self._onglet(page, 1)
+        piste = self._piste(page, "Basse", page._track_list)
+        self._clic(page._other_sound_button)
+        son = page._track().preset.name
+        page._volume.setValue(17)
+        self._onglet(page, 3)
+        page._song_name.setText("MON TECHNO")
+        self._recomposer(page, "house")
+        second = page._project
+
+        vus = self._ouvrir(page)
+        self.assertTrue(vus["ouvrable"])
+        self.assertTrue(vus["lignes"][0].startswith("MON TECHNO\n"),
+                        vus["lignes"])
+        self.assertIn("Techno", vus["lignes"][0])
+        repris = page._project
+        self.assertEqual(repris.ident, premier.ident)
+        self.assertEqual(repris.style.genre, "techno")
+        basse = repris.track(piste.uid)
+        self.assertEqual(basse.preset.name, son)
+        self.assertEqual(basse.level, 17)
+        self.assertEqual(page._song_name.text(), "MON TECHNO")
+        self.assertTrue(page._genre_buttons["techno"].isChecked())
+        self.assertIn("MON TECHNO", self.messages[-1])
+        # Le morceau qu'on quittait a pris sa place parmi les brouillons.
+        self.assertEqual({f.ident for f in self._brouillons()},
+                         {premier.ident, second.ident})
+        # Et l'ouverture se défait.
+        self._clic(page._undo_button)
+        self.assertEqual(page._project.ident, second.ident)
+
+    def test_le_morceau_en_cours_ne_se_rouvre_pas_sur_lui_meme(self):
+        page = self._page()
+        self._composer(page)
+        self._ecrire(page)
+        avant = page._project
+        vus = self._ouvrir(page)
+        self.assertFalse(vus["ouvrable"])
+        self.assertIn("le morceau en cours", vus["lignes"][0])
+        self.assertIs(page._project, avant)
+
+    def test_ecrire_range_le_morceau_sous_son_nom(self):
+        page = self._page()
+        projet = self._composer(page)
+        self._ecrire(page, "MONESSAI")
+        fiches = self._brouillons()
+        self.assertEqual([(f.ident, f.name) for f in fiches],
+                         [(projet.ident, "MONESSAI")])
+        self.assertTrue(fiches[0].meta["written"])
+        # Le nom écrit devient celui du morceau : la prochaine écriture le
+        # propose.
+        self.assertEqual(page._song_name.text(), "MONESSAI")
+
+    def test_ouvrir_un_morceau_du_deluge_range_celui_en_cours(self):
+        page = self._page()
+        projet = self._composer(page)
+        self.assertTrue(page.open_song("SONGS/M.XML"))
+        self.assertEqual([f.ident for f in self._brouillons()],
+                         [projet.ident])
+
+    def test_supprimer_un_brouillon_demande_puis_efface(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QDialog, QMessageBox
+
+        from delugeapp.ui.draftsdialog import DraftsDialog
+
+        page = self._page()
+        self._composer(page, genre="techno")
+        self._recomposer(page, "house")
+        self.assertEqual(len(self._brouillons()), 1)
+        restes = {}
+
+        def supprimer(reponse):
+            def geste(dialogue):
+                dialogue._list.setCurrentRow(0)
+                with mock.patch.object(QMessageBox, "question",
+                                       return_value=reponse):
+                    dialogue._delete_button.click()
+                    _APP.processEvents()
+                restes["lignes"] = dialogue.idents()
+                return QDialog.DialogCode.Rejected
+            return geste
+
+        with mock.patch.object(DraftsDialog, "exec",
+                               supprimer(QMessageBox.StandardButton.No)):
+            self._clic(page._drafts_button)
+        self.assertEqual(len(self._brouillons()), 1, "supprimé sans accord")
+        with mock.patch.object(DraftsDialog, "exec",
+                               supprimer(QMessageBox.StandardButton.Yes)):
+            self._clic(page._drafts_button)
+        self.assertEqual(self._brouillons(), [])
+        self.assertEqual(restes["lignes"], [])
+        self.assertIn("Brouillon supprimé", self.messages[-1])
+
+    def test_la_liste_vide_le_dit(self):
+        from delugeapp.ui.draftsdialog import DraftsDialog
+
+        dialogue = DraftsDialog([])
+        self._widgets.append(dialogue)
+        self.assertEqual(dialogue.idents(), [])
+        self.assertIn("Aucun brouillon", dialogue._list.item(0).text())
+        self.assertFalse(dialogue._open_button.isEnabled())
+        self.assertFalse(dialogue._delete_button.isEnabled())
+
+    def test_un_brouillon_illisible_le_dit_sans_rien_remplacer(self):
+        from delugeapp.ui.pages.atelier import drafts_dir
+
+        page = self._page()
+        projet = self._composer(page)
+        base = drafts_dir()
+        base.mkdir(parents=True, exist_ok=True)
+        (base / ("%s.pickle" % ("ab" * 16))).write_bytes(b"pas un brouillon")
+        self.assertFalse(page.open_draft("ab" * 16))
+        self.assertIn("ne se relit pas", self.messages[-1])
+        self.assertIs(page._project, projet)
+
+
+# --------------------------------------------------------------------------- #
 # Le pont vers le DAW
 # --------------------------------------------------------------------------- #
 

@@ -367,12 +367,13 @@ The page follows the order of the work. At the top, the **step bar**: [Style], [
 
 Nothing forces you to follow the order: every step stays open, and you can come back to a sound after working on the structure. As long as no song is composed, steps 2 to 5 say so — “No song yet” — and offer the two ways to begin: [Compose a song], which leads back to the style, and [Open a Deluge song…].
 
-The header carries three commands, valid at every step:
+The header carries six commands, valid at every step:
 
 - [Open a Deluge song…] opens a song from the card in the studio (see [Opening a Deluge song, and completing it](#atelier-completer));
-- [Play an excerpt] plays eight bars of the song's fullest passage, all tracks together;
-- [Stop] cuts the listening. [[Space]] does the same, and starts listening again to what the step shows: the sound, the clip, the section — at the other two, an excerpt of the song, or its chords while it is not composed yet.
-- [Undo] goes back on the last action — a sound changed, a hit drawn, a clip deleted, a track or a section removed, even a song composed again —, [Redo] replays it. [[Ctrl+Z]] and [[Ctrl+Y]] do the same; each button's tooltip says which action it undoes. What is already written to the card cannot be undone.
+- [Drafts…] opens the list of the studio's songs kept on the computer (see [The drafts](#atelier-brouillons));
+- [Play an excerpt] plays eight bars of the song's fullest passage;
+- the **square** cuts the listening, and stops a computation in progress: nothing starts after it. [[Space]] does the same, and starts listening again to what the step shows: the sound, the clip, the section — at the other two, an excerpt of the song, or its chords while it is not composed yet;
+- the **two arrows** undo and redo. The first goes back on the last action — a sound changed, a hit drawn, a clip deleted, a track or a section removed, even a song composed again —, the second replays it. [[Ctrl+Z]] and [[Ctrl+Y]] do the same; each arrow's tooltip says which action it undoes. What is already written to the card cannot be undone.
 
 Its subtitle names the song in progress: its genre, its key, its length and its duration. Until it is written, **nothing is written to the card**: the studio composes even without a card, and only asks for it to write, or to build a kit from your samples.
 
@@ -382,6 +383,8 @@ Its subtitle names the song in progress: its genre, its key, its length and its 
 ## 1. The style {#atelier-style}
 
 On the left, the generator's twenty-two **genres**, one pad each; the tooltip describes the genre's character and its tempo range. Choosing one puts the tempo in the middle of that range, and ticks the arpeggio when the genre usually has one. Clicking the current genre again undoes nothing.
+
+The step always shows **the style of the song in progress** — picked up at start-up, reopened from a draft or brought back by the arrows, it puts its genre, its tempo, its key and its parts back there. A song already composed keeps its tempo when you try another genre: it is the next composition that will take the genre's, unless you set the counter in the meantime — the bottom line says so. For a song that came from the card, which does not say its genre, the pad you choose becomes its own: its new sounds and clips will be in it.
 
 **Tempo and key**:
 
@@ -405,7 +408,7 @@ On the left, the generator's twenty-two **genres**, one pad each; the tooltip de
 
 [Compose the song] then makes the project: one track per ticked part, a sound in the style for each, a first clip, and the **genre's structure** — intro, build-up, theme, breakdown… — with the variations it calls for: lighter drums for the intro, no kick for the breakdown, ornamented for the peak; at the second peak, the melody answers the first one and the bass grows richer. The studio then moves on to the sounds.
 
-Once the song is composed, the button becomes [Recompose the song]: it replaces the song in progress, after a question. A style setting changed afterwards does not touch the song — except the tempo —: it applies to the next composition, and a line says so.
+Once the song is composed, the button becomes [Recompose the song]: it makes a new song in place of the one in progress, after a question — the old one is not lost, it joins [the drafts](#atelier-brouillons). A style setting changed afterwards does not touch the song — except the tempo counter, which it takes at once —: it applies to the next composition, and a line says so.
 
 ## 2. The sounds {#atelier-sons}
 
@@ -415,16 +418,19 @@ On the left, the **Tracks** column, shared by the sounds and the clips, each tra
 - [Another sound] draws another one in the same style for a synth; for drums, another kit built from your library. The replaced sound is not lost: it joins the list of **sounds tried**, under the buttons — newest first —, and [Take this sound back] gives it back to the track.
 - [Choose on the card…] takes a preset or a kit from the card for the track, chosen in the index.
 - [Edit the sound…], in advanced mode, opens the sound editor (see [Editing a sound by hand](#atelier-modifier-son)).
+- **Volume** sets the track's level in the song, in the machine's steps — from 0 to 50 —, with its value in decibels: the sound's for a synth, the kit's for drums. This is where the balance is made: you hear it at the next listen, it is written with the song, and it **stays the track's** when its sound changes — [Another sound] does not undo a balance you have set. A MIDI or CV track, whose sound is elsewhere, has none.
 - A MIDI or CV track shows its **channel**, which can be changed here.
 
-For drums, **The kit** lists its rows and the sound of each one. Don't like a row? Pick it, then [Another sound for the row]: another sound of the same role replaces it — from the same machine first, then from a neighbouring one —, without touching the rest of the kit.
+For drums, **The kit** lists its rows and the sound of each one. [Play the row] plays the chosen row as the kit plays it; if listening on click is set ([Settings](#reglages-ecoute)), choosing it is enough. Don't like a row? [Another sound for the row]: another sound of the same role replaces it — from the same machine first, then from a neighbouring one —, without touching the rest of the kit, and you hear it at once.
 
 **Variations in the style**: [Suggest 8 variations] offers eight of the track's sound. Each one touches **a single** facet: either a facet drawn again — the timbre, the filter, the envelopes, the movement, the space, the width, the modulations —, or a slider pushed — brighter, darker, dirtier, wider, more space… The rest of the sound does not move, and nothing leaves the genre. A click plays a variation; a double-click, or [Adopt], gives it to the track.
 
 !!! retenir Dirtier means the same sound, dirtier
     Each decision of the sound — the cutoff, the drive, the shape of the LFOs — has its own random draw. Pushing the dirt therefore only changes what depends on it: you get the same sound, dirtier, and not another sound.
 
-Under the list of tracks, a menu and two buttons add or remove a track: the **part** it will play, then [Add] — with a sound in the style and a first clip — or [Remove], which also removes it from every section. At the simple level, the kind follows the part: a kit for the drums, a Deluge synth for the rest; in advanced mode, a second menu chooses it — kit, synth, MIDI or CV.
+Under the list of tracks, [Mute] silences the chosen track when listening on the computer and [Solo] listens to it alone; a second click brings back what was silent, and the list says what is muted. These are the same pads as in front of each row of [the section grid](#atelier-morceau): they are for the ear only, the written song keeps all its tracks.
+
+Lower down, a menu and two buttons add or remove a track: the **part** it will play, then [Add] — with a sound in the style and a first clip — or [Remove], which also removes it from every section. At the simple level, the kind follows the part: a kit for the drums, a Deluge synth for the rest; in advanced mode, a second menu chooses it — kit, synth, MIDI or CV.
 
 ## Editing a sound by hand {#atelier-modifier-son}
 
@@ -443,15 +449,29 @@ In **Modulation**, each line links a source to a setting, with a depth from −5
 
 ## 3. The clips {#atelier-clips}
 
-A track has its clips, named A, B, C…: the list says where each one comes from — generated, a variation of another, or taken from the original song — and its length. Below, the clip itself: the rows of a drum kit, from bottom to top, or a synth's notes at their pitch. A line says how many notes it has and in which sections it plays.
+A track has its clips, named A, B, C…: the list says where each one comes from — generated, a variation or a copy of another, empty, or taken from the original song — and its length. Below, the clip itself, its bars numbered: the rows of a drum kit, from bottom to top, or a synth's notes at their pitch. A line says how many notes it has and in which sections it plays.
 
-**The drums are drawn with the mouse**: a click in the grid lights a hit, a second click turns it off. The grid always shows the kick, the snare, the clap and both hi-hats, even with no hit: enough to add a clap where one is missing. **A synth's notes too**: a click on an empty cell puts an eighth note at that pitch, a click on a note removes it — a wrong note is fixed without redoing the clip. A clip taken from the original song cannot be drawn: vary it, the variation is a new clip.
+Listening sits above the grid:
 
-- [Play the clip] plays it on the computer, with its track's sound.
+- [Play the clip] plays it on the computer, with its track's sound; a white bar follows playback in the grid.
+- [Loop], on by default, keeps it turning until you stop — the square in the header, or [[Space]]: it starts again from its beginning, in time, its reverb carried over from one turn to the next. Off, the clip plays once. The same setting applies to the sections; leaving the studio stops the loop.
+- [With the song] lets you hear it **with the other tracks**: those of the first section where it is placed, failing that of the section chosen at the Structure step. That is how a variation is judged — in its context, not on its own. Muted tracks stay silent; its own is always heard.
 - [Vary] opens the menu of variations; the chosen variation is **added** to the track as a new clip, and the original stays.
+
+!!! astuce The loop follows your gestures
+    While a clip or a section is turning, what you change is heard a fraction of a second later, **without restarting the loop**: a hit switched on, a note dragged, a cell of the grid, a track muted or soloed, a volume adjusted. The sound is computed again a moment after your last gesture and takes the place of the old one at the same bar. Only a change of duration — a doubled clip, a tempo — makes it start again from the beginning.
+
+**The drums are drawn with the mouse**: a click in the grid lights a hit, a second click turns it off; a **right-click** changes its strength — strong, medium, soft —, which the shade of the pad shows: enough to place ghost notes. The grid always shows the kick, the snare, the clap and both hi-hats, even with no hit: enough to add a clap where one is missing. **A synth's notes too**: a click on an empty cell puts an eighth note at that pitch; **dragging to the right** before releasing gives it the length you covered; a click on a note removes it, a right-click changes its strength — a wrong note is fixed without redoing the clip. A clip taken from the original song cannot be drawn, but its copy can: [Duplicate].
+
+Below the grid, the track's clips:
+
 - [New clip] makes another one, of the length chosen beside it (one, two, four or eight bars), on the song's progression.
+- [Empty clip] opens one with no notes, of the same length, to draw from scratch.
+- [Duplicate] makes a copy of it, to edit without touching the original.
+- [Double the length] makes it twice as long by repeating its content, up to sixteen bars — the machine's own gesture: four bars become eight, of which you vary the second half.
 - [Delete the clip] removes it; the sections that played it fall silent for that track.
 - [Clip to MIDI…], in advanced mode, writes the clip to a `.mid` file, off the card; drums go on channel 10.
+- For a synth, **Pitch**: [Octave −] and [Octave +] move all its notes by an octave — a bass line composed too high comes down in one click.
 
 | For a synth | For drums |
 |---|---|
@@ -485,12 +505,14 @@ The Deluge must be plugged in and connected ([Connecting](#se-connecter)), and M
 
 ## 4. The structure {#atelier-morceau}
 
-The grid shows the whole song: **one row per track, one column per section**, and in each cell the letter of the clip the track plays there. A click on a cell makes the track play its next clip, then silence, then the first one again. A click on a section's header chooses it. Clips taken from a song on the card have a dotted outline.
+The grid shows the whole song: **one row per track, one column per section**, and in each cell the letter of the clip the track plays there. A click on a cell makes the track play its next clip, then silence, then the first one again. A **right-click** opens the list of its clips — where they come from, their length — and silence: you choose in one gesture, instead of cycling through them; the last line opens the clip being played at the Clips step. A click on a section's header chooses it. Clips taken from a song on the card have a dotted outline.
+
+In front of each track's name, **its listening pad**, like the machine's column of pads: lit, the track is heard. A click turns it off — the track falls silent, its cells fade —, a second click brings it back; a right-click, or Shift+click, **solos** it: it plays alone, its pad ringed in white. These pads are for listening on the computer only: the song written to the card keeps all its tracks.
 
 **The chosen section** is set below: its **name** — which its clips carry on the Deluge — and its **length** in bars, over which its clips loop.
 
-- [Play the section] plays its beginning — eight bars at most —, all tracks together; [Stop] cuts the listening.
-- [Add a section] adds one after the chosen one, with the same clips; [Remove the section] removes it.
+- [Play the section] plays its beginning — eight bars at most —, without the muted tracks; a white bar crosses its column. With [Loop], it keeps turning until you stop.
+- [Add a section] adds one after the chosen one, with the same clips; [Duplicate the section] makes its exact copy — length, clips, numbered name —, for you to vary; [Remove the section] removes it.
 - The two arrows move it one step in the song.
 - [Genre structure] replaces the sections with the genre's, with their variations. Starting from one of your songs, its sections stay, and the genre's are added after them.
 
@@ -502,7 +524,7 @@ The last step writes the song. **Song name** suggests a name — the genre's, or
 
 One exception: if that name is a song **the studio wrote**, and neither you nor the Deluge has changed it since, the application offers to **replace** it with the new version — [Yes] — rather than write a second one next to it — [No]. The old one is kept in `_BACKUP`, at the root of the card. A song saved on the machine is never replaced.
 
-[Write the song] turns it into a Deluge song, in `SONGS`: one Deluge section per project section, each with its clips and its number of repeats, and the complete arrangement for the SONG view. The synths carry their sound; the drums, a kit built from your samples, or the one you chose; the MIDI and CV tracks, their channel. The route is that of any [written song](#parcours-morceau): the name, the plan, then the writing of a new file. A line then says what was written, and [Show in Songs] opens it on the Songs page.
+[Write the song] turns it into a Deluge song, in `SONGS`: one Deluge section per project section, each with its clips and its number of repeats, and the complete arrangement for the SONG view. The synths carry their sound and their volume; the drums, a kit built from your samples, or the one you chose; the MIDI and CV tracks, their channel. The route is that of any [written song](#parcours-morceau): the name, the plan, then the writing of a new file. A line then says what was written, and [Show in Songs] opens it on the Songs page. The name it is written under becomes the song's own — the next write suggests it —, and the song joins [the drafts](#atelier-brouillons).
 
 **The Deluge** panel says where the song will go: on the working copy, it goes up to the machine by itself, a few seconds after the write. [Deluge Live…] opens the machine's window; [Sync] exchanges with it right away.
 
@@ -510,7 +532,7 @@ In advanced mode, [Song to MIDI…] writes the whole song to a `.mid` file, off 
 
 ## Opening a Deluge song, and completing it {#atelier-completer}
 
-[Open a Deluge song…] opens a song from the card in the studio — the latest received from the Deluge at the top of the list; [Open in the studio], on the Songs page, and the [Continue a Deluge song] door of the home page lead there too. The studio opens it at the Structure step. Its tracks, its clips, its tempo and its scale become the project's; its chord progression is read from its notes, so that the new clips fit it. Its clips can be varied like the others — a variation is always a new clip —, and tracks, clips and sections can be added.
+[Open a Deluge song…] opens a song from the card in the studio — the latest received from the Deluge at the top of the list; [Open in the studio], on the Songs page, and the [Continue a Deluge song] door of the home page lead there too. The studio opens it at the Structure step. Its tracks, its clips, its tempo and its scale become the project's; its chord progression is read from its notes, so that the new clips fit it. Its clips can be varied like the others — a variation is always a new clip — or duplicated, the copy being drawn by hand; and tracks, clips and sections can be added. The song you were leaving joins [the drafts](#atelier-brouillons).
 
 [Complete the song], at the Deluge step, then writes a **new version**: “Cool1 5” after “Cool1 4”. It contains the original song **byte for byte**, plus what you added: the new tracks, their clips, and the new sections with theirs. The plan details every addition before writing. The written file is read back at once: if the original song is not intact in it, nothing is written.
 
@@ -518,6 +540,21 @@ In advanced mode, [Song to MIDI…] writes the whole song to a `.mid` file, off 
     The new version is a file next to the old one; load it on the Deluge like any song. The existing sections keep their length and their clips; they receive those of the new tracks, and of a track that played nothing in them. A track that already has its clip there keeps it: in grid layout, the Deluge shows only one per track and per section. Put the new one in a new section — the plan flags each case.
 
 The song must come from firmware 1.2 or later. An older song, or one in the 2.x format, is refused: save it once on the Deluge, which converts it, then try again. The new notes are written in the song's format; the Deluge knows 24 sections at most in firmware 1.3, 12 before.
+
+## The drafts {#atelier-brouillons}
+
+The studio holds only one song at a time, but loses none. Every song it **replaces** — you recompose, you open a Deluge song or another draft — and every song it **writes** to the card is put away on the computer, as it is: its sounds, edited or not, its clips, its sections, the volume of each track.
+
+[Drafts…], in the header, opens the list, newest first: the song's name, its genre, its key and its duration, whether it was written to the card, and when it was put away.
+
+- [Open] — or a double-click — puts the chosen draft back in the studio, at the step where you left it; the song in progress takes its place in the list. The header's arrows undo this gesture too.
+- [Delete] erases it from the computer, after a question: it is the only gesture of the studio that cannot be undone.
+- [Close] closes the list, changing nothing.
+
+!!! retenir A draft is not the song on the card
+    Reopening a **written** song with [Open a Deluge song…] gives it back as the machine reads it: its tracks belong to it, its sounds can no longer be edited, you can only complete it. Its draft, though, has remained a studio project: everything in it can still be changed, and [Write the song] offers to replace the written version. The card is never touched by the drafts; deleting them erases no Deluge song.
+
+The drafts live in the application's configuration folder. Forty are kept; beyond that, the oldest go — first those that were neither edited nor written.
 
 ## Sounds from other pages {#atelier-venus}
 

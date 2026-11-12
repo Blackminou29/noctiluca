@@ -35,6 +35,7 @@ import logging
 import pickle
 import random
 import re
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -56,7 +57,10 @@ __all__ = [
     "edit_sound", "FEELS", "feels_for", "toggle_hit", "groove_clip",
     "add_euclid", "fullest_section", "arrangement_parts", "export_midi",
     "part_for", "use_preset", "use_kit", "toggle_note", "dump_draft",
-    "load_draft", "DRAFT_FORMAT",
+    "load_draft", "DRAFT_FORMAT", "MAX_BARS", "LEVELS", "empty_clip",
+    "duplicate_clip", "double_clip", "transpose_clip", "accent_hit",
+    "accent_note", "duplicate_section", "context_parts", "track_volume",
+    "set_track_volume", "describe_volume", "keep_level", "KIT_VOLUME",
 ]
 
 #: Natures de piste, comme sur le Deluge.
@@ -80,6 +84,14 @@ MACROS = ("brightness", "movement", "space", "dirt", "width", "complexity")
 
 #: Longueur d'un premier clip, en mesures.
 DEFAULT_BARS = 4
+
+#: Longueur qu'un clip ne dépasse pas quand on le double : au-delà, sa
+#: grille ne se lit plus.
+MAX_BARS = 16
+
+#: Les forces qu'un clic droit fait tourner sur un coup ou une note — fort,
+#: moyen, doux —, en pourcentage comme :attr:`NoteEvent.velocity`.
+LEVELS = (100, 70, 40)
 
 
 def parts_for_kind(kind: str) -> tuple[str, ...]:
@@ -192,6 +204,11 @@ class AtelierTrack:
     #: Le jeu des clips neufs d'une piste d'accords ou de basse — « stabs »,
     #: « contretemps »… (:data:`FEELS`) ; vide : celui du genre.
     feel: str = ""
+    #: Le volume choisi pour la piste, au cran de la machine (0 à 50) ;
+    #: ``None`` : celui de son son. Il suit la piste quand elle change de
+    #: son (:func:`keep_level`) : un équilibre réglé ne se refait pas à
+    #: chaque « Autre son ».
+    level: int | None = None
 
     def clip(self, key: str) -> AtelierClip | None:
         for clip in self.clips:
@@ -239,6 +256,12 @@ class Project:
     #: l'octet près, l'atelier peut le remplacer par une nouvelle version au
     #: lieu de numéroter (``songwriter.write_song(replace=…)``).
     written: dict[str, str] = field(default_factory=dict)
+    #: Ce qui fait de ce morceau le même d'une séance à l'autre : son
+    #: brouillon rangé le retrouve par là (:mod:`.atelierstore`).
+    ident: str = field(default_factory=lambda: uuid.uuid4().hex)
+    #: Gestes faits depuis sa composition : un morceau travaillé se garde
+    #: plus longtemps parmi les brouillons qu'un morceau juste composé.
+    edits: int = 0
     _next_uid: int = 1
 
     def track(self, uid: int) -> AtelierTrack | None:
@@ -472,6 +495,149 @@ def remove_clip(project: Project, uid: int, key: str) -> None:
             del section.cells[uid]
 
 
+def _own_clip(project: Project, uid: int, key: str
+              ) -> tuple[AtelierTrack, AtelierClip]:
+    """La piste et son clip ``key`` ; ``ValueError`` s'il n'existe pas."""
+    track = project.track(uid)
+    clip = track.clip(key) if track is not None else None
+    if clip is None:
+        raise ValueError(tr("clip inconnu"))
+    return track, clip
+
+
+def empty_clip(project: Project, uid: int,
+               bars: int | None = None) -> AtelierClip:
+    """Un clip sans note, à dessiner : la grille d'une batterie, ou le
+    rouleau d'un synthé, vides."""
+    track = project.track(uid)
+    if track is None:
+        raise ValueError(tr("piste inconnue"))
+    bars = max(1, min(MAX_BARS, int(bars or DEFAULT_BARS)))
+    clip = AtelierClip(key=next_key(track), bars=bars, origin=N_("vide"))
+    if track.is_drums:
+        clip.pattern = rhythm.Pattern(name="", steps=clip.steps)
+    track.clips.append(clip)
+    return clip
+
+
+def duplicate_clip(project: Project, uid: int, key: str) -> AtelierClip:
+    """Une copie du clip, ajoutée à la piste : on la retouche sans toucher à
+    l'original.
+
+    La copie d'un clip du morceau d'origine est un clip **neuf** : elle se
+    dessine, alors que l'original, déjà sur le Deluge, ne se réécrit pas.
+    """
+    track, source = _own_clip(project, uid, key)
+    clip = AtelierClip(key=next_key(track), bars=source.bars,
+                       origin=N_("copie"), parent=source.key,
+                       seed=source.seed)
+    clip.events = copy.deepcopy(source.events)
+    clip.pattern = copy.deepcopy(source.pattern)
+    if track.is_drums and clip.pattern is None:
+        clip.pattern = rhythm.Pattern(name="", steps=clip.steps)
+    track.clips.append(clip)
+    return clip
+
+
+def _editable_clip(project: Project, uid: int, key: str
+                   ) -> tuple[AtelierTrack, AtelierClip]:
+    """Comme :func:`_own_clip`, mais refuse un clip déjà sur le Deluge."""
+    track, clip = _own_clip(project, uid, key)
+    if clip.existing is not None:
+        raise ValueError(tr("ce clip est déjà sur le Deluge"))
+    return track, clip
+
+
+def double_clip(project: Project, uid: int, key: str) -> AtelierClip:
+    """Double la longueur du clip en répétant son contenu — le geste de la
+    machine : quatre mesures en deviennent huit, dont on varie la seconde
+    moitié. ``ValueError`` au-delà de :data:`MAX_BARS` mesures."""
+    track, clip = _editable_clip(project, uid, key)
+    if int(clip.bars) * 2 > MAX_BARS:
+        raise ValueError(tr("un clip ne dépasse pas %d mesures") % MAX_BARS)
+    steps = clip.steps
+    if clip.pattern is not None:
+        for hits in clip.pattern.tracks.values():
+            for hit in list(hits):
+                twin = copy.copy(hit)
+                twin.pos = hit.pos + steps
+                if hit.grid is not None:
+                    twin.grid = int(hit.grid) + steps
+                hits.append(twin)
+        clip.pattern.steps = steps * 2
+    clip.events.extend(NoteEvent(e.start + steps, e.length, e.note,
+                                 e.velocity) for e in list(clip.events))
+    clip.bars = int(clip.bars) * 2
+    return clip
+
+
+def transpose_clip(project: Project, uid: int, key: str,
+                   semitones: int) -> int:
+    """Déplace toutes les notes d'un clip de synthé de ``semitones``
+    demi-tons — une octave vaut douze. Rend le nombre de notes déplacées.
+
+    ``ValueError`` si une note sortirait de l'étendue MIDI (0 à 127) : le
+    clip reste alors tel quel.
+    """
+    track, clip = _editable_clip(project, uid, key)
+    if track.is_drums or clip.pattern is not None:
+        raise ValueError(tr("une batterie ne se transpose pas"))
+    shift = int(semitones)
+    if not clip.events or not shift:
+        return 0
+    notes = [int(e.note) + shift for e in clip.events]
+    if min(notes) < 0 or max(notes) > 127:
+        raise ValueError(tr("les notes sortiraient de l'étendue du clavier"))
+    for event, note in zip(clip.events, notes):
+        event.note = note
+    return len(notes)
+
+
+def _next_level(velocity: int) -> int:
+    """La force suivante d'un coup : fort, moyen, doux, puis fort."""
+    for level in LEVELS:
+        if int(velocity) > level:
+            return level
+    return LEVELS[0]
+
+
+def accent_hit(project: Project, uid: int, key: str, row: str,
+               step: int) -> int | None:
+    """Change la force du coup de la case ``step`` de la rangée ``row`` :
+    fort, moyen, doux, puis fort de nouveau (:data:`LEVELS`). Rend la force
+    posée, ou ``None`` s'il n'y a pas de coup à cette case."""
+    _track, clip = _editable_clip(project, uid, key)
+    if clip.pattern is None:
+        return None
+    hits = [s for s in clip.pattern.tracks.get(str(row), [])
+            if rhythm.cell(s) == int(step)]
+    if not hits:
+        return None
+    level = _next_level(max(int(s.velocity) for s in hits))
+    for hit in hits:
+        hit.velocity = level
+    return level
+
+
+def accent_note(project: Project, uid: int, key: str, note: int,
+                step: int) -> int | None:
+    """Change la force de la note de hauteur ``note`` qui sonne à la case
+    ``step`` — fort, moyen, doux. Rend la force posée, ou ``None`` si la
+    case est vide."""
+    track, clip = _editable_clip(project, uid, key)
+    if track.is_drums or clip.pattern is not None:
+        return None
+    touched = [e for e in clip.events if int(e.note) == int(note)
+               and float(e.start) <= int(step)
+               < float(e.start) + float(e.length)]
+    if not touched:
+        return None
+    level = _next_level(max(int(e.velocity) for e in touched))
+    for event in touched:
+        event.velocity = level
+    return level
+
+
 def set_cell(project: Project, section_index: int, uid: int,
              key: str | None) -> None:
     """Le clip que la piste joue dans la section ; ``None`` : silence."""
@@ -511,6 +677,29 @@ def move_section(project: Project, index: int, offset: int) -> int:
         section = project.sections.pop(index)
         project.sections.insert(target, section)
     return target
+
+
+def duplicate_section(project: Project, index: int) -> int:
+    """Ajoute, juste après la section ``index``, sa copie : même durée,
+    mêmes clips, et son nom numéroté (« Refrain », « Refrain 2 »…). Rend la
+    place de la copie.
+
+    La copie d'une section du morceau d'origine est une section **neuve** :
+    compléter le morceau lui donnera un numéro libre.
+    """
+    index = int(index)
+    if not 0 <= index < len(project.sections):
+        raise ValueError(tr("section inconnue"))
+    source = project.sections[index]
+    base = re.sub(r"\s+\d+$", "", tr(source.name)).strip() or tr("Section")
+    taken = {tr(s.name).casefold() for s in project.sections}
+    number = 2
+    while ("%s %d" % (base, number)).casefold() in taken:
+        number += 1
+    twin = AtelierSection(name="%s %d" % (base, number), kind=source.kind,
+                          bars=int(source.bars), cells=dict(source.cells))
+    project.sections.insert(index + 1, twin)
+    return index + 1
 
 
 # --------------------------------------------------------------------------- #
@@ -741,6 +930,7 @@ def regenerate_sound(project: Project, uid: int,
     track.options, track.preset = _sound_for(project.style, track.part,
                                              new_seed)
     track.edited = False
+    keep_level(track)
 
 
 def sound_variations(project: Project, uid: int, n: int = 8,
@@ -760,6 +950,7 @@ def sound_variations(project: Project, uid: int, n: int = 8,
         out = synthgen.style_variations(track.options, n, seed=seed)
         for variant in out:
             _arp_off(variant.preset.sound)
+            _level_sound(variant.preset.sound, track.level)
         return out
     from .sdcard import safe_deluge_name
     from .soundedit import carry_edits
@@ -777,6 +968,7 @@ def sound_variations(project: Project, uid: int, n: int = 8,
             break
         sound = carry_edits(start, edited, variant.preset.sound)
         _arp_off(sound)
+        _level_sound(sound, track.level)
         probe = copy.copy(sound)
         probe.name = edited.name
         if probe == edited:
@@ -799,6 +991,7 @@ def adopt_sound(project: Project, uid: int,
     track.options = choice.options
     track.preset = choice.preset
     track.edited = choice.retouched
+    keep_level(track)
 
 
 def edit_sound(project: Project, uid: int, sound) -> bool:
@@ -816,7 +1009,91 @@ def edit_sound(project: Project, uid: int, sound) -> bool:
         preset.name = sound.name
     track.preset = preset
     track.edited = True
+    if track.level is not None:
+        # Le volume réglé dans l'éditeur devient celui de la piste.
+        track.level = track_volume(track)
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Le volume d'une piste
+# --------------------------------------------------------------------------- #
+
+#: Le volume d'un kit qui n'en dit rien : celui d'un morceau neuf
+#: (``render.SONG_VOLUME``, le cran 35).
+KIT_VOLUME = 0x3504F334
+
+
+def track_volume(track: AtelierTrack) -> int | None:
+    """Le volume de la piste, au cran de la machine (0 à 50) : celui du son
+    d'un synthé, celui du kit d'une batterie. ``None`` quand la piste n'a
+    pas de son à elle — MIDI, CV, batterie encore sans kit."""
+    from .fixedpoint import to_display
+
+    if track is None:
+        return None
+    if track.kind == "synth" and track.preset is not None:
+        from . import soundedit
+
+        return int(soundedit.value(track.preset.sound, "volume"))
+    if track.kind == "kit" and track.kit is not None:
+        raw = (track.kit.params or {}).get("volume", KIT_VOLUME)
+        try:
+            return int(to_display(int(raw)))
+        except (TypeError, ValueError):
+            return int(to_display(KIT_VOLUME))
+    return None
+
+
+def _level_sound(sound, level: int | None) -> None:
+    if level is not None:
+        from . import soundedit
+
+        soundedit.set_value(sound, "volume", int(level))
+
+
+def keep_level(track: AtelierTrack) -> None:
+    """Rend à la piste le volume qu'on lui a choisi, après un changement de
+    son : sans cela, « Autre son » défaisait l'équilibre du morceau."""
+    from .fixedpoint import from_display
+
+    if track is None or track.level is None:
+        return
+    level = max(0, min(50, int(track.level)))
+    if track.kind == "synth" and track.preset is not None:
+        _level_sound(track.preset.sound, level)
+    elif track.kind == "kit" and track.kit is not None:
+        track.kit.params["volume"] = from_display(level)
+
+
+def set_track_volume(project: Project, uid: int, value: int) -> bool:
+    """Règle le volume de la piste, au cran de la machine (0 à 50). Il
+    s'entend à l'écoute et s'écrit avec le morceau ; il reste celui de la
+    piste quand elle change de son. Une piste du morceau d'origine garde le
+    sien : compléter un morceau n'en réécrit rien. Rend vrai si le volume a
+    été posé."""
+    track = project.track(uid)
+    if track is None or track.existing is not None \
+            or track_volume(track) is None:
+        return False
+    track.level = max(0, min(50, int(round(float(value)))))
+    keep_level(track)
+    return True
+
+
+def describe_volume(track: AtelierTrack) -> str:
+    """Ce que vaut le volume de la piste, en décibels sous le maximum —
+    « −6,2 dB » —, ou ``""`` pour une piste sans volume."""
+    from . import soundedit
+    from .fixedpoint import from_display
+    from .model import Sound
+
+    level = track_volume(track)
+    if level is None:
+        return ""
+    probe = Sound()
+    probe.set_param("volume", from_display(level))
+    return soundedit.describe(probe, "volume")
 
 
 # --------------------------------------------------------------------------- #
@@ -841,19 +1118,68 @@ def _part_key(track: AtelierTrack) -> str:
     return "%s#%d" % (track.part, track.uid)
 
 
-def section_parts(project: Project, index: int, max_bars: int = 8
-                  ) -> tuple[dict, rhythm.Pattern | None, int]:
+def section_parts(project: Project, index: int, max_bars: int = 8,
+                  only=None) -> tuple[dict, rhythm.Pattern | None, int]:
     """Le début d'une section, toutes pistes ensemble : ``(parties, batterie,
-    mesures)``. Chaque clip boucle sur la durée écoutée."""
+    mesures)``. Chaque clip boucle sur la durée écoutée.
+
+    ``only`` — des ``uid`` de pistes — ne laisse sonner que celles-là : les
+    pistes muettes ou hors du solo se taisent à l'écoute."""
     if not 0 <= int(index) < len(project.sections):
         return {}, None, 0
     section = project.sections[int(index)]
     bars = max(1, min(int(max_bars), int(section.bars)))
+    return _mixed_parts(project, dict(section.cells), bars, only) + (bars,)
+
+
+def context_parts(project: Project, uid: int, key: str,
+                  section: int | None = None, max_bars: int = 8, only=None
+                  ) -> tuple[dict, rhythm.Pattern | None, int, int]:
+    """Un clip **avec le morceau** : ``(parties, batterie, mesures,
+    section)``.
+
+    Les autres pistes jouent ce qu'elles jouent dans la première section où
+    le clip est placé ; s'il ne l'est nulle part, dans la section ``section``
+    (celle qu'on regarde à l'étape Structure), à défaut la plus pleine. La
+    durée est celle du plus long des clips entendus — chacun s'entend en
+    entier —, ``max_bars`` au plus. La piste du clip sonne toujours, même
+    hors de ``only``. Sans section, le clip joue seul (section -1).
+    """
+    track = project.track(uid)
+    clip = track.clip(key) if track is not None else None
+    if clip is None:
+        return {}, None, 0, -1
+    index = next((i for i, s in enumerate(project.sections)
+                  if s.cells.get(uid) == key), -1)
+    if index < 0 and section is not None \
+            and 0 <= int(section) < len(project.sections):
+        index = int(section)
+    if index < 0:
+        index = fullest_section(project)
+    cells = dict(project.sections[index].cells) if index >= 0 else {}
+    cells[uid] = key
+    heard = None if only is None else set(only) | {uid}
+    longest = int(clip.bars)
+    for other in project.tracks:
+        if heard is not None and other.uid not in heard:
+            continue
+        played = other.clip(cells.get(other.uid) or "")
+        if played is not None:
+            longest = max(longest, int(played.bars))
+    bars = max(1, min(int(max_bars), longest))
+    return _mixed_parts(project, cells, bars, heard) + (bars, index)
+
+
+def _mixed_parts(project: Project, cells: dict, bars: int, only=None
+                 ) -> tuple[dict, rhythm.Pattern | None]:
+    """Les clips de ``cells`` (piste -> clé), bouclés sur ``bars`` mesures."""
     steps = bars * STEPS_PER_BAR
     parts: dict[str, list[NoteEvent]] = {}
     drums: rhythm.Pattern | None = None
     for track in project.tracks:
-        key = section.cells.get(track.uid)
+        if only is not None and track.uid not in only:
+            continue
+        key = cells.get(track.uid)
         clip = track.clip(key) if key else None
         if clip is None:
             continue
@@ -873,7 +1199,7 @@ def section_parts(project: Project, index: int, max_bars: int = 8
                     events.append(NoteEvent(start, event.length, event.note,
                                             event.velocity))
         parts[_part_key(track)] = events
-    return parts, drums, bars
+    return parts, drums
 
 
 def fullest_section(project: Project) -> int:
@@ -1189,6 +1515,7 @@ def use_preset(project: Project, preset, part: str = "",
     track.preset = preset
     track.options = copy.deepcopy(options) if options is not None else None
     track.edited = bool(edited)
+    keep_level(track)
     return track
 
 
@@ -1203,6 +1530,7 @@ def use_kit(project: Project, kit, uid: int | None = None) -> AtelierTrack:
     if track is None:
         track = add_track(project, "kit", "Batterie")
     track.kit = copy.deepcopy(kit)
+    keep_level(track)
     return track
 
 

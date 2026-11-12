@@ -367,12 +367,13 @@ La page suit l'ordre du travail. En haut, la **barre des étapes** : [Style], [S
 
 Rien n'oblige à suivre l'ordre : toutes les étapes restent ouvertes, et l'on revient sur un son après avoir travaillé la structure. Tant qu'aucun morceau n'est composé, les étapes 2 à 5 le disent — « Pas encore de morceau » — et proposent les deux façons de commencer : [Composer un morceau], qui ramène au style, et [Ouvrir un morceau du Deluge…].
 
-L'en-tête porte trois commandes, valables à toute étape :
+L'en-tête porte six commandes, valables à toute étape :
 
 - [Ouvrir un morceau du Deluge…] ouvre un morceau de la carte dans l'atelier (voir [Ouvrir un morceau du Deluge, et le compléter](#atelier-completer)) ;
-- [Écouter un extrait] joue huit mesures du passage le plus plein du morceau, toutes pistes ensemble ;
-- [Arrêter] coupe l'écoute. [[Espace]] fait de même, et relance l'écoute de ce que montre l'étape : le son, le clip, la section — aux deux autres, un extrait du morceau, ou ses accords tant qu'il n'est pas composé.
-- [Défaire] revient sur le dernier geste — un son changé, un coup dessiné, un clip supprimé, une piste ou une section retirée, et même un morceau recomposé —, [Refaire] le rejoue. [[Ctrl+Z]] et [[Ctrl+Y]] font de même ; l'infobulle de chaque bouton dit quel geste il défait. Ce qui est déjà écrit sur la carte, lui, ne se défait pas.
+- [Brouillons…] ouvre la liste des morceaux de l'atelier gardés sur l'ordinateur (voir [Les brouillons](#atelier-brouillons)) ;
+- [Écouter un extrait] joue huit mesures du passage le plus plein du morceau ;
+- le **carré** coupe l'écoute, et arrête un calcul en cours : rien ne part après lui. [[Espace]] fait de même, et relance l'écoute de ce que montre l'étape : le son, le clip, la section — aux deux autres, un extrait du morceau, ou ses accords tant qu'il n'est pas composé ;
+- les **deux flèches** défont et refont. La première revient sur le dernier geste — un son changé, un coup dessiné, un clip supprimé, une piste ou une section retirée, et même un morceau recomposé —, la seconde le rejoue. [[Ctrl+Z]] et [[Ctrl+Y]] font de même ; l'infobulle de chaque flèche dit quel geste elle défait. Ce qui est déjà écrit sur la carte, lui, ne se défait pas.
 
 Son sous-titre dit le morceau en cours : son genre, sa tonalité, sa longueur et sa durée. Jusqu'à l'écriture, **rien n'est écrit sur la carte** : l'atelier compose même sans carte, et ne la demande que pour écrire, ou pour bâtir un kit avec vos échantillons.
 
@@ -382,6 +383,8 @@ Son sous-titre dit le morceau en cours : son genre, sa tonalité, sa longueur et
 ## 1. Le style {#atelier-style}
 
 À gauche, les vingt-deux **genres** du générateur, un pad chacun ; l'infobulle décrit le caractère du genre et sa plage de tempo. En choisir un place le tempo au milieu de cette plage, et coche l'arpège quand le genre en a l'habitude. Recliquer le genre en cours ne défait rien.
+
+L'étape montre toujours **le style du morceau en cours** — repris au lancement, rouvert d'un brouillon ou rendu par les flèches, il y remet son genre, son tempo, sa tonalité et ses parties. Un morceau déjà composé garde son tempo quand vous essayez un autre genre : c'est la prochaine composition qui prendra celui du genre, à moins que vous ne régliez le compteur entre-temps — la ligne du bas le dit. Pour un morceau venu de la carte, qui ne dit pas son genre, le pad choisi devient le sien : ses sons et ses clips neufs en seront.
 
 **Tempo et tonalité** :
 
@@ -405,7 +408,7 @@ Son sous-titre dit le morceau en cours : son genre, sa tonalité, sa longueur et
 
 [Composer le morceau] fabrique alors le projet : une piste par partie cochée, un son dans le style pour chacune, un premier clip, et la **structure du genre** — intro, montée, thème, cassure… — avec les variations qu'elle appelle : une batterie allégée pour l'intro, sans grosse caisse pour la cassure, ornée pour le sommet ; au second sommet, la mélodie répond à la première et la basse s'enrichit. L'atelier passe ensuite aux sons.
 
-Le morceau composé, le bouton devient [Recomposer le morceau] : il remplace le morceau en cours, après une question. Un réglage du style changé ensuite ne touche pas au morceau — le tempo excepté — : il vaut pour la prochaine composition, et une ligne le rappelle.
+Le morceau composé, le bouton devient [Recomposer le morceau] : il fait un morceau neuf à la place de celui en cours, après une question — l'ancien n'est pas perdu, il rejoint [les brouillons](#atelier-brouillons). Un réglage du style changé ensuite ne touche pas au morceau — le compteur de tempo excepté, qu'il prend aussitôt — : il vaut pour la prochaine composition, et une ligne le rappelle.
 
 ## 2. Les sons {#atelier-sons}
 
@@ -415,16 +418,19 @@ Le morceau composé, le bouton devient [Recomposer le morceau] : il remplace le 
 - [Autre son] en tire un autre du même style pour un synthé ; pour une batterie, un autre kit bâti dans votre bibliothèque. Le son remplacé n'est pas perdu : il rejoint la liste des **sons essayés**, sous les boutons — le plus récent en tête —, et [Reprendre ce son] le rend à la piste.
 - [Choisir sur la carte…] prend pour la piste un preset ou un kit de la carte, choisi dans l'index.
 - [Modifier le son…], en mode avancé, ouvre l'éditeur du son (voir [Modifier un son à la main](#atelier-modifier-son)).
+- **Volume** règle le niveau de la piste dans le morceau, au cran de la machine — de 0 à 50 —, avec sa valeur en décibels : celui du son pour un synthé, celui du kit pour une batterie. C'est ici que se fait l'équilibre : il s'entend dès l'écoute suivante, s'écrit avec le morceau, et **reste celui de la piste** quand elle change de son — [Autre son] ne défait pas un équilibre réglé. Une piste MIDI ou CV, dont le son est ailleurs, n'en a pas.
 - Une piste MIDI ou CV montre son **canal**, qui se change ici.
 
-Pour une batterie, **Le kit** liste ses rangées et le son de chacune. Une rangée ne vous plaît pas ? Choisissez-la, puis [Autre son pour la rangée] : un autre son du même rôle la remplace — de la même machine d'abord, d'une voisine ensuite —, sans toucher au reste du kit.
+Pour une batterie, **Le kit** liste ses rangées et le son de chacune. [Écouter la rangée] joue la rangée choisie telle que le kit la joue ; si l'écoute au clic est réglée ([Réglages](#reglages-ecoute)), la choisir suffit. Une rangée ne vous plaît pas ? [Autre son pour la rangée] : un autre son du même rôle la remplace — de la même machine d'abord, d'une voisine ensuite —, sans toucher au reste du kit, et s'entend aussitôt.
 
 **Variantes dans le style** : [Proposer 8 variantes] en propose huit du son de la piste. Chacune ne touche qu'**un** aspect : soit un aspect tiré à nouveau — le timbre, le filtre, les enveloppes, le mouvement, l'espace, la largeur, les modulations —, soit un curseur poussé — plus brillant, plus sombre, plus sale, plus large, plus d'espace… Le reste du son ne bouge pas, et rien ne sort du genre. Un clic écoute une variante ; un double-clic, ou [Adopter], la donne à la piste.
 
 !!! retenir Plus sale, c'est le même son en plus sale
     Chaque décision du son — la coupure, la saturation, la forme des LFO — a son propre tirage. Pousser la saleté ne change donc que ce qui dépend d'elle : on obtient le même son, en plus sale, et non un autre son.
 
-Sous la liste des pistes, un menu et deux boutons ajoutent ou retirent une piste : la **partie** qu'elle jouera, puis [Ajouter] — avec un son dans le style et un premier clip — ou [Retirer], qui la retire aussi de toutes les sections. Au niveau simple, la nature suit la partie : un kit pour la batterie, un synthé du Deluge pour le reste ; en mode avancé, un second menu la choisit — kit, synthé, MIDI ou CV.
+Sous la liste des pistes, [Muet] fait taire la piste choisie à l'écoute de l'ordinateur et [Solo] n'écoute qu'elle ; un second clic rend ce qui se taisait, et la liste dit ce qui est muet. Ce sont les mêmes pads que devant chaque rangée de [la grille des sections](#atelier-morceau) : ils ne valent que pour l'oreille, le morceau écrit garde toutes ses pistes.
+
+Plus bas, un menu et deux boutons ajoutent ou retirent une piste : la **partie** qu'elle jouera, puis [Ajouter] — avec un son dans le style et un premier clip — ou [Retirer], qui la retire aussi de toutes les sections. Au niveau simple, la nature suit la partie : un kit pour la batterie, un synthé du Deluge pour le reste ; en mode avancé, un second menu la choisit — kit, synthé, MIDI ou CV.
 
 ## Modifier un son à la main {#atelier-modifier-son}
 
@@ -443,15 +449,29 @@ Dans **Modulations**, chaque ligne relie une source à un réglage, avec une pro
 
 ## 3. Les clips {#atelier-clips}
 
-Une piste a ses clips, nommés A, B, C… : la liste dit d'où vient chacun — généré, variation d'un autre, ou repris du morceau d'origine — et sa longueur. Dessous, le clip lui-même : les rangées d'une batterie, de bas en haut, ou les notes d'un synthé sur leur hauteur. Une ligne dit combien il a de notes et dans quelles sections il joue.
+Une piste a ses clips, nommés A, B, C… : la liste dit d'où vient chacun — généré, variation ou copie d'un autre, vide, ou repris du morceau d'origine — et sa longueur. Dessous, le clip lui-même, ses mesures numérotées : les rangées d'une batterie, de bas en haut, ou les notes d'un synthé sur leur hauteur. Une ligne dit combien il a de notes et dans quelles sections il joue.
 
-**La batterie se dessine à la souris** : un clic dans la grille allume un coup, un second l'éteint. La grille montre toujours la grosse caisse, la caisse claire, le clap et les deux charleys, même sans coup : de quoi ajouter un clap là où il manque. **Les notes d'un synthé aussi** : un clic sur une case vide pose une note d'une croche à cette hauteur, un clic sur une note la retire — une fausse note se corrige sans refaire le clip. Un clip repris du morceau d'origine ne se dessine pas : variez-le, la variation est un clip neuf.
+L'écoute est au-dessus de la grille :
 
-- [Écouter le clip] le joue sur l'ordinateur, avec le son de sa piste.
+- [Écouter le clip] le joue sur l'ordinateur, avec le son de sa piste ; une barre blanche suit la lecture dans la grille.
+- [En boucle], allumé d'office, le fait tourner jusqu'à l'arrêt — le carré de l'en-tête, ou [[Espace]] : il repart à son début, en mesure, sa réverbération enchaînée d'un tour au suivant. Éteint, le clip joue une fois. Le même réglage vaut pour les sections ; quitter l'atelier arrête la boucle.
+- [Avec le morceau] le fait entendre **avec les autres pistes** : celles de la première section où il est placé, à défaut de la section choisie à l'étape Structure. C'est ainsi qu'on juge une variation — dans son contexte, pas toute seule. Les pistes muettes se taisent ; la sienne s'entend toujours.
 - [Varier] ouvre le menu des variations ; la variation choisie s'**ajoute** à la piste comme un clip neuf, l'original reste.
+
+!!! astuce La boucle suit vos gestes
+    Pendant qu'un clip ou une section tourne, ce que vous changez s'entend une fraction de seconde plus tard, **sans relancer la boucle** : un coup allumé, une note tirée, une case de la grille, une piste coupée ou isolée, un volume retouché. Le son est recalculé un instant après votre dernier geste et prend la place de l'ancien à la même mesure. Seul un changement de durée — un clip doublé, un tempo — la fait repartir du début.
+
+**La batterie se dessine à la souris** : un clic dans la grille allume un coup, un second l'éteint ; un **clic droit** change sa force — fort, moyen, doux —, que la teinte du pad montre : de quoi poser des notes fantômes. La grille montre toujours la grosse caisse, la caisse claire, le clap et les deux charleys, même sans coup : de quoi ajouter un clap là où il manque. **Les notes d'un synthé aussi** : un clic sur une case vide pose une croche à cette hauteur ; **tirer vers la droite** avant de relâcher lui donne la longueur parcourue ; un clic sur une note la retire, un clic droit change sa force — une fausse note se corrige sans refaire le clip. Un clip repris du morceau d'origine ne se dessine pas, mais sa copie, si : [Dupliquer].
+
+Sous la grille, les clips de la piste :
+
 - [Nouveau clip] en fabrique un autre, de la longueur choisie à côté (une, deux, quatre ou huit mesures), sur la progression du morceau.
+- [Clip vide] en ouvre un sans note, de la même longueur, à dessiner entièrement.
+- [Dupliquer] en fait une copie, à retoucher sans toucher à l'original.
+- [Doubler la longueur] le rend deux fois plus long en répétant son contenu, jusqu'à seize mesures — le geste de la machine : quatre mesures en deviennent huit, dont on varie la seconde moitié.
 - [Supprimer le clip] le retire ; les sections qui le jouaient se taisent pour cette piste.
 - [Clip en MIDI…], en mode avancé, écrit le clip dans un fichier `.mid`, hors de la carte ; une batterie part sur le canal 10.
+- Pour un synthé, **Hauteur** : [Octave −] et [Octave +] déplacent toutes ses notes d'une octave — une basse composée trop haut se descend d'un clic.
 
 | Pour un synthé | Pour une batterie |
 |---|---|
@@ -485,12 +505,14 @@ Le Deluge doit être branché et connecté ([Se connecter](#se-connecter)), et M
 
 ## 4. La structure {#atelier-morceau}
 
-La grille montre le morceau entier : **une rangée par piste, une colonne par section**, et dans chaque case la lettre du clip que la piste y joue. Un clic sur une case fait jouer à la piste son clip suivant, puis le silence, puis à nouveau le premier. Un clic sur l'en-tête d'une section la choisit. Les clips repris d'un morceau de la carte ont un contour pointillé.
+La grille montre le morceau entier : **une rangée par piste, une colonne par section**, et dans chaque case la lettre du clip que la piste y joue. Un clic sur une case fait jouer à la piste son clip suivant, puis le silence, puis à nouveau le premier. Un **clic droit** ouvre la liste de ses clips — d'où ils viennent, leur longueur — et le silence : on choisit d'un geste, au lieu de les faire défiler ; la dernière ligne ouvre le clip joué à l'étape Clips. Un clic sur l'en-tête d'une section la choisit. Les clips repris d'un morceau de la carte ont un contour pointillé.
+
+Devant le nom de chaque piste, **son pad d'écoute**, comme la colonne de pads de la machine : allumé, la piste s'entend. Un clic l'éteint — la piste se tait, ses cases s'estompent —, un second la rend ; un clic droit, ou Maj+clic, l'**isole** : elle joue seule, son pad cerclé de blanc. Ces pads ne valent que pour l'écoute de l'ordinateur : le morceau écrit sur la carte garde toutes ses pistes.
 
 **La section choisie** se règle dessous : son **nom** — que ses clips portent sur le Deluge — et sa **durée** en mesures, sur laquelle ses clips bouclent.
 
-- [Écouter la section] joue son début — huit mesures au plus —, toutes pistes ensemble ; [Arrêter] coupe l'écoute.
-- [Ajouter une section] en ajoute une après celle choisie, avec les mêmes clips ; [Retirer la section] la retire.
+- [Écouter la section] joue son début — huit mesures au plus —, les pistes muettes en moins ; une barre blanche traverse sa colonne. Avec [En boucle], elle tourne jusqu'à l'arrêt.
+- [Ajouter une section] en ajoute une après celle choisie, avec les mêmes clips ; [Dupliquer la section] en fait la copie exacte — durée, clips, nom numéroté —, à faire varier ; [Retirer la section] la retire.
 - Les deux flèches la déplacent d'un cran dans le morceau.
 - [Structure du genre] remplace les sections par celles du genre, avec leurs variations. Partant d'un de vos morceaux, ses sections restent, et celles du genre s'ajoutent après.
 
@@ -502,7 +524,7 @@ La dernière étape écrit le morceau. **Nom du morceau** propose un nom — cel
 
 Une exception : si ce nom est celui d'un morceau **que l'atelier a écrit**, et que ni vous ni le Deluge ne l'avez changé depuis, l'application propose de le **remplacer** par la nouvelle version — [Oui] — plutôt que d'en écrire une seconde à côté — [Non]. L'ancienne est gardée dans `_BACKUP`, à la racine de la carte. Un morceau enregistré sur la machine, lui, n'est jamais remplacé.
 
-[Écrire le morceau] en fait un morceau du Deluge, dans `SONGS` : une section du Deluge par section du projet, chacune avec ses clips et son nombre de répétitions, et l'arrangement complet pour la vue SONG. Les synthés y portent leur son ; la batterie, un kit bâti avec vos échantillons, ou celui que vous avez choisi ; les pistes MIDI et CV, leur canal. Le parcours est celui de tout [morceau écrit](#parcours-morceau) : le nom, le plan, puis l'écriture d'un fichier neuf. Une ligne dit ensuite ce qui est écrit, et [Voir dans Morceaux] l'ouvre sur la page Morceaux.
+[Écrire le morceau] en fait un morceau du Deluge, dans `SONGS` : une section du Deluge par section du projet, chacune avec ses clips et son nombre de répétitions, et l'arrangement complet pour la vue SONG. Les synthés y portent leur son et leur volume ; la batterie, un kit bâti avec vos échantillons, ou celui que vous avez choisi ; les pistes MIDI et CV, leur canal. Le parcours est celui de tout [morceau écrit](#parcours-morceau) : le nom, le plan, puis l'écriture d'un fichier neuf. Une ligne dit ensuite ce qui est écrit, et [Voir dans Morceaux] l'ouvre sur la page Morceaux. Le nom sous lequel il est écrit devient celui du morceau — la prochaine écriture le propose —, et le morceau rejoint [les brouillons](#atelier-brouillons).
 
 Le panneau **Le Deluge** dit où partira le morceau : sur la copie de travail, il monte sur la machine de lui-même, quelques secondes après l'écriture. [Deluge en direct…] ouvre la fenêtre de la machine ; [Synchroniser] échange tout de suite avec elle.
 
@@ -510,7 +532,7 @@ En mode avancé, [Morceau en MIDI…] écrit le morceau entier dans un fichier `
 
 ## Ouvrir un morceau du Deluge, et le compléter {#atelier-completer}
 
-[Ouvrir un morceau du Deluge…] ouvre dans l'atelier un morceau de la carte — les derniers reçus du Deluge en tête de liste ; [Ouvrir dans l'atelier], sur la page Morceaux, et la porte [Continuer un morceau du Deluge] de l'accueil y mènent aussi. L'atelier l'ouvre à l'étape Structure. Ses pistes, ses clips, son tempo et sa gamme deviennent ceux du projet ; sa progression d'accords est lue dans ses notes, pour que les clips neufs s'y accordent. Ses clips se varient comme les autres — une variation est toujours un clip neuf —, et l'on ajoute des pistes, des clips et des sections.
+[Ouvrir un morceau du Deluge…] ouvre dans l'atelier un morceau de la carte — les derniers reçus du Deluge en tête de liste ; [Ouvrir dans l'atelier], sur la page Morceaux, et la porte [Continuer un morceau du Deluge] de l'accueil y mènent aussi. L'atelier l'ouvre à l'étape Structure. Ses pistes, ses clips, son tempo et sa gamme deviennent ceux du projet ; sa progression d'accords est lue dans ses notes, pour que les clips neufs s'y accordent. Ses clips se varient comme les autres — une variation est toujours un clip neuf — ou se dupliquent, la copie se dessinant à la main ; et l'on ajoute des pistes, des clips et des sections. Le morceau que vous quittiez rejoint [les brouillons](#atelier-brouillons).
 
 [Compléter le morceau], à l'étape Deluge, écrit alors une **nouvelle version** : « Cool1 5 » après « Cool1 4 ». Elle contient le morceau d'origine **octet pour octet**, plus ce que vous avez ajouté : les pistes neuves, leurs clips, et les sections neuves avec les leurs. Le plan détaille chaque ajout avant d'écrire. Le fichier écrit est relu aussitôt : si le morceau d'origine n'y est pas intact, rien n'est écrit.
 
@@ -518,6 +540,21 @@ En mode avancé, [Morceau en MIDI…] écrit le morceau entier dans un fichier `
     La nouvelle version est un fichier à côté de l'ancien ; chargez-la sur le Deluge comme tout morceau. Les sections existantes gardent leur durée et leurs clips ; elles reçoivent ceux des pistes neuves, et d'une piste qui n'y jouait rien. Une piste qui y a déjà son clip le garde : en disposition grille, le Deluge n'en montre qu'un par piste et par section. Placez le nouveau dans une section neuve — le plan signale chaque cas.
 
 Le morceau doit venir d'un firmware 1.2 ou plus récent. Un morceau plus ancien, ou au format 2.x, est refusé : enregistrez-le une fois sur le Deluge, qui le convertit, puis recommencez. Les notes neuves sont écrites dans le format du morceau ; le Deluge connaît 24 sections au plus en firmware 1.3, 12 avant.
+
+## Les brouillons {#atelier-brouillons}
+
+L'atelier ne tient qu'un morceau à la fois, mais n'en perd aucun. Chaque morceau qu'il **remplace** — vous recomposez, vous ouvrez un morceau du Deluge ou un autre brouillon — et chaque morceau qu'il **écrit** sur la carte est rangé sur l'ordinateur, tel quel : ses sons, retouchés ou non, ses clips, ses sections, le volume de chaque piste.
+
+[Brouillons…], dans l'en-tête, en ouvre la liste, le plus récent en tête : le nom du morceau, son genre, sa tonalité et sa durée, s'il a été écrit sur la carte, et quand il a été rangé.
+
+- [Ouvrir] — ou un double-clic — remet le brouillon choisi dans l'atelier, à l'étape où vous l'aviez laissé ; le morceau en cours prend sa place dans la liste. Les flèches de l'en-tête défont aussi ce geste.
+- [Supprimer] l'efface de l'ordinateur, après une question : c'est le seul geste de l'atelier qui ne se défait pas.
+- [Fermer] ferme la liste sans rien changer.
+
+!!! retenir Un brouillon n'est pas le morceau de la carte
+    Rouvrir un morceau **écrit** par [Ouvrir un morceau du Deluge…] le rend tel que la machine le lit : ses pistes lui appartiennent, ses sons ne se retouchent plus, on ne peut que le compléter. Son brouillon, lui, est resté un projet de l'atelier : tout s'y modifie encore, et [Écrire le morceau] propose de remplacer la version écrite. La carte n'est jamais touchée par les brouillons ; les supprimer n'efface aucun morceau du Deluge.
+
+Les brouillons vivent dans le dossier de configuration de l'application. Quarante sont gardés ; au-delà, les plus anciens partent — d'abord ceux qui n'ont été ni retouchés ni écrits.
 
 ## Des sons venus d'autres pages {#atelier-venus}
 

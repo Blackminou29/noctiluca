@@ -43,7 +43,7 @@ ICON_NAMES = (
     "link", "warning", "check", "chevron-right", "chevron-down",
     "chevron-left", "plus",
     "minus", "filter", "grid", "list", "info", "backup", "midi", "atelier",
-    "home", "memo",
+    "home", "memo", "loop", "undo", "redo", "mute", "solo",
 )
 
 
@@ -448,10 +448,73 @@ def _draw_memo(p: QPainter, c: QColor) -> None:
         p.drawLine(QPointF(34, y), QPointF(66, y))
 
 
+def _draw_loop(p: QPainter, c: QColor) -> None:
+    """Une piste fermée et sa flèche : l'écoute tourne en boucle."""
+    _pen(p, c, 8.0)
+    path = QPainterPath(QPointF(54, 28))
+    path.lineTo(QPointF(34, 28))
+    path.arcTo(QRectF(14, 28, 40, 44), 90, 180)
+    path.lineTo(QPointF(66, 72))
+    path.arcTo(QRectF(46, 28, 40, 44), 270, 140)
+    p.drawPath(path)
+    _fill(p, c)
+    p.drawPolygon(_poly([(54, 12), (76, 28), (54, 44)]))
+
+
+def _fleche_de_retour(p: QPainter, c: QColor, miroir: bool) -> None:
+    """Une flèche qui rebrousse chemin, vers la gauche — ou vers la droite
+    (``miroir``)."""
+    def x(valeur: float) -> float:
+        return 100.0 - valeur if miroir else valeur
+
+    _pen(p, c, 8.0)
+    path = QPainterPath(QPointF(x(30), 38))
+    path.lineTo(QPointF(x(58), 38))
+    cadre = QRectF(min(x(36), x(80)), 38, 44, 40)
+    if miroir:
+        path.arcTo(cadre, 90, 180)
+    else:
+        path.arcTo(cadre, 90, -180)
+    path.lineTo(QPointF(x(36), 78))
+    p.drawPath(path)
+    _fill(p, c)
+    p.drawPolygon(_poly([(x(34), 20), (x(12), 38), (x(34), 56)]))
+
+
+def _haut_parleur(p: QPainter, c: QColor) -> None:
+    _fill(p, c)
+    p.drawPolygon(_poly([(12, 40), (28, 40), (48, 22), (48, 78), (28, 60),
+                         (12, 60)]))
+
+
+def _draw_mute(p: QPainter, c: QColor) -> None:
+    """Un haut-parleur barré : la piste se tait."""
+    _haut_parleur(p, c)
+    _pen(p, c, 8.0)
+    p.drawLine(QPointF(62, 38), QPointF(86, 62))
+    p.drawLine(QPointF(86, 38), QPointF(62, 62))
+
+
+def _draw_solo(p: QPainter, c: QColor) -> None:
+    """Un haut-parleur qui sonne : on n'écoute que cette piste."""
+    _haut_parleur(p, c)
+    _pen(p, c, 7.0)
+    for cadre in (QRectF(46, 34, 22, 32), QRectF(42, 20, 44, 60)):
+        path = QPainterPath()
+        path.arcMoveTo(cadre, -52)
+        path.arcTo(cadre, -52, 104)
+        p.drawPath(path)
+
+
 #: Table des fonctions de dessin, par nom d'icône.
 _DRAW = {
     "home": _draw_home,
     "memo": _draw_memo,
+    "loop": _draw_loop,
+    "undo": lambda p, c: _fleche_de_retour(p, c, miroir=False),
+    "redo": lambda p, c: _fleche_de_retour(p, c, miroir=True),
+    "mute": _draw_mute,
+    "solo": _draw_solo,
     "dashboard": _draw_dashboard,
     "samples": _draw_samples,
     "synth": _draw_synth,

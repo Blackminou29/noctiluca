@@ -595,17 +595,26 @@ style**, tout ce qui crée — du choix des sons à l'arrangement —, en **cinq
    oscillateurs, filtres, enveloppes, LFO, effets et modulations, chaque
    réglage au cran de la machine et, dessous, ce qu'il vaut sur le Deluge
    (« decay 13 · 1,8 s »). Le même éditeur s'ouvre depuis le Générateur.
+   Un **volume par piste** fait l'équilibre du morceau, et reste celui de
+   la piste quand elle change de son.
 3. **Clips** — un premier clip par piste, puis ses **variations** : rythme
    décalé, autres notes, plus ou moins de notes, réponse, octave, fin de
    phrase ; pour la batterie, ornements, roulement, cassure, demi-temps,
    montée. Toujours dans la gamme, toujours parentes de l'original. La
-   batterie **se dessine au clic**, les notes d'un synthé aussi ; en mode
-   avancé, groove, rythmes euclidiens et style de jeu des accords et de la
-   basse.
+   batterie **se dessine au clic**, les notes d'un synthé aussi — tirer
+   donne sa longueur à une note, un clic droit sa force ; un clip se
+   duplique, se double, change d'octave, ou part de zéro. En mode avancé,
+   groove, rythmes euclidiens et style de jeu des accords et de la basse.
 4. **Structure** — une grille pistes × sections, la structure du genre en un
-   clic.
+   clic ; un clic droit choisit le clip d'une case, une section se duplique.
 5. **Deluge** — **Écrire le morceau** : un morceau neuf, sections et
    arrangement compris, qui part sur la machine par le câble.
+
+**Écouter en composant.** Un clip ou une section tourne **en boucle**, en
+mesure, une barre suivant la lecture ; le clip s'écoute seul ou **avec le
+morceau**. Devant chaque piste, un pad la fait taire ou l'isole, comme sur
+la machine. Et la boucle **suit vos gestes** : un coup dessiné, une piste
+coupée, un volume retouché s'entendent sans la relancer.
 
 **Travailler en même temps que la machine.** *Jouer sur le Deluge* envoie un
 clip à la machine, dans le clip que suit MIDI Follow, calé sur sa mesure —
@@ -619,9 +628,11 @@ jamais touché.
 **Rien ne se perd.** *Défaire* et *Refaire* (Ctrl+Z, Ctrl+Y) remontent chaque
 geste, jusqu'à un morceau recomposé ; les sons qu'« Autre son » a remplacés
 restent dans la liste des **sons essayés** ; le morceau en cours est gardé sur
-l'ordinateur et revient au lancement suivant. Une version écrite par l'atelier
-et restée telle quelle peut être **remplacée** au lieu d'être numérotée — à
-votre demande, l'ancienne gardée dans `_BACKUP`.
+l'ordinateur et revient au lancement suivant. Chaque morceau remplacé ou écrit
+rejoint les **brouillons**, d'où il se rouvre tel quel — sons retouchés, clips,
+sections. Une version écrite par l'atelier et restée telle quelle peut être
+**remplacée** au lieu d'être numérotée — à votre demande, l'ancienne gardée
+dans `_BACKUP`.
 
 ---
 
@@ -678,6 +689,7 @@ delugeapp/
     songwriter.py        écriture de morceaux du Deluge depuis les outils
     variation.py         variations d'un clip, dans la gamme et parentes
     atelier.py           le projet de l'atelier : style, pistes, clips, sections
+    atelierstore.py      ses brouillons : les morceaux gardés sur l'ordinateur
     songinsert.py        compléter un morceau sans le réécrire, preuve à l'appui
     midiport.py          MIDI et SysEx par winmm, sans dépendance
     midifollow.py        les 52 contrôleurs du mode MIDI Follow
@@ -700,6 +712,7 @@ delugeapp/
     tasks.py             travaux longs hors du fil de l'interface
     songexport.py        parcours commun des boutons « en morceau »
     report.py            signaler un problème : un rapport à relire
+    draftsdialog.py      la liste des brouillons de l'atelier
     firmwaredialog.py    Outils ▸ Firmware du Deluge…
     livewindow.py        « Deluge en direct » : écran, tempo, son sélectionné
     cardwork.py          la copie de travail tenue à l'image de la carte
@@ -711,9 +724,9 @@ delugeapp/
                          enveloppe, forme d'onde, pads, piano…
 tests/
   test_core.py           798 tests du cœur
-  test_ui.py             465 tests d'interface, dont ceux du manuel
+  test_ui.py             520 tests d'interface, dont ceux du manuel
   test_i18n.py           30 tests de la traduction
-  test_atelier.py        68 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
+  test_atelier.py        107 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
   deluge_simule.py       un Deluge simulé, qui répond comme la vraie machine
 SPEC.md                  contrat d'architecture : formats, règles, budgets
 ```
@@ -730,7 +743,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-1 361 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+1 455 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

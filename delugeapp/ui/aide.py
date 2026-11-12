@@ -346,9 +346,62 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                                            "modifié"),
         "Composer un morceau": N_("Mène à la première étape : choisir un "
                                   "style, puis composer"),
+        "@_drafts_button": N_("Les morceaux de l'atelier gardés sur "
+                              "l'ordinateur : chaque morceau remplacé ou "
+                              "écrit y est rangé tel quel — sons, clips, "
+                              "sections. En rouvrir un le remet dans "
+                              "l'atelier ; la carte n'est pas touchée"),
         "@_listen_song_button": N_("Joue huit mesures du passage le plus "
-                                   "plein du morceau, toutes pistes "
-                                   "ensemble — rien n'est écrit"),
+                                   "plein du morceau, les pistes muettes en "
+                                   "moins — en boucle si « En boucle » est "
+                                   "allumé ; rien n'est écrit"),
+        "@_mute_button": N_("Fait taire la piste choisie à l'écoute de "
+                            "l'ordinateur — section, extrait, clip « avec le "
+                            "morceau » ; un second clic la rend. Le morceau "
+                            "écrit sur la carte garde toutes ses pistes"),
+        "@_solo_button": N_("N'écoute que la piste choisie ; un second clic "
+                            "rend les autres. Pour l'oreille seulement : le "
+                            "morceau écrit n'en tient pas compte"),
+        "@_volume": N_("Le niveau de la piste dans le morceau, au cran de la "
+                       "machine (0 à 50) : celui du son pour un synthé, celui "
+                       "du kit pour une batterie. Il s'entend dès l'écoute "
+                       "suivante, s'écrit avec le morceau, et reste celui de "
+                       "la piste quand elle change de son"),
+        "@_listen_row_button": N_("Joue le son de la rangée choisie, tel que "
+                                  "le kit le joue : son échantillon, ses "
+                                  "réglages, le volume du kit"),
+        "@_loop_button": N_("L'écoute tourne en boucle jusqu'à « Arrêter » "
+                            "(Espace) : le clip ou la section repart à son "
+                            "début, en mesure, sa réverbération enchaînée — "
+                            "et ce que vous dessinez pendant qu'elle tourne "
+                            "s'entend sans la relancer. Éteint, il joue une "
+                            "fois"),
+        "@_loop_section_button": N_("L'écoute tourne en boucle jusqu'à "
+                                    "« Arrêter » (Espace) : la section repart "
+                                    "à son début, en mesure. Éteint, elle "
+                                    "joue une fois — le même réglage qu'à "
+                                    "l'étape Clips"),
+        "@_context_button": N_("Écoute le clip avec les autres pistes : "
+                               "celles de la première section où il joue, ou "
+                               "de la section choisie à l'étape Structure. "
+                               "Éteint, le clip joue seul"),
+        "@_empty_clip_button": N_("Un clip sans note, de la longueur choisie "
+                                  "à côté, à dessiner dans la grille"),
+        "@_copy_clip_button": N_("Une copie du clip choisi, ajoutée à la "
+                                 "piste : retouchez-la sans toucher à "
+                                 "l'original. La copie d'un clip venu du "
+                                 "Deluge se dessine, elle"),
+        "@_double_clip_button": N_("Rend le clip deux fois plus long en "
+                                   "répétant son contenu, jusqu'à seize "
+                                   "mesures : de quoi varier la seconde "
+                                   "moitié"),
+        "@_octave_down_button": N_("Descend toutes les notes du clip d'une "
+                                   "octave — une basse composée trop haut"),
+        "@_octave_up_button": N_("Monte toutes les notes du clip d'une "
+                                 "octave"),
+        "@_copy_section_button": N_("Ajoute juste après la section choisie sa "
+                                    "copie — même durée, mêmes clips, nom "
+                                    "numéroté —, à faire varier"),
         "@_prev_button": N_("Revient à l'étape d'avant ; rien de ce que vous "
                             "avez fait ne se perd"),
         "@_next_button": N_("Passe à l'étape suivante du morceau ; toutes "
@@ -467,7 +520,9 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                                 "main garde ses retouches"),
         "@_adopt_button": N_("La piste prend le son de la variante choisie"),
         "@_listen_clip_button": N_("Joue le clip choisi sur l'ordinateur, "
-                                   "avec le son de sa piste"),
+                                   "avec le son de sa piste ; une barre "
+                                   "blanche suit la lecture dans la grille  "
+                                   "(Espace)"),
         "@_live_button": N_("Joue le clip en boucle sur le Deluge, dans le "
                             "clip que suit MIDI Follow : machine en lecture, "
                             "calé sur sa mesure ; en enregistrement (REC), il "
@@ -478,7 +533,7 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                             "ornements, remplissage, cassure, montée…"),
         "@_new_clip_button": N_("Un clip neuf pour la piste, sur la "
                                 "progression du morceau"),
-        "@_clip_bars": N_("Longueur du clip neuf"),
+        "@_clip_bars": N_("Longueur du prochain clip, neuf ou vide"),
         "@_delete_clip_button": N_("Retire le clip de la piste ; les sections "
                                    "qui le jouaient se taisent pour elle  "
                                    "(rien n'est écrit sur la carte)"),
@@ -487,8 +542,9 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
         "@_section_bars": N_("Durée de la section, en mesures : ses clips y "
                              "bouclent"),
         "@_listen_section_button": N_("Joue le début de la section (huit "
-                                      "mesures au plus), toutes pistes "
-                                      "ensemble"),
+                                      "mesures au plus), les pistes muettes "
+                                      "en moins ; une barre blanche traverse "
+                                      "sa colonne  (Espace)"),
         "@_add_section_button": N_("Ajoute une section après celle choisie, "
                                    "avec les mêmes clips"),
         "@_remove_section_button": N_("Retire la section choisie du "

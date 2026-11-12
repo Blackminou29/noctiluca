@@ -291,6 +291,44 @@ class Player:
             log.debug("play_array : erreur", exc_info=True)
             self.stop()
 
+    def replace_array(self, data: np.ndarray, sample_rate: int) -> bool:
+        """Remplace ce qui tourne en boucle par un tableau de même durée,
+        **sans interrompre la lecture** ; rend vrai si c'est fait.
+
+        Pour l'atelier : on allume un coup pendant que le clip tourne, le
+        rendu est refait, et la boucle continue à la même mesure avec le
+        nouveau son. Rend faux, sans rien changer, quand rien ne tourne en
+        boucle, quand la durée ou la fréquence diffèrent, ou quand la sortie
+        ne sait pas échanger (``winsound`` joue un fichier) : l'appelant
+        relance alors la lecture avec :meth:`play_array`.
+        """
+        try:
+            arr = _as_frames(data)
+        except Exception:
+            log.debug("replace_array : tableau illisible", exc_info=True)
+            return False
+        with self._api_lock:
+            with self._state_lock:
+                if not self._playing or not self._loop \
+                        or int(sample_rate) <= 0:
+                    return False
+                if self._backend == "none":
+                    # Rien ne sort : seule la durée compte, pour que la
+                    # position simulée garde son sens.
+                    return abs(arr.shape[0] / float(sample_rate)
+                               - self._duration) < 1e-3
+                current = self._data
+                if self._backend != "sounddevice" or current is None \
+                        or int(sample_rate) != int(self._sr):
+                    return False
+                arr = _fit_channels(arr, current.shape[1])
+                if arr.shape != current.shape:
+                    return False
+                # Le rappel de PortAudio lit ``_data`` sous ce même verrou :
+                # il reprend au même échantillon, dans le nouveau tableau.
+                self._data = arr
+                return True
+
     def stop(self) -> None:
         """Arrête immédiatement la lecture et libère les ressources."""
         with self._api_lock:

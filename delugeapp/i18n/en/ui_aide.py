@@ -528,8 +528,82 @@ TEXTS = {
         "sound edited by hand keeps its edits",
     "La piste prend le son de la variante choisie":
         "The track takes the sound of the chosen variation",
-    "Joue le clip choisi sur l'ordinateur, avec le son de sa piste":
-        "Plays the chosen clip on the computer, with its track's sound",
+    "Joue le clip choisi sur l'ordinateur, avec le son de sa piste ; une "
+    "barre blanche suit la lecture dans la grille  (Espace)":
+        "Plays the chosen clip on the computer, with its track's sound; a "
+        "white bar follows playback in the grid  (Space)",
+    "Les morceaux de l'atelier gardés sur l'ordinateur : chaque morceau "
+    "remplacé ou écrit y est rangé tel quel — sons, clips, sections. En "
+    "rouvrir un le remet dans l'atelier ; la carte n'est pas touchée":
+        "The studio's songs kept on the computer: every song you replace or "
+        "write is put away there as it is — sounds, clips, sections. "
+        "Reopening one puts it back in the studio; the card is not touched",
+    "Fait taire la piste choisie à l'écoute de l'ordinateur — section, "
+    "extrait, clip « avec le morceau » ; un second clic la rend. Le morceau "
+    "écrit sur la carte garde toutes ses pistes":
+        "Mutes the chosen track when listening on the computer — section, "
+        "excerpt, clip “with the song”; a second click brings it back. The "
+        "song written to the card keeps all its tracks",
+    "N'écoute que la piste choisie ; un second clic rend les autres. Pour "
+    "l'oreille seulement : le morceau écrit n'en tient pas compte":
+        "Listens to the chosen track only; a second click brings the others "
+        "back. For the ear only: the written song takes no account of it",
+    "Le niveau de la piste dans le morceau, au cran de la machine (0 à 50) "
+    ": celui du son pour un synthé, celui du kit pour une batterie. Il "
+    "s'entend dès l'écoute suivante, s'écrit avec le morceau, et reste "
+    "celui de la piste quand elle change de son":
+        "The track's level in the song, in the machine's steps (0 to 50): "
+        "the sound's for a synth, the kit's for drums. You hear it at the "
+        "next listen, it is written with the song, and it stays the "
+        "track's when its sound changes",
+    "Joue le son de la rangée choisie, tel que le kit le joue : son "
+    "échantillon, ses réglages, le volume du kit":
+        "Plays the sound of the chosen row as the kit plays it: its sample, "
+        "its settings, the kit's volume",
+    "L'écoute tourne en boucle jusqu'à « Arrêter » (Espace) : le clip ou la "
+    "section repart à son début, en mesure, sa réverbération enchaînée — et "
+    "ce que vous dessinez pendant qu'elle tourne s'entend sans la relancer. "
+    "Éteint, il joue une fois":
+        "Listening loops until “Stop” (Space): the clip or the section "
+        "starts again from its beginning, in time, its reverb carried "
+        "over — and what you draw while it turns is heard without "
+        "restarting it. Off, it plays once",
+    "L'écoute tourne en boucle jusqu'à « Arrêter » (Espace) : la section "
+    "repart à son début, en mesure. Éteint, elle joue une fois — le même "
+    "réglage qu'à l'étape Clips":
+        "Listening loops until “Stop” (Space): the section starts again "
+        "from its beginning, in time. Off, it plays once — the same setting "
+        "as at the Clips step",
+    "Écoute le clip avec les autres pistes : celles de la première section "
+    "où il joue, ou de la section choisie à l'étape Structure. Éteint, le "
+    "clip joue seul":
+        "Plays the clip with the other tracks: those of the first section "
+        "where it plays, or of the section chosen at the Structure step. "
+        "Off, the clip plays alone",
+    "Un clip sans note, de la longueur choisie à côté, à dessiner dans la "
+    "grille":
+        "A clip with no notes, of the length chosen alongside, to draw in "
+        "the grid",
+    "Une copie du clip choisi, ajoutée à la piste : retouchez-la sans "
+    "toucher à l'original. La copie d'un clip venu du Deluge se dessine, "
+    "elle":
+        "A copy of the chosen clip, added to the track: edit it without "
+        "touching the original. The copy of a clip that came from the "
+        "Deluge can be drawn",
+    "Rend le clip deux fois plus long en répétant son contenu, jusqu'à "
+    "seize mesures : de quoi varier la seconde moitié":
+        "Makes the clip twice as long by repeating its content, up to "
+        "sixteen bars: room to vary the second half",
+    "Descend toutes les notes du clip d'une octave — une basse composée "
+    "trop haut":
+        "Moves every note of the clip down an octave — a bass line composed "
+        "too high",
+    "Monte toutes les notes du clip d'une octave":
+        "Moves every note of the clip up an octave",
+    "Ajoute juste après la section choisie sa copie — même durée, mêmes "
+    "clips, nom numéroté —, à faire varier":
+        "Adds a copy of the chosen section right after it — same length, "
+        "same clips, numbered name — for you to vary",
     "Joue le clip en boucle sur le Deluge, dans le clip que suit MIDI Follow "
     ": machine en lecture, calé sur sa mesure ; en enregistrement (REC), il "
     "s'y inscrit. Recliquez pour arrêter":
@@ -544,7 +618,8 @@ TEXTS = {
         "fill, breakdown, build-up…",
     "Un clip neuf pour la piste, sur la progression du morceau":
         "A new clip for the track, on the song's progression",
-    "Longueur du clip neuf": "Length of the new clip",
+    "Longueur du prochain clip, neuf ou vide":
+        "Length of the next clip, new or empty",
     "Retire le clip de la piste ; les sections qui le jouaient se taisent "
     "pour elle  (rien n'est écrit sur la carte)":
         "Removes the clip from the track; the sections that played it fall "
@@ -553,10 +628,10 @@ TEXTS = {
         "Name of the section; its clips carry it on the Deluge",
     "Durée de la section, en mesures : ses clips y bouclent":
         "Length of the section, in bars: its clips loop in it",
-    "Joue le début de la section (huit mesures au plus), toutes pistes "
-    "ensemble":
-        "Plays the start of the section (eight bars at most), all tracks "
-        "together",
+    "Joue le début de la section (huit mesures au plus), les pistes "
+    "muettes en moins ; une barre blanche traverse sa colonne  (Espace)":
+        "Plays the start of the section (eight bars at most), without the "
+        "muted tracks; a white bar crosses its column  (Space)",
     "Ajoute une section après celle choisie, avec les mêmes clips":
         "Adds a section after the chosen one, with the same clips",
     "Retire la section choisie du morceau":
@@ -647,10 +722,11 @@ TEXTS = {
         "sections become the project's. Nothing is changed",
     "Mène à la première étape : choisir un style, puis composer":
         "Leads to the first step: choose a style, then compose",
-    "Joue huit mesures du passage le plus plein du morceau, toutes "
-    "pistes ensemble — rien n'est écrit":
-        "Plays eight bars of the song's fullest passage, all tracks "
-        "together — nothing is written",
+    "Joue huit mesures du passage le plus plein du morceau, les pistes "
+    "muettes en moins — en boucle si « En boucle » est allumé ; rien n'est "
+    "écrit":
+        "Plays eight bars of the song's fullest passage, without the muted "
+        "tracks — looping if “Loop” is on; nothing is written",
     "Revient à l'étape d'avant ; rien de ce que vous avez fait ne se perd":
         "Goes back to the previous step; nothing you have done is lost",
     "Passe à l'étape suivante du morceau ; toutes restent ouvertes, "

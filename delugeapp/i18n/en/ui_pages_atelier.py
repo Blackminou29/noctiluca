@@ -35,8 +35,10 @@ TEXTS = {
     "son retouché": "sound edited",
     "variante adoptée": "variant adopted",
     "style de jeu": "playing style",
-    "Un clic dans la grille ajoute une note ; un clic sur une note la retire.":
-        "A click in the grid adds a note; a click on a note removes it.",
+    "Un clic pose une croche, tirer vers la droite l'allonge ; un clic sur "
+    "une note la retire, un clic droit change sa force.":
+        "A click places an eighth note, dragging to the right lengthens it; "
+        "a click on a note removes it, a right-click changes its strength.",
     "coup de batterie": "drum hit",
     "note": "note",
     "%s : note ajoutée au pas %d.": "%s: note added at step %d.",
@@ -126,9 +128,13 @@ TEXTS = {
         "it is written into it.",
     "Sections": "Sections",
     "Un clic sur une case fait jouer à la piste le clip suivant, puis le "
-    "silence. Un clic sur une section la choisit.":
-        "A click on a cell makes the track play its next clip, then silence. "
-        "A click on a section chooses it.",
+    "silence ; un clic droit le choisit dans la liste, ou ouvre le clip. Un "
+    "clic sur une section la choisit. Le pad devant chaque piste la fait "
+    "taire à l'écoute ; un clic droit l'isole.":
+        "A click on a cell makes the track play its next clip, then silence; "
+        "a right-click picks it from the list, or opens the clip. A click "
+        "on a section chooses it. The pad in front of each track mutes it "
+        "when listening; a right-click solos it.",
     "La section choisie": "The chosen section",
     "Nom": "Name",
     "Mesures": "Bars",
@@ -174,7 +180,10 @@ TEXTS = {
     "%s de %s": "%s of %s",
     "%d mes.": "%d bar(s)",
     "%d note(s) sur %d mesure(s).": "%d note(s) over %d bar(s).",
-    "Déjà dans le morceau d'origine.": "Already in the original song.",
+    "Déjà dans le morceau d'origine : « Dupliquer » en fait une copie à "
+    "dessiner.":
+        "Already in the original song: “Duplicate” makes a copy you can "
+        "draw.",
     "Joué dans : %s.": "Played in: %s.",
     "Dans aucune section pour l'instant.": "In no section for now.",
     "Un clip vide ne se varie pas.": "An empty clip cannot be varied.",
@@ -326,10 +335,14 @@ TEXTS = {
         "These settings apply to the next composition: “Recompose the "
         "song” replaces the current one.",
     "%s %s :  %s": "%s %s:  %s",
-    "Recomposer remplace le morceau en cours — ses sons, ses clips et "
-    "ses sections. Rien n'est écrit sur la carte. Continuer ?":
-        "Recomposing replaces the current song — its sounds, its clips and "
-        "its sections. Nothing is written to the card. Continue?",
+    "Recomposer fait un morceau neuf à la place de celui en cours. "
+    "L'ancien — ses sons, ses clips et ses sections — est rangé dans les "
+    "brouillons, où vous le retrouverez. Rien n'est écrit sur la carte. "
+    "Continuer ?":
+        "Recomposing makes a new song in place of the current one. The old "
+        "one — its sounds, its clips and its sections — is put away in the "
+        "drafts, where you will find it again. Nothing is written to the "
+        "card. Continue?",
     "Morceau composé : %d piste(s), %d section(s), %s. Écoutez chaque "
     "son, puis les clips et la structure ; écrivez-le sur la carte à "
     "la dernière étape.":
@@ -373,12 +386,12 @@ TEXTS = {
     "selon le genre": "according to the genre",
     "Clip %s, joué « %s » : écoutez-le, puis placez-le dans une section.":
         "Clip %s, played “%s”: listen to it, then place it in a section.",
-    "Un clic dans la grille allume ou éteint un coup.":
-        "A click in the grid switches a hit on or off.",
-    "Ce clip est déjà sur le Deluge : variez-le pour en faire un neuf, "
-    "que vous pourrez dessiner.":
-        "This clip is already on the Deluge: vary it to make a new one, "
-        "which you can then draw.",
+    "Un clic allume ou éteint un coup ; un clic droit change sa force.":
+        "A click switches a hit on or off; a right-click changes its "
+        "strength.",
+    "Ce clip est déjà sur le Deluge : dupliquez-le, la copie se dessine.":
+        "This clip is already on the Deluge: duplicate it, the copy can be "
+        "drawn.",
     "%s : coup ajouté au pas %d.": "%s: hit added at step %d.",
     "%s : coup retiré au pas %d.": "%s: hit removed at step %d.",
     "Groove appliqué au clip %s. Sur le Deluge : swing %s.":
@@ -451,4 +464,109 @@ TEXTS = {
         "Song exported: %s — %d track(s), %d section(s), the section names "
         "as markers.",
     "Style de jeu": "Playing style",
+    # -- 10 novembre 2026 : brouillons, écoute en boucle, clips à la main -- #
+    "Brouillons…": "Drafts…",
+    "Arrêter : coupe l'écoute en cours  (Espace)":
+        "Stop: cuts the current playback  (Space)",
+    "Muet": "Mute",
+    "Solo": "Solo",
+    "Volume": "Volume",
+    "Écouter la rangée": "Play the row",
+    "En boucle": "Loop",
+    "Avec le morceau": "With the song",
+    "Clip vide": "Empty clip",
+    "Dupliquer": "Duplicate",
+    "Doubler la longueur": "Double the length",
+    "Hauteur": "Pitch",
+    "Octave −": "Octave −",
+    "Octave +": "Octave +",
+    "Dupliquer la section": "Duplicate the section",
+    "Solo levé : les pistes reviennent dans l'écoute.":
+        "Solo lifted: the tracks are back in the listening.",
+    "%s : de nouveau dans l'écoute.": "%s: back in the listening.",
+    "%s : muette à l'écoute de l'ordinateur — le morceau écrit la garde.":
+        "%s: muted when listening on the computer — the written song keeps "
+        "it.",
+    "%s : seule à l'écoute de l'ordinateur.":
+        "%s: alone when listening on the computer.",
+    "solo": "solo",
+    "muette": "muted",
+    "volume de la piste": "track volume",
+    "Supprimer le brouillon": "Delete the draft",
+    "Effacer ce brouillon de l'ordinateur ? Ses sons, ses clips et ses "
+    "sections ne se retrouveront pas. Un morceau écrit sur la carte y reste, "
+    "la carte n'est pas touchée.":
+        "Erase this draft from the computer? Its sounds, its clips and its "
+        "sections cannot be recovered. A song written to the card stays "
+        "there, the card is not touched.",
+    "Brouillon supprimé de l'ordinateur ; la carte n'est pas touchée.":
+        "Draft deleted from the computer; the card is not touched.",
+    "Ce brouillon est le morceau en cours.":
+        "This draft is the current song.",
+    "Ce brouillon ne se relit pas : %s.": "This draft cannot be read: %s.",
+    "brouillon ouvert": "draft opened",
+    "« %s » est de nouveau dans l'atelier, tel que vous l'aviez laissé.":
+        "“%s” is back in the studio, as you left it.",
+    "Rendu de la rangée": "Rendering the row",
+    "%s : note de %d pas posée au pas %d.":
+        "%s: note of %d steps placed at step %d.",
+    "fort": "strong",
+    "moyen": "medium",
+    "doux": "soft",
+    "force d'un coup": "strength of a hit",
+    "Pas de coup à cette case : un clic gauche en pose un.":
+        "No hit in this cell: a left click places one.",
+    "%s, pas %d : coup %s.": "%s, step %d: %s hit.",
+    "force d'une note": "strength of a note",
+    "Pas de note à cette case : un clic gauche en pose une.":
+        "No note in this cell: a left click places one.",
+    "%s, pas %d : jeu %s.": "%s, step %d: played %s.",
+    "clip vide": "empty clip",
+    "Clip %s, vide : dessinez-le dans la grille, puis placez-le dans une "
+    "section.":
+        "Clip %s, empty: draw it in the grid, then place it in a section.",
+    "clip dupliqué": "clip duplicated",
+    "Clip %s : copie de %s. Retouchez-la, l'original ne bouge pas.":
+        "Clip %s: copy of %s. Edit it, the original does not move.",
+    "longueur doublée": "length doubled",
+    "Clip non doublé : %s.": "Clip not doubled: %s.",
+    "Clip %s : %d mesures, la seconde moitié répète la première — "
+    "variez-la.":
+        "Clip %s: %d bars, the second half repeats the first — vary it.",
+    "octave du clip": "clip octave",
+    "Clip non déplacé : %s.": "Clip not moved: %s.",
+    "Clip %s : une octave plus haut.": "Clip %s: one octave higher.",
+    "Clip %s : une octave plus bas.": "Clip %s: one octave lower.",
+    "L'écoute tourne en boucle jusqu'à « Arrêter ».":
+        "Listening loops until “Stop”.",
+    "L'écoute joue une fois.": "Listening plays once.",
+    "Le clip s'écoute avec les autres pistes du morceau.":
+        "The clip plays with the song's other tracks.",
+    "Le clip s'écoute seul.": "The clip plays alone.",
+    "Clip %s avec le morceau : « %s », %d mesure(s).":
+        "Clip %s with the song: “%s”, %d bar(s).",
+    "Ce clip est vide : dessinez-y des notes.":
+        "This clip is empty: draw some notes in it.",
+    "Silence": "Silence",
+    "Ouvrir le clip %s à l'étape Clips": "Open clip %s at the Clips step",
+    "section dupliquée": "section duplicated",
+    "Section non dupliquée : %s.": "Section not duplicated: %s.",
+    "« %s » : la copie, %d mesures, les mêmes clips. Changez-y ce qui doit "
+    "varier.":
+        "“%s”: the copy, %d bars, the same clips. Change in it whatever "
+        "should vary.",
+    "Les pistes de cette section sont muettes : rendez-en une à l'écoute.":
+        "The tracks of this section are muted: bring one back into the "
+        "listening.",
+    "Rien à écouter ici.": "Nothing to play here.",
+    "En boucle : Espace l'arrête.": "Looping: Space stops it.",
+    "Clip %s en boucle : Espace l'arrête.":
+        "Clip %s looping: Space stops it.",
+    "genre du morceau": "genre of the song",
+    "Les sons et les clips neufs de ce morceau seront en %s.":
+        "This song's new sounds and clips will be in %s.",
+    "Elle prendra le tempo du genre, %d BPM, sauf si vous réglez le "
+    "compteur.":
+        "It will take the genre's tempo, %d BPM, unless you set the "
+        "counter.",
 }

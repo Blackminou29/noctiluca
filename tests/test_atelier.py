@@ -1338,5 +1338,594 @@ class TestLAtelierGardeLeTravail(CarteCase):
                                 .iterdir()), ["REMPLACE.XML"])
 
 
+# --------------------------------------------------------------------------- #
+# Les clips qu'on reprend à la main, l'écoute en contexte, le volume
+# --------------------------------------------------------------------------- #
+
+class TestLesClipsALaMain(unittest.TestCase):
+    """Clip vide, copie, longueur doublée, octave, force d'un coup."""
+
+    def setUp(self):
+        self.projet = atelier.new_project(atelier.Style(genre="house",
+                                                        seed=6))
+        par_part = {t.part: t for t in self.projet.tracks}
+        self.batterie, self.basse = par_part["Batterie"], par_part["Basse"]
+
+    def test_un_clip_vide_se_dessine(self):
+        for piste in (self.batterie, self.basse):
+            with self.subTest(piste=piste.part):
+                clip = atelier.empty_clip(self.projet, piste.uid, bars=2)
+                self.assertEqual((clip.bars, clip.note_count, clip.origin),
+                                 (2, 0, "vide"))
+                self.assertIs(piste.clips[-1], clip)
+        clip = self.batterie.clips[-1]
+        self.assertEqual(clip.pattern.steps, 32)
+        self.assertTrue(atelier.toggle_hit(self.projet, self.batterie.uid,
+                                           clip.key, "Kick", 0))
+        clip = self.basse.clips[-1]
+        self.assertTrue(atelier.toggle_note(self.projet, self.basse.uid,
+                                            clip.key, 45, 0, length=6))
+        self.assertEqual([(e.start, e.length) for e in clip.events],
+                         [(0.0, 6.0)])
+
+    def test_la_copie_ne_touche_pas_a_l_original(self):
+        for piste in (self.batterie, self.basse):
+            with self.subTest(piste=piste.part):
+                source = piste.clips[0]
+                avant = source.note_count
+                copie = atelier.duplicate_clip(self.projet, piste.uid,
+                                               source.key)
+                self.assertEqual((copie.parent, copie.origin, copie.bars),
+                                 (source.key, "copie", source.bars))
+                self.assertEqual(copie.note_count, avant)
+                self.assertNotEqual(copie.key, source.key)
+        copie = self.basse.clips[-1]
+        copie.events.clear()
+        self.assertTrue(self.basse.clips[0].events)
+        copie = self.batterie.clips[-1]
+        copie.pattern.tracks.clear()
+        self.assertTrue(self.batterie.clips[0].pattern.tracks)
+
+    def test_la_copie_d_un_clip_du_deluge_se_dessine(self):
+        source = self.basse.clips[0]
+        source.existing = 3
+        copie = atelier.duplicate_clip(self.projet, self.basse.uid,
+                                       source.key)
+        self.assertIsNone(copie.existing)
+        libre = next(n for n in range(30, 90)
+                     if n not in {e.note for e in copie.events})
+        self.assertTrue(atelier.toggle_note(self.projet, self.basse.uid,
+                                            copie.key, libre, 0))
+
+    def test_doubler_repete_le_contenu(self):
+        clip = self.basse.clips[0]
+        notes = [(e.start, e.note) for e in clip.events]
+        pas = clip.steps
+        atelier.double_clip(self.projet, self.basse.uid, clip.key)
+        self.assertEqual(clip.bars, 8)
+        self.assertEqual(sorted((e.start, e.note) for e in clip.events),
+                         sorted(notes + [(s + pas, n) for s, n in notes]))
+        clip = self.batterie.clips[0]
+        coups = {nom: sorted(float(s.pos) for s in liste)
+                 for nom, liste in clip.pattern.tracks.items()}
+        pas = clip.steps
+        atelier.double_clip(self.projet, self.batterie.uid, clip.key)
+        self.assertEqual(clip.pattern.steps, 2 * pas)
+        for nom, positions in coups.items():
+            self.assertEqual(
+                sorted(float(s.pos) for s in clip.pattern.tracks[nom]),
+                sorted(positions + [p + pas for p in positions]), nom)
+        # Le second passage reste éditable case par case.
+        self.assertTrue(clip.pattern.tracks.get("Kick"))
+        case = max(rhythm.cell(s)
+                   for s in clip.pattern.tracks["Kick"])
+        self.assertFalse(atelier.toggle_hit(self.projet, self.batterie.uid,
+                                            clip.key, "Kick", case))
+
+    def test_doubler_s_arrete_a_seize_mesures(self):
+        clip = self.basse.clips[0]
+        atelier.double_clip(self.projet, self.basse.uid, clip.key)
+        atelier.double_clip(self.projet, self.basse.uid, clip.key)
+        self.assertEqual(clip.bars, atelier.MAX_BARS)
+        avant = len(clip.events)
+        with self.assertRaises(ValueError):
+            atelier.double_clip(self.projet, self.basse.uid, clip.key)
+        self.assertEqual((clip.bars, len(clip.events)),
+                         (atelier.MAX_BARS, avant))
+
+    def test_une_octave_plus_bas_puis_plus_haut(self):
+        clip = self.basse.clips[0]
+        notes = [e.note for e in clip.events]
+        self.assertEqual(atelier.transpose_clip(self.projet, self.basse.uid,
+                                                clip.key, -12), len(notes))
+        self.assertEqual([e.note for e in clip.events],
+                         [n - 12 for n in notes])
+        atelier.transpose_clip(self.projet, self.basse.uid, clip.key, 12)
+        self.assertEqual([e.note for e in clip.events], notes)
+
+    def test_une_octave_de_trop_ne_change_rien(self):
+        clip = self.basse.clips[0]
+        clip.events[0].note = 5
+        notes = [e.note for e in clip.events]
+        with self.assertRaises(ValueError):
+            atelier.transpose_clip(self.projet, self.basse.uid, clip.key, -12)
+        self.assertEqual([e.note for e in clip.events], notes)
+        with self.assertRaises(ValueError):
+            atelier.transpose_clip(self.projet, self.batterie.uid,
+                                   self.batterie.clips[0].key, 12)
+
+    def test_un_clip_du_deluge_ne_se_retouche_pas(self):
+        clip = self.basse.clips[0]
+        clip.existing = 0
+        for geste in (lambda: atelier.double_clip(self.projet,
+                                                  self.basse.uid, clip.key),
+                      lambda: atelier.transpose_clip(self.projet,
+                                                     self.basse.uid,
+                                                     clip.key, 12),
+                      lambda: atelier.accent_note(self.projet, self.basse.uid,
+                                                  clip.key, 40, 0)):
+            with self.assertRaises(ValueError):
+                geste()
+
+    def test_la_force_d_un_coup_tourne(self):
+        clip = atelier.empty_clip(self.projet, self.batterie.uid, bars=1)
+        uid = self.batterie.uid
+        self.assertIsNone(atelier.accent_hit(self.projet, uid, clip.key,
+                                             "Kick", 4))
+        atelier.toggle_hit(self.projet, uid, clip.key, "Kick", 4)
+        vues = [atelier.accent_hit(self.projet, uid, clip.key, "Kick", 4)
+                for _ in range(4)]
+        self.assertEqual(vues, [70, 40, 100, 70])
+        self.assertEqual(clip.pattern.tracks["Kick"][0].velocity, 70)
+
+    def test_la_force_d_une_note_tourne(self):
+        clip = atelier.empty_clip(self.projet, self.basse.uid, bars=1)
+        uid = self.basse.uid
+        atelier.toggle_note(self.projet, uid, clip.key, 45, 2, length=4)
+        self.assertIsNone(atelier.accent_note(self.projet, uid, clip.key,
+                                              45, 9))
+        # Où qu'on touche la note, c'est elle qui change : 90, puis 70.
+        self.assertEqual(atelier.accent_note(self.projet, uid, clip.key,
+                                             45, 5), 70)
+        self.assertEqual(atelier.accent_note(self.projet, uid, clip.key,
+                                             45, 2), 40)
+        self.assertEqual(atelier.accent_note(self.projet, uid, clip.key,
+                                             45, 2), 100)
+
+
+class TestLaStructureEtLEcoute(unittest.TestCase):
+    """Dupliquer une section, écouter un clip avec le morceau, faire taire
+    une piste."""
+
+    def setUp(self):
+        self.projet = atelier.new_project(atelier.Style(genre="house",
+                                                        seed=6))
+        self.par_part = {t.part: t for t in self.projet.tracks}
+
+    def test_la_copie_d_une_section_la_suit(self):
+        projet = self.projet
+        noms = [s.name for s in projet.sections]
+        rang = next(i for i, s in enumerate(projet.sections)
+                    if s.kind == "pic")
+        source = projet.sections[rang]
+        place = atelier.duplicate_section(projet, rang)
+        self.assertEqual(place, rang + 1)
+        copie = projet.sections[place]
+        self.assertEqual((copie.bars, copie.cells, copie.kind),
+                         (source.bars, source.cells, source.kind))
+        self.assertIsNot(copie.cells, source.cells)
+        self.assertIsNone(copie.existing)
+        self.assertNotIn(copie.name, noms)
+        self.assertEqual(len(projet.sections), len(noms) + 1)
+        with self.assertRaises(ValueError):
+            atelier.duplicate_section(projet, 99)
+
+    def test_le_nom_d_une_copie_prend_le_numero_libre(self):
+        projet = self.projet
+        projet.sections[0].name = "Refrain"
+        projet.sections[1].name = "Refrain 2"
+        place = atelier.duplicate_section(projet, 1)
+        self.assertEqual(projet.sections[place].name, "Refrain 3")
+
+    def test_une_piste_muette_se_tait(self):
+        projet = self.projet
+        plein = atelier.fullest_section(projet)
+        parties, batterie, mesures = atelier.section_parts(projet, plein)
+        self.assertIsNotNone(batterie)
+        self.assertGreaterEqual(len(parties), 2)
+        basse = self.par_part["Basse"]
+        seules = {basse.uid}
+        parties, batterie, _m = atelier.section_parts(projet, plein,
+                                                      only=seules)
+        self.assertIsNone(batterie)
+        self.assertEqual(list(parties), [atelier._part_key(basse)])
+        parties, batterie, _m = atelier.section_parts(projet, plein,
+                                                      only=set())
+        self.assertEqual((parties, batterie), ({}, None))
+
+    def test_un_clip_s_ecoute_avec_le_morceau(self):
+        projet = self.projet
+        basse, batterie = self.par_part["Basse"], self.par_part["Batterie"]
+        neuf = atelier.vary_clip(projet, basse.uid, basse.clips[0].key,
+                                 "notes")
+        # Placé nulle part : il prend la section qu'on regarde.
+        cible = atelier.fullest_section(projet)
+        parties, motif, mesures, section = atelier.context_parts(
+            projet, basse.uid, neuf.key, section=cible)
+        self.assertEqual(section, cible)
+        self.assertIsNotNone(motif)
+        cle = atelier._part_key(basse)
+        self.assertEqual(sorted((e.start, e.note) for e in parties[cle]
+                                if e.start < neuf.steps),
+                         sorted((e.start, e.note) for e in neuf.events))
+        self.assertGreater(len(parties), 1)
+        self.assertGreaterEqual(mesures, neuf.bars)
+        # Placé dans une section, c'est celle-là qu'on entend.
+        atelier.set_cell(projet, 0, basse.uid, neuf.key)
+        _p, _m, _b, section = atelier.context_parts(projet, basse.uid,
+                                                    neuf.key, section=cible)
+        self.assertEqual(section, 0)
+        # Sa piste muette, il sonne quand même ; les autres se taisent.
+        parties, motif, _b, _s = atelier.context_parts(
+            projet, basse.uid, neuf.key, only={batterie.uid})
+        self.assertEqual(list(parties), [cle])
+
+    def test_le_plus_long_clip_donne_la_duree(self):
+        projet = self.projet
+        basse, accords = self.par_part["Basse"], self.par_part["Accords"]
+        court = atelier.empty_clip(projet, basse.uid, bars=1)
+        atelier.toggle_note(projet, basse.uid, court.key, 40, 0)
+        section = next(i for i, s in enumerate(projet.sections)
+                       if s.cells.get(accords.uid))
+        _p, _m, mesures, _s = atelier.context_parts(projet, basse.uid,
+                                                    court.key,
+                                                    section=section)
+        self.assertEqual(mesures, 4)
+        _p, _m, mesures, _s = atelier.context_parts(
+            projet, basse.uid, court.key, section=section, only=set())
+        self.assertEqual(mesures, 1)
+
+    def test_sans_section_le_clip_joue_seul(self):
+        projet = atelier.new_project(atelier.Style(genre="house", seed=6),
+                                     structure=False)
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        parties, motif, mesures, section = atelier.context_parts(
+            projet, basse.uid, basse.clips[0].key)
+        self.assertEqual((list(parties), motif, section),
+                         ([atelier._part_key(basse)], None, -1))
+        self.assertEqual(mesures, basse.clips[0].bars)
+
+    def test_un_rendu_replie_tourne_en_mesure(self):
+        from delugeapp.core import render
+
+        audio = np.zeros((1000, 2), dtype=np.float32)
+        audio[0] = 0.5                 # le premier temps
+        audio[450] = 0.25              # la queue, après la dernière mesure
+        boucle = render.loop_fold(audio, 400 / 44100.0, 44100)
+        self.assertEqual(boucle.shape, (400, 2))
+        self.assertAlmostEqual(float(boucle[0, 0]), 0.5)
+        self.assertAlmostEqual(float(boucle[50, 0]), 0.25)
+        # Plus court que la boucle : complété de silence.
+        boucle = render.loop_fold(audio[:100], 400 / 44100.0, 44100)
+        self.assertEqual(boucle.shape, (400, 2))
+        self.assertEqual(float(np.abs(boucle[100:]).max()), 0.0)
+
+
+class TestLeVolumeDUnePiste(CarteCase):
+    """Le volume réglé s'entend, s'écrit, et suit la piste quand elle change
+    de son."""
+
+    def setUp(self):
+        super().setUp()
+        self.projet = atelier.new_project(atelier.Style(genre="house",
+                                                        seed=6),
+                                          sd=self.sd, lib=self.lib,
+                                          kinds={"Mélodie": "midi"})
+        self.par_part = {t.part: t for t in self.projet.tracks}
+
+    def test_le_cran_du_kit_d_un_morceau_neuf(self):
+        from delugeapp.core import render
+
+        self.assertEqual(atelier.KIT_VOLUME, render.SONG_VOLUME)
+        self.assertEqual(atelier.track_volume(self.par_part["Batterie"]), 35)
+
+    def test_une_piste_midi_n_a_pas_de_volume(self):
+        midi = self.par_part["Mélodie"]
+        self.assertIsNone(atelier.track_volume(midi))
+        self.assertFalse(atelier.set_track_volume(self.projet, midi.uid, 30))
+        self.assertEqual(atelier.describe_volume(midi), "")
+
+    def test_le_volume_s_entend(self):
+        from delugeapp.core import render
+
+        basse, batterie = self.par_part["Basse"], self.par_part["Batterie"]
+        self.assertTrue(atelier.set_track_volume(self.projet, basse.uid, 50))
+        fort = render.render_sound(basse.preset.sound, 36, 0.4, 22050)
+        atelier.set_track_volume(self.projet, basse.uid, 25)
+        doux = render.render_sound(basse.preset.sound, 36, 0.4, 22050)
+        rapport = float(np.abs(fort).max()) / float(np.abs(doux).max())
+        self.assertAlmostEqual(rapport, 4.0, delta=0.3)   # 12 dB
+        self.assertEqual(atelier.describe_volume(basse), "-12,0 dB")
+        avant = render.kit_gain(batterie.kit)
+        atelier.set_track_volume(self.projet, batterie.uid, 25)
+        self.assertAlmostEqual(avant / render.kit_gain(batterie.kit),
+                               (1.0 + 0.4) ** 2, delta=0.05)
+
+    def test_le_volume_suit_la_piste_qui_change_de_son(self):
+        from delugeapp.core import soundedit
+
+        basse, batterie = self.par_part["Basse"], self.par_part["Batterie"]
+        atelier.set_track_volume(self.projet, basse.uid, 22)
+        atelier.regenerate_sound(self.projet, basse.uid, seed=99)
+        self.assertEqual(atelier.track_volume(basse), 22)
+        variantes = atelier.sound_variations(self.projet, basse.uid, 4,
+                                             seed=1)
+        self.assertEqual({soundedit.value(v.preset.sound, "volume")
+                          for v in variantes}, {22})
+        atelier.adopt_sound(self.projet, basse.uid, variantes[0])
+        self.assertEqual(atelier.track_volume(basse), 22)
+        preset = synthgen.generate(synthgen.GenOptions(genre="techno",
+                                                       role="bass", seed=3))
+        atelier.use_preset(self.projet, preset, "Basse", uid=basse.uid)
+        self.assertEqual(atelier.track_volume(basse), 22)
+        atelier.set_track_volume(self.projet, batterie.uid, 41)
+        atelier.use_kit(self.projet, atelier._build_kit(
+            self.sd, self.lib, self.projet.style, 5))
+        self.assertEqual(atelier.track_volume(batterie), 41)
+
+    def test_sans_reglage_le_son_garde_le_sien(self):
+        basse = self.par_part["Basse"]
+        self.assertIsNone(basse.level)
+        vus = set()
+        for graine in range(6):
+            atelier.regenerate_sound(self.projet, basse.uid, seed=graine)
+            vus.add(atelier.track_volume(basse))
+        self.assertTrue(all(0 < v <= 50 for v in vus), vus)
+
+    def test_le_volume_regle_dans_l_editeur_devient_celui_de_la_piste(self):
+        from delugeapp.core import soundedit
+
+        basse = self.par_part["Basse"]
+        atelier.set_track_volume(self.projet, basse.uid, 30)
+        son = soundedit.copy_sound(basse.preset.sound)
+        soundedit.set_value(son, "volume", 44)
+        atelier.edit_sound(self.projet, basse.uid, son)
+        self.assertEqual((basse.level, atelier.track_volume(basse)),
+                         (44, 44))
+
+    def test_une_piste_du_morceau_d_origine_garde_son_volume(self):
+        basse = self.par_part["Basse"]
+        basse.existing = {"kind": "sound"}
+        avant = atelier.track_volume(basse)
+        self.assertFalse(atelier.set_track_volume(self.projet, basse.uid, 5))
+        self.assertEqual(atelier.track_volume(basse), avant)
+
+    def test_le_volume_s_ecrit_avec_le_morceau(self):
+        from delugeapp.core.fixedpoint import parse_fixed, to_display
+
+        basse, batterie = self.par_part["Basse"], self.par_part["Batterie"]
+        atelier.set_track_volume(self.projet, basse.uid, 21)
+        atelier.set_track_volume(self.projet, batterie.uid, 44)
+        spec = atelier.to_song_spec(self.projet, "VOLUME", sd=self.sd,
+                                    lib=self.lib)
+        res = songwriter.write_song(self.sd, spec, apply=True)
+        self.assertTrue(res.applied, res.error)
+        racine = dxml.load(self.sd.abs(res.rel)).root
+
+        # Dans un morceau, les réglages d'un instrument vivent dans chacun
+        # de ses clips : ``kitParams`` pour un kit, ``soundParams`` pour un
+        # synthé.
+        def crans(nom, balise):
+            return {to_display(parse_fixed(clip.find(balise).get("volume")))
+                    for clip in racine.iter("instrumentClip")
+                    if clip.get("instrumentPresetName") == nom}
+
+        self.assertEqual(crans(batterie.kit.name, "kitParams"), {44})
+        self.assertEqual(crans(basse.preset.name, "soundParams"), {21})
+        accords = self.par_part["Accords"]
+        self.assertEqual(crans(accords.preset.name, "soundParams"),
+                         {atelier.track_volume(accords)})
+
+
+class TestLeLecteurEchangeEnPlace(unittest.TestCase):
+    """``Player.replace_array`` : une boucle qui tourne reçoit un nouveau
+    rendu sans perdre sa place. L'état d'une lecture est posé à la main :
+    aucun flux audio réel n'est ouvert."""
+
+    def setUp(self):
+        from delugeapp.core import audio_out
+
+        self.lecteur = audio_out.Player()
+        self._backend = self.lecteur._backend
+        self.addCleanup(self._rendre)
+
+    def _rendre(self):
+        with self.lecteur._state_lock:
+            self.lecteur._playing = False
+            self.lecteur._loop = False
+            self.lecteur._data = None
+        self.lecteur._backend = self._backend
+
+    def _boucle(self, trames, position=0):
+        self.lecteur._backend = "sounddevice"
+        with self.lecteur._state_lock:
+            self.lecteur._data = trames
+            self.lecteur._sr = 44100
+            self.lecteur._pos = position
+            self.lecteur._loop = True
+            self.lecteur._playing = True
+            self.lecteur._volume = 1.0
+
+    def test_rien_ne_joue_rien_ne_s_echange(self):
+        neuf = np.zeros((100, 2), dtype=np.float32)
+        self.assertFalse(self.lecteur.replace_array(neuf, 44100))
+
+    def test_la_boucle_reprend_au_meme_echantillon(self):
+        ancien = np.full((100, 2), 0.25, dtype=np.float32)
+        neuf = np.full((100, 2), 0.5, dtype=np.float32)
+        self._boucle(ancien, position=40)
+        self.assertTrue(self.lecteur.replace_array(neuf, 44100))
+        sortie = np.zeros((30, 2), dtype=np.float32)
+        self.lecteur._callback(sortie, 30, None, None)
+        self.assertTrue(np.allclose(sortie, 0.5), "l'ancien son joue encore")
+        self.assertEqual(self.lecteur._pos, 70)
+        self.assertTrue(self.lecteur._playing)
+        # Et la boucle tourne : la fin enchaîne sur le début du neuf.
+        sortie = np.zeros((60, 2), dtype=np.float32)
+        self.lecteur._callback(sortie, 60, None, None)
+        self.assertEqual(self.lecteur._pos, 30)
+        self.assertTrue(np.allclose(sortie, 0.5))
+
+    def test_un_son_mono_prend_les_canaux_de_la_boucle(self):
+        self._boucle(np.zeros((100, 2), dtype=np.float32))
+        self.assertTrue(self.lecteur.replace_array(
+            np.full(100, 0.1, dtype=np.float32), 44100))
+        self.assertEqual(self.lecteur._data.shape, (100, 2))
+
+    def test_une_autre_duree_n_est_pas_echangee(self):
+        ancien = np.full((100, 2), 0.25, dtype=np.float32)
+        self._boucle(ancien)
+        for neuf, frequence in ((np.zeros((90, 2), np.float32), 44100),
+                                (np.zeros((100, 2), np.float32), 48000)):
+            self.assertFalse(self.lecteur.replace_array(neuf, frequence))
+        self.assertIs(self.lecteur._data, ancien)
+
+    def test_une_lecture_unique_n_est_pas_echangee(self):
+        ancien = np.full((100, 2), 0.25, dtype=np.float32)
+        self._boucle(ancien)
+        self.lecteur._loop = False
+        self.assertFalse(self.lecteur.replace_array(
+            np.zeros((100, 2), np.float32), 44100))
+        self.assertIs(self.lecteur._data, ancien)
+
+    def test_sans_sortie_seule_la_duree_compte(self):
+        self.lecteur._backend = "none"
+        with self.lecteur._state_lock:
+            self.lecteur._loop = True
+            self.lecteur._playing = True
+            self.lecteur._duration = 100 / 44100.0
+        self.assertTrue(self.lecteur.replace_array(
+            np.zeros((100, 2), np.float32), 44100))
+        self.assertFalse(self.lecteur.replace_array(
+            np.zeros((300, 2), np.float32), 44100))
+
+
+class TestLesBrouillonsDeLAtelier(unittest.TestCase):
+    """Les morceaux rangés sur l'ordinateur : chacun se rouvre tel quel."""
+
+    def setUp(self):
+        from delugeapp.core import atelierstore
+
+        self.store = atelierstore
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name) / "atelier" / "brouillons"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _projet(self, genre="house", graine=5):
+        return atelier.new_project(atelier.Style(genre=genre, seed=graine))
+
+    def test_ranger_puis_rouvrir(self):
+        projet = self._projet()
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        atelier.set_track_volume(projet, basse.uid, 19)
+        projet.edits = 3
+        fiche = self.store.shelve(self.base, projet,
+                                  {"name": "MON MORCEAU", "genre": "house"})
+        self.assertEqual((fiche.ident, fiche.name, fiche.worked),
+                         (projet.ident, "MON MORCEAU", True))
+        liste = self.store.entries(self.base)
+        self.assertEqual([(e.ident, e.name) for e in liste],
+                         [(projet.ident, "MON MORCEAU")])
+        self.assertEqual(liste[0].meta["genre"], "house")
+        repris, meta = self.store.load(self.base, projet.ident)
+        self.assertEqual(meta["name"], "MON MORCEAU")
+        self.assertEqual(repris.ident, projet.ident)
+        self.assertEqual(repris.edits, 3)
+        reprise = next(t for t in repris.tracks if t.part == "Basse")
+        self.assertEqual(atelier.track_volume(reprise), 19)
+        self.assertEqual([c.key for c in reprise.clips],
+                         [c.key for c in basse.clips])
+
+    def test_le_meme_morceau_ne_fait_qu_un_brouillon(self):
+        projet = self._projet()
+        self.store.shelve(self.base, projet, {"name": "UN"})
+        self.store.shelve(self.base, projet, {"name": "UN, RETOUCHÉ"})
+        autre = self._projet(graine=6)
+        self.store.shelve(self.base, autre, {"name": "DEUX"})
+        self.assertEqual(sorted(e.name for e in self.store.entries(self.base)),
+                         ["DEUX", "UN, RETOUCHÉ"])
+
+    def test_le_plus_recent_d_abord(self):
+        from unittest import mock
+
+        for rang, nom in enumerate(("A", "B", "C")):
+            with mock.patch.object(self.store.time, "time",
+                                   return_value=1000.0 + rang):
+                self.store.shelve(self.base, self._projet(graine=rang),
+                                  {"name": nom})
+        self.assertEqual([e.name for e in self.store.entries(self.base)],
+                         ["C", "B", "A"])
+
+    def test_supprimer(self):
+        projet = self._projet()
+        self.store.shelve(self.base, projet, {"name": "UN"})
+        self.assertTrue(self.store.remove(self.base, projet.ident))
+        self.assertEqual(self.store.entries(self.base), [])
+        self.assertEqual(list(self.base.iterdir()), [])
+        self.assertFalse(self.store.remove(self.base, projet.ident))
+        with self.assertRaises(OSError):
+            self.store.load(self.base, projet.ident)
+
+    def test_les_morceaux_travailles_restent_les_derniers(self):
+        from unittest import mock
+
+        gardes = []
+        for rang in range(6):
+            projet = self._projet(graine=rang)
+            # Les deux plus anciens ont été retouchés, ou écrits.
+            if rang == 0:
+                projet.edits = 2
+            if rang == 1:
+                projet.written["SONGS/X.XML"] = "0" * 64
+            with mock.patch.object(self.store.time, "time",
+                                   return_value=1000.0 + rang):
+                self.store.shelve(self.base, projet, {"name": "M%d" % rang},
+                                  keep=4)
+            gardes.append(projet.ident)
+        noms = sorted(e.name for e in self.store.entries(self.base))
+        self.assertEqual(noms, ["M0", "M1", "M4", "M5"])
+
+    def test_une_fiche_abimee_est_passee(self):
+        projet = self._projet()
+        self.store.shelve(self.base, projet, {"name": "BON"})
+        (self.base / ("%s.json" % ("ab" * 16))).write_text("{", "utf-8")
+        (self.base / ("%s.pickle" % ("ab" * 16))).write_bytes(b"x")
+        (self.base / "orpheline.json").write_text("{}", "utf-8")
+        (self.base / ("%s.json" % ("cd" * 16))).write_text("{}", "utf-8")
+        self.assertEqual([e.name for e in self.store.entries(self.base)],
+                         ["BON"])
+        with self.assertRaises(ValueError):
+            self.store.load(self.base, "ab" * 16)
+
+    def test_un_identifiant_etranger_est_refuse(self):
+        for ident in ("", "../ailleurs", "ZZZZ", "a/b"):
+            with self.subTest(ident=ident):
+                with self.assertRaises(ValueError):
+                    self.store.load(self.base, ident)
+                with self.assertRaises(ValueError):
+                    self.store.remove(self.base, ident)
+
+    def test_un_brouillon_d_avant_les_brouillons_recoit_son_identifiant(self):
+        projet = self._projet()
+        del projet.__dict__["ident"]
+        del projet.__dict__["edits"]
+        del projet.tracks[0].__dict__["level"]
+        repris, _meta = atelier.load_draft(atelier.dump_draft(projet))
+        self.assertRegex(repris.ident, r"^[0-9a-f]{32}$")
+        self.assertEqual((repris.edits, repris.tracks[0].level), (0, None))
+
+
 if __name__ == "__main__":
     unittest.main()

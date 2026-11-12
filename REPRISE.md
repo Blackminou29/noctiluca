@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 9 novembre 2026 (les essais sur la machine, §3 duoquinquagies)
+**Dernière mise à jour :** 11 novembre 2026 (l'atelier : écouter, dessiner, retrouver, §3 triquinquagies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -38,6 +38,7 @@ morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quad
 **Rien ne se perd plus dans l'atelier** (défaire, sons essayés, morceau repris au lancement), **un dossier de notes devient un instrument**, l'analyse va 2,5 fois plus vite, et les fausses alertes de santé que le firmware provoquait ont disparu — voir §3 quinquagies et `ameliorations.md`.
 **Les noms courts de FAT ne trompent plus l'index**, un morceau s'écoute depuis sa page, la carte se prépare pour un nouveau firmware, et l'écoute porte le sidechain, le LFO 1 global et le glissé du firmware — voir §3 unquinquagies.
 **Les essais sur la machine sont faits** : sidechain, Steinway, table d'onde, favori, envoi d'un pack, atelier en direct, synchronisation différée, et le DAW — Live joue les sons du Deluge depuis un set déjà routé, le Deluge mène l'horloge ; celle de Live ne passait pas sous Windows 11, et un **firmware corrigé**, compilé et installé sur sa machine, la fait suivre — voir §3 duoquinquagies.
+**L'atelier s'écoute en boucle et se dessine** : une boucle qui suit ce qu'on change sans se relancer, un clip entendu avec le morceau, des pistes qu'on coupe ou qu'on isole, des notes tirées à la souris, un volume par piste, et des brouillons où chaque morceau remplacé ou écrit se retrouve — voir §3 triquinquagies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -331,6 +332,125 @@ signaux, et `Page.run()` pour les travaux longs.
 
 ---
 
+## 3 triquinquagies. L'atelier : écouter en boucle, dessiner, retrouver ses morceaux (10–11 novembre 2026)
+
+**La demande** : « Améliorer l'ergonomie et les fonctionnalités de l'atelier du logiciel
+Noctiluca. » Consigne large : d'abord regarder — le journal de l'utilisateur, puis l'atelier
+rendu en PNG **avec une copie de son vrai brouillon** (deep house, 136 mesures, laissé à
+l'étape Clips le 10 novembre à 21 h 35), à 1 360 et 980 px, simple et avancé. Détail du
+contrat : SPEC §4.51 et §5.36.
+
+### Ce que les images ont montré, avant d'écrire une ligne
+
+* **L'étape Style mentait.** Sous l'en-tête « Deep house · La mineur », l'étape montrait
+  « Techno, 136 BPM » : un morceau repris au lancement — ou rendu par Défaire — ne remettait
+  pas ses réglages dans l'étape. [Recomposer] aurait changé de genre sans qu'on le demande, et
+  toucher au compteur aurait porté le morceau de 120 à 137 BPM. Défaire un tempo laissait le
+  compteur sur la valeur défaite.
+* **L'écoute était à un coup** : un clip jouait une fois, seul, sans repère ; à 980 × 700, ses
+  boutons étaient sous le bas de la fenêtre. `ClipView.set_playhead` existait et n'était
+  appelé nulle part.
+* **Un clip ne se reprenait pas à la main** : notes d'une croche seulement, ni clip vide ni
+  copie, un clip venu du Deluge impossible à redessiner.
+* **La grille des sections faisait défiler** : quatre clips, quatre clics pour revenir au
+  premier ; rien ne menait d'une case à son clip.
+* **Un seul morceau** : recomposer, ou ouvrir un morceau du Deluge — sans même une question —
+  remplaçait celui en cours. Son journal le montre écrire six genres à la suite en une soirée
+  (23 octobre, de Minimal à Boards of Canada) : chaque composition effaçait la précédente.
+
+### Ce qui a été construit
+
+* **Le style suit le morceau** (`_show_style`) ; essayer un genre ne touche plus au tempo du
+  morceau en cours — avant, parcourir les pads le faisait passer de 120 à 136, puis à 122 en
+  revenant au premier. La prochaine composition prend le tempo du genre, sauf compteur réglé.
+  Un morceau de la carte, qui ne dit pas son genre, prend celui du pad choisi.
+* **Écouter** : [En boucle] (allumé d'office ; le rendu est ramené à sa durée musicale, sa
+  queue repliée sur le début — `render.loop_fold`), une tête de lecture dans la grille du clip
+  et dans la colonne de la section, [Avec le morceau] (`atelier.context_parts`), [Muet] et
+  [Solo] — les mêmes pads devant chaque rangée de la grille, comme la colonne de la machine.
+  Une seule entrée pour toutes les écoutes, numérotées : **un rendu arrêté ou dépassé ne joue
+  plus** (avant, le son partait une seconde après [Arrêter]).
+* **La boucle suit les gestes** : tout geste qui retouche le morceau passe par `_checkpoint`,
+  qui prévient la boucle ; 180 ms après le dernier, le rendu est refait et **échangé en place**
+  (`Player.replace_array` : même échantillon, même mesure). Un coup dessiné, une case, une
+  piste coupée, un volume s'entendent sans relancer. Quitter l'atelier arrête la boucle.
+* **Dessiner** : tirer vers la droite donne sa longueur à une note ; un clic droit fait tourner
+  la force d'un coup ou d'une note (fort, moyen, doux) ; [Clip vide], [Dupliquer] — la copie
+  d'un clip du Deluge se dessine —, [Doubler la longueur], [Octave −], [Octave +] ; mesures
+  numérotées.
+* **Structure** : clic droit sur une case — la liste de ses clips, le silence, et « Ouvrir le
+  clip … à l'étape Clips » ; [Dupliquer la section].
+* **Sons** : un **volume par piste**, au cran de la machine, qui s'écrit avec le morceau et
+  **reste celui de la piste quand elle change de son** (`AtelierTrack.level`, `keep_level`) ;
+  [Écouter la rangée] d'un kit, et le son tiré pour une rangée s'entend aussitôt.
+* **Les brouillons** (`core/atelierstore.py`, `ui/draftsdialog.py`, [Brouillons…]) : chaque
+  morceau remplacé ou écrit est rangé sur l'ordinateur et se rouvre tel quel — sons retouchés,
+  clips, sections, volumes. Quarante au plus ; partent d'abord ceux qu'on n'a ni retouchés ni
+  écrits. Écrire un morceau donne son nom au champ : la prochaine écriture propose de
+  remplacer cette version.
+* L'en-tête porte six commandes : le carré d'arrêt et les deux flèches n'ont plus de libellé
+  (icônes `undo`, `redo` ; `loop`, `mute`, `solo` ajoutées). Manuel et aide complétés dans les
+  deux langues, section « Les brouillons ».
+
+### Mesuré
+
+* **Sur son brouillon** (copie lue, jamais écrite ; échantillons lus dans `SDCARD Deluge`) :
+  instantané pour Défaire 3,3 ms ; ranger un brouillon 6,4 ms et 56 Ko, le rouvrir 2,2 ms ;
+  rendu d'un clip seul 0,06 à 0,37 s, d'un clip avec le morceau 1,0 à 1,2 s, de la section la
+  plus pleine (huit mesures) 1,9 s — c'est le délai après lequel un geste s'entend dans une
+  boucle. La boucle fait exactement sa durée musicale : 352 800 trames pour quatre mesures à
+  120 BPM.
+* **L'en-tête à 1 360 px** : six libellés demandaient 762 px pour 733 — tout se repliait sur
+  ses icônes. Avec trois boutons sans libellé, 653 px. Un bouton à largeur fixée annonçait
+  encore les 50 px de son `sizeHint` : `_ActionsCompactes._largeur_propre`.
+* **« Boards of Canada »** perdait encore 8 px à 980 px en mode avancé (113 pour 121) : les
+  pads de genre ne descendent plus sous leur nom. Douze configurations mesurées (deux langues,
+  deux niveaux, 980, 1 100 et 1 360 px) : aucun nom coupé, aucune barre horizontale.
+* **Le volume écrit** : dans un morceau, les réglages d'un instrument vivent dans chacun de
+  ses clips (`soundParams`, `kitParams`) — relu dans le fichier, 21 et 44 retrouvés.
+
+### Mes erreurs, relevées
+
+* **Mon script de mesure bouclait sur plusieurs fenêtres dans un seul test** : fermer la
+  première ferme le contexte, et les suivantes n'obéissent plus à rien (`guard` ignore tout).
+  J'y ai lu une barre horizontale de 221 px à l'étape Style, « présente aussi dans HEAD » —
+  elle n'existait pas. Une fenêtre par test. Le même défaut faussait deux largeurs sur trois de
+  ma mesure de l'en-tête ; la première, la seule juste, était celle dont je m'étais servi.
+* **Un `git stash` de trop**, pour comparer avec HEAD, sur un dépôt qui portait des notes non
+  commitées : rendu aussitôt, rien de perdu, mais c'est `git archive HEAD | tar -x` dans le
+  scratchpad qu'il fallait — et que j'ai pris ensuite.
+* **Deux tests ne prouvaient rien** : l'arrêt pendant le calcul passait sans le numéro
+  d'écoute, parce que le rendu d'un clip sait s'interrompre de lui-même. Le rendu d'un son seul
+  ne le sait pas : c'est lui que le test arrête désormais.
+* La copie de travail est en CRLF (`core.autocrlf`) : mon script de retrait des correctifs,
+  qui cherchait des « \n », n'a d'abord rien trouvé — et l'a dit, au lieu de passer.
+* Deux petits correctifs passés par le shell (un heredoc, un `python -c`) malgré la règle :
+  relus dans le diff, intacts ; l'outil d'édition suffisait.
+
+### Vérifié
+
+* **Vingt-cinq correctifs retirés tour à tour** font échouer leurs tests ; fichiers rendus à
+  l'octet (empreintes).
+* Rendu en PNG dans la vraie fenêtre, 65 images : français et anglais, simple et avancé,
+  1 360 et 980 px, sans morceau, piste muette, piste isolée, tête de lecture, la liste des
+  brouillons, les cinq icônes. Une trentaine regardées — chaque étape au moins une fois dans
+  chaque langue, chaque niveau et chaque largeur ; pas toutes.
+* Réglages et brouillon réels intacts (empreintes de `settings.json` et de
+  `atelier/brouillon.pickle` identiques avant et après) ; son application était fermée.
+* **1 455 tests au vert**, sous unittest (324 s) et sous pytest (274 s) : 798 du cœur, 520
+  d'interface, 107 de l'atelier, 30 de la traduction — 94 nouveaux ; texte anglais et manuel
+  complets (les tests de couverture passent).
+* L'autovérification (`main.py --self-test`, depuis les sources) : tout en ordre, 174 modules,
+  2 971 textes anglais. Aucun paquet n'a été construit : les deux modules neufs y entrent par
+  `collect_submodules`, ce que seule une construction prouvera.
+
+### Ce qui attend la machine
+
+Le volume d'une piste et un clip doublé s'écrivent par le chemin déjà éprouvé (mêmes champs,
+autres valeurs) ; les entendre sur le Deluge reste à faire avec lui — voir `ameliorations.md`.
+
+---
+
 ## 3 duoquinquagies. Les essais sur la machine (9 novembre 2026)
 
 **La demande** : « j'ai le Deluge de branché, je suis prêt à faire les essais qui n'ont pas pu
@@ -523,8 +643,11 @@ la page qu'une fois — il échoue avec l'ancien code.
 
 **La 1.0.3** : le passage de `72ede47` est le premier entièrement vert sur GitHub (trois
 constructions, trois suites de tests) ; à sa demande, `__version__ = "1.0.3"` — correctifs de
-l'interblocage et de la casse pour les utilisateurs. Étiquette `v1.0.3` posée par lui. Un
-blocage intermittent ne se juge pas sur un seul passage vert : à surveiller aux suivants.
+l'interblocage et de la casse pour les utilisateurs. Étiquette `v1.0.3` posée par lui ;
+construction et tests verts sur les trois systèmes, brouillon créé. **L'installateur Windows
+de la 1.0.3, lancé par lui par-dessus sa version installée, « fonctionne bien »** : premier
+essai de mise à jour. Un blocage intermittent ne se juge pas sur un seul passage vert : à
+surveiller aux suivants.
 
 ### Vérifié
 

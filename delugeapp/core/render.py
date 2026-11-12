@@ -2007,6 +2007,32 @@ def mix(*tracks: np.ndarray, levels: tuple[float, ...] | None = None
     return out
 
 
+def loop_fold(audio: np.ndarray, seconds: float,
+              sr: int = 44100) -> np.ndarray:
+    """Un rendu prêt à tourner en boucle, de ``seconds`` secondes exactement.
+
+    Un rendu finit par sa queue — réverbération, relâchements — après la
+    dernière mesure : rejoué tel quel, il perdrait la mesure à chaque tour.
+    Il est donc coupé à sa durée musicale, et sa queue **repliée sur le
+    début**, là où elle sonnera au tour suivant. Un rendu plus court est
+    complété de silence.
+    """
+    frames = int(round(float(seconds) * int(sr)))
+    if audio is None or frames <= 0:
+        return audio
+    data = np.asarray(audio, dtype=np.float32)
+    if data.ndim == 1:
+        data = data[:, None]
+    out = np.zeros((frames, data.shape[1]), dtype=np.float32)
+    for start in range(0, data.shape[0], frames):
+        piece = data[start:start + frames]
+        out[:piece.shape[0]] += piece
+    peak = float(np.max(np.abs(out))) if out.size else 0.0
+    if peak > 0.98:
+        out *= 0.98 / peak
+    return out
+
+
 def spectrum(data: np.ndarray, sr: int,
              n: int = 4096) -> tuple[np.ndarray, np.ndarray]:
     """``(fréquences, amplitudes en dB)`` du signal, pour l'affichage.

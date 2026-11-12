@@ -225,16 +225,30 @@ class ClipView(QWidget):
     (:meth:`set_clip` avec ``editable``) : un clic sur une case émet
     :attr:`hitToggled` avec la rangée et le pas, et la page allume ou éteint
     le coup. Un clip de synthé aussi : :attr:`noteToggled` donne la hauteur
-    et le pas, et la page ajoute la note ou retire celle qu'on a touchée.
+    et le pas, et la page ajoute la note ou retire celle qu'on a touchée ;
+    tirer vers la droite depuis une case vide dessine une note de la
+    longueur parcourue (:attr:`noteDrawn`). Un clic droit sur un coup ou une
+    note en change la force (:attr:`hitAccented`, :attr:`noteAccented`).
+
+    Au-dessus de la grille, les numéros de mesure ; pendant l'écoute, la
+    page y promène la tête de lecture (:meth:`set_playhead`).
     """
 
     #: Un clic dans la grille d'une batterie : (rangée, pas).
     hitToggled = pyqtSignal(str, int)
     #: Un clic dans la grille d'un synthé : (note MIDI, pas).
     noteToggled = pyqtSignal(int, int)
+    #: Une note tirée à la souris : (note MIDI, pas de départ, durée en pas).
+    noteDrawn = pyqtSignal(int, int, int)
+    #: Un clic droit sur une case d'une batterie : (rangée, pas).
+    hitAccented = pyqtSignal(str, int)
+    #: Un clic droit sur une case d'un synthé : (note MIDI, pas).
+    noteAccented = pyqtSignal(int, int)
 
     #: Hauteurs montrées au moins, pour un clip de synthé qu'on dessine.
     EDIT_SPAN = 24
+    #: Hauteur de la bande des numéros de mesure, au-dessus de la grille.
+    HEAD = 14.0
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -245,6 +259,8 @@ class ClipView(QWidget):
         self._color = GOLD
         self._editable = False
         self._hover: tuple[str, int] | None = None
+        #: La note qu'on est en train de tirer : (hauteur, départ, bout).
+        self._drag: tuple[int, int, int] | None = None
         self._empty = (tr("Aucun clip choisi"),
                        tr("Choisissez une piste et un de ses clips"))
         self._playhead: float | None = None
@@ -274,6 +290,7 @@ class ClipView(QWidget):
         self._color = color or GOLD
         self._editable = bool(editable) and clip is not None
         self._hover = None
+        self._drag = None
         meme = clip is not None and id(clip) == self._clip_id
         self._clip_id = id(clip) if clip is not None else None
         if clip is None:
@@ -323,7 +340,7 @@ class ClipView(QWidget):
         area = QRectF(self.rect()).adjusted(11, 11, -11, -11)
         low, high = self._note_range or self._span_for(None)
         label_w = min(46.0, area.width() * 0.09)
-        grid = area.adjusted(label_w, 0, 0, 0)
+        grid = area.adjusted(label_w, self.HEAD, 0, 0)
         return (area, grid, grid.width() / float(self._steps),
                 grid.height() / float(high - low + 1), low)
 
@@ -354,7 +371,7 @@ class ClipView(QWidget):
         """``(zone, grille, largeur d'une case, hauteur d'une rangée)``."""
         area = QRectF(self.rect()).adjusted(11, 11, -11, -11)
         label_w = min(86.0, area.width() * 0.16)
-        grid = area.adjusted(label_w, 0, 0, 0)
+        grid = area.adjusted(label_w, self.HEAD, 0, 0)
         rows = max(1, len(self._rows))
         return (area, grid, grid.width() / float(self._steps),
                 grid.height() / float(rows))
@@ -379,10 +396,45 @@ class ClipView(QWidget):
         return QPointF(grid.left() + (int(step) + 0.5) * cell_w,
                        grid.bottom() - (index + 0.5) * cell_h)
 
+    def _sounding(self, note: int, col: int) -> bool:
+        """Une note de cette hauteur sonne-t-elle à cette case ?"""
+        return any(int(e.note) == int(note)
+                   and float(e.start) <= col < float(e.start) + float(e.length)
+                   for e in self._events)
+
+    def _column_at(self, x: float) -> int:
+        """La colonne sous une abscisse, ramenée dans la grille."""
+        _area, grid, cell_w, _row_h, _low = self._note_geometry()
+        if cell_w <= 0:
+            return 0
+        return max(0, min(self._steps - 1, int((x - grid.left()) // cell_w)))
+
+    def dragging(self) -> tuple[int, int, int] | None:
+        """La note en train d'être tirée : (hauteur, départ, bout)."""
+        return self._drag
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - API Qt
+        # Sur une case vide d'un synthé, l'appui commence une note : la
+        # tirer vers la droite lui donne sa longueur.
+        if self._editable and self._pattern is None \
+                and event.button() == Qt.MouseButton.LeftButton:
+            case = self.note_at(event.position().x(), event.position().y())
+            if case is not None and not self._sounding(*case):
+                self._drag = (case[0], case[1], case[1])
+                self.update()
+        super().mousePressEvent(event)
+
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - API Qt
         if not self._editable:
             return
         x, y = event.position().x(), event.position().y()
+        if self._drag is not None:
+            note, start, end = self._drag
+            col = max(start, self._column_at(x))
+            if col != end:
+                self._drag = (note, start, col)
+                self.update()
+            return
         case = self.cell_at(x, y) if self._pattern is not None \
             else self.note_at(x, y)
         if case != self._hover:
@@ -396,16 +448,30 @@ class ClipView(QWidget):
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
+        drag, self._drag = self._drag, None
+        x, y = event.position().x(), event.position().y()
         if self._editable and event.button() == Qt.MouseButton.LeftButton:
-            x, y = event.position().x(), event.position().y()
             if self._pattern is not None:
                 case = self.cell_at(x, y)
                 if case is not None:
                     self.hitToggled.emit(case[0], case[1])
+            elif drag is not None and drag[2] > drag[1]:
+                self.noteDrawn.emit(drag[0], drag[1], drag[2] - drag[1] + 1)
             else:
                 case = self.note_at(x, y)
                 if case is not None:
                     self.noteToggled.emit(case[0], case[1])
+        elif self._editable and event.button() == Qt.MouseButton.RightButton:
+            if self._pattern is not None:
+                case = self.cell_at(x, y)
+                if case is not None:
+                    self.hitAccented.emit(case[0], case[1])
+            else:
+                case = self.note_at(x, y)
+                if case is not None:
+                    self.noteAccented.emit(case[0], case[1])
+        if drag is not None:
+            self.update()
         super().mouseReleaseEvent(event)
 
     def set_playhead(self, step: float | None) -> None:
@@ -449,25 +515,43 @@ class ClipView(QWidget):
         lower = QRectF(area.left(), area.center().y() + 2, area.width(), 22)
         p.drawText(lower, Qt.AlignmentFlag.AlignCenter, detail)
 
-    def _grid(self, p: QPainter, area: QRectF, cell_w: float) -> None:
+    def _grid(self, p: QPainter, area: QRectF, cell_w: float,
+              beats: bool = True) -> None:
         """Les temps et les mesures, comme les colonnes de la machine."""
         for step in range(self._steps + 1):
             x = area.left() + step * cell_w
             if step % 16 == 0:
                 p.setPen(QPen(QColor(mix(GOLD, PANEL_LO, 0.35)), 1.4))
-            elif step % 4 == 0:
+            elif step % 4 == 0 and beats:
                 p.setPen(QPen(QColor(mix(GREY, PANEL_LO, 0.55)), 1))
             else:
                 continue
             p.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()))
 
+    def _bar_numbers(self, p: QPainter, grid: QRectF, cell_w: float) -> None:
+        """Le numéro de chaque mesure, au-dessus de son premier temps."""
+        petite = QFont(self.font())
+        petite.setPointSizeF(max(6.5, petite.pointSizeF() * 0.8))
+        p.setFont(petite)
+        p.setPen(QColor(TEXT_SOFT))
+        for bar in range(self._steps // 16):
+            p.drawText(QRectF(grid.left() + bar * 16 * cell_w + 3,
+                              grid.top() - self.HEAD, 16 * cell_w - 4,
+                              self.HEAD - 1),
+                       Qt.AlignmentFlag.AlignLeft
+                       | Qt.AlignmentFlag.AlignVCenter, str(bar + 1))
+        p.setFont(self.font())
+
     def _paint_drums(self, p: QPainter, area: QRectF) -> None:
         rows = self._rows or ["?"]
         label_w = min(86.0, area.width() * 0.16)
-        grid = area.adjusted(label_w, 0, 0, 0)
+        grid = area.adjusted(label_w, self.HEAD, 0, 0)
         cell_w = grid.width() / float(self._steps)
         cell_h = grid.height() / float(len(rows))
         pad = max(2.0, min(cell_w, cell_h) * 0.78)
+        self._bar_numbers(p, grid, cell_w)
+        if self._steps > 16:
+            self._grid(p, grid, cell_w, beats=False)
         p.setFont(self.font())
         for index, name in enumerate(rows):
             # La rangée 0 en bas, comme sur la machine.
@@ -505,9 +589,10 @@ class ClipView(QWidget):
         low, high = self._note_range or self._span_for(None)
         span = high - low + 1
         label_w = min(46.0, area.width() * 0.09)
-        grid = area.adjusted(label_w, 0, 0, 0)
+        grid = area.adjusted(label_w, self.HEAD, 0, 0)
         cell_w = grid.width() / float(self._steps)
         row_h = grid.height() / float(span)
+        self._bar_numbers(p, grid, cell_w)
         # Les rangées des do, plus claires : on s'y repère.
         p.setFont(self.font())
         for note in range(low, high + 1):
@@ -551,15 +636,29 @@ class ClipView(QWidget):
             art.paint_pad(p, rect, shade, glow=0.0,
                           radius=min(rect.height(), rect.width()) * 0.3,
                           sheen=rect.height() >= 8)
+        if self._drag is not None:
+            # La note qu'on tire : sa longueur se lit avant de la poser.
+            note, start, end = self._drag
+            top = grid.bottom() - (int(note) - low + 1) * row_h
+            rect = QRectF(grid.left() + start * cell_w + 1, top + 1,
+                          max(3.0, (end - start + 1) * cell_w - 2),
+                          max(3.0, row_h - 2))
+            fond = QColor(self._color)
+            fond.setAlphaF(0.45)
+            p.setPen(QPen(QColor(GOLD), 1.4))
+            p.setBrush(fond)
+            p.drawRoundedRect(rect, 3, 3)
         self._paint_playhead(p, grid, cell_w)
 
     def _paint_playhead(self, p: QPainter, grid: QRectF,
                         cell_w: float) -> None:
         if self._playhead is None:
             return
+        # Blanche : les barres de mesure sont déjà dorées.
         x = grid.left() + (float(self._playhead) % self._steps) * cell_w
-        p.setPen(QPen(QColor(GOLD), 2))
-        p.drawLine(QPointF(x, grid.top()), QPointF(x, grid.bottom()))
+        p.setPen(QPen(QColor(PAD_WHITE), 2))
+        p.drawLine(QPointF(x, grid.top() - self.HEAD + 2),
+                   QPointF(x, grid.bottom()))
 
 
 class SectionMatrix(QWidget):
@@ -568,11 +667,23 @@ class SectionMatrix(QWidget):
     Chaque case est le pad du clip que la piste joue dans la section, à la
     couleur de sa partie et à la lettre de son clip ; une case éteinte, la
     piste se tait. Un clic sur une case émet :attr:`cellClicked`, un clic
-    sur l'en-tête d'une section :attr:`sectionClicked`.
+    sur l'en-tête d'une section :attr:`sectionClicked` ; un clic droit sur
+    une case demande le menu de ses clips (:attr:`cellMenuRequested`).
+
+    Devant le nom de chaque piste, **son pad d'écoute**, comme la colonne
+    des pads de la machine : allumé, la piste s'entend ; éteint, elle se
+    tait. Un clic sur le pad ou le nom émet :attr:`muteToggled`, un clic
+    droit — ou Maj+clic — :attr:`soloToggled` ; la page dit ce qui s'entend
+    (:meth:`set_listening`) et où en est l'écoute (:meth:`set_playing`).
     """
 
     cellClicked = pyqtSignal(int, int)          # section, piste (uid)
     sectionClicked = pyqtSignal(int)
+    #: Un clic droit sur une case : section, piste (uid), point à l'écran.
+    cellMenuRequested = pyqtSignal(int, int, object)
+    #: Faire taire ou rendre une piste (uid) ; l'isoler ou rendre les autres.
+    muteToggled = pyqtSignal(int)
+    soloToggled = pyqtSignal(int)
 
     LABEL_W = 150
     HEAD_H = 46
@@ -586,6 +697,11 @@ class SectionMatrix(QWidget):
         self._current = -1
         self._hover: tuple[int, int] | None = None
         self._origins: dict[tuple[int, str], bool] = {}
+        #: Pistes muettes, et piste isolée s'il y en a une.
+        self._muted: set[int] = set()
+        self._solo: int | None = None
+        #: Section qu'on écoute, et où en est sa lecture (0 à 1).
+        self._playing: tuple[int, float] | None = None
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Preferred,
@@ -606,6 +722,35 @@ class SectionMatrix(QWidget):
     def set_current(self, index: int) -> None:
         self._current = int(index)
         self.update()
+
+    def set_listening(self, muted=(), solo: int | None = None) -> None:
+        """Ce qui s'entend : les pistes ``muted`` se taisent ; ``solo``, si
+        elle est donnée, joue seule."""
+        self._muted = {int(uid) for uid in (muted or ())}
+        self._solo = int(solo) if solo is not None else None
+        self.update()
+
+    def audible(self, uid: int) -> bool:
+        """La piste s'entend-elle à l'écoute ?"""
+        if self._solo is not None:
+            return int(uid) == self._solo
+        return int(uid) not in self._muted
+
+    def set_playing(self, index: int | None, fraction: float = 0.0) -> None:
+        """La section qu'on écoute, et l'avancement de sa lecture (0 à 1) ;
+        ``None`` : plus rien ne joue."""
+        nouveau = None if index is None else (
+            int(index), max(0.0, min(1.0, float(fraction))))
+        if nouveau != self._playing:
+            self._playing = nouveau
+            self.update()
+
+    def playing(self) -> tuple[int, float] | None:
+        return self._playing
+
+    def label_center(self, row: int) -> QPointF:
+        """Le centre du pad d'écoute de la rangée — pour viser un clic."""
+        return QPointF(13.0, self.HEAD_H + (int(row) + 0.5) * self.ROW_H)
 
     def sizeHint(self) -> QSize:  # noqa: N802 - API Qt
         cols = max(1, len(self._sections))
@@ -645,14 +790,38 @@ class SectionMatrix(QWidget):
         self.update()
         super().leaveEvent(event)
 
+    def _label_hit(self, x: float, y: float) -> int | None:
+        """La rangée dont on touche le pad d'écoute ou le nom."""
+        if not 0 <= x < self.LABEL_W or y < self.HEAD_H:
+            return None
+        row = int((y - self.HEAD_H) // self.ROW_H)
+        return row if 0 <= row < len(self._tracks) else None
+
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - API Qt
-        if event.button() != Qt.MouseButton.LeftButton:
+        gauche = event.button() == Qt.MouseButton.LeftButton
+        droit = event.button() == Qt.MouseButton.RightButton
+        if not gauche and not droit:
             return
-        hit = self._hit(event.position().x(), event.position().y())
+        x, y = event.position().x(), event.position().y()
+        rangee = self._label_hit(x, y)
+        if rangee is not None:
+            uid = self._tracks[rangee][0]
+            maj = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            if droit or maj:
+                self.soloToggled.emit(uid)
+            else:
+                self.muteToggled.emit(uid)
+            return
+        hit = self._hit(x, y)
         if hit is None:
             return
         col, row = hit
-        if row < 0:
+        if droit:
+            if row >= 0:
+                self.cellMenuRequested.emit(
+                    col, self._tracks[row][0],
+                    event.globalPosition().toPoint())
+        elif row < 0:
             self.sectionClicked.emit(col)
         else:
             self.cellClicked.emit(col, self._tracks[row][0])
@@ -664,18 +833,34 @@ class SectionMatrix(QWidget):
             base = QFont(self.font())
             bold = QFont(base)
             bold.setBold(True)
-            for row, (_uid, name, color) in enumerate(self._tracks):
+            for row, (uid, name, color) in enumerate(self._tracks):
                 top = self.HEAD_H + row * self.ROW_H
-                dot = QRectF(6, top + self.ROW_H / 2.0 - 7, 14, 14)
-                art.paint_pad(p, dot, color, glow=0.0, radius=3)
+                # Le pad d'écoute : allumé, la piste s'entend ; cerclé de
+                # blanc, elle joue seule ; éteint, elle se tait.
+                pad = QRectF(4, top + self.ROW_H / 2.0 - 9, 18, 18)
+                entendue = self.audible(uid)
+                if entendue:
+                    art.paint_pad(p, pad, color, glow=0.0, radius=4.5)
+                else:
+                    art.paint_off_pad(p, pad, diode=False, radius=4.5)
+                    cadre = QColor(color)
+                    cadre.setAlphaF(0.55)
+                    p.setPen(QPen(cadre, 1.2))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawRoundedRect(pad.adjusted(0.6, 0.6, -0.6, -0.6),
+                                      4, 4)
+                if self._solo == uid:
+                    p.setPen(QPen(QColor(PAD_WHITE), 1.6))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawRoundedRect(pad.adjusted(-2, -2, 2, 2), 6, 6)
                 p.setFont(base)
-                p.setPen(QColor(PAD_WHITE))
-                p.drawText(QRectF(26, top, self.LABEL_W - 30, self.ROW_H),
+                p.setPen(QColor(PAD_WHITE if entendue else TEXT_SOFT))
+                p.drawText(QRectF(30, top, self.LABEL_W - 34, self.ROW_H),
                            Qt.AlignmentFlag.AlignVCenter
                            | Qt.AlignmentFlag.AlignLeft,
                            p.fontMetrics().elidedText(
                                name, Qt.TextElideMode.ElideRight,
-                               self.LABEL_W - 32))
+                               self.LABEL_W - 36))
             for col, (title, bars, cells) in enumerate(self._sections):
                 left = self.LABEL_W + col * self.COL_W
                 head = QRectF(left + 3, 4, self.COL_W - 6, self.HEAD_H - 10)
@@ -701,7 +886,11 @@ class SectionMatrix(QWidget):
                     rect = self._cell_rect(col, row)
                     key = cells.get(uid)
                     if key:
-                        if current:
+                        # Une piste qui se tait garde ses clips, estompés :
+                        # la grille montre ce qu'on entend.
+                        entendue = self.audible(uid)
+                        p.setOpacity(1.0 if entendue else 0.32)
+                        if current and entendue:
                             art.paint_glow(p, rect, color, 0.20, 0.45)
                         art.paint_pad(p, rect, color, glow=0.0, radius=8)
                         if self._origins.get((uid, key)):
@@ -713,12 +902,24 @@ class SectionMatrix(QWidget):
                         p.setFont(bold)
                         p.setPen(QColor(text_on(color)))
                         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, key)
+                        p.setOpacity(1.0)
                     else:
                         art.paint_off_pad(p, rect, diode=False, radius=8)
                     if self._hover == (col, row):
                         p.setPen(QPen(QColor(GOLD), 1.8))
                         p.setBrush(Qt.BrushStyle.NoBrush)
                         p.drawRoundedRect(rect, 8, 8)
+            if self._playing is not None and self._tracks \
+                    and 0 <= self._playing[0] < len(self._sections):
+                # La tête de lecture traverse la colonne de la section
+                # qu'on écoute.
+                col, part = self._playing
+                x = self.LABEL_W + col * self.COL_W + 4 \
+                    + part * (self.COL_W - 8)
+                p.setPen(QPen(QColor(PAD_WHITE), 2))
+                p.drawLine(QPointF(x, self.HEAD_H - 2),
+                           QPointF(x, self.HEAD_H
+                                   + len(self._tracks) * self.ROW_H - 2))
             p.end()
         except Exception as exc:     # noqa: BLE001
             log.debug("matrice des sections non tracée : %s", exc)

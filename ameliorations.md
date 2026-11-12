@@ -1,8 +1,8 @@
 # Améliorations possibles — Noctiluca
 
-**Relevé du 7 novembre 2026**, sur `master` (`c28827d`, v1.0.0 publiée), complété le soir même, repris le 8 novembre, puis le 9 après les essais sur la machine.
+**Relevé du 7 novembre 2026**, sur `master` (`c28827d`, v1.0.0 publiée), complété le soir même, repris le 8 novembre, puis le 9 après les essais sur la machine, et le 11 après le travail sur l'atelier.
 
-Les pistes faites ont été retirées. Leur détail (ce qui a été fait, mesuré et vérifié) est dans `REPRISE.md` : au §3 quinquagies pour le 7 novembre, au §3 unquinquagies pour le 8, au §3 duoquinquagies pour les essais du 9. Il ne reste ici que ce qui n'est pas fait, avec la raison. Tout ce qui reste attend la machine, ta décision, ou quelqu'un d'autre.
+Les pistes faites ont été retirées. Leur détail (ce qui a été fait, mesuré et vérifié) est dans `REPRISE.md` : au §3 quinquagies pour le 7 novembre, au §3 unquinquagies pour le 8, au §3 duoquinquagies pour les essais du 9, au §3 triquinquagies pour l'atelier. Il ne reste ici que ce qui n'est pas fait, avec la raison. Tout ce qui reste attend la machine, ta décision, ou quelqu'un d'autre.
 
 ---
 
@@ -64,14 +64,13 @@ Dans les deux cas, il faut un Mac ou un Linux avec le Deluge : les noms de ses p
 
 ### 3.3 L'installateur et la signature
 
-Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
+La mise à jour par-dessus une version installée marche (essayée par toi avec la 1.0.3, le 9 novembre). Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
 
 * la désinstallation ;
-* la mise à jour par-dessus la 1.0.0 ;
 * le refus quand l'application est ouverte ;
 * les paquets Mac et Linux chez un vrai utilisateur.
 
-À essayer avec l'installateur de la 1.0.2 (la mise à jour par-dessus la 1.0.0 en premier) : les essais demandent ta présence (fenêtre UAC). La signature évite l'avertissement SmartScreen, et la demande à la fondation SignPath vient de l'auteur. La marche à suivre est dans `packaging/LISEZMOI.md`.
+Les essais demandent ta présence (fenêtre UAC). La signature évite l'avertissement SmartScreen, et la demande à la fondation SignPath vient de l'auteur. La marche à suivre est dans `packaging/LISEZMOI.md`.
 
 ### 3.4 Plus loin
 
@@ -79,6 +78,8 @@ Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
 * **Découper les tests** : `test_core.py` dépasse 13 000 lignes et la suite complète prend près de 5 minutes. Écarté pour l'instant : le gain est faible, et l'on risque de casser les garde-fous de chaque module.
 * **Convertir le FLAC et le MP3 à l'envoi** : « Envoyer au Deluge » les écarte en conseillant de les exporter en WAV ([cardimport.py](delugeapp/core/cardimport.py)). Les convertir demanderait une dépendance (`soundfile`). À ne faire que si des utilisateurs le demandent : ton journal n'en montre aucun cas.
 * **Écouter un morceau entier plus vite** : un quart de minute de calcul pour un morceau de trois minutes, et le LFO 1 global en ajoute 40 % sur les morceaux de l'atelier. Jouer le début pendant que la suite se calcule demanderait un lecteur qui reçoit le son par morceaux.
+* **Une boucle de section qui suit plus vite** : dans l'atelier, un geste fait pendant qu'une boucle tourne s'entend après le temps d'un rendu — 0,1 à 0,4 s pour un clip seul, 1 s pour un clip avec le morceau, **1,9 s pour une section de huit mesures** (mesuré sur ton brouillon de deep house). Tout est recalculé à chaque fois. Garder le rendu de chaque piste et ne refaire que celle qui a changé ramènerait la section au délai d'un clip ; cela demande de découper `render_parts`, où les pistes partagent une réverbération, et de revérifier le mélange contre l'actuel. Pas fait : c'est toucher au moteur d'écoute vérifié contre la machine, pour un gain de confort.
+* **Choisir soi-même l'échantillon d'une rangée de kit** dans l'atelier : aujourd'hui [Autre son pour la rangée] en tire un, qu'on entend aussitôt, et Défaire le rend. Une liste des sons du même rôle demanderait un dialogue de plus. À faire si tu en sens le besoin.
 
 ---
 
@@ -95,6 +96,7 @@ Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
 * **Un favori posé sur la machine**, puis retrouvé dans l'application (le sens application → machine est vérifié).
 * **Outils ▸ [Firmware du Deluge…]** le jour d'une nouvelle version stable : la machine s'installe-t-elle avec le `.bin` posé ?
 * **L'atelier** : charger « Calm Down 2 » complété.
+* **L'atelier, depuis le 11 novembre** (REPRISE §3 triquinquagies) : écrire un morceau dont le **volume d'une piste** a été réglé (un synthé baissé, le kit monté), et l'entendre sur la machine — le volume est écrit dans chaque clip de l'instrument (`soundParams`, `kitParams`), relu dans le fichier mais pas encore écouté sur le Deluge. De même un **clip doublé** (huit ou seize mesures) et un coup **doux** (vélocité 40) : mêmes champs que d'habitude, autres valeurs.
 * **Relectures** : le manuel devant la machine (surtout la partie III), et l'anglais par quelqu'un qui joue du Deluge en anglais.
 * **Rappels** : *Display Param* est peut-être resté allumé (MIDI-Follow ▸ Display Param). Sur la carte restent, de nos essais : `SONGS/Cool1 DAW.XML` (la copie pour Live) et `SAMPLES/RESAMPLE/ESSAI SIDECHAIN/output_000.wav` (l'export du sidechain). Sur le PC, dans `Desktop\musique\Cool1 — pour le DAW` : les trois sets Live de l'essai. Sur le Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Output est sur ON, et le firmware est la 1.3.0 corrigée (« 1.3.0-dev-156500e-dirty ») ; l'officiel est rangé dans `_BACKUP/firmware-20261109-111704` de la copie de travail. `C:\Users\sebas\dfw` (≈ 2 Go : le firmware cloné et sa chaîne de compilation) sert encore si les relecteurs de #5276 demandent une retouche ; à supprimer ensuite.
 
@@ -102,7 +104,7 @@ Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
 
 ## Ordre proposé
 
-1. **Les tests sur GitHub** (3.1 : ils échouent sous Linux, à lire dans le journal de l'exécution) et **l'installateur** (3.3), avec la construction de la 1.0.2.
+1. **L'installateur** (3.3) : la désinstallation et le refus quand l'application est ouverte ; et les prochains passages sur GitHub (3.1), pour s'assurer que l'interblocage ne revient pas.
 2. **Les points ouverts par les essais** (§4) : la santé, puis la surveillance du prochain gros envoi.
 3. **L'horloge sous Windows** (1.2) : suivre la proposition #5276 jusqu'à son acceptation.
 4. **Le MIDI sur Mac et Linux** (3.2), quand un Mac ou un Linux sera à portée avec le Deluge.

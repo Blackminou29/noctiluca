@@ -832,6 +832,7 @@ class Player:
     def set_volume(self, v: float) -> None
     def play_file(self, path: Path, loop: bool = False) -> None
     def play_array(self, data: np.ndarray, sample_rate: int, loop: bool = False) -> None
+    def replace_array(self, data: np.ndarray, sample_rate: int) -> bool   # §4.51
     def stop(self) -> None
     @property
     def is_playing(self) -> bool
@@ -3225,6 +3226,75 @@ de « deluge-c1_3_0.bin », « c1.3.0 », « release_1_2_1 »), `is_newer`, `car
   set exporté de la copie est déjà routé, et sous Windows l'horloge du DAW ne passe pas
   (`_WINDOWS_CLOCK`, §4.42).
 
+### 4.51 L'atelier : reprendre un clip à la main, écouter en contexte, garder ses morceaux (10 novembre 2026)
+
+`delugeapp/core/atelier.py` (§4.38) gagne :
+
+```python
+MAX_BARS = 16                       # longueur qu'un clip doublé ne dépasse pas
+LEVELS = (100, 70, 40)              # fort, moyen, doux — la force d'un coup ou d'une note
+KIT_VOLUME = 0x3504F334             # le volume d'un kit qui n'en dit rien (render.SONG_VOLUME)
+class AtelierTrack: …; level: int | None = None       # volume choisi pour la piste, cran 0–50
+class Project: …; ident: str (uuid4) ; edits: int = 0  # identité du morceau, gestes faits
+def empty_clip(project, uid, bars=None) -> AtelierClip           # origine « vide »
+def duplicate_clip(project, uid, key) -> AtelierClip             # origine « copie », existing=None
+def double_clip(project, uid, key) -> AtelierClip                # en place ; ValueError > MAX_BARS
+def transpose_clip(project, uid, key, semitones) -> int          # ValueError hors de 0–127
+def accent_hit(project, uid, key, row, step) -> int | None       # tourne dans LEVELS
+def accent_note(project, uid, key, note, step) -> int | None
+def duplicate_section(project, index) -> int                     # juste après, nom numéroté
+def section_parts(project, index, max_bars=8, only=None)         # only : les uid qui sonnent
+def context_parts(project, uid, key, section=None, max_bars=8, only=None)
+        -> (parties, batterie, mesures, section)                 # un clip avec le morceau
+def track_volume(track) -> int | None ; def set_track_volume(project, uid, value) -> bool
+def keep_level(track) -> None ; def describe_volume(track) -> str      # « -6,2 dB »
+```
+
+* **Un clip du morceau d'origine ne se retouche toujours pas** (`double_clip`,
+  `transpose_clip`, `accent_*` lèvent `ValueError`) ; sa **copie** est un clip neuf, qui se
+  dessine — le chemin qui manquait pour le reprendre à la main.
+* **`context_parts`** : les autres pistes jouent ce qu'elles jouent dans la première section où
+  le clip est placé, à défaut dans `section`, à défaut dans la plus pleine ; la durée est celle
+  du plus long des clips entendus, `max_bars` au plus ; la piste du clip sonne toujours, même
+  hors de `only`.
+* **Le volume d'une piste** est celui du son d'un synthé (`soundedit`, réglage `volume`) ou du
+  kit (`Kit.params["volume"]`), au cran de la machine. `AtelierTrack.level` le **garde quand
+  la piste change de son** : `regenerate_sound`, `adopt_sound`, `use_preset`, `use_kit` et
+  les variantes (`sound_variations`) le reposent (`keep_level`) ; un volume réglé dans
+  l'éditeur devient celui de la piste. Une piste du morceau d'origine garde le sien. Dans le
+  morceau écrit, il vit dans chaque clip de l'instrument (`soundParams`, `kitParams` —
+  vérifié en relisant le fichier).
+* **`Project.ident`** fait d'un morceau le même d'une séance à l'autre ; `edits` compte les
+  gestes faits depuis sa composition. Un brouillon d'avant ces champs les reçoit à la lecture
+  (`_fill_defaults`).
+* `render.loop_fold(audio, seconds, sr=44100)` : un rendu ramené à sa durée musicale, sa queue
+  — réverbération, relâchements — **repliée sur le début**, prêt à tourner en boucle en mesure.
+* `audio_out.Player.replace_array(data, sample_rate) -> bool` (§4.7) : remplace ce qui tourne
+  en boucle par un tableau de même durée **sans interrompre la lecture** — le rappel de
+  PortAudio reprend au même échantillon. Faux, sans rien changer, quand rien ne tourne en
+  boucle, quand la durée ou la fréquence diffèrent, ou sous `winsound` ; sans sortie, seule la
+  durée compte.
+
+`delugeapp/core/atelierstore.py` — **les brouillons** : les morceaux de l'atelier gardés sur
+l'ordinateur, un par `Project.ident`, dans le dossier que l'appelant désigne
+(`<configuration>/atelier/brouillons`).
+
+```python
+KEEP = 40
+@dataclass
+class Entry: ident; name=""; saved=0.0; meta={}        # .worked : retouché ou écrit
+def shelve(base, project, meta=None, keep=KEEP) -> Entry    # <ident>.pickle + <ident>.json
+def entries(base) -> list[Entry]                            # le plus récent d'abord
+def load(base, ident) -> (Project, meta)                    # ValueError, OSError
+def remove(base, ident) -> bool
+def prune(base, keep=KEEP) -> int      # partent d'abord les non travaillés, puis les anciens
+```
+
+Écriture d'un seul geste (fichier provisoire puis `os.replace`) ; un identifiant qui n'est pas
+un hexadécimal de 8 à 64 chiffres est refusé (`ValueError`) : aucun chemin ne se fabrique
+depuis un nom de fichier étranger. Comme le brouillon de séance, ces `pickle` ne se lisent que
+depuis le dossier de configuration, qui les a écrits.
+
 ---
 
 ## 5. Contrats de l'interface
@@ -4421,6 +4491,82 @@ Ctrl+R et le bandeau font une analyse **incrémentale** (`_start_scan(full=False
   la trace dedans (`ReportDialog(…, detail=…)`).
 * `widgets.common.RangeeSouple` : une rangée qui passe à la ligne ; les rangées de l'étape
   Clips de l'atelier en sont faites — à 980 px, le panneau (470 px) perdait sa droite.
+
+### 5.36 L'atelier : écouter en boucle, dessiner, choisir, retrouver ses morceaux (10 novembre 2026)
+
+**Le style suit le morceau** — `AtelierPage._show_style(project)`, appelé par `_set_project`
+et `_restore` : genre, tempo, tonique, gamme, ambiance, couleur, graine, curseurs et parties
+cochées reprennent ceux du morceau (repris au lancement, rouvert d'un brouillon, rendu par
+Défaire). Avec un morceau en cours, choisir un genre ne touche plus à son tempo
+(`_next_tempo` : la prochaine composition prend celui du genre, sauf compteur réglé entre-temps,
+et la ligne du bas le dit) ; pour un morceau venu de la carte, le pad choisi devient son genre.
+
+**L'en-tête** : `_import_button`, `_drafts_button` [Brouillons…], `_listen_song_button`, puis
+trois boutons sans libellé — `_stop_button` (carré), `_undo_button`, `_redo_button` (icônes
+`undo`, `redo`), nommés par leur infobulle et leur nom accessible. Mesuré à 1 360 px : six
+libellés demandaient 762 px pour 733, et tout l'en-tête se repliait sur ses icônes.
+`_ActionsCompactes._largeur_propre` borne la largeur d'un bouton par celle qu'on lui a fixée.
+
+**L'écoute** — une seule entrée, `_start_listening(fn, *args, title, heard, bpm, loop)` : chaque
+écoute prend un numéro (`_listen_serial`) ; un rendu qui arrive avec un numéro dépassé — autre
+écoute demandée, ou arrêt — est jeté, et le rendu en cours reçoit `cancel()`. `_render(parts,
+drums, title, heard, bars, loop)` ; `_render_mix(…, loop_bars)` replie le rendu
+(`render.loop_fold`).
+* `_loop_button` et `_loop_section_button` [En boucle] : un seul réglage (`_loop_on`, allumé
+  d'office) pour le clip, la section et l'extrait ; l'écoute d'un son ne boucle jamais.
+* `_context_button` [Avec le morceau] : `atelier.context_parts`.
+* `_mute_button`, `_solo_button` et les pads de `SectionMatrix` : `_muted`, `_solo`,
+  `_audible()` — pour l'écoute seulement, remis à zéro par `_set_project`.
+* La tête de lecture : `_play_timer` (40 ms) lit `Player.position()` — `ClipView.set_playhead`
+  ou `SectionMatrix.set_playing(colonne, part)` ; elle s'efface quand le lecteur s'arrête,
+  y compris par Espace, qui ne passe pas par la page.
+* **La boucle suit les gestes** : `_checkpoint(…, edit=True)` — par où passe tout geste qui
+  retouche le morceau —, `_toggle_mute`, `_toggle_solo` et `_context_toggled` appellent
+  `_relisten()` ; si une boucle tourne, `_relisten_timer` (180 ms, relancé à chaque geste)
+  déclenche `_relisten_now()`, qui refait le rendu (`seamless=True`, sans message) et
+  l'échange en place par `Player.replace_array` — ou relance la lecture si la durée a changé.
+  Plus rien à faire tourner (clip vidé, pistes toutes muettes) : la boucle s'arrête. Une
+  section ajoutée, retirée ou déplacée arrête la boucle d'une section (`_stop_section_loop`) ;
+  éteindre [En boucle] l'arrête ; `hideEvent` l'arrête en quittant la page. Le rendu reçoit ses
+  propres copies des notes, du motif et du kit : on dessine pendant qu'il calcule.
+
+**Les clips** — l'écoute est **au-dessus** de la grille (dessous, à 980 × 700, il fallait défiler
+pour entendre ce qu'on venait de dessiner). `_ClipChips` : la liste des clips prend une rangée,
+deux au plus. Boutons : `_empty_clip_button` [Clip vide], `_copy_clip_button` [Dupliquer],
+`_double_clip_button` [Doubler la longueur], `_octave_down_button`, `_octave_up_button`.
+`ClipView` : numéros de mesure (`HEAD`), barres de mesure sur une batterie de plus d'une mesure,
+`noteDrawn(note, pas, durée)` en tirant depuis une case vide, `hitAccented(rangée, pas)` et
+`noteAccented(note, pas)` au clic droit, tête de lecture blanche.
+
+**La structure** — `SectionMatrix` : `cellMenuRequested(section, uid, point)` au clic droit
+(`AtelierPage.cell_menu` : chaque clip, « Silence », « Ouvrir le clip … à l'étape Clips »),
+`muteToggled(uid)` au clic sur le pad ou le nom d'une piste, `soloToggled(uid)` au clic droit ou
+Maj+clic, `set_listening(muted, solo)`, `set_playing(index, fraction)`. `_copy_section_button`
+[Dupliquer la section]. La seconde rangée de boutons est une `RangeeSouple`.
+
+**Les sons** — `_volume` (curseur 0–50) et sa valeur en décibels, cachés pour une piste MIDI ou
+CV ; `_listen_row_button` [Écouter la rangée] (`_render_row` : un kit d'une seule rangée) ;
+choisir une rangée la joue si `Settings.autoplay` ; [Autre son] d'un kit et [Autre son pour la
+rangée] s'entendent aussitôt.
+
+**Les brouillons** — `_shelve()` range le morceau en cours (`atelierstore.shelve`,
+`drafts_dir()`) avant chaque geste qui le remplace (composer, `open_song`, `open_draft`) et
+après chaque écriture ; `_checkpoint(…, edit=False)` pour ces gestes-là. `ui/draftsdialog.py`,
+`DraftsDialog(entries, summary, current, color)` : [Ouvrir] (ou double-clic), [Supprimer]
+(`deleteRequested`, question posée par la page), [Fermer] ; `chosen()`, `forget(ident)`.
+Écrire un morceau donne son nom au champ **Nom du morceau**.
+
+Icônes ajoutées (`ui/icons.py`) : `loop`, `undo`, `redo`, `mute`, `solo`.
+
+**Tests** (`tests/test_ui.py`, en cliquant) : `TestLeStyleSuitLeMorceau`,
+`TestLAtelierEcouteEnBoucle` (lecteur factice : boucle en mesure, tête de lecture, arrêt pendant
+le calcul, deux écoutes coup sur coup), `TestLaBoucleSuitCeQuOnChange`,
+`TestLAtelierMuetEtSolo`, `TestLAtelierDessineALaMain`, `TestLAtelierStructureAuChoix`,
+`TestLeVolumeDUnePisteDansLAtelier`, `TestLesRangeesDuKitSEcoutent`,
+`TestLesBrouillonsDansLAtelier` ; `tests/test_atelier.py` : `TestLesClipsALaMain`,
+`TestLaStructureEtLEcoute`, `TestLeVolumeDUnePiste`, `TestLeLecteurEchangeEnPlace`,
+`TestLesBrouillonsDeLAtelier`. Vingt-cinq correctifs retirés tour à tour font échouer leurs
+tests.
 
 ---
 

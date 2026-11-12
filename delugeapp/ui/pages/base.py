@@ -748,18 +748,26 @@ class _ActionsCompactes(QObject):
     def _est_principal(bouton) -> bool:
         return bouton.objectName() == "Primary"
 
+    @staticmethod
+    def _largeur_propre(bouton) -> int:
+        """La largeur que demande le bouton tel qu'il est — bornée par celle
+        qu'on lui a fixée : un bouton réduit d'office à son icône
+        (``setFixedWidth``) annonçait encore les 50 px de son ``sizeHint``,
+        et la barre se croyait trop large de 12 px par bouton."""
+        return min(bouton.sizeHint().width(), bouton.maximumWidth())
+
     def _largeur_depliee(self, bouton) -> int:
         """Largeur qu'aurait le bouton avec son texte."""
         texte = self._textes.get(id(bouton), "")
         if not texte or bouton.text():
-            return bouton.sizeHint().width()
+            return self._largeur_propre(bouton)
         metrique = bouton.fontMetrics().horizontalAdvance(texte)
         return bouton.sizeHint().width() + metrique + 8
 
     def _largeur_repliee(self, bouton) -> int:
         """Largeur du bouton réduit à sa seule icône."""
         if not bouton.text():
-            return bouton.sizeHint().width()
+            return self._largeur_propre(bouton)
         metrique = bouton.fontMetrics().horizontalAdvance(bouton.text())
         return max(34, bouton.sizeHint().width() - metrique)
 

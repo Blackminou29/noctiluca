@@ -46,4 +46,11 @@ TEXTS = {
     "case hors du clip": "cell outside the clip",
     "ce clip est déjà sur le Deluge": "this clip is already on the Deluge",
     "brouillon d'une autre version": "draft from another version",
+    "vide": "empty",
+    "copie": "copy",
+    "un clip ne dépasse pas %d mesures": "a clip cannot exceed %d bars",
+    "une batterie ne se transpose pas": "drums cannot be transposed",
+    "les notes sortiraient de l'étendue du clavier":
+        "the notes would leave the range of the keyboard",
+    "section inconnue": "unknown section",
 }
