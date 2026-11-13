@@ -905,4 +905,97 @@ TEXTS = {
     "un canal libre":
         "A track that already listens to a channel keeps it; unticked, each "
         "one gets a free channel",
+
+    # -- le hub MIDI --------------------------------------------------------- #
+    "Met le hub en marche ou à l'arrêt. À l'arrêt, rien ne passe et ses "
+    "ports sont rendus aux autres logiciels ; les branchements restent en "
+    "place":
+        "Starts or stops the hub. Stopped, nothing goes through and its "
+        "ports are given back to the other programs; the patches stay in "
+        "place",
+    "Relâche tout ce que le hub tient — notes, pédale, molette — puis "
+    "demande le silence à chaque sortie ouverte, sur les seize canaux : le "
+    "bouton de secours si un son reste coincé":
+        "Releases everything the hub holds — notes, pedal, bend — then asks "
+        "each open output for silence, on all sixteen channels: the "
+        "emergency button if a sound gets stuck",
+    "Branche ce clavier sur le Deluge : ce que vous jouez part vers "
+    "l'instrument du clip où vous êtes sur la machine (MIDI Follow A). Rien "
+    "n'est écrit sur la carte":
+        "Patches this keyboard to the Deluge: what you play goes to the "
+        "instrument of the clip you are in on the machine (MIDI Follow A). "
+        "Nothing is written to the card",
+    "Ouvre les ports du Deluge, comme la pastille de la barre du haut : la "
+    "machine dit sa version, et le hub peut la brancher":
+        "Opens the Deluge's ports, like the chip in the top bar: the "
+        "machine gives its version, and the hub can patch it",
+    "Décoché, le branchement garde sa place dans la grille mais ne laisse "
+    "plus rien passer ; ses ports sont rendus s'ils ne servent à rien "
+    "d'autre":
+        "Unticked, the patch keeps its place in the grid but lets nothing "
+        "through; its ports are given back if nothing else uses them",
+    "Où arrive ce qui passe. Sur le Deluge : l'instrument du clip où vous "
+    "êtes (MIDI Follow A), ou une piste précise (Channel Track, firmware "
+    "1.3) — le canal est lu sur la carte de la machine. Ailleurs : le canal "
+    "d'origine, ou un canal imposé":
+        "Where what goes through arrives. On the Deluge: the instrument of "
+        "the clip you are in (MIDI Follow A), or a given track (Channel "
+        "Track, firmware 1.3) — the channel is read from the machine's "
+        "card. Elsewhere: the original channel, or a forced one",
+    "Transpose ce qui passe d'une octave vers le grave ; une note qui "
+    "sortirait du clavier MIDI n'est pas jouée":
+        "Transposes what goes through one octave down; a note that would "
+        "fall off the MIDI keyboard is not played",
+    "Transpose ce qui passe d'une octave vers l'aigu ; une note qui "
+    "sortirait du clavier MIDI n'est pas jouée":
+        "Transposes what goes through one octave up; a note that would fall "
+        "off the MIDI keyboard is not played",
+    "La transposition au demi-ton près, de −60 à +60 ; une note tenue est "
+    "relâchée avant de changer de hauteur":
+        "The transposition by semitones, from −60 to +60; a held note is "
+        "released before its pitch changes",
+    "N'écouter qu'un canal de la source : pour une surface dont les pads et "
+    "les touches sortent sur des canaux différents":
+        "Listen to one channel of the source only: for a surface whose pads "
+        "and keys come out on different channels",
+    "La note la plus grave qui passe, de 0 à 127 : de quoi partager un "
+    "clavier entre deux destinations":
+        "The lowest note let through, from 0 to 127: a way to split one "
+        "keyboard between two destinations",
+    "La note la plus aiguë qui passe, de 0 à 127":
+        "The highest note let through, from 0 to 127",
+    "Les touches enfoncées et relâchées, avec leur force":
+        "The keys pressed and released, with their velocity",
+    "La molette de hauteur et la pression, par canal et par touche":
+        "The pitch bend wheel and the pressure, per channel and per key",
+    "Les boutons, les curseurs, la pédale et la molette de modulation "
+    "(contrôleurs continus)":
+        "The knobs, the faders, the pedal and the modulation wheel "
+        "(continuous controllers)",
+    "Les changements de programme : fermés d'office, parce qu'ils changent "
+    "de son sur beaucoup d'appareils":
+        "Program changes: closed by default, because they change the sound "
+        "on many devices",
+    "L'horloge, le départ, l'arrêt et la position : à n'ouvrir que vers "
+    "l'appareil qui doit suivre le tempo de la source":
+        "The clock, start, stop and position: open only towards the device "
+        "that must follow the source's tempo",
+    "Tournez ensuite un bouton de la surface : il s'ajoute à la table, où "
+    "vous choisissez le réglage du Deluge qu'il pilote":
+        "Then turn a knob of the surface: it is added to the table, where "
+        "you choose the Deluge setting it drives",
+    "Retire de la table le bouton sélectionné : il repasse sous son propre "
+    "numéro":
+        "Removes the selected knob from the table: it goes through under "
+        "its own number again",
+    "Rend la source coupée pour emballement. Défaites d'abord la boucle : "
+    "un appareil ou un port qui renvoie ce qu'il reçoit":
+        "Gives back the source cut for running away. Undo the loop first: a "
+        "device or a port that sends back what it receives",
+    "Retire ce branchement ; les notes qu'il tenait sont relâchées. Rien "
+    "n'est écrit sur la carte":
+        "Removes this patch; the notes it held are released. Nothing is "
+        "written to the card",
+    "Efface les lignes du moniteur ; le hub, lui, continue de relayer":
+        "Clears the monitor's lines; the hub itself keeps relaying",
 }

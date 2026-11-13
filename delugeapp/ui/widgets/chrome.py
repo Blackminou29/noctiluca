@@ -373,12 +373,16 @@ class NavPad(QPushButton):
     et lisent son état comme avant.
     """
 
-    #: 40 et non 44 : avec les trois titres de groupe, la colonne doit tenir
+    #: 40 et non 44 : avec les trois titres de groupe, la colonne devait tenir
     #: dans les 557 pixels qu'une fenêtre de 640 lui laisse.
     HAUTEUR = 40
+    #: Dans une fenêtre trop basse pour douze pads de 40 et quatre titres,
+    #: la colonne se resserre (``MainWindow._fit_rail``) : le pad dessiné
+    #: garde ses 28 pixels.
+    DENSE = 32
 
     def __init__(self, title: str, icon_name: str, color: str,
-                 number: int | None = None,
+                 number: int | str | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(f"  {title}", parent)
         self.setObjectName("NavButton")
@@ -389,7 +393,11 @@ class NavPad(QPushButton):
                            QSizePolicy.Policy.Fixed)
         self._icone = icon_name
         self._couleur = color
-        self._numero = None if number is None else int(number)
+        # Un chiffre, ou la lettre d'une page qui a son propre raccourci
+        # (« M » : le hub MIDI, ``Ctrl+M``).
+        self._numero = (None if number is None
+                        else number if isinstance(number, str)
+                        else int(number))
         self._lumiere = 0.0
         self._survol = False
         self._libelle = _police(FONT_UI, 10, 500)

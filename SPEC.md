@@ -394,6 +394,7 @@ delugeapp/
     songwriter.py               # écrire un morceau du Deluge (§4.31)
     midiport.py                 # MIDI et SysEx par winmm (§4.28)
     midifollow.py               # la carte des contrôleurs (§4.29)
+    midihub.py                  # le hub MIDI : claviers, Deluge et DAW reliés (§4.52)
     delugelink.py               # le lien vivant avec la machine (§4.30)
     delugesysex.py              # identité, ping, écran (§4.32)
     delugefiles.py              # la carte par USB, firmware 1.3 (§4.33)
@@ -430,6 +431,7 @@ delugeapp/
       filtercurve.py
       delugescreen.py           # l'écran de la machine, pixel pour pixel
       atelierviews.py           # le clip et la grille des sections (§5.28)
+      hubviews.py               # la baie de brassage du hub MIDI (§5.37)
       soundeditor.py            # l'éditeur de son et sa fenêtre (§5.29)
     pages/
       __init__.py
@@ -441,6 +443,7 @@ delugeapp/
       generator.py
       atelier.py                # l'Atelier (§5.28)
       toolbox.py
+      hub.py                    # le hub MIDI (§5.37)
       health.py
       settings.py
     mainwindow.py
@@ -449,6 +452,8 @@ tests/
   test_ui.py
   test_i18n.py                  # le catalogue suit le code (§5.26)
   test_atelier.py               # variations, atelier, compléter, jouer calé (§4.36-4.38)
+  test_hub.py                   # le hub MIDI, ports simulés (§4.52)
+  ports_simules.py              # des claviers et des sorties simulés, pour le hub
   i18n_analyse.py               # lecture du code par son arbre, sans l'importer
   deluge_simule.py              # un Deluge simulé, fidèle aux mesures
 ```
@@ -3295,6 +3300,91 @@ un hexadécimal de 8 à 64 chiffres est refusé (`ValueError`) : aucun chemin ne
 depuis un nom de fichier étranger. Comme le brouillon de séance, ces `pickle` ne se lisent que
 depuis le dossier de configuration, qui les a écrits.
 
+### 4.52 Le hub MIDI : `delugeapp/core/midihub.py` (12 novembre 2026)
+
+Le Deluge n'a qu'une prise USB : relié à l'ordinateur, il ne reçoit plus de clavier. Le hub
+relie n'importe quelle entrée MIDI à n'importe quelle sortie, l'ordinateur au centre.
+
+```python
+DELUGE = "@deluge"                  # le Deluge, tel que le lien de l'application le tient
+FOLLOW_TARGETS = ("a", "b", "c", "track_1", …, "track_16")
+RATE_MAX = 4000 ; REPEAT_MAX = 64   # au-delà, par seconde et par source : une boucle
+SWITCH_INTERVAL = 0.0002            # la bascule des fils de Python, tant qu'une entrée est ouverte
+@dataclass
+class Route: source; dest; enabled=True; channel_in=0; channel_out=0; follow="";
+             transpose=0; low=0; high=127; notes=True; bend=True; controllers=True;
+             programs=False; clock=False; cc_map={}; uid
+    clone() ; to_dict() ; from_dict(data) -> Route | None     # tout se répare, sauf les bouts
+def default_route(source, dest) -> Route        # vers le Deluge : follow="a"
+class Backend(link=None):                       # les ports de la machine, vus par le hub
+    inputs() ; outputs() ; deluge_detected() ; open_input(name, push) ; open_output(name)
+class MidiHub(backend=None):
+    enabled ; set_enabled(on) ; routes ; route(uid) ; find(source, dest)
+    refusal(source, dest) -> str                # « » : rien ne s'y oppose
+    set_routes(routes) ; connect(source, dest, **réglages) -> Route   # ValueError si refusé
+    update(uid, **changes) ; remove(uid)
+    follow ; set_follow(FollowSettings | None, default_channel) ; channel_for(route)
+    advice(route) -> str                        # ce qu'il reste à régler sur le Deluge
+    rescan() -> bool                            # accorde les ports ; une fois par seconde
+    rearm(source="") ; flush(timeout) ; panic() -> int ; close()
+    state(uid) -> "active"|"off"|"hub_off"|"no_source"|"no_dest"|"no_channel"|"tripped"
+    sources() ; destinations() -> list[Endpoint] ; counts() ; stats() -> HubStats
+    monitor(after=0) -> list[Event] ; last_controller(source) ; overview() ; summary()
+def load_config(path) -> (enabled, routes) ; def save_config(path, enabled, routes) -> bool
+def role_of(name) ; endpoint_label(name) ; target_label(follow, channel) ;
+def describe_route(route, channel) ; describe_message(status, d1, d2)
+```
+
+* **Le Deluge passe par le lien** (`DelugeLink`) : ses ports, ceux que le lien tient
+  (`DelugeLink.open_ports()`) et tout port nommé « Deluge », sont retirés des listes et
+  remplacés par `DELUGE`, présent en sortie quand le lien est connecté, en entrée quand son
+  entrée est ouverte. Le hub ne les rouvre jamais — un pilote à un seul client ne refuse rien,
+  et le hub ne ferme pas ce qui n'est pas à lui. Vers le Deluge : `DelugeLink.send_short`
+  (le port des notes) ; depuis : `DelugeLink.set_listener(fn)`, qui fait suivre chaque message
+  court **sans rien retirer** au lien (tempo, notes, retour MIDI Follow), et survit à une
+  reconnexion.
+* **`midiport`** : `MidiIn.set_message_tap(tap)` confie chaque message court à `tap(statut,
+  d1, d2, instant) -> bool` dans le rappel du pilote (vrai : il le garde, la file reste
+  vide) ; `MidiOut(reset_on_close=False)` se ferme sans seize « silence » ni remise à zéro —
+  le hub relâche lui-même ce qu'il a fait passer.
+* **Le chemin** : le rappel empile `(source, statut, d1, d2, instant)` dans une
+  `SimpleQueue` ; le fil `hub-midi` dépile et passe le message à chaque voie de la source.
+  L'« active sensing » (`0xFE`) est écarté dès le rappel ; les SysEx ne traversent pas.
+* **Une voie** (`_Voie`) par branchement en service : canal d'arrivée résolu, notes tenues
+  `(canal, note) reçus -> (canal, note) envoyés`, pédales, molettes. Un relâchement part où
+  l'appui est parti ; une note de force nulle est un relâchement ; la pression par touche suit
+  la note transposée ; une note qui sortirait de 0–127 n'est pas jouée. **Rien ne reste
+  coincé** : modifier une voie (canal, cible, transposition…), la couper, la retirer, perdre
+  sa source ou sa sortie, arrêter ou fermer le hub la relâche (`note off`, CC 64 à 0, molette
+  au centre). Une voie dont rien n'a changé n'est pas recréée : `rescan` ne relâche rien.
+* **Les cibles du Deluge** : `follow` vaut `a`, `b`, `c` (l'instrument du clip où l'on est)
+  ou `track_N` (« Channel Track N », firmware 1.3 : cette piste, quelle que soit celle qu'on
+  regarde — `MidiFollow::noteMessageReceivedForSpecificTrack`). Le canal est lu dans
+  `SETTINGS/MIDIFollow.XML` (`midifollow.read_settings`, qui lit désormais les seize
+  `track_N` dans `FollowSettings.tracks` et ramène `track_a` à `a`). Sans réglages lus, ou
+  si la carte dit A non réglé, A prend le canal de l'application ; une autre cible non
+  réglée laisse la voie en attente (`no_channel`), et `advice` dit le menu à régler.
+* **Les ports** : `rescan` n'ouvre que les ports d'un branchement **en service**, ferme ce
+  qui ne sert plus ou a disparu, note l'erreur d'un refus (une fois au journal). Hub arrêté :
+  aucun port tenu.
+* **Le fusible** : par source et par seconde, plus de `RATE_MAX` messages, ou la même note à
+  la même force plus de `REPEAT_MAX` fois, coupent la source (`tripped`), ses notes relâchées ;
+  `rearm` la rend.
+* **La bascule des fils** — mesuré le 12 novembre 2026 (`scratchpad/mesure_hub.py`, ports
+  simulés, 2 000 contrôleurs espacés de 2 ms) : au repos, 0,04 ms de retard médian, 1 ms au
+  pire ; **fil principal occupé par du Python : 8,7 ms de médiane, 32 au pire** — le fil du
+  hub attend la main de Python au battement de l'ordonnanceur de Windows. Bascule à 1 ms :
+  inchangé ; à 0,2 ms : 0,04 ms de médiane, 2,8 à 7 au pire, sans coût mesurable pour le fil
+  occupé. Pendant un rendu de l'écoute (boucles `nogil`) : 0,04 ms, 2,6 au pire. Le hub
+  raccourcit donc la bascule (`sys.setswitchinterval`) tant qu'une entrée est ouverte, compté
+  sur tous les hubs, et rend la valeur trouvée quand le dernier n'en a plus besoin.
+* **`hub.json`** (`config.HUB_PATH`, dossier de configuration) : `{"version": 1, "enabled",
+  "routes": [...]}`, écrit d'un geste ; illisible, il donne un hub en marche et vide, sans
+  lever. Un branchement d'un appareil sur lui-même, ou sans bouts, est écarté.
+* `AppContext.ensure_hub()` le crée au premier besoin avec ses branchements ;
+  `refresh_hub_follow()` lui redit les réglages MIDI Follow de la carte ; `save_hub()` ;
+  `close()` ferme le hub **avant** le lien.
+
 ---
 
 ## 5. Contrats de l'interface
@@ -4567,6 +4657,70 @@ le calcul, deux écoutes coup sur coup), `TestLaBoucleSuitCeQuOnChange`,
 `TestLaStructureEtLEcoute`, `TestLeVolumeDUnePiste`, `TestLeLecteurEchangeEnPlace`,
 `TestLesBrouillonsDeLAtelier`. Vingt-cinq correctifs retirés tour à tour font échouer leurs
 tests.
+
+### 5.37 La page Hub MIDI (`delugeapp/ui/pages/hub.py`, 12 novembre 2026)
+
+**Douze pages.** `HubPage` (`TITLE` « Hub MIDI », icône `hub`, couleur `PAD_LIME` — hors du
+cycle des douze teintes des pads, toutes prises —, `NEEDS_CARD = False`) se place après le
+DAW, sous un nouveau groupe de la colonne, **Relier** (`RAIL_GROUPS["Daw"]`). Son raccourci
+est une lettre, `SHORTCUT = "M"` : `mainwindow._page_marks(classes)` donne aux autres pages les
+chiffres qu'elles avaient (`Ctrl+0` reste la santé) et la virgule aux Réglages ; `NavPad`
+accepte une lettre. Douze pads de 40 px et quatre titres demandent 640 px quand une fenêtre de
+640 en laisse 556 à la colonne : `MainWindow._fit_rail` (filtre d'évènements sur `_rail`) passe
+les pads à `NavPad.DENSE` (32) et efface les cales des titres, et revient quand la place
+revient.
+
+**Le hub vit avec la fenêtre**, quelle que soit la page : `MainWindow.__init__` appelle
+`ctx.ensure_hub()` ; `_poll_hub()`, chaque seconde après `_poll_midi()`, fait `hub.rescan()`,
+annonce un clavier qu'on branche (« … branché : ses branchements reprennent », ou « le hub MIDI
+peut le relier au Deluge (Ctrl+M) ») ou qu'on retire — rien au démarrage ;
+`_refresh_hub_chip()` tient la pastille de la barre d'état (`_hub_chip` : grise sans
+branchement ou à l'arrêt, « Hub 2/5 » verte si tout passe, ambre si un branchement attend,
+rouge si une source est coupée ; un clic ouvre la page). `_card_changed` et `_work_received`
+appellent `ctx.refresh_hub_follow()` ; `closeEvent` enregistre (`ctx.save_hub()`).
+
+**La page** : `_power_button` [Hub en marche] (pad à la couleur de la page, cochable),
+`_panic_button` [Tout éteindre]. Carte « Qui joue quoi » : `_hint`, une offre (`_offer`,
+`_suggest_button` [Brancher sur le Deluge] pour le premier clavier présent relié à rien,
+`_connect_button` [Connecter le Deluge] quand il est détecté sans être connecté), la grille
+`_matrix` dans `_matrix_area` (défilement horizontal seulement), `_state_label`. Carte « Le
+branchement choisi » : `_route_title`, `_route_text` (état, erreur du port, conseil, note de
+base des kits), `_form` — `_enabled_box`, `_target_box` (données `follow:a`, `channel:10` —
+des chaînes : Qt ne compare pas un tuple Python), `_octave_down_button`, `_octave_up_button`,
+`_transpose_label` ; en mode avancé (`_fine`) `_transpose_spin`, `_channel_in_box`,
+`_low_spin`, `_high_spin`, `_range_label`, les cases `_pass_notes`, `_pass_bend`,
+`_pass_controllers`, `_pass_programs`, `_pass_clock`, la table des boutons `_cc_table`
+(colonne 2 : une liste des réglages MIDI Follow par leur nom, puis les 128 numéros),
+`_learn_button` [Apprendre un bouton] (le prochain contrôleur venu de la source,
+`hub.last_controller`), `_forget_button` ; `_rearm_button` [Rétablir la source] pour une
+source coupée, `_remove_button`. Carte « Ce qui passe » (mode avancé) : `_monitor_list`
+(200 lignes), `_stats_label`, `_clear_button`. Carte « Et le DAW ? » : `_daw_label`, qui
+nomme les ports virtuels trouvés ou dit comment en créer. Fiche et moniteur côte à côte, l'un
+sous l'autre sous 900 px (`RangeeAdaptative`) ; les rangées de la fiche sont des
+`RangeeSouple`.
+
+`ui/widgets/hubviews.py`, `PatchMatrix` : sources en rangées, destinations en colonnes ; une
+diode par port (couleur de son rôle, `ROLE_COLORS` ; cercle vide s'il est débranché ; rouge
+s'il est coupé ; blanche un instant au passage d'un message, `pulse()`/`fading()`), un pad par
+croisement : éteint et cerclé (« + » au survol), plein (`active`), sombre cerclé (`off`),
+pointillé ambre (`waiting`), rouge « ! » (`tripped`), entouré de blanc s'il est choisi.
+`cellClicked(source, dest)`, `cellMenuRequested(source, dest, point)` (clic droit sur un pad
+branché : `HubPage.cell_menu` — Couper / Remettre en service, Retirer le branchement) ; un
+croisement d'un port avec lui-même ne répond pas ; `tip_at(x, y)` donne l'infobulle.
+
+**Le battement** : `_timer` (100 ms, seulement page visible) appelle `_tick`, **méthode liée**
+— PyQt débranche une méthode quand la page est détruite, pas une fermeture `guard` : par
+`guard`, la minuterie tirait sur une page détruite et la suite de tests tombait (violation
+d'accès, comme le brouillon de l'atelier le 7 novembre). `_beat` redessine si l'état a changé
+(`_etat`), fait briller ce qui est passé (compteurs), allonge le moniteur, apprend un bouton.
+
+**Tests** : `tests/test_hub.py` (65, ports simulés — `tests/ports_simules.py`, partagé avec
+l'interface — et le Deluge simulé au bout d'un vrai `DelugeLink`) ; `tests/test_ui.py` :
+`TestLeHubBranche`, `TestLaFicheDuBranchement`, `TestLeHubEnMarche`, `TestLeHubDansLaFenetre`
+(pastille, annonces, relais quelle que soit la page, fermeture, reprise des branchements,
+`MIDIFollow.XML` lu, colonne resserrée, page à 980 × 640 sans défilement horizontal),
+`TestLesFiguresDuManuelSuiventLesPages`. `PageCase` détourne aussi `config.HUB_PATH` et ferme
+le hub du contexte.
 
 ---
 

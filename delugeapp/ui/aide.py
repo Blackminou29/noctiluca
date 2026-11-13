@@ -734,6 +734,76 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                               "l'ancienne version gardée à côté ; rien n'y "
                               "est supprimé. Le plan est montré d'abord"),
     },
+
+    # ---------------------------------------------------------------- #
+    "Hub": {
+        "@_power_button": N_("Met le hub en marche ou à l'arrêt. À l'arrêt, "
+                             "rien ne passe et ses ports sont rendus aux "
+                             "autres logiciels ; les branchements restent en "
+                             "place"),
+        "@_panic_button": N_("Relâche tout ce que le hub tient — notes, "
+                             "pédale, molette — puis demande le silence à "
+                             "chaque sortie ouverte, sur les seize canaux : "
+                             "le bouton de secours si un son reste coincé"),
+        "@_suggest_button": N_("Branche ce clavier sur le Deluge : ce que "
+                               "vous jouez part vers l'instrument du clip où "
+                               "vous êtes sur la machine (MIDI Follow A). "
+                               "Rien n'est écrit sur la carte"),
+        "@_connect_button": N_("Ouvre les ports du Deluge, comme la pastille "
+                               "de la barre du haut : la machine dit sa "
+                               "version, et le hub peut la brancher"),
+        "@_enabled_box": N_("Décoché, le branchement garde sa place dans la "
+                            "grille mais ne laisse plus rien passer ; ses "
+                            "ports sont rendus s'ils ne servent à rien "
+                            "d'autre"),
+        "@_target_box": N_("Où arrive ce qui passe. Sur le Deluge : "
+                           "l'instrument du clip où vous êtes (MIDI Follow "
+                           "A), ou une piste précise (Channel Track, firmware "
+                           "1.3) — le canal est lu sur la carte de la "
+                           "machine. Ailleurs : le canal d'origine, ou un "
+                           "canal imposé"),
+        "@_octave_down_button": N_("Transpose ce qui passe d'une octave vers "
+                                   "le grave ; une note qui sortirait du "
+                                   "clavier MIDI n'est pas jouée"),
+        "@_octave_up_button": N_("Transpose ce qui passe d'une octave vers "
+                                 "l'aigu ; une note qui sortirait du clavier "
+                                 "MIDI n'est pas jouée"),
+        "@_transpose_spin": N_("La transposition au demi-ton près, de −60 à "
+                               "+60 ; une note tenue est relâchée avant de "
+                               "changer de hauteur"),
+        "@_channel_in_box": N_("N'écouter qu'un canal de la source : pour une "
+                               "surface dont les pads et les touches sortent "
+                               "sur des canaux différents"),
+        "@_low_spin": N_("La note la plus grave qui passe, de 0 à 127 : de "
+                         "quoi partager un clavier entre deux destinations"),
+        "@_high_spin": N_("La note la plus aiguë qui passe, de 0 à 127"),
+        "@_pass_notes": N_("Les touches enfoncées et relâchées, avec leur "
+                           "force"),
+        "@_pass_bend": N_("La molette de hauteur et la pression, par canal "
+                          "et par touche"),
+        "@_pass_controllers": N_("Les boutons, les curseurs, la pédale et la "
+                                 "molette de modulation (contrôleurs "
+                                 "continus)"),
+        "@_pass_programs": N_("Les changements de programme : fermés "
+                              "d'office, parce qu'ils changent de son sur "
+                              "beaucoup d'appareils"),
+        "@_pass_clock": N_("L'horloge, le départ, l'arrêt et la position : à "
+                           "n'ouvrir que vers l'appareil qui doit suivre le "
+                           "tempo de la source"),
+        "@_learn_button": N_("Tournez ensuite un bouton de la surface : il "
+                             "s'ajoute à la table, où vous choisissez le "
+                             "réglage du Deluge qu'il pilote"),
+        "@_forget_button": N_("Retire de la table le bouton sélectionné : il "
+                              "repasse sous son propre numéro"),
+        "@_rearm_button": N_("Rend la source coupée pour emballement. "
+                             "Défaites d'abord la boucle : un appareil ou un "
+                             "port qui renvoie ce qu'il reçoit"),
+        "@_remove_button": N_("Retire ce branchement ; les notes qu'il "
+                              "tenait sont relâchées. Rien n'est écrit sur la "
+                              "carte"),
+        "@_clear_button": N_("Efface les lignes du moniteur ; le hub, lui, "
+                             "continue de relayer"),
+    },
 }
 
 

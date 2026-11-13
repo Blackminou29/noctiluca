@@ -18,8 +18,10 @@
 Application de bureau qui accompagne un **Synthstrom Deluge** : elle gère le
 contenu de la carte SD, range les échantillons et les presets, répare les
 références cassées, génère des presets de synthé et des kits, compose avec
-vous un morceau du premier son à l'arrangement, et réunit les outils utiles
-au quotidien d'un producteur de musique électronique.
+vous un morceau du premier son à l'arrangement, fait du PC le centre de
+votre installation — claviers, surfaces de contrôle, Deluge et DAW reliés
+par son hub MIDI —, et réunit les outils utiles au quotidien d'un producteur
+de musique électronique.
 
 Tout tient sur votre ordinateur : pas de serveur, pas de compte, pas d'accès
 réseau. L'application lit la carte montée par un lecteur SD ou par l'USB du
@@ -67,8 +69,10 @@ Noctiluca is a free desktop application for the **Synthstrom Deluge**. It
 manages the SD card (samples, presets, kits, songs), repairs broken
 references, generates synth presets and drum kits by genre, composes a whole
 song with you in five steps and sends it to the Deluge, and bridges the Deluge
-with your DAW. Nothing leaves your computer, and nothing is written to the card
-without showing you the plan first.
+with your DAW. Its **MIDI hub** puts your computer at the centre: your USB
+keyboards and control surfaces play the Deluge — the selected instrument or a
+given track —, alongside your DAW. Nothing leaves your computer, and nothing is
+written to the card without showing you the plan first.
 
 **Download** the file for your system from the
 [Releases page](https://github.com/Blackminou29/noctiluca/releases/latest):
@@ -223,19 +227,20 @@ partie.
 - **Chaque page a sa couleur**, prise dans les pads de la machine : ambre
   pour l'accueil, rouge pour l'atelier, magenta pour le générateur, menthe
   pour le mémo, cyan pour les échantillons, violet pour les presets, vert
-  pour les kits, bleu pour les morceaux, orange pour la santé, indigo pour
+  pour les kits, bleu pour les morceaux, rose pour le DAW, citron vert pour
+  le hub MIDI, orange pour la santé, indigo pour
   les réglages. Comme chaque partie du guide a la sienne, la page la
   porte partout : son pad allumé dans la colonne de gauche, le filet
   lumineux sous la barre du haut, l'en-tête et son treillis, le bouton
   principal, les sélections, les onglets, les cases et les curseurs.
 - **La colonne de gauche est une rangée de pads**, dans l'ordre du travail :
   l'accueil, puis *Créer* (atelier, générateur, mémo), *Bibliothèque*
-  (échantillons, presets, kits, morceaux, et le pont vers le DAW) et
-  *La carte* (santé, réglages).
+  (échantillons, presets, kits, morceaux), *Relier* (le pont vers le DAW, le
+  hub MIDI) et *La carte* (santé, réglages).
   Éteints, les pads montrent leur couleur en veilleuse ; celui de la page
-  affichée s'allume. Le chiffre à droite est son raccourci (`Ctrl+1` à
-  `Ctrl+9`, puis `Ctrl+0` pour la santé ; les réglages ont `Ctrl+,`), et
-  `Ctrl+B` réduit la colonne à ses pads.
+  affichée s'allume. Le signe à droite est son raccourci (`Ctrl+1` à
+  `Ctrl+9`, `Ctrl+M` pour le hub MIDI, `Ctrl+0` pour la santé ; les réglages
+  ont `Ctrl+,`), et `Ctrl+B` réduit la colonne à ses pads.
 - **L'écran en haut** est celui du Deluge : la carte ouverte et ce qu'elle
   contient. Chaque message de l'application y passe quelques secondes, et
   défile s'il est trop long, comme sur la machine. Un clic mène aux réglages
@@ -364,9 +369,36 @@ montre tel quel (des traits qui tombent, en mode « Deluge »), et le message
 de « Faire signe » reste dessous. Seul un geste sur la machine le réveille
 (Settings ▸ Defaults ▸ Screensaver pour le régler).
 
+### Le PC au centre : le hub MIDI
+
+Le Deluge n'a qu'une prise USB : relié au PC, il ne reçoit plus de clavier.
+La page **Hub MIDI** (`Ctrl+M`) fait du PC la baie de brassage : vos
+claviers et surfaces de contrôle USB, le Deluge, les ports du DAW. Les
+sources sont les rangées, les destinations les colonnes ; un pad allumé au
+croisement, et ce que joue l'un part vers l'autre. Le hub tourne quelle que
+soit la page affichée ; une pastille de la barre d'état dit combien de
+branchements passent.
+
+* **Vers le Deluge**, un branchement vise l'instrument du clip où vous êtes
+  (MIDI Follow A) ou, en firmware 1.3, une **piste précise** (Channel Track
+  1 à 16) : deux surfaces jouent deux pistes à la fois. Les canaux sont lus
+  sur la carte de la machine, et suivent quand vous les changez dessus.
+* **Les boutons d'une surface** s'apprennent en les tournant, et se posent
+  sur un réglage du Deluge choisi par son nom (filtre, résonance…).
+* **Aucune note coincée** : couper, régler, débrancher ou quitter relâche ce
+  qui sonnait. Une boucle MIDI (un port qui renvoie ce qu'il reçoit) coupe
+  d'office sa source.
+* **Le DAW** ouvre lui-même le clavier et le Deluge, en même temps que le hub
+  (Windows 11 partage les ports) ; pour que le hub lui parle, un port en
+  boucle (Windows MIDI Services ou loopMIDI) paraît dans la grille.
+* Le retard ajouté se mesure : 0,04 ms en médiane, ports simulés.
+
+Rien n'est écrit sur la carte ; le hub n'ouvre que les ports de ses
+branchements, et les rend à l'arrêt.
+
 ---
 
-## Les onze pages
+## Les douze pages
 
 | Page | Raccourci | À quoi elle sert |
 | --- | --- | --- |
@@ -379,10 +411,11 @@ de « Faire signe » reste dessous. Seul un geste sur la machine le réveille
 | **Kits** | `Ctrl+7` | voir les kits pad par pad, repérer les pads muets ou cassés ; les utiliser dans l'atelier |
 | **Morceaux** | `Ctrl+8` | tempo, gamme, pistes et instruments de chaque morceau (**lecture seule**) ; l'écouter, clip par clip ou en entier ; l'ouvrir dans l'atelier ; export MIDI et rassemblement des dépendances |
 | **DAW** | `Ctrl+9` | le pont avec votre logiciel de musique, au choix : un morceau **vers le DAW** (set Ableton Live, MIDI, DAWproject, Reaper, pistes audio), un projet **depuis le DAW** (MIDI, set Ableton Live, DAWproject, Reaper) en nouveau morceau, ou **jouer ensemble** — le DAW joue les sons du Deluge, chaque piste sur son canal |
+| **Hub MIDI** | `Ctrl+M` | le PC au centre : claviers et surfaces de contrôle USB, Deluge et DAW reliés d'une grille de pads ; l'instrument sélectionné ou une piste du Deluge pour cible, octave, boutons appris, moniteur |
 | **Santé** | `Ctrl+0` | diagnostic complet, réparation guidée, rangement, sauvegarde |
 | **Réglages** | `Ctrl+,` | carte SD, audio, analyse, niveau de l'interface, apparence, sauvegardes |
 
-Autres raccourcis : `Ctrl+N` nouveau morceau, `Ctrl+E` mode avancé, `Ctrl+R`
+Autres raccourcis : `Ctrl+M` hub MIDI, `Ctrl+N` nouveau morceau, `Ctrl+E` mode avancé, `Ctrl+R`
 analyser, `Ctrl+F` rechercher, `Ctrl+G` générateur, `Ctrl+O` choisir la
 carte, `Ctrl+B` replier la barre latérale, `Ctrl+,` réglages, `Espace`
 écouter, `F1` le manuel, `Ctrl+Q` quitter. La
@@ -692,7 +725,8 @@ delugeapp/
     atelierstore.py      ses brouillons : les morceaux gardés sur l'ordinateur
     songinsert.py        compléter un morceau sans le réécrire, preuve à l'appui
     midiport.py          MIDI et SysEx par winmm, sans dépendance
-    midifollow.py        les 52 contrôleurs du mode MIDI Follow
+    midifollow.py        les 52 contrôleurs du mode MIDI Follow, ses canaux
+    midihub.py           le hub MIDI : claviers, Deluge et DAW reliés
     delugelink.py delugesysex.py      le lien vivant avec la machine
     delugefiles.py cardsync.py        la carte par USB, la copie de travail
     cardimport.py        envoyer au Deluge : du PC vers la carte
@@ -706,7 +740,7 @@ delugeapp/
     updates.py           une version plus récente ? (seulement sur demande)
     firmware.py          préparer la carte pour un nouveau firmware (sans flasher)
   ui/
-    mainwindow.py        assemblage des dix pages
+    mainwindow.py        assemblage des douze pages, le hub vivant
     theme.py icons.py    identité graphique, icônes dessinées à la main
     art.py               treillis de circuits et pads du guide, au QPainter
     tasks.py             travaux longs hors du fil de l'interface
@@ -721,13 +755,15 @@ delugeapp/
     manuel_dessins.py    ses ouvertures de partie et ses figures, au QPainter
     pages/               une page par domaine
     widgets/             façade (écran, pads de navigation), potentiomètre,
-                         enveloppe, forme d'onde, pads, piano…
+                         enveloppe, forme d'onde, pads, piano, baie du hub…
 tests/
   test_core.py           798 tests du cœur
-  test_ui.py             520 tests d'interface, dont ceux du manuel
+  test_ui.py             560 tests d'interface, dont ceux du manuel
   test_i18n.py           30 tests de la traduction
   test_atelier.py        107 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
+  test_hub.py            66 tests du hub MIDI
   deluge_simule.py       un Deluge simulé, qui répond comme la vraie machine
+  ports_simules.py       des claviers et des sorties simulés, pour le hub
 SPEC.md                  contrat d'architecture : formats, règles, budgets
 ```
 
@@ -743,7 +779,7 @@ long part dans un fil séparé pour que la fenêtre reste vivante.
 python -m unittest discover -s tests
 ```
 
-1 455 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
+1 561 tests, exécutés sur une vraie carte montée en lecture, et sur des copies
 jetables pour tout ce qui écrit. **Ils n'écrivent jamais dans vos réglages** :
 chaque module de test déplace la configuration dans un dossier temporaire
 avant d'importer quoi que ce soit, et un test vérifie que ce déplacement a

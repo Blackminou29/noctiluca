@@ -41,6 +41,7 @@ MODULES: tuple[str, ...] = (
     "core_kitgen",
     "core_midifile",
     "core_midifollow",
+    "core_midihub",
     "core_midiport",
     "core_multisample",
     "core_model",
@@ -77,6 +78,7 @@ MODULES: tuple[str, ...] = (
     "ui_pages_daw",
     "ui_pages_generator",
     "ui_pages_health",
+    "ui_pages_hub",
     "ui_pages_kits",
     "ui_pages_samples",
     "ui_pages_settings",
@@ -93,6 +95,7 @@ MODULES: tuple[str, ...] = (
     "ui_widgets_common",
     "ui_widgets_delugescreen",
     "ui_widgets_filtercurve",
+    "ui_widgets_hubviews",
     "ui_widgets_soundeditor",
     "ui_widgets_waveform",
 )

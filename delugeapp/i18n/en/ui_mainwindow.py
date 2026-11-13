@@ -185,4 +185,17 @@ TEXTS = {
         "advanced mode.",
     "Nouveau morceau, dans l'atelier": "New song, in the studio",
     "Mode simple ou avancé": "Simple or advanced mode",
+
+    # -- le hub MIDI --------------------------------------------------------- #
+    "Relier": "Connect",
+    "« %s » branché : ses branchements reprennent.":
+        "“%s” plugged in: its patches resume.",
+    "« %s » branché : le hub MIDI peut le relier au Deluge  (Ctrl+M).":
+        "“%s” plugged in: the MIDI hub can patch it to the Deluge  (Ctrl+M).",
+    "« %s » débranché.": "“%s” unplugged.",
+    "Hub MIDI": "MIDI hub",
+    "Hub %d/%d": "Hub %d/%d",
+    "Un clic ouvre le hub MIDI  (Ctrl+M)":
+        "A click opens the MIDI hub  (Ctrl+M)",
+    "Le hub MIDI": "The MIDI hub",
 }

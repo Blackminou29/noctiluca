@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 11 novembre 2026 (l'atelier : écouter, dessiner, retrouver, §3 triquinquagies)
+**Dernière mise à jour :** 13 novembre 2026 (le hub MIDI, §3 quaterquinquagies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -39,6 +39,7 @@ morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quad
 **Les noms courts de FAT ne trompent plus l'index**, un morceau s'écoute depuis sa page, la carte se prépare pour un nouveau firmware, et l'écoute porte le sidechain, le LFO 1 global et le glissé du firmware — voir §3 unquinquagies.
 **Les essais sur la machine sont faits** : sidechain, Steinway, table d'onde, favori, envoi d'un pack, atelier en direct, synchronisation différée, et le DAW — Live joue les sons du Deluge depuis un set déjà routé, le Deluge mène l'horloge ; celle de Live ne passait pas sous Windows 11, et un **firmware corrigé**, compilé et installé sur sa machine, la fait suivre — voir §3 duoquinquagies.
 **L'atelier s'écoute en boucle et se dessine** : une boucle qui suit ce qu'on change sans se relancer, un clip entendu avec le morceau, des pistes qu'on coupe ou qu'on isole, des notes tirées à la souris, un volume par piste, et des brouillons où chaque morceau remplacé ou écrit se retrouve — voir §3 triquinquagies.
+**Le PC est au centre** : le hub MIDI relie claviers, surfaces de contrôle, Deluge et DAW — une baie de brassage en pads, l'instrument sélectionné ou une piste du Deluge pour cible, aucune note coincée, une boucle MIDI coupée d'office — voir §3 quaterquinquagies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -329,6 +330,128 @@ signaux, et `Page.run()` pour les travaux longs.
 
 > ⚠️ **`Settings.backup_path` est une méthode, pas une propriété.** L'oubli produisait un
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
+
+---
+
+## 3 quaterquinquagies. Le hub MIDI : l'ordinateur au centre (12–13 novembre 2026)
+
+**La demande** : « je veux pouvoir utiliser mon PC comme Hub entre mon déluge, mon DAW et mon
+clavier midi USB (ou tout autre surface de contrôle midi USB, possibilité d'en piloter
+plusieurs souhaitable). Noctiluca doit être au centre du système afin de faciliter le
+workflow. » Contrat : SPEC §4.52 et §5.37 ; manuel, chapitre « Hub MIDI » (`#hub`).
+
+### Ce qu'il fallait savoir avant d'écrire
+
+* **Le Deluge n'a qu'une prise USB** : relié au PC, il ne reçoit plus de clavier. C'est au PC
+  de faire suivre.
+* **Sur sa machine, aujourd'hui** (lecture seule) : aucun port MIDI hormis le synthé GS de
+  Windows ; Windows n'a gardé la trace d'**aucun clavier** branché un jour (le Deluge, une
+  manette, un DAC) ; le service MIDI de Windows (`midisrv`, 10.0.26100.9949) tourne, son
+  transport de **ports en boucle** existe, mais les outils de Windows MIDI Services (l'appli
+  « MIDI Settings ») ne sont pas installés, ni loopMIDI ; MIDI Control Center 1.22 et Live 12
+  Lite le sont. Son application et Live étaient fermés.
+* **Le code du firmware 1.3** (`cin5-sur-1.3.0`, la version de sa machine) : MIDI Follow a,
+  outre A, B et C — qui vont à l'instrument du clip où l'on est —, **seize canaux par piste**
+  (« Channel Track 1 » à « 16 », `midi_follow.cpp` : `noteMessageReceivedForSpecificTrack`) :
+  ce qui arrive sur ce canal va à cette piste, quelle que soit celle qu'on regarde. Le moyen,
+  pour plusieurs surfaces, de jouer plusieurs pistes à la fois. La 1.3 les écrit dans
+  `SETTINGS/MIDIFollow.XML` (`<track_2><channel>…`, 256 pour « aucun ») — sur sa carte : A = 1,
+  aucune piste réglée, retour sur A.
+* `midiport` ne savait que remplir une file que l'interface vide toutes les 40 ms : trop lent
+  pour un clavier. Il fallait un chemin direct du rappel du pilote à la sortie.
+
+### Ce qui a été construit
+
+* **`core/midihub.py`** : des **branchements** (source → destination), chacun avec sa cible,
+  sa transposition, son étendue de clavier, ce qu'il laisse passer et la table qui traduit les
+  boutons d'une surface. Le rappel du pilote empile, un fil relaie. Le Deluge y passe **par le
+  lien de l'application** (jamais ses ports rouverts) : vers lui sur le port des notes, depuis
+  lui par un auditeur qui ne retire rien au lien. Les branchements sont retenus (`hub.json`).
+* **Aucune note coincée** : le hub sait ce qu'il a fait passer, et le relâche là où c'est
+  parti quand on coupe, règle, retire, débranche, arrête ou quitte — notes, pédale, molette.
+* **Une boucle MIDI est coupée** (plus de 4 000 messages par seconde, ou la même note plus de
+  64 fois) : la source passe au rouge, ses notes relâchées.
+* **La page Hub MIDI** (`Ctrl+M`, douzième page, groupe **Relier** avec le DAW) : une **baie de
+  brassage en pads** — sources en rangées, destinations en colonnes, un pad allumé au
+  croisement, qui brille au passage d'un message ; diodes des ports à la couleur de leur rôle.
+  Un clavier relié à rien est proposé ([Brancher sur le Deluge]) ; un Deluge détecté mais pas
+  connecté aussi ([Connecter le Deluge]). La fiche : cible (l'instrument sélectionné, une
+  piste, un canal), octave, en service ; en mode avancé, canal écouté, étendue, filtres,
+  **apprendre un bouton** et le poser sur un réglage du Deluge nommé, le moniteur et le retard.
+* **Le hub vit avec la fenêtre**, quelle que soit la page : pastille « Hub 2/5 » dans la barre
+  d'état, clavier annoncé quand on le branche (et ses branchements repris), réglages MIDI
+  Follow relus à chaque synchronisation — changer Channel A sur la machine, le hub suit.
+* Douze pads ne tenaient plus dans une fenêtre de 640 px (640 demandés, 556 offerts) : la
+  colonne se resserre d'elle-même. Le raccourci du hub est une **lettre**, pour que chaque page
+  garde le chiffre que l'utilisateur connaît.
+* Manuel (fr, en) : chapitre « Hub MIDI », partie « Relier », dépannage « Mon clavier ne joue
+  pas le Deluge », glossaire, raccourcis ; figures des pages et de la fenêtre à douze pages.
+
+### Mesuré
+
+* **Le retard du hub** (`scratchpad/mesure_hub.py`, ports simulés, 2 000 contrôleurs espacés de
+  2 ms, de l'instant posé par le rappel au départ vers la sortie) : au repos, **0,04 ms** de
+  médiane, 1,2 au pire. **Le fil principal occupé par du Python : 8,7 ms de médiane, 32 au
+  pire** — le fil du hub attend la main de Python au battement de l'ordonnanceur de Windows
+  (la bascule de Python vaut 5 ms ; à 1 ms, rien ne change). À **0,2 ms**, 0,04 ms de médiane
+  et 3 à 7 au pire, sans coût mesurable pour le fil occupé. Pendant un rendu de l'écoute (boucles
+  `nogil`) : 0,04 ms, 2,6 au pire. Le hub raccourcit donc la bascule tant qu'il a une entrée
+  ouverte, et la rend ensuite : mesuré après, fil occupé, 0,03 ms de médiane, 4,6 au pire.
+* Un premier passage de la mesure n'avait rien mesuré : mon script appariait 2 000 messages
+  joués avec les 1 000 seuls partis — il relâchait des notes jamais jouées, que le hub, à
+  raison, ne fait pas suivre — et lisait « une seconde » de retard. Le script joue désormais
+  des contrôleurs ; la statistique du hub, elle, disait juste.
+* **Rien n'est mesuré sur un vrai clavier** : aucun n'est branché à ce PC. Ni le retard réel
+  par `winmm`, ni un port virtuel avec Live.
+
+### Mes erreurs, relevées
+
+* **Une minuterie branchée sur une fermeture `guard`** a fait tomber la suite d'interface
+  (violation d'accès, 388e test) : PyQt garde la fermeture et tire sur une page détruite. Le
+  même piège était écrit en toutes lettres dans l'atelier depuis le 7 novembre — je ne l'ai
+  pas relu avant d'écrire la page. Méthode liée, avec son propre rempart.
+* `findData` ne retrouvait pas un tuple Python dans une liste déroulante : des chaînes.
+* Encore un petit script par heredoc (des remplacements dans `tests/test_ui.py`) : fichier
+  vérifié ligne à ligne (CRLF partout, syntaxe), intact.
+* La fiche, le moniteur et cinq cases sur une ligne poussaient la page hors d'une fenêtre de
+  980 px : vu sur le rendu, corrigé (rangées souples, fiche et moniteur empilés sous 900 px).
+* Un correctif sur dix-neuf ne se prouvait pas : une voie qui disparaît relâche ses notes —
+  mais la fermeture du port relâchait à sa place dans tous mes tests. Le cas où les ports
+  restent ouverts (la piste du Deluge qui perd son canal) est désormais testé.
+* Les séparateurs de section de la page, tapés à la main, s'allongeaient de 79 à 94
+  colonnes : remis à 79.
+
+### Vérifié
+
+* **Dix-neuf correctifs retirés tour à tour** (`scratchpad/retirer_correctifs_hub.py`) font
+  échouer leurs tests — relâchements, fusible, bascule des fils, « active sensing », ports du
+  Deluge par le lien, robinet du pilote, fermeture sans bruit, auditeur après reconnexion,
+  canaux par piste, minuterie (arrêt brutal du processus sans elle), enregistrement, colonne
+  resserrée, annonces, relecture de MIDI Follow à la synchronisation ; fichiers rendus à
+  l'octet.
+* Rendu en PNG dans la vraie fenêtre, ports simulés (34 images : français et anglais, simple
+  et avancé, 1 360 et 980 px, grille vide, branchée, source coupée, hub à l'arrêt, sans
+  appareil, premier clavier, colonne à 980 × 640) ; une dizaine regardées, dont chaque
+  largeur.
+* Réglages et brouillon réels intacts pendant toute la vérification ; aucun `hub.json` dans sa
+  configuration. Ses empreintes avaient changé depuis le 11 : ses propres séances (journal :
+  11 novembre 21 h 32 et 21 h 37 — « ATELIER DOWNTEMPO » écrit avec le nouvel atelier —,
+  12 novembre 9 h 35), pas les miennes.
+* **1 561 tests au vert**, sous unittest (343 s) et sous pytest (340 s) : 798 du cœur, 560 d'interface, 107 de
+  l'atelier, 66 du hub, 30 de la traduction — 106 nouveaux. Manuel et aide complets dans les
+  deux langues (tests de couverture).
+* L'autovérification (`main.py --self-test`, depuis les sources) : tout en ordre, 180 modules,
+  3 122 textes anglais, 12 pages.
+
+### Ce qui attend la machine, ou lui
+
+* **Un vrai clavier** sur le Deluge par le hub : la note, la force, la molette ; un kit à
+  partir de la note 36 ; une surface dont un bouton appris pilote le filtre (avec Takeover en
+  Pickup, le bouton doit croiser la valeur).
+* **Deux surfaces sur deux pistes** : régler Channel Track 1 et 2 sur la machine, attendre la
+  synchronisation, choisir « La piste 1 » et « La piste 2 ».
+* **Le DAW** : installer un port en boucle (Windows MIDI Services ou loopMIDI), y brancher le
+  clavier, le choisir comme entrée dans Live.
 
 ---
 

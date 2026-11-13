@@ -120,7 +120,7 @@ Le chapitre suivant présente la fenêtre ; le chapitre [La carte et l'index](#c
 
 | Repère | Élément | Rôle |
 |---|---|---|
-| 1 | La colonne de pads | les dix pages, dans l'ordre du travail ; le pad de la page affichée s'allume |
+| 1 | La colonne de pads | les douze pages, dans l'ordre du travail ; le pad de la page affichée s'allume |
 | 2 | Les menus | Fichier, Édition, Outils, Langue, Aide |
 | 3 | L'écran | la carte ouverte, et chaque message de l'application |
 | 4 | La pastille « Deluge » | l'état de la machine branchée ; un clic agit |
@@ -135,15 +135,15 @@ Le chapitre suivant présente la fenêtre ; le chapitre [La carte et l'index](#c
 
 Comme chaque partie du guide a la sienne, chaque page de l'application porte une couleur, prise dans les pads de la machine. Elle se retrouve partout : le pad de la colonne, le filet sous la barre du haut, l'en-tête, le bouton principal, les sélections, les onglets, les cases et les curseurs.
 
-[[figure pages | Les onze pages et leur raccourci clavier. | Accueil ; Atelier ; Générateur ; Mémo ; Échantillons ; Presets ; Kits ; Morceaux ; DAW ; Santé ; Réglages]]
+[[figure pages | Les douze pages et leur raccourci clavier. | Accueil ; Atelier ; Générateur ; Mémo ; Échantillons ; Presets ; Kits ; Morceaux ; DAW ; Hub MIDI ; Santé ; Réglages]]
 
 La couleur dit aussi **où mène un raccourci** : sur l'accueil, la porte [Créer un son] est magenta parce qu'elle mène au générateur, et le bouton [Sauvegarder] du bandeau « À faire maintenant » est orange parce qu'il mène à la page Santé — directement sur l'onglet des sauvegardes.
 
 ## La colonne de pads {#colonne}
 
-Un clic sur un pad ouvre sa page. Les pads suivent l'ordre du travail : l'**Accueil** d'abord, puis trois groupes, chacun sous son titre — **Créer** (Atelier, Générateur, Mémo), **Bibliothèque** (Échantillons, Presets, Kits, Morceaux, et le [pont vers le DAW](#daw)) et **La carte** (Santé, Réglages). Le chiffre à droite est le raccourci de la page, de [[Ctrl+1]] à [[Ctrl+9]], puis [[Ctrl+0]] pour la dixième, la santé ; les réglages ont [[Ctrl+,]].
+Un clic sur un pad ouvre sa page. Les pads suivent l'ordre du travail : l'**Accueil** d'abord, puis quatre groupes, chacun sous son titre — **Créer** (Atelier, Générateur, Mémo), **Bibliothèque** (Échantillons, Presets, Kits, Morceaux), **Relier** (le [pont vers le DAW](#daw) et le [hub MIDI](#hub)) et **La carte** (Santé, Réglages). Le signe à droite est le raccourci de la page : de [[Ctrl+1]] à [[Ctrl+9]], [[Ctrl+M]] pour le hub MIDI, [[Ctrl+0]] pour la santé ; les réglages ont [[Ctrl+,]].
 
-Le bouton [Replier], en bas, réduit la colonne à ses seuls pads pour donner la place aux listes ; les titres des groupes deviennent un simple filet. [[Ctrl+B]] fait de même, et la colonne repliée se déplie par le même geste.
+Le bouton [Replier], en bas, réduit la colonne à ses seuls pads pour donner la place aux listes ; les titres des groupes deviennent un simple filet. [[Ctrl+B]] fait de même, et la colonne repliée se déplie par le même geste. Dans une fenêtre basse, la colonne resserre d'elle-même ses pads.
 
 ## La barre du haut {#barre-du-haut}
 
@@ -200,7 +200,7 @@ Laissez la souris une seconde sur n'importe quel bouton, case, liste ou curseur 
 
 ## La barre d'état {#barre-etat}
 
-En bas de la fenêtre : le dernier message de l'application, une barre d'avancement pendant un travail long, « ● lecture » pendant une écoute, et l'espace libre de la carte.
+En bas de la fenêtre : le dernier message de l'application, une barre d'avancement pendant un travail long, la pastille du [hub MIDI](#hub) — combien de ses branchements passent, d'où que l'on soit ; un clic y mène —, « ● lecture » pendant une écoute, et l'espace libre de la carte.
 
 ## Les travaux longs {#travaux-longs}
 
@@ -922,6 +922,8 @@ Ces exports sont du mode avancé.
 !!! pro Archiver un morceau fini
     [Rassembler…] est la bonne façon de mettre un morceau à l'abri ou de le donner : rien n'est oublié, pas même l'échantillon rangé ailleurs qu'un preset réclame.
 
+@partie relier Daw | Relier | Le DAW et le hub MIDI : le Deluge relié au reste de votre installation
+
 # DAW {#daw page=Daw}
 
 > Le pont entre le Deluge et votre logiciel de musique : un morceau part vers le DAW, un projet du DAW revient en morceau, et le DAW joue les sons du Deluge en direct.
@@ -979,6 +981,87 @@ La liste du bas dit le reste, pas à pas, pour Ableton Live ou un autre DAW : l'
 
 !!! astuce Aller et retour
     Un clip exporté vers le DAW puis renvoyé sur son canal rejoue les bons sons du kit : les notes sont les mêmes dans les deux sens.
+
+# Hub MIDI {#hub page=Hub}
+
+> L'ordinateur au centre : vos claviers et vos surfaces de contrôle jouent le Deluge, le DAW s'y joint, et un coup d'œil dit qui joue quoi.
+
+Le Deluge n'a qu'une prise USB : relié à l'ordinateur, il ne peut plus recevoir un clavier. Le hub fait suivre — ce qui arrive d'une entrée MIDI part vers une sortie —, et il le fait tant que l'application est ouverte, quelle que soit la page affichée. [[Ctrl+M]] ouvre la page ; la pastille « Hub », dans la barre d'état, dit partout combien de branchements passent, et y mène d'un clic.
+
+!!! retenir Rien n'est écrit, rien n'est joué sans vous
+    Le hub ne touche ni à la carte ni aux réglages du Deluge. Il n'ouvre que les ports de ses branchements, et ne relaie que ce que vos appareils envoient. Les SysEx ne le traversent pas : ceux du Deluge restent le dialogue de l'application avec lui.
+
+## La grille {#hub-grille}
+
+Chaque **source** est une rangée : un clavier, une surface de contrôle, le Deluge lui-même — ce que jouent ses pistes MIDI, son horloge, les réglages qu'il renvoie —, un port venu du DAW. Chaque **destination** est une colonne : le Deluge, le synthé de Windows — de quoi essayer sans rien brancher —, un port vers le DAW, un autre appareil. La diode de chaque port est à sa couleur : l'or pour le Deluge, le cyan pour un clavier ou une surface, le rose pour un port virtuel, le violet pour le synthé de Windows ; un simple cercle, l'appareil est débranché.
+
+Un pad éteint au croisement : cliquez, la rangée est **branchée** sur la colonne. Un pad allumé : cliquez pour le choisir, la fiche du dessous le règle ; un clic droit le coupe ou le retire. Le pad porte sa cible : **A** pour l'instrument sélectionné sur le Deluge, **P2** pour sa piste 2, un chiffre pour un canal imposé, **=** pour le canal d'origine.
+
+| Pad | Ce qu'il dit |
+|---|---|
+| plein, à la couleur de la page | en service ; il brille quand un message passe |
+| cerclé, sombre | coupé : il garde sa place, rien ne passe |
+| en pointillés ambre | il attend : un appareil débranché, le hub à l'arrêt, ou une cible que le Deluge n'a pas réglée |
+| rouge, marqué « ! » | sa source s'est emballée : une boucle MIDI, coupée d'office |
+
+Un clavier branché, et encore relié à rien ? La page le propose : [Brancher sur le Deluge] le relie à l'instrument que vous regardez sur la machine. Si le Deluge est au bout du câble sans être connecté, [Connecter le Deluge] ouvre ses ports, comme sa pastille de la barre du haut.
+
+[Hub en marche], dans l'en-tête, arrête et relance le tout : à l'arrêt, les ports sont rendus aux autres logiciels et les branchements restent en place. [Tout éteindre] relâche ce que le hub tient et demande le silence à chaque sortie. Les branchements sont retenus d'une séance à l'autre : un clavier rebranché retrouve les siens, et la barre d'état le dit.
+
+!!! retenir Aucune note coincée
+    Le hub sait quelles notes il a fait passer. Couper un branchement, le régler touche enfoncée, débrancher un clavier ou quitter l'application relâche ces notes-là, là où elles sont parties — et la pédale, et la molette.
+
+## Jouer le Deluge au clavier {#hub-deluge}
+
+Un branchement vers le Deluge arrive sur une **cible** de son mode MIDI Follow. La liste « Arrive sur » les propose, avec le canal que la machine leur a donné — lu sur sa carte, dans `SETTINGS/MIDIFollow.XML`.
+
+- **L'instrument sélectionné — MIDI Follow A** : le Deluge joue l'instrument du clip où vous êtes. Changez de clip sur la machine, le clavier suit. Un kit répond à partir de la note 36 (Kit Root Note). C'est le choix d'office ; il demande le réglage MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A, celui de [Deux réglages sur la machine](#reglages-machine).
+- **Une piste** (firmware 1.3) : MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel Track 1 à 16 donne un canal à une piste du morceau ; ce qui arrive sur ce canal va à **cette** piste, quelle que soit celle que vous regardez. Deux surfaces jouent ainsi deux pistes à la fois — un clavier sur la basse, des pads sur le kit. Une piste sans canal sur la machine laisse le branchement en attente, et la fiche dit quoi régler. Le niveau simple ne montre que les pistes déjà réglées ; le mode avancé les montre toutes.
+- **Un canal** : celui d'origine, ou un canal imposé de 1 à 16 — pour une piste du Deluge qui a appris son propre canal, ou pour tout autre appareil.
+
+[Octave −] et [Octave +] transposent ce qui passe ; la case [En service] coupe le branchement sans le retirer ; [Retirer le branchement] le retire.
+
+!!! astuce Le Deluge change de canal ? Le branchement suit
+    Les cibles sont relues sur la carte à chaque synchronisation : changez Channel A sur la machine, le hub envoie sur le nouveau canal — une note tenue est d'abord relâchée sur l'ancien.
+
+## Régler finement un branchement {#hub-reglages}
+
+En mode avancé, la fiche montre le reste :
+
+| Réglage | Ce qu'il fait |
+|---|---|
+| Écoute | tous les canaux de la source, ou un seul |
+| Touches | l'étendue du clavier qui passe : le bas vers une destination, le haut vers une autre |
+| Le compteur de demi-tons | la transposition fine, de −60 à +60 |
+| [Notes] | les touches, avec leur force |
+| [Molette et pression] | la molette de hauteur, la pression par canal et par touche |
+| [Contrôleurs] | boutons, curseurs, pédale, molette de modulation |
+| [Programmes] | les changements de programme — fermés d'office |
+| [Horloge et transport] | l'horloge, le départ, l'arrêt, la position — fermés d'office |
+
+**Les boutons d'une surface de contrôle** se posent sur les réglages du Deluge. Cliquez [Apprendre un bouton], tournez un bouton : il entre dans la table, et la liste de sa ligne propose les réglages que MIDI Follow pilote — fréquence du filtre, résonance, attaque… —, lus dans la [table des contrôleurs](#midi-follow) de votre carte. Le hub traduit alors le numéro que la surface envoie en celui que le Deluge attend. [Oublier ce bouton] retire la ligne choisie.
+
+!!! attention Le réglage Takeover de la machine
+    En **Pickup** ou en **Scale**, le Deluge ignore un bouton tant qu'il n'a pas « rattrapé » la valeur du réglage : tournez-le jusqu'à la croiser. C'est le comportement de la machine, voulu pour éviter les sauts.
+
+## Ce qui passe {#hub-moniteur}
+
+En mode avancé, le moniteur écrit chaque message à son passage : sa source, ce qu'il est, et combien de branchements l'ont relayé — « nulle part » veut dire qu'il est arrivé sans trouver de sortie. Dessous, le **retard** mesuré entre l'arrivée d'un message et son départ : quelques centièmes de milliseconde d'ordinaire. [Vider le moniteur] efface les lignes.
+
+!!! pro Une boucle MIDI est coupée d'office
+    Un appareil ou un port qui renvoie ce qu'il reçoit fait tourner un message en rond. Une source qui débite plus de 4 000 messages par seconde, ou qui répète la même note plus de 64 fois dans la seconde, est coupée : son pad passe au rouge. Défaites la boucle, puis [Rétablir la source].
+
+## Avec le DAW {#hub-daw}
+
+Sous Windows 11, les ports MIDI se partagent : votre DAW peut ouvrir le clavier et le Deluge en même temps que le hub. Le plus simple est donc souvent de laisser le DAW jouer le Deluge lui-même (voir [Jouer ensemble](#daw-ensemble)), pendant que le hub relie le clavier à la machine.
+
+Pour que le hub parle au DAW — choisir d'ici ce qu'il reçoit, lui envoyer ce que joue le Deluge —, il faut un **port virtuel** : une paire de ports en boucle, créée par l'application « MIDI Settings » — elle vient avec les outils de Windows MIDI Services, à installer depuis le site de Microsoft — ou par loopMIDI. Ils paraissent dans la grille sous leur nom, la diode rose. Branchez le clavier sur l'un, choisissez-le comme entrée dans le DAW ; ce que le DAW envoie sur l'autre paraît en rangée, à brancher sur le Deluge.
+
+!!! attention Un clavier, deux chemins
+    Si le DAW ouvre lui-même le clavier **et** renvoie ses notes au Deluge pendant que le hub les y envoie aussi, chaque note arrive deux fois. Gardez un seul chemin : coupez le branchement du hub, ou l'entrée du clavier dans le DAW.
+
+!!! attention L'horloge
+    L'horloge du DAW vers le Deluge passe mieux en direct que par le hub, qui ajoute sa gigue à chaque top. La case [Horloge et transport] sert surtout à faire suivre l'horloge **du Deluge** vers un port virtuel.
 
 @partie entretien Health | La carte | Sa santé, ses sauvegardes, et les réglages de l'application
 
@@ -1373,6 +1456,7 @@ Les pages Kits, Morceaux et Mémo, elles, n'écrivent jamais sur la carte ; [Ess
 | Raccourci | Action |
 |---|---|
 | [[Ctrl+1]] à [[Ctrl+9]], [[Ctrl+0]] | aller à la page correspondante, dans l'ordre de la colonne : [[Ctrl+1]] l'accueil, [[Ctrl+2]] l'atelier… [[Ctrl+9]] le DAW, [[Ctrl+0]] la santé |
+| [[Ctrl+M]] | le hub MIDI |
 | [[Ctrl+N]] | un nouveau morceau, dans l'atelier |
 | [[Ctrl+E]] | le mode avancé, ou le retour au niveau simple |
 | [[Ctrl+R]] | analyser la carte |
@@ -1437,6 +1521,15 @@ L'ordinateur ne voit pas la machine. Vérifiez le câble — certains câbles US
 
 Le réglage **MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A** de la machine doit valoir le canal de l'application (1 par défaut, Réglages ▸ Deluge branché). Rappel : la machine joue **l'instrument sélectionné sur elle**. [Jouer un do] permet de vérifier.
 
+## Mon clavier ne joue pas le Deluge {#clavier-muet}
+
+Dans l'ordre, sur la page [Hub MIDI](#hub) :
+
+1. Le bouton [Hub en marche] est-il allumé ? À l'arrêt, rien ne passe.
+1. Le pad au croisement du clavier et du Deluge est-il plein ? En pointillés, il attend : son infobulle dit quoi — le Deluge non connecté, ou une cible sans canal.
+1. La diode du clavier brille-t-elle quand vous jouez ? Sinon l'ordinateur ne reçoit rien : vérifiez le câble, et qu'aucun autre logiciel ne retient le port.
+1. Sur le Deluge, **MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A** est-il réglé ? Et êtes-vous dans un clip de synthé ou de kit ? En vue morceau, la machine joue l'instrument du dernier clip ouvert.
+
 ## L'écoute sur le Deluge ne change pas le son {#ecoute-sans-effet}
 
 - Le Deluge applique les réglages à **l'instrument sélectionné sur lui** : est-ce bien celui que vous écoutez ? En vue morceau, c'est le dernier clip ouvert.
@@ -1488,6 +1581,7 @@ Rien d'écrit à moitié ne reste sur la carte : une sauvegarde interrompue est 
 | Analyse | la lecture de la carte qui remplit l'index ; elle ne modifie rien |
 | Analyse acoustique | les mesures faites sur chaque son : tempo, tonalité, niveaux, timbre |
 | Arrangement | la vue du Deluge où le morceau se déroule sur une ligne de temps |
+| Branchement | dans le hub MIDI, la liaison d'une source à une destination : ce qui arrive de l'une part vers l'autre |
 | Câble de modulation | une liaison entre une source (LFO, enveloppe, vélocité…) et un paramètre |
 | Camelot | une notation des tonalités qui dit d'un coup d'œil lesquelles s'enchaînent |
 | Clip | une boucle de notes d'un instrument, sur la grille de session |
@@ -1500,12 +1594,14 @@ Rien d'écrit à moitié ne reste sur la carte : une sauvegarde interrompue est 
 | Étape | une des cinq parties de l'atelier : style, sons, clips, structure, Deluge |
 | Firmware communautaire | le firmware ouvert du Deluge (versions c1.x) ; il répond aux messages de l'application |
 | Graine | le nombre qui rend une génération reproductible |
+| Hub MIDI | la page qui relie par l'ordinateur les claviers, le Deluge et le DAW |
 | Index | la base de données de l'application sur la carte ; elle vit sur l'ordinateur |
 | Kit | un instrument de batterie : une rangée par son |
 | MIDI Follow | le mode du firmware communautaire où les contrôleurs reçus pilotent l'instrument sélectionné |
 | Mode avancé | le niveau de l'interface qui montre toutes les commandes ; le niveau simple n'en garde que l'essentiel |
 | Orphelin | un échantillon qu'aucun preset, kit ni morceau ne cite |
 | Plan | la liste exacte des opérations, montrée avant toute écriture |
+| Port virtuel | un port MIDI sans appareil, créé par un logiciel : ce qu'un programme y envoie, un autre le reçoit |
 | Preset | un son de synthé enregistré dans `SYNTHS` |
 | Rangée | une ligne d'un kit : un son, et ses réglages |
 | Section | un groupe de clips qui jouent ensemble dans un morceau du Deluge |

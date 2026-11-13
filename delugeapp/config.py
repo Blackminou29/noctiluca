@@ -44,7 +44,7 @@ LEGACY_APP_ORG = "DelugeCompanion"
 __all__ = [
     "APP_NAME", "APP_ORG", "CONFIG_ENV",
     "LEGACY_APP_NAME", "LEGACY_APP_ORG", "LEGACY_CONFIG_ENV",
-    "CONFIG_DIR", "SETTINGS_PATH", "DB_PATH", "LOG_PATH",
+    "CONFIG_DIR", "SETTINGS_PATH", "DB_PATH", "LOG_PATH", "HUB_PATH",
     "DEFAULT_BACKUP_DIR", "Settings", "AppContext",
     "load_settings", "save_settings", "ensure_config_dir",
     "config_impose", "chemin_actuel", "REPRISES",
@@ -189,6 +189,8 @@ if not config_impose():
 SETTINGS_PATH: Path = CONFIG_DIR / "settings.json"
 DB_PATH: Path = CONFIG_DIR / "library.db"
 LOG_PATH: Path = CONFIG_DIR / "app.log"
+#: Les branchements du hub MIDI (:mod:`delugeapp.core.midihub`).
+HUB_PATH: Path = CONFIG_DIR / "hub.json"
 DEFAULT_BACKUP_DIR: Path = CONFIG_DIR / "backups"
 
 
@@ -635,6 +637,9 @@ class AppContext:
     #: demandé : ouvrir un port a un coût, et l'application doit démarrer
     #: aussi vite sans machine qu'avec.
     link: Any = None
+    #: Le hub MIDI, qui relie claviers, Deluge et DAW. ``None`` tant que
+    #: personne ne l'a demandé ; sans branchement, il n'ouvre aucun port.
+    hub: Any = None
     #: Vrai une fois ``close()`` appelé. L'interface s'en sert pour ne pas
     #: interroger une base déjà fermée : un travail lancé dans un fil rend
     #: son résultat par un signal **mis en file**, qui peut arriver après la
@@ -675,6 +680,51 @@ class AppContext:
     def link_connected(self) -> bool:
         """Vrai si un port MIDI est ouvert. Ne crée rien."""
         return bool(self.link is not None and self.link.is_connected)
+
+    def ensure_hub(self):
+        """Le hub MIDI, créé au premier besoin avec ses branchements
+        enregistrés.
+
+        Le Deluge y passe par le lien de l'application : le hub le voit dès
+        que le lien est connecté, et n'ouvre jamais ses ports lui-même. Sans
+        branchement en service, aucun port n'est ouvert.
+        """
+        if self.hub is None:
+            from delugeapp.core import midihub
+
+            hub = midihub.MidiHub(midihub.Backend(lambda: self.link))
+            marche, routes = midihub.load_config(HUB_PATH)
+            hub.set_enabled(marche)
+            hub.set_routes(routes)
+            self.hub = hub
+            self.refresh_hub_follow()
+        return self.hub
+
+    def refresh_hub_follow(self) -> None:
+        """Redit au hub ce que le Deluge écoute en MIDI Follow : ses
+        réglages lus sur la carte, et le canal de l'application à défaut. À
+        appeler quand la carte change ou vient d'être synchronisée."""
+        hub = self.hub
+        if hub is None:
+            return
+        reglages = None
+        try:
+            from delugeapp.core import midifollow
+
+            if self.sd is not None:
+                reglages = midifollow.read_settings(self.sd)
+        except Exception:  # noqa: BLE001 - un fichier de la carte
+            log.debug("réglages MIDI Follow illisibles", exc_info=True)
+        hub.set_follow(reglages, getattr(self.settings, "midi_channel", 1))
+
+    def save_hub(self) -> None:
+        """Enregistre les branchements du hub."""
+        hub = self.hub
+        if hub is None or self.closed:
+            return
+        from delugeapp.core import midihub
+
+        midihub.save_config(HUB_PATH, hub.enabled, hub.routes)
 
     def sd_or_warn(self, parent: Any = None,
                    write: bool = False) -> "SDCard | None":
@@ -735,7 +785,8 @@ class AppContext:
                 stop()
             except Exception:
                 log.exception("Arrêt du lecteur audio impossible")
-        for name in ("link", "player", "lib"):
+        # Le hub d'abord : il relâche ses notes par le port du lien.
+        for name in ("hub", "link", "player", "lib"):
             obj = getattr(self, name, None)
             close = getattr(obj, "close", None)
             if callable(close):

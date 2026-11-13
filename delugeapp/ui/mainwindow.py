@@ -28,8 +28,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, Qt, QTimer
-from PyQt6.QtGui import QAction, QActionGroup, QKeySequence
+from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -40,6 +40,8 @@ from PyQt6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QSpacerItem,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -56,6 +58,7 @@ from .theme import (
     GREY,
     PAD_AMBER,
     PAD_GREEN,
+    PAD_RED,
     apply_theme,
     page_color,
 )
@@ -96,7 +99,7 @@ _RAIL_KEY = "window/rail"
 
 
 def _page_classes():
-    """Les onze pages, dans l'ordre de la barre latérale.
+    """Les douze pages, dans l'ordre de la barre latérale.
 
     Importées ici et non au niveau du module : chaque page tire ses propres
     dépendances, et les charger toutes à l'import ralentirait le démarrage
@@ -105,15 +108,17 @@ def _page_classes():
     L'ordre suit l'intention, pas la sorte de fichier : on part de
     l'accueil ; on crée (un morceau dans l'atelier, un son dans le
     générateur, le mémo sous la main) ; on puise dans sa bibliothèque ; on
-    prend soin de la carte. Les clés internes ne changent pas : l'aide, le
-    manuel et les adresses ``Page#Partie`` les citent. Le pont vers le DAW
-    suit les morceaux, qu'il emporte et rapporte.
+    relie le Deluge au reste — le DAW, qui emporte et rapporte les
+    morceaux, puis le hub MIDI, qui fait jouer ensemble claviers, machine et
+    DAW ; on prend soin de la carte. Les clés internes ne changent pas :
+    l'aide, le manuel et les adresses ``Page#Partie`` les citent.
     """
     from .pages.atelier import AtelierPage
     from .pages.dashboard import DashboardPage
     from .pages.daw import DawPage
     from .pages.generator import GeneratorPage
     from .pages.health import HealthPage
+    from .pages.hub import HubPage
     from .pages.kits import KitsPage
     from .pages.samples import SamplesPage
     from .pages.settings import SettingsPage
@@ -122,21 +127,36 @@ def _page_classes():
     from .pages.toolbox import ToolboxPage
 
     return (DashboardPage, AtelierPage, GeneratorPage, ToolboxPage,
-            SamplesPage, SynthsPage, KitsPage, SongsPage, DawPage, HealthPage,
-            SettingsPage)
+            SamplesPage, SynthsPage, KitsPage, SongsPage, DawPage, HubPage,
+            HealthPage, SettingsPage)
 
 
-def _page_digit(index: int) -> int | None:
-    """Le chiffre du raccourci de la page de rang ``index`` (depuis 1) :
-    ``Ctrl+1`` à ``Ctrl+9``, puis ``Ctrl+0`` pour la dixième ; la onzième,
-    les Réglages, n'en a pas — elle garde ``Ctrl+,``."""
-    return index % 10 if index <= 10 else None
+def _page_marks(classes) -> dict[str, str]:
+    """La touche du raccourci de chaque page, à joindre à ``Ctrl+``.
+
+    Une page qui a sa lettre (``SHORTCUT`` : « M » pour le hub MIDI) la
+    garde ; les autres prennent les chiffres dans l'ordre de la colonne —
+    ``1`` à ``9``, puis ``0`` pour la dixième, la santé — et la dernière,
+    les Réglages, la virgule. Le hub est arrivé après les autres : sa
+    lettre laisse à chacune le chiffre qu'elle avait.
+    """
+    marques: dict[str, str] = {}
+    rang = 0
+    for classe in classes:
+        lettre = str(getattr(classe, "SHORTCUT", "") or "")
+        if lettre:
+            marques[_short_name(classe)] = lettre
+            continue
+        rang += 1
+        marques[_short_name(classe)] = str(rang % 10) if rang <= 10 else ","
+    return marques
 
 
 #: Le titre de chaque groupe de la colonne, posé avant sa première page.
 RAIL_GROUPS: dict[str, str] = {
     "Atelier": N_("Créer"),
     "Samples": N_("Bibliothèque"),
+    "Daw": N_("Relier"),
     "Health": N_("La carte"),
 }
 
@@ -194,6 +214,8 @@ class MainWindow(QMainWindow):
         self._pages: dict[str, object] = {}
         self._buttons: dict[str, QPushButton] = {}
         self._classes = {_short_name(c): c for c in _page_classes()}
+        #: La touche du raccourci de chaque page (``Ctrl+`` devant).
+        self._marks = _page_marks(self._classes.values())
         self._rail_wide = True
         #: Le Deluge était-il là au dernier battement ? ``None`` tant qu'on
         #: n'a pas encore regardé, pour ne pas annoncer une « apparition »
@@ -260,6 +282,13 @@ class MainWindow(QMainWindow):
         # **Après** la barre d'état : l'en-tête y écrit l'espace libre.
         self._refresh_header()
         self._safely(self._refresh_deluge_chip)
+        # Le hub MIDI reprend ses branchements dès l'ouverture, quelle que
+        # soit la page : sans branchement, il n'ouvre aucun port.
+        #: Les claviers et surfaces vus au dernier battement ; ``None`` tant
+        #: qu'on n'a pas regardé, pour ne rien annoncer au démarrage.
+        self._hub_devices: set[str] | None = None
+        self._safely(self.ctx.ensure_hub)
+        self._safely(self._refresh_hub_chip)
 
         self._restore_state()
         self._fit_header(self.width())
@@ -518,6 +547,61 @@ class MainWindow(QMainWindow):
         self._deluge_seen = present
         self._refresh_deluge_chip()
 
+    # -- le hub MIDI ---------------------------------------------------------- #
+
+    def _poll_hub(self) -> None:
+        """Fait suivre au hub les appareils qu'on branche et qu'on retire.
+
+        Appelé une fois par seconde, après :meth:`_poll_midi` — le Deluge
+        passe par le lien, que celui-ci vient de connecter ou de fermer. Un
+        clavier qui arrive retrouve ses branchements ; s'il n'en a pas, la
+        barre d'état dit où lui en donner un.
+        """
+        hub = self.ctx.hub
+        if hub is None:
+            return
+        hub.rescan()
+        appareils = {b.name for b in hub.sources()
+                     if b.present and b.role == "device"}
+        avant, self._hub_devices = self._hub_devices, appareils
+        if avant is not None:
+            relies = {r.source for r in hub.routes}
+            for nom in sorted(appareils - avant):
+                self.statusBar().showMessage(
+                    (tr("« %s » branché : ses branchements reprennent.")
+                     if nom in relies else
+                     tr("« %s » branché : le hub MIDI peut le relier au "
+                        "Deluge  (Ctrl+M).")) % nom, 8000)
+            for nom in sorted(avant - appareils):
+                self.statusBar().showMessage(tr("« %s » débranché.") % nom,
+                                             6000)
+        self._refresh_hub_chip()
+
+    def _refresh_hub_chip(self) -> None:
+        """La pastille du hub, dans la barre d'état : verte quand tout ce
+        qui est branché passe, ambre quand un branchement attend son
+        appareil, rouge quand une source s'emballe, grise à l'arrêt."""
+        from ..core import midiport
+        from .widgets.common import pad_dot
+
+        hub = self.ctx.hub
+        if hub is None or not midiport.available():
+            self._hub_chip.setVisible(False)
+            return
+        total, actifs, coupe = hub.overview()
+        if not total or not hub.enabled:
+            teinte, texte = GREY, tr("Hub MIDI")
+        else:
+            teinte = (PAD_RED if coupe else PAD_GREEN if actifs == total
+                      else PAD_AMBER)
+            texte = tr("Hub %d/%d") % (actifs, total)
+        self._hub_chip.setVisible(True)
+        self._hub_chip.setIcon(QIcon(pad_dot(teinte, 11)))
+        self._hub_chip.setText(texte)
+        self._hub_chip.setToolTip("%s\n%s\n%s" % (
+            hub.summary(), hub.stats().summary(),
+            tr("Un clic ouvre le hub MIDI  (Ctrl+M)")))
+
     # -- liaison vivante ---------------------------------------------------- #
 
     @staticmethod
@@ -574,6 +658,9 @@ class MainWindow(QMainWindow):
         page = self._pages.get("Dashboard") or self._create_page("Dashboard")
         if page is not None and hasattr(page, "update_index"):
             self._safely(page.update_index)
+        # Un réglage MIDI Follow changé sur la machine vient d'arriver avec
+        # ``SETTINGS/MIDIFollow.XML`` : les branchements du hub le suivent.
+        self._safely(self.ctx.refresh_hub_follow)
         self.refresh_all()
 
     def _card_work_changed(self) -> None:
@@ -742,26 +829,33 @@ class MainWindow(QMainWindow):
         column.setSpacing(2)
         #: Les titres de groupe, que le repli réduit à un filet.
         self._rail_groups: list[RailGroup] = []
+        #: Les cales posées avant chaque titre, et la hauteur que la colonne
+        #: demande à son aise : trop basse, elle se resserre
+        #: (:meth:`_fit_rail`).
+        self._rail_gaps: list[QSpacerItem] = []
+        self._rail_dense = False
+        self._rail_demand = 0
 
-        for index, (key, cls) in enumerate(self._classes.items(), 1):
+        for key, cls in self._classes.items():
             groupe = RAIL_GROUPS.get(key)
             if groupe:
                 titre = RailGroup(tr(groupe), self._rail)
-                column.addSpacing(4)
+                cale = QSpacerItem(0, 4, QSizePolicy.Policy.Minimum,
+                                   QSizePolicy.Policy.Fixed)
+                column.addItem(cale)
+                self._rail_gaps.append(cale)
                 column.addWidget(titre)
                 self._rail_groups.append(titre)
             # Chaque page est un pad de sa couleur : éteint, il la montre
             # en veilleuse ; choisi, il s'allume. La colonne devient une
             # rangée de pads de la machine, et l'on repère une destination à
-            # la teinte avant même d'avoir lu l'étiquette. Le chiffre est
-            # celui du raccourci.
-            # La dixième prend le 0, comme sur un clavier ; la onzième, les
-            # Réglages, garde Ctrl+,.
-            chiffre = _page_digit(index)
-            button = NavPad(tr(cls.TITLE), cls.ICON, page_color(key), chiffre,
-                            self._rail)
-            button.setToolTip("%s  (Ctrl+%s)" % (
-                tr(cls.TITLE), chiffre if chiffre is not None else ","))
+            # la teinte avant même d'avoir lu l'étiquette. Le chiffre — ou
+            # la lettre — est celui du raccourci ; la virgule des Réglages
+            # ne s'affiche pas.
+            marque = self._marks[key]
+            button = NavPad(tr(cls.TITLE), cls.ICON, page_color(key),
+                            None if marque == "," else marque, self._rail)
+            button.setToolTip("%s  (Ctrl+%s)" % (tr(cls.TITLE), marque))
             button.setProperty("navColor", page_color(key))
             button.clicked.connect(
                 lambda _c=False, k=key: self.go_to(k))
@@ -779,7 +873,40 @@ class MainWindow(QMainWindow):
                "listes  (Ctrl+B)"))
         self._fold_button.clicked.connect(self.toggle_rail)
         column.addWidget(self._fold_button)
+        self._rail.installEventFilter(self)
         return self._rail
+
+    def eventFilter(self, objet, evenement) -> bool:  # noqa: N802 - API Qt
+        if objet is getattr(self, "_rail", None) \
+                and evenement.type() == QEvent.Type.Resize:
+            try:
+                self._fit_rail()
+            except Exception as exc:    # noqa: BLE001 - un décor ne casse rien
+                log.debug("colonne non ajustée : %s", exc)
+        return super().eventFilter(objet, evenement)
+
+    def _fit_rail(self) -> None:
+        """Resserre la colonne quand la fenêtre est trop basse pour elle.
+
+        Douze pads de 40 pixels et quatre titres demandent 640 pixels ; une
+        fenêtre de 640 n'en laisse que 556 à la colonne (mesuré le
+        12 novembre 2026). Qt écrasait alors tout en proportion. Les pads
+        passent à 32 pixels et les cales s'effacent — 552 pixels —, et
+        retrouvent leur aise dès que la place revient.
+        """
+        disposition = self._rail.layout()
+        if not self._rail_dense:
+            self._rail_demand = disposition.minimumSize().height()
+        dense = self._rail.height() < self._rail_demand
+        if dense == self._rail_dense:
+            return
+        self._rail_dense = dense
+        for bouton in self._buttons.values():
+            bouton.setFixedHeight(NavPad.DENSE if dense else NavPad.HAUTEUR)
+        for cale in self._rail_gaps:
+            cale.changeSize(0, 0 if dense else 4, QSizePolicy.Policy.Minimum,
+                            QSizePolicy.Policy.Fixed)
+        disposition.invalidate()
 
     def toggle_rail(self) -> None:
         """Replie ou déplie la barre latérale."""
@@ -817,6 +944,18 @@ class MainWindow(QMainWindow):
         self._progress.setFixedWidth(160)
         self._progress.setVisible(False)
         bar.addPermanentWidget(self._progress)
+
+        # Le hub MIDI tourne quelle que soit la page : sa pastille le dit
+        # d'ici, et y mène.
+        self._hub_chip = QPushButton("")
+        self._hub_chip.setFlat(True)
+        self._hub_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._hub_chip.setStyleSheet(
+            "QPushButton { border: none; padding: 0 8px; }")
+        self._hub_chip.setVisible(False)
+        self._hub_chip.clicked.connect(
+            lambda _c=False: self._safely(lambda: self.go_to("Hub")))
+        bar.addPermanentWidget(self._hub_chip)
 
         self._playing = QLabel("")
         self._playing.setFixedWidth(90)
@@ -885,6 +1024,7 @@ class MainWindow(QMainWindow):
                 self._progress.set_busy(True)
 
             self._poll_midi()
+            self._poll_hub()
             if self._update_answer is not None:
                 answer, self._update_answer = self._update_answer, None
                 self._update_known(*answer)
@@ -1087,13 +1227,15 @@ class MainWindow(QMainWindow):
                 tr("Action impossible : voir le journal."), 8000)
 
     def _build_shortcuts(self) -> None:
-        """``Ctrl+1`` à ``Ctrl+0`` pour les pages, ``Espace`` pour l'écoute."""
-        for index, key in enumerate(self._classes, 1):
-            chiffre = _page_digit(index)
-            if chiffre is None:
+        """``Ctrl+1`` à ``Ctrl+0`` et ``Ctrl+M`` pour les pages, ``Espace``
+        pour l'écoute. ``Ctrl+,``, celui des Réglages, est dans le menu
+        Édition."""
+        for key in self._classes:
+            marque = self._marks[key]
+            if marque == ",":
                 continue
             action = QAction(self)
-            action.setShortcut(QKeySequence(f"Ctrl+{chiffre}"))
+            action.setShortcut(QKeySequence(f"Ctrl+{marque}"))
             action.triggered.connect(
                 lambda _c=False, k=key: self.go_to(k))
             self.addAction(action)
@@ -1484,6 +1626,8 @@ class MainWindow(QMainWindow):
                 self.ctx.link.load_follow_map(self.ctx.sd)
             except Exception:  # noqa: BLE001
                 log.exception("relecture de MIDI Follow impossible")
+        # Les canaux que le Deluge écoute aussi : le hub les suit.
+        self._safely(self.ctx.refresh_hub_follow)
 
         self._safely(self.card_work.refresh_pending)
         self._refresh_header()
@@ -1634,6 +1778,7 @@ class MainWindow(QMainWindow):
             (tr("Espace"), tr("Écouter / arrêter")),
             ("Ctrl+1 … Ctrl+0", tr("Aller à la page correspondante, de "
                                    "l'accueil à la santé de la carte")),
+            ("Ctrl+M", tr("Le hub MIDI")),
             ("F1", tr("Le manuel, au chapitre de la page affichée")),
             ("Ctrl+Q", tr("Quitter")),
         ]
@@ -1827,6 +1972,10 @@ class MainWindow(QMainWindow):
         stubborn = tasks.stop_all(4000)
         if stubborn:
             log.warning("%d fil(s) interrompu(s) de force", stubborn)
+        try:
+            self.ctx.save_hub()
+        except Exception:  # noqa: BLE001
+            log.exception("branchements du hub non enregistrés")
         try:
             self.ctx.close()
         except Exception:  # noqa: BLE001

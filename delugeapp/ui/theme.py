@@ -84,6 +84,8 @@ PAD_INDIGO = "#6B5CE7"
 PAD_PURPLE = "#A85BE0"
 PAD_MAGENTA = "#F04FA8"
 PAD_PINK = "#FF7BB0"
+#: Hors du cycle des douze teintes de la machine : la couleur du hub MIDI.
+PAD_LIME = "#B4E637"
 PAD_OFF = "#262A33"
 PAD_DIM = "#3A404C"
 PAD_WHITE = "#F2F4F8"
@@ -108,6 +110,10 @@ PAGE_COLORS = {
     # Le rose, dernière teinte libre des pads, entre le bleu des morceaux et
     # l'orange de la santé.
     "Daw": PAD_PINK,
+    # Le citron vert : les douze teintes des pads étaient prises, celle-ci
+    # se glisse entre le jaune et le vert sans se confondre avec l'ambre de
+    # l'accueil ni le vert des kits.
+    "Hub": PAD_LIME,
     "Generator": PAD_MAGENTA,
     # Le rouge du bouton d'enregistrement : on y compose le morceau.
     "Atelier": PAD_RED,
@@ -167,6 +173,7 @@ __all__ = [
     "PANEL", "PANEL_HI", "PANEL_LO", "GOLD", "GOLD_HI", "GOLD_LO",
     "PAD_RED", "PAD_ORANGE", "PAD_AMBER", "PAD_YELLOW", "PAD_GREEN", "PAD_MINT",
     "PAD_CYAN", "PAD_BLUE", "PAD_INDIGO", "PAD_PURPLE", "PAD_MAGENTA", "PAD_PINK",
+    "PAD_LIME",
     "PAD_OFF", "PAD_DIM", "PAD_WHITE", "PAD_ETEINT", "PAD_CYCLE",
     "CHROME", "CHROME_EDGE", "OLED_BG", "OLED_FG", "OLED_DIM", "OLED_HI",
     "OLED_EDGE",

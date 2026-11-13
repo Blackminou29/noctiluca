@@ -229,6 +229,9 @@ def load_map_with_source(card=None, path: Path | None = None
 #: (``MIDI_FOLLOW_XML``, mesuré sur la carte), la racine avant.
 FOLLOW_PLACES = ("SETTINGS/" + FOLLOW_FILE, FOLLOW_FILE)
 
+#: Les canaux par piste de la 1.3 (``kNumMIDIFollowChannelTrackTypes``).
+FOLLOW_TRACKS = 16
+
 
 def _card_file(card) -> Path | None:
     if card is None:
@@ -293,8 +296,24 @@ class FollowSettings:
     channel_b: int | None = None
     channel_c: int | None = None
     kit_root_note: int | None = None
-    #: ``"a"``, ``"b"``, ``"c"`` ou ``None`` (retour éteint).
+    #: ``"a"``, ``"b"``, ``"c"`` ou ``None`` (retour éteint). Les réglages
+    #: « piste et A » (``track_a``…) de la 1.3 valent ici leur lettre.
     feedback: str | None = None
+    #: Les canaux « Channel Track 1 » à « 16 » de la 1.3 : numéro de piste
+    #: -> canal. Ce que la machine reçoit sur ce canal va à **cette** piste,
+    #: quelle que soit celle qu'on regarde
+    #: (``MidiFollow::noteMessageReceivedForSpecificTrack``).
+    tracks: tuple[tuple[int, int], ...] = ()
+
+    def channel_of(self, target: str) -> int | None:
+        """Le canal d'une cible ``"a"``, ``"b"``, ``"c"`` ou
+        ``"track_3"`` ; ``None`` si la machine ne l'a pas réglé."""
+        cible = str(target or "").strip().lower()
+        if cible in ("a", "b", "c"):
+            return getattr(self, "channel_" + cible)
+        if cible.startswith("track_") and cible[6:].isdigit():
+            return dict(self.tracks).get(int(cible[6:]))
+        return None
 
 
 def read_settings(card=None, path: Path | None = None) -> FollowSettings | None:
@@ -325,10 +344,15 @@ def read_settings(card=None, path: Path | None = None) -> FollowSettings | None:
 
     note = (section.findtext("kit_root_note/note") or "").strip()
     retour = (section.findtext("feedback/channel") or "").strip().lower()
+    if retour.startswith("track_"):
+        retour = retour[6:]              # « track_a » : la piste, et A
+    pistes = tuple((n, c) for n in range(1, FOLLOW_TRACKS + 1)
+                   for c in (canal("track_%d" % n),) if c is not None)
     return FollowSettings(
         channel_a=canal("a"), channel_b=canal("b"), channel_c=canal("c"),
         kit_root_note=int(note) if note.isdigit() else None,
-        feedback=retour if retour in ("a", "b", "c") else None)
+        feedback=retour if retour in ("a", "b", "c") else None,
+        tracks=pistes)
 
 
 def _raw_value(sound, cle: str) -> int | None:

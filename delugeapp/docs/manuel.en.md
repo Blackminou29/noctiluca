@@ -120,7 +120,7 @@ The next chapter presents the window; the chapter [The card and the index](#cart
 
 | Marker | Element | Role |
 |---|---|---|
-| 1 | The column of pads | the ten pages, in the order of the work; the pad of the page shown lights up |
+| 1 | The column of pads | the twelve pages, in the order of the work; the pad of the page shown lights up |
 | 2 | The menus | File, Edit, Tools, Language, Help |
 | 3 | The screen | the open card, and every message from the application |
 | 4 | The “Deluge” chip | the state of the connected machine; a click acts on it |
@@ -135,15 +135,15 @@ The next chapter presents the window; the chapter [The card and the index](#cart
 
 Just as each part of the guide has its own, each page of the application wears a colour taken from the machine's pads. You find it everywhere: the pad in the column, the strip under the top bar, the header, the main button, selections, tabs, check boxes and sliders.
 
-[[figure pages | The eleven pages and their keyboard shortcut. | Home ; Studio ; Generator ; Notebook ; Samples ; Presets ; Kits ; Songs ; DAW ; Health ; Settings]]
+[[figure pages | The twelve pages and their keyboard shortcut. | Home ; Studio ; Generator ; Notebook ; Samples ; Presets ; Kits ; Songs ; DAW ; MIDI hub ; Health ; Settings]]
 
 The colour also tells **where a shortcut leads**: on the home page, the [Create a sound] door is magenta because it leads to the generator, and the [Back up] button of the “Do this now” banner is orange because it leads to the Health page — right on the backups tab.
 
 ## The column of pads {#colonne}
 
-A click on a pad opens its page. The pads follow the order of the work: **Home** first, then three groups, each under its title — **Create** (Studio, Generator, Notebook), **Library** (Samples, Presets, Kits, Songs, and the [bridge to the DAW](#daw)) and **The card** (Health, Settings). The number on the right is the page's shortcut, from [[Ctrl+1]] to [[Ctrl+9]], then [[Ctrl+0]] for the tenth, Health; Settings has [[Ctrl+,]].
+A click on a pad opens its page. The pads follow the order of the work: **Home** first, then four groups, each under its title — **Create** (Studio, Generator, Notebook), **Library** (Samples, Presets, Kits, Songs), **Connect** (the [bridge to the DAW](#daw) and the [MIDI hub](#hub)) and **The card** (Health, Settings). The sign on the right is the page's shortcut: from [[Ctrl+1]] to [[Ctrl+9]], [[Ctrl+M]] for the MIDI hub, [[Ctrl+0]] for Health; Settings has [[Ctrl+,]].
 
-The [Collapse] button at the bottom shrinks the column to its pads alone, making room for the lists; the group titles become a plain line. [[Ctrl+B]] does the same, and the same gesture unfolds the column again.
+The [Collapse] button at the bottom shrinks the column to its pads alone, making room for the lists; the group titles become a plain line. [[Ctrl+B]] does the same, and the same gesture unfolds the column again. In a low window, the column tightens its pads by itself.
 
 ## The top bar {#barre-du-haut}
 
@@ -200,7 +200,7 @@ Leave the mouse for a second over any button, check box, list or slider: a toolt
 
 ## The status bar {#barre-etat}
 
-At the bottom of the window: the application's latest message, a progress bar during long work, “● playing” during playback, and the card's free space.
+At the bottom of the window: the application's latest message, a progress bar during long work, the chip of the [MIDI hub](#hub) — how many of its patches are passing, wherever you are; a click takes you there —, “● playing” during playback, and the card's free space.
 
 ## Long tasks {#travaux-longs}
 
@@ -922,6 +922,8 @@ These exports belong to advanced mode.
 !!! pro Archiving a finished song
     [Collect…] is the right way to put a song in a safe place or to give it away: nothing is forgotten, not even the sample filed elsewhere that a preset asks for.
 
+@partie relier Daw | Connect | The DAW and the MIDI hub: the Deluge linked to the rest of your setup
+
 # DAW {#daw page=Daw}
 
 > The bridge between the Deluge and your music software: a song goes to the DAW, a DAW project comes back as a song, and the DAW plays the Deluge's sounds live.
@@ -979,6 +981,87 @@ The list at the bottom says the rest, step by step, for Ableton Live or another 
 
 !!! astuce There and back
     A clip exported to the DAW and sent back on its channel plays the right kit sounds again: the notes are the same both ways.
+
+# MIDI hub {#hub page=Hub}
+
+> The computer at the centre: your keyboards and control surfaces play the Deluge, the DAW joins in, and one glance tells who plays what.
+
+The Deluge has a single USB socket: linked to the computer, it can no longer take a keyboard. The hub passes things on — what arrives from a MIDI input leaves through an output —, and it does so as long as the application is open, whatever page is shown. [[Ctrl+M]] opens the page; the “Hub” chip, in the status bar, tells everywhere how many patches are passing, and takes you there in one click.
+
+!!! retenir Nothing is written, nothing is played without you
+    The hub touches neither the card nor the Deluge's settings. It only opens the ports of its patches, and only relays what your devices send. SysEx does not go through it: the Deluge's stays the application's own conversation with it.
+
+## The grid {#hub-grille}
+
+Each **source** is a row: a keyboard, a control surface, the Deluge itself — what its MIDI tracks play, its clock, the settings it sends back —, a port coming from the DAW. Each **destination** is a column: the Deluge, the Windows synth — a way to try things with nothing plugged in —, a port to the DAW, another device. Each port's LED has its colour: gold for the Deluge, cyan for a keyboard or a surface, pink for a virtual port, purple for the Windows synth; a plain ring, and the device is unplugged.
+
+An unlit pad where they cross: click, and the row is **patched** to the column. A lit pad: click to select it, and the panel below sets it; a right-click turns it off or removes it. The pad shows its target: **A** for the instrument selected on the Deluge, **T2** for its track 2, a number for a forced channel, **=** for the original channel.
+
+| Pad | What it says |
+|---|---|
+| filled, in the page's colour | active; it flashes when a message goes through |
+| outlined, dark | turned off: it keeps its place, nothing goes through |
+| dashed amber | waiting: a device unplugged, the hub stopped, or a target the Deluge has not set |
+| red, marked “!” | its source ran away: a MIDI loop, cut automatically |
+
+A keyboard plugged in, and still patched to nothing? The page offers it: [Patch to the Deluge] links it to the instrument you are looking at on the machine. If the Deluge is at the end of the cable without being connected, [Connect the Deluge] opens its ports, like its chip in the top bar.
+
+[Hub running], in the header, stops and restarts the lot: stopped, the ports are given back to the other programs and the patches stay in place. [All notes off] releases what the hub holds and asks every output for silence. The patches are remembered from one session to the next: a keyboard plugged back in finds its own again, and the status bar says so.
+
+!!! retenir No stuck note
+    The hub knows which notes it let through. Turning a patch off, setting it with a key held down, unplugging a keyboard or quitting the application releases those notes, where they went — and the pedal, and the bend.
+
+## Playing the Deluge from a keyboard {#hub-deluge}
+
+A patch to the Deluge arrives on a **target** of its MIDI Follow mode. The “Arrives on” list offers them, with the channel the machine gave them — read from its card, in `SETTINGS/MIDIFollow.XML`.
+
+- **The selected instrument — MIDI Follow A**: the Deluge plays the instrument of the clip you are in. Change clip on the machine, and the keyboard follows. A kit answers from note 36 upwards (Kit Root Note). It is the default choice; it needs the MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A setting, the one from [Two settings on the machine](#reglages-machine).
+- **A track** (firmware 1.3): MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel Track 1 to 16 gives a channel to a track of the song; what arrives on that channel goes to **that** track, whichever one you are looking at. Two surfaces can thus play two tracks at once — a keyboard on the bass, pads on the kit. A track with no channel on the machine leaves the patch waiting, and the panel says what to set. The simple level only shows the tracks already set; the advanced mode shows them all.
+- **A channel**: the original one, or a forced channel from 1 to 16 — for a Deluge track that has learnt its own channel, or for any other device.
+
+[Octave −] and [Octave +] transpose what goes through; the [Active] box turns the patch off without removing it; [Remove the patch] removes it.
+
+!!! astuce The Deluge changes channel? The patch follows
+    The targets are read again from the card at every synchronisation: change Channel A on the machine, and the hub sends on the new channel — a held note is first released on the old one.
+
+## Fine-tuning a patch {#hub-reglages}
+
+In advanced mode, the panel shows the rest:
+
+| Setting | What it does |
+|---|---|
+| Listens to | all the source's channels, or a single one |
+| Keys | the range of the keyboard let through: the bottom to one destination, the top to another |
+| The semitone counter | the fine transposition, from −60 to +60 |
+| [Notes] | the keys, with their velocity |
+| [Bend and pressure] | the pitch bend wheel, the pressure per channel and per key |
+| [Controllers] | knobs, faders, pedal, modulation wheel |
+| [Programs] | program changes — closed by default |
+| [Clock and transport] | the clock, start, stop, position — closed by default |
+
+**The knobs of a control surface** can be laid on the Deluge's settings. Click [Learn a knob], turn a knob: it enters the table, and the list on its line offers the settings MIDI Follow drives — filter frequency, resonance, attack… —, read from the [controller table](#midi-follow) of your card. The hub then translates the number the surface sends into the one the Deluge expects. [Forget this knob] removes the selected line.
+
+!!! attention The machine's Takeover setting
+    In **Pickup** or **Scale**, the Deluge ignores a knob until it has “caught up” with the setting's value: turn it until it crosses it. That is the machine's behaviour, meant to avoid jumps.
+
+## What goes through {#hub-moniteur}
+
+In advanced mode, the monitor writes each message as it passes: its source, what it is, and how many patches relayed it — “nowhere” means it arrived without finding an output. Below, the **delay** measured between a message's arrival and its departure: a few hundredths of a millisecond as a rule. [Clear the monitor] wipes the lines.
+
+!!! pro A MIDI loop is cut automatically
+    A device or a port that sends back what it receives makes a message go round in circles. A source that puts out more than 4,000 messages per second, or repeats the same note more than 64 times within the second, is cut: its pad turns red. Undo the loop, then [Restore the source].
+
+## With the DAW {#hub-daw}
+
+Under Windows 11, MIDI ports are shared: your DAW can open the keyboard and the Deluge at the same time as the hub. The simplest is therefore often to let the DAW play the Deluge itself (see [Play together](#daw-ensemble)), while the hub links the keyboard to the machine.
+
+For the hub to talk to the DAW — to choose from here what it receives, to send it what the Deluge plays —, you need a **virtual port**: a pair of loopback ports, created by the “MIDI Settings” application — it comes with the Windows MIDI Services tools, to be installed from Microsoft's site — or by loopMIDI. They show up in the grid under their name, with the pink LED. Patch the keyboard to one, choose it as an input in the DAW; what the DAW sends to the other shows up as a row, to patch to the Deluge.
+
+!!! attention One keyboard, two paths
+    If the DAW opens the keyboard itself **and** sends its notes on to the Deluge while the hub sends them there too, every note arrives twice. Keep a single path: turn off the hub's patch, or the keyboard's input in the DAW.
+
+!!! attention The clock
+    The DAW's clock reaches the Deluge better directly than through the hub, which adds its jitter to every tick. The [Clock and transport] box mostly serves to pass the **Deluge's** clock on to a virtual port.
 
 @partie entretien Health | The card | Its health, its backups, and the application's settings
 
@@ -1373,6 +1456,7 @@ The Kits, Songs and Notebook pages, for their part, never write to the card; nor
 | Shortcut | Action |
 |---|---|
 | [[Ctrl+1]] to [[Ctrl+9]], [[Ctrl+0]] | go to the matching page, in the column's order: [[Ctrl+1]] the home page, [[Ctrl+2]] the studio… [[Ctrl+9]] the DAW, [[Ctrl+0]] Health |
+| [[Ctrl+M]] | the MIDI hub |
 | [[Ctrl+N]] | a new song, in the studio |
 | [[Ctrl+E]] | advanced mode, or back to the simple level |
 | [[Ctrl+R]] | scan the card |
@@ -1437,6 +1521,15 @@ The computer doesn't see the machine. Check the cable — some USB cables only c
 
 The machine's **MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A** setting must match the application's channel (1 by default, Settings ▸ Connected Deluge). Remember: the machine plays **the instrument selected on it**. [Play a C] lets you check.
 
+## My keyboard does not play the Deluge {#clavier-muet}
+
+In order, on the [MIDI hub](#hub) page:
+
+1. Is the [Hub running] button lit? Stopped, nothing goes through.
+1. Is the pad where the keyboard and the Deluge cross filled? Dashed, it is waiting: its tooltip says for what — the Deluge not connected, or a target with no channel.
+1. Does the keyboard's LED flash when you play? If not, the computer receives nothing: check the cable, and that no other program is holding the port.
+1. On the Deluge, is **MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel A** set? And are you in a synth or kit clip? In song view, the machine plays the instrument of the last clip you opened.
+
 ## Listening on the Deluge does not change the sound {#ecoute-sans-effet}
 
 - The Deluge applies the settings to **the instrument selected on it**: is it the one you are listening to? In song view, it is the last clip you opened.
@@ -1488,6 +1581,7 @@ Nothing half-written stays on the card: an interrupted backup is deleted so it c
 | Scan | the reading of the card that fills the index; it changes nothing |
 | Acoustic analysis | the measurements taken on every sound: tempo, key, levels, timbre |
 | Arrangement | the Deluge view where the song unfolds on a timeline |
+| Patch (MIDI hub) | in the MIDI hub, the link from a source to a destination: what arrives from one leaves for the other |
 | Patch cable | a link between a source (LFO, envelope, velocity…) and a parameter |
 | Camelot | a key notation that shows at a glance which keys blend |
 | Clip | a loop of notes for one instrument, on the session grid |
@@ -1500,12 +1594,14 @@ Nothing half-written stays on the card: an interrupted backup is deleted so it c
 | Step | one of the five parts of the studio: style, sounds, clips, structure, Deluge |
 | Community firmware | the Deluge's open firmware (c1.x versions); it answers the application's messages |
 | Seed | the number that makes a generation reproducible |
+| MIDI hub | the page that links keyboards, the Deluge and the DAW through the computer |
 | Index | the application's database about the card; it lives on the computer |
 | Kit | a drum instrument: one row per sound |
 | MIDI Follow | the community firmware mode where incoming controllers drive the selected instrument |
 | Advanced mode | the interface level that shows every command; the simple level keeps only the essentials |
 | Orphan | a sample no preset, kit or song refers to |
 | Plan | the exact list of operations, shown before any write |
+| Virtual port | a MIDI port with no device, created by software: what one program sends to it, another receives |
 | Preset | a synth sound saved in `SYNTHS` |
 | Row | one line of a kit: a sound and its settings |
 | Section | a group of clips that play together in a Deluge song |

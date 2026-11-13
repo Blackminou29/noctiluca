@@ -349,6 +349,9 @@ class DelugeLink:
         self._sync_ready = False
         #: Envois en cours qui ont fait taire la recopie de l'écran.
         self._screen_hold = 0
+        #: Qui reçoit aussi, dès leur arrivée, les messages courts de la
+        #: machine (:meth:`set_listener`) : le hub MIDI.
+        self._listener = None
         self._reset_live()
 
     def _reset_live(self) -> None:
@@ -495,6 +498,7 @@ class DelugeLink:
             if installer is not None and self._in.is_open:
                 installer(self.transport.feed)
                 self._transport_tap = True
+            self._install_listener()
 
             if sortie.is_deluge:
                 self._open_sysex(sorties, entrees, sortie, entree)
@@ -663,6 +667,9 @@ class DelugeLink:
             retirer = getattr(port, "set_sysex_tap", None)
             if retirer is not None:
                 retirer(None)
+        retirer = getattr(self._in, "set_message_tap", None)
+        if retirer is not None:
+            retirer(None)
         self._sync_ready = False
         self.files = None
         self._files_known = False
@@ -922,6 +929,62 @@ class DelugeLink:
             return False
         return self._out.control_change(cc, midifollow.cc_value(raw, key),
                                         self._channel)
+
+    # -- le hub ------------------------------------------------------------ #
+
+    def set_listener(self, listener) -> None:
+        """Fait suivre à ``listener(statut, data1, data2, instant)`` chaque
+        message court venu de la machine — notes de ses pistes MIDI, retour
+        MIDI Follow, horloge —, dès son arrivée. Le lien garde tout ce
+        qu'il recevait : l'auditeur ne retire rien. Appelé depuis le fil du
+        pilote, il ne fait qu'empiler. ``None`` le retire. Il survit à une
+        reconnexion."""
+        self._listener = listener
+        self._install_listener()
+
+    def _install_listener(self) -> None:
+        installer = getattr(self._in, "set_message_tap", None)
+        if installer is None:
+            return
+        auditeur = self._listener
+        if auditeur is None:
+            installer(None)
+            return
+
+        def robinet(statut, data1, data2, instant) -> bool:
+            auditeur(statut, data1, data2, instant)
+            return False                 # le lien garde le message
+
+        installer(robinet)
+
+    @property
+    def can_listen(self) -> bool:
+        """Vrai si l'entrée de la machine est ouverte."""
+        return bool(getattr(self._in, "is_open", False))
+
+    def open_ports(self) -> dict[str, set[str]]:
+        """Les noms des ports que le lien tient ouverts, par sens
+        (``"in"``, ``"out"``) : le hub ne les rouvre pas."""
+        noms: dict[str, set[str]] = {"in": set(), "out": set()}
+        for sens, ports in (("out", (self._out, self._sx_out)),
+                            ("in", (self._in, self._sx_in))):
+            for port in ports:
+                appareil = getattr(port, "device", None)
+                if getattr(port, "is_open", False) and appareil is not None:
+                    noms[sens].add(appareil.name)
+        return noms
+
+    def send_short(self, status: int, data1: int = 0, data2: int = 0) -> bool:
+        """Envoie tel quel un message court par le port des notes : ce que
+        le hub relaie vers la machine, sur le canal qu'il a choisi."""
+        envoi = getattr(self._out, "send", None)
+        if envoi is None or not self._out.is_open:
+            return False
+        try:
+            return bool(envoi(int(status), int(data1), int(data2)))
+        except Exception as exc:       # noqa: BLE001
+            log.debug("message non relayé : %s", exc)
+            return False
 
     def note_on(self, note: int = NOTE_C3, velocity: int = 100) -> bool:
         return self._out.note_on(note, velocity, self._channel)

@@ -1181,10 +1181,14 @@ class PageCase(WidgetCase):
 
         self._config_mod = config_mod
         self._config_sauve = (config_mod.CONFIG_DIR,
-                              config_mod.SETTINGS_PATH)
+                              config_mod.SETTINGS_PATH,
+                              config_mod.HUB_PATH)
         config_mod.CONFIG_DIR = base / "config"
         config_mod.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         config_mod.SETTINGS_PATH = config_mod.CONFIG_DIR / "settings.json"
+        # Les branchements du hub MIDI aussi : un test qui en pose un ne le
+        # laisse pas au suivant.
+        config_mod.HUB_PATH = config_mod.CONFIG_DIR / "hub.json"
 
     def tearDown(self):
         from delugeapp.ui import tasks
@@ -1196,8 +1200,13 @@ class PageCase(WidgetCase):
         # fait dans l'application après ``AppContext.close()``.
         self.ctx.closed = True
         tasks.stop_all(2000)
+        # Le hub a son fil : il s'arrête avec le test.
+        hub = getattr(self.ctx, "hub", None)
+        if hub is not None:
+            hub.close()
         (self._config_mod.CONFIG_DIR,
-         self._config_mod.SETTINGS_PATH) = self._config_sauve
+         self._config_mod.SETTINGS_PATH,
+         self._config_mod.HUB_PATH) = self._config_sauve
         super().tearDown()
         self.lib.close()
         self._tmp.cleanup()
@@ -1213,7 +1222,7 @@ class PageCase(WidgetCase):
 
 
 class TestPageContract(PageCase):
-    """Le contrat de la SPEC §5.5, vérifié sur les onze pages."""
+    """Le contrat de la SPEC §5.5, vérifié sur les douze pages."""
 
     def _pages(self):
         from delugeapp.ui.pages.atelier import AtelierPage
@@ -1221,6 +1230,7 @@ class TestPageContract(PageCase):
         from delugeapp.ui.pages.daw import DawPage
         from delugeapp.ui.pages.generator import GeneratorPage
         from delugeapp.ui.pages.health import HealthPage
+        from delugeapp.ui.pages.hub import HubPage
         from delugeapp.ui.pages.kits import KitsPage
         from delugeapp.ui.pages.samples import SamplesPage
         from delugeapp.ui.pages.settings import SettingsPage
@@ -1229,11 +1239,14 @@ class TestPageContract(PageCase):
         from delugeapp.ui.pages.toolbox import ToolboxPage
 
         return (DashboardPage, SamplesPage, SynthsPage, KitsPage, SongsPage,
-                GeneratorPage, AtelierPage, ToolboxPage, DawPage, HealthPage,
-                SettingsPage)
+                GeneratorPage, AtelierPage, ToolboxPage, DawPage, HubPage,
+                HealthPage, SettingsPage)
 
-    def test_les_onze_pages_existent(self):
-        self.assertEqual(len(self._pages()), 11)
+    def test_les_douze_pages_existent(self):
+        from delugeapp.ui.mainwindow import _page_classes
+
+        self.assertEqual(len(self._pages()), 12)
+        self.assertEqual(set(self._pages()), set(_page_classes()))
 
     def test_contrat(self):
         """Titre, icône, signal d'état et ``refresh`` sur chaque page."""
@@ -2093,8 +2106,8 @@ class TestMainWindowAssemblage(MainWindowCase):
         win = self.window()
         self.assertIn(__version__, win.windowTitle())
         self.assertIn("Noctiluca", win.windowTitle())
-        self.assertEqual(len(win._classes), 11)
-        self.assertEqual(len(win._buttons), 11)
+        self.assertEqual(len(win._classes), 12)
+        self.assertEqual(len(win._buttons), 12)
         # Qt ajoute un menu interne sans titre (le débordement) : on ne
         # garde que les menus nommés.
         titres = [m.title() for m in win.menuBar().findChildren(QMenu)
@@ -2104,14 +2117,14 @@ class TestMainWindowAssemblage(MainWindowCase):
                           "&Aide"])
 
     def test_les_pages_sont_creees_au_premier_affichage(self):
-        """Onze pages construites au démarrage, ce serait onze fois trop."""
+        """Douze pages construites au démarrage, ce serait douze fois trop."""
         win = self.window()
         self.assertEqual(len(win._pages), 1,
                          "une seule page doit exister au démarrage")
         for key in win._classes:
             win.go_to(key)
             _APP.processEvents()
-        self.assertEqual(len(win._pages), 11)
+        self.assertEqual(len(win._pages), 12)
 
     def test_page_inconnue_ignoree(self):
         win = self.window()
@@ -2127,18 +2140,19 @@ class TestMainWindowAssemblage(MainWindowCase):
         self.assertEqual(coches, ["Toolbox"])
 
     def test_raccourcis_de_navigation(self):
-        """``Ctrl+1`` à ``Ctrl+9``, ``Ctrl+0`` pour la dixième page, plus
-        ``Espace`` pour l'écoute ; la onzième, les Réglages, garde
-        ``Ctrl+,``."""
+        """``Ctrl+1`` à ``Ctrl+9``, ``Ctrl+0`` pour la santé, plus ``Espace``
+        pour l'écoute ; les Réglages gardent ``Ctrl+,``. Le hub MIDI, venu
+        après, a sa lettre — ``Ctrl+M`` — et ne décale personne."""
         win = self.window()
         sequences = {a.shortcut().toString() for a in win.actions()}
         for index in range(10):
             self.assertIn(f"Ctrl+{index}", sequences)
         self.assertIn("Space", sequences)
-        # L'ordre du travail : l'accueil, l'atelier, puis la bibliothèque et
-        # le DAW ; la dixième, la santé de la carte.
+        # L'ordre du travail : l'accueil, l'atelier, puis la bibliothèque,
+        # le DAW et le hub ; la santé de la carte garde le zéro.
         for touche, page in (("Ctrl+1", "Dashboard"), ("Ctrl+2", "Atelier"),
                              ("Ctrl+7", "Kits"), ("Ctrl+9", "Daw"),
+                             ("Ctrl+M", "Hub"),
                              ("Ctrl+0", "Health"), ("Ctrl+,", "Settings")):
             # Ctrl+, vit dans le menu Édition, pas parmi les actions de la
             # fenêtre.
@@ -2171,7 +2185,7 @@ class TestMainWindowAssemblage(MainWindowCase):
         win.toggle_rail()
         _APP.processEvents()
         self.assertEqual(win._rail.width(), self.mw.RAIL_NARROW)
-        self.assertEqual(len(win._buttons), 11, "les boutons restent")
+        self.assertEqual(len(win._buttons), 12, "les boutons restent")
         win.toggle_rail()
         _APP.processEvents()
         self.assertEqual(win._rail.width(), self.mw.RAIL_WIDE)
@@ -5164,7 +5178,7 @@ class TestChaqueCommandeSExplique(MainWindowCase):
             total += 1
             if restantes:
                 muettes[cle] = restantes
-        self.assertEqual(total, 11, "les onze pages n'ont pas été visitées")
+        self.assertEqual(total, 12, "les douze pages n'ont pas été visitées")
         self.assertEqual(
             muettes, {},
             "commandes sans explication : %s"
@@ -7591,7 +7605,7 @@ class TestInterfaceEnAnglais(MainWindowCase):
                 if _a_l_air_francais(texte.replace(str(self.root), "")):
                     trouves.setdefault(texte[:120], set()).add(
                         "%s, %s" % (cle, origine))
-        self.assertEqual(pages, 11, "les onze pages n'ont pas été visitées")
+        self.assertEqual(pages, 12, "les douze pages n'ont pas été visitées")
         # Mesuré le 19 octobre 2026 : 8 606 textes lus, dont 459 distincts
         # signalés quand l'interface est en français. Un relevé qui ne lit
         # plus rien passerait sans rien prouver.
@@ -8237,7 +8251,7 @@ class TestLeManuelDansLAide(MainWindowCase):
 
 
 class TestLeManuelDecritChaqueCommande(MainWindowCase):
-    """Chaque bouton et chaque case des onze pages est cité dans le manuel,
+    """Chaque bouton et chaque case des douze pages est cité dans le manuel,
     sous le libellé qu'il porte à l'écran, dans les deux langues.
 
     Le pendant de ``TestChaqueCommandeSExplique`` : une commande ajoutée
@@ -10996,6 +11010,772 @@ class TestDawPage(PageCase):
         page._daw_choice.setCurrentIndex(1)
         self.assertNotIn("MIDI To", page._steps.text())
         self.assertIn("Clock", page._steps.text())
+
+
+# --------------------------------------------------------------------------- #
+# Le hub MIDI
+# --------------------------------------------------------------------------- #
+
+def _ports_simules():
+    """Le module ``tests/ports_simules.py``, quelle que soit la façon dont la
+    suite est lancée."""
+    import importlib
+    import sys
+
+    dossier = str(Path(__file__).resolve().parent)
+    if dossier not in sys.path:
+        sys.path.insert(0, dossier)
+    return importlib.import_module("ports_simules")
+
+
+CLAVIER, SURFACE, BOUCLE = "KeyStep 37", "Launchpad Mini", "loopMIDI Port"
+SYNTHE_GS = "Microsoft GS Wavetable Synth"
+
+
+class HubCase(PageCase):
+    """La page Hub MIDI, **en cliquant**, sur des ports simulés : un
+    clavier, une surface de contrôle, le Deluge et le synthé de Windows.
+
+    Le hub du contexte est posé avant la page ; il s'arrête avec le test
+    (``PageCase.tearDown``). Aucun port réel n'est visible de toute façon.
+    """
+
+    ENTREES = ("@deluge", CLAVIER, SURFACE)
+    SORTIES = ("@deluge", SYNTHE_GS)
+
+    def _hub(self, entrees=None, sorties=None):
+        from delugeapp.core import midifollow, midihub
+
+        self.ports = _ports_simules().FauxPorts(
+            self.ENTREES if entrees is None else entrees,
+            self.SORTIES if sorties is None else sorties)
+        self.ctx.hub = midihub.MidiHub(self.ports)
+        self.suivi = midifollow.FollowSettings(channel_a=1, kit_root_note=36,
+                                               feedback="a")
+        self.ctx.hub.set_follow(self.suivi, 1)
+        # La page relit les réglages de la carte en s'affichant : ici, elle
+        # garde ceux du test.
+        self.ctx.refresh_hub_follow = lambda: None
+        return self.ctx.hub
+
+    def _page(self, entrees=None, sorties=None):
+        from delugeapp.ui.pages.hub import HubPage
+
+        if getattr(self.ctx, "hub", None) is None:
+            self._hub(entrees, sorties)
+        page = self.open(HubPage)
+        self.messages = []
+        page.status.connect(self.messages.append)
+        return page
+
+    def _clic(self, bouton):
+        self.assertTrue(bouton.isEnabled(), _libelle(bouton))
+        with self.assertNoLogs("delugeapp.ui", level="ERROR"):
+            bouton.click()
+            _APP.processEvents()
+
+    def _pad(self, page, source, dest, bouton=Qt.MouseButton.LeftButton):
+        """Un clic sur le pad au croisement de ``source`` et ``dest``."""
+        from PyQt6.QtTest import QTest
+
+        centre = page._matrix.cell_center(source, dest)
+        with self.assertNoLogs("delugeapp.ui", level="ERROR"):
+            QTest.mouseClick(page._matrix, bouton,
+                             Qt.KeyboardModifier.NoModifier, centre.toPoint())
+            _APP.processEvents()
+
+    def _choisir(self, liste, donnee):
+        """Choisit dans une liste déroulante, comme la souris le ferait."""
+        rang = liste.findData(donnee)
+        self.assertGreaterEqual(rang, 0, "%r absent de la liste" % (donnee,))
+        liste.setCurrentIndex(rang)
+        with self.assertNoLogs("delugeapp.ui", level="ERROR"):
+            liste.activated.emit(rang)
+            _APP.processEvents()
+
+    def _jouer(self, page, nom, status, d1=0, d2=0):
+        self.ports.jouer(nom, status, d1, d2)
+        self.assertTrue(self.ctx.hub.flush())
+        page._beat()
+
+    def _recus(self, nom="@deluge"):
+        return self.ports.sorties_ouvertes[nom].recus
+
+    def _etat(self, page, source, dest):
+        cellule = page._matrix._cells.get((source, dest))
+        return None if cellule is None else (cellule.state, cellule.tag)
+
+
+class TestLeHubBranche(HubCase):
+    """La grille : un clic branche, un clic choisit, et ce qui passe se
+    voit."""
+
+    def test_la_grille_montre_les_ports_du_hub(self):
+        page = self._page()
+        self.assertEqual(page._matrix.sources(), ["@deluge", CLAVIER, SURFACE])
+        self.assertEqual(page._matrix.destinations(), ["@deluge", SYNTHE_GS])
+        self.assertTrue(page._matrix_area.isVisibleTo(page))
+        self.assertIn("aucun branchement", page._state_label.text())
+        # Le Deluge ne se branche pas sur lui-même : son croisement ne
+        # répond pas.
+        self._pad(page, "@deluge", "@deluge")
+        self.assertEqual(self.ctx.hub.routes, [])
+
+    def test_un_clic_sur_un_pad_eteint_branche_le_clavier_sur_le_deluge(self):
+        from delugeapp import config
+        from delugeapp.core import midihub
+
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        routes = self.ctx.hub.routes
+        self.assertEqual(len(routes), 1)
+        self.assertEqual((routes[0].source, routes[0].dest, routes[0].follow),
+                         (CLAVIER, "@deluge", "a"))
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "A"))
+        self.assertEqual(page._matrix.selected(), (CLAVIER, "@deluge"))
+        self.assertIn("Branché", self.messages[-1])
+        self.assertTrue(page._form.isVisibleTo(page))
+        self.assertIn(CLAVIER, page._route_title.text())
+        # Le branchement est retenu pour la prochaine séance.
+        marche, lus = midihub.load_config(config.HUB_PATH)
+        self.assertTrue(marche)
+        self.assertEqual([r.uid for r in lus], [routes[0].uid])
+
+    def test_ce_que_le_clavier_joue_arrive_au_deluge_et_se_voit(self):
+        self.ctx.settings.interface_level = "avance"
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        page._beat()                      # un premier relevé des compteurs
+        self._jouer(page, CLAVIER, 0x90 | 3, 60, 96)
+        self.assertEqual(self._recus(), [(0x90, 60, 96)])
+        matrice = page._matrix
+        self.assertGreater(matrice._eclat("c", CLAVIER, "@deluge"), 0.0)
+        self.assertGreater(matrice._eclat("s", CLAVIER), 0.0)
+        self.assertGreater(matrice._eclat("d", "@deluge"), 0.0)
+        self.assertEqual(matrice._eclat("s", SURFACE), 0.0)
+        ligne = page._monitor_list.item(page._monitor_list.count() - 1).text()
+        self.assertIn("KeyStep 37 — note Do3, force 96 (canal 4)", ligne)
+        self.assertIn("→ 1", ligne)
+        self.assertIn("1 message relayé", page._stats_label.text())
+
+    def test_un_clic_sur_un_pad_allume_le_choisit_sans_le_changer(self):
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        self._pad(page, SURFACE, SYNTHE_GS)
+        self.assertEqual(page._matrix.selected(), (SURFACE, SYNTHE_GS))
+        self._pad(page, CLAVIER, "@deluge")
+        self.assertEqual(page._matrix.selected(), (CLAVIER, "@deluge"))
+        self.assertEqual(len(self.ctx.hub.routes), 2)
+        self.assertEqual(self._etat(page, SURFACE, SYNTHE_GS),
+                         ("active", "="))
+
+    def test_le_menu_d_un_pad_le_coupe_puis_le_retire(self):
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        self.assertIsNone(page.cell_menu(SURFACE, "@deluge"))
+        menu = page.cell_menu(CLAVIER, "@deluge")
+        self.assertEqual([a.text() for a in menu.actions()],
+                         ["Couper", "Retirer le branchement"])
+        menu.actions()[0].trigger()
+        _APP.processEvents()
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"), ("off", "A"))
+        menu = page.cell_menu(CLAVIER, "@deluge")
+        self.assertEqual(menu.actions()[0].text(), "Remettre en service")
+        menu.actions()[1].trigger()
+        _APP.processEvents()
+        self.assertEqual(self.ctx.hub.routes, [])
+        self.assertFalse(page._form.isVisibleTo(page))
+        self.assertIn("Aucun branchement choisi", page._route_title.text())
+
+    def test_un_clavier_relie_a_rien_est_propose(self):
+        page = self._page()
+        self.assertTrue(page._suggest_button.isVisibleTo(page))
+        self.assertFalse(page._connect_button.isVisibleTo(page))
+        self.assertIn(CLAVIER, page._offer_label.text())
+        self._clic(page._suggest_button)
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "A"))
+        # Reste la surface : c'est elle que la page propose ensuite.
+        self.assertIn(SURFACE, page._offer_label.text())
+        self._clic(page._suggest_button)
+        self.assertFalse(page._offer.isVisibleTo(page))
+
+    def test_un_deluge_detecte_mais_pas_connecte_se_connecte_d_ici(self):
+        self._hub(entrees=(CLAVIER,), sorties=(SYNTHE_GS,))
+        self.ports.deluge_au_bout = True
+        page = self._page()
+        self.assertTrue(page._connect_button.isVisibleTo(page))
+        self.assertFalse(page._suggest_button.isVisibleTo(page))
+        self.assertIn("pas connecté", page._offer_label.text())
+        # Aucun port réel n'est visible : la connexion échoue sans lever,
+        # et la barre d'état dit où l'on en est.
+        self._clic(page._connect_button)
+        self.assertIn("Deluge", self.messages[-1])
+
+    def test_sans_appareil_la_page_dit_quoi_brancher(self):
+        page = self._page(entrees=(), sorties=(SYNTHE_GS,))
+        self.assertFalse(page._matrix_area.isVisibleTo(page))
+        self.assertIn("Branchez un clavier", page._hint.text())
+        self.assertFalse(page._offer.isVisibleTo(page))
+        self.assertIn("Aucun port virtuel", page._daw_label.text())
+
+    def test_un_appareil_qui_arrive_parait_sans_rien_cliquer(self):
+        page = self._page(entrees=(CLAVIER,), sorties=("@deluge",))
+        self.ports.entrees.append(BOUCLE)
+        self.ports.sorties.append(BOUCLE)
+        self.ctx.hub.rescan()             # le battement de la fenêtre
+        page._beat()
+        self.assertIn(BOUCLE, page._matrix.sources())
+        self.assertIn(BOUCLE, page._matrix.destinations())
+        self.assertIn("« loopMIDI Port »", page._daw_label.text())
+        # Un port virtuel rend ce qu'on lui envoie : pas sur lui-même.
+        self._pad(page, BOUCLE, BOUCLE)
+        self.assertEqual(self.ctx.hub.routes, [])
+
+    def test_un_branchement_qui_attend_son_appareil_le_dit(self):
+        page = self._page()
+        self._pad(page, SURFACE, SYNTHE_GS)
+        self.ports.entrees.remove(SURFACE)
+        self.ctx.hub.rescan()
+        page._beat()
+        self.assertEqual(self._etat(page, SURFACE, SYNTHE_GS),
+                         ("waiting", "="))
+        self.assertIn("La source n'est pas branchée", page._route_text.text())
+        self.assertIn("la source n'est pas branchée".capitalize(),
+                      page._matrix.tip_at(
+                          *self._point(page, SURFACE, SYNTHE_GS)))
+
+    @staticmethod
+    def _point(page, source, dest):
+        centre = page._matrix.cell_center(source, dest)
+        return centre.x(), centre.y()
+
+    def test_les_infobulles_de_la_grille(self):
+        page = self._page()
+        self.assertEqual(page._matrix.tip_at(*self._point(
+            page, CLAVIER, "@deluge")),
+            "Cliquer pour brancher « KeyStep 37 » sur « Deluge »")
+        self.assertIn("lui-même", page._matrix.tip_at(*self._point(
+            page, "@deluge", "@deluge")))
+        self._pad(page, CLAVIER, "@deluge")
+        bulle = page._matrix.tip_at(*self._point(page, CLAVIER, "@deluge"))
+        self.assertIn("« KeyStep 37 » vers « Deluge »", bulle)
+        self.assertIn("En service.", bulle)
+        self.assertEqual(page._matrix.tip_at(2.0, 2.0), "")
+
+
+class TestLaFicheDuBranchement(HubCase):
+    """Le branchement choisi se règle dessous : cible, octave, filtres,
+    boutons d'une surface."""
+
+    def _branche(self, source=CLAVIER, dest="@deluge", avance=True):
+        if avance:
+            self.ctx.settings.interface_level = "avance"
+        page = self._page()
+        self._pad(page, source, dest)
+        return page, self.ctx.hub.routes[0]
+
+    def _route(self):
+        return self.ctx.hub.routes[0]
+
+    def test_la_cible_se_choisit_dans_la_liste(self):
+        from delugeapp.core import midifollow
+
+        self._hub()
+        self.ctx.hub.set_follow(
+            midifollow.FollowSettings(channel_a=1, tracks=((2, 7),)), 1)
+        page, _route = self._branche()
+        liste = page._target_box
+        self.assertEqual(liste.currentData(), "follow:a")
+        self.assertIn("MIDI Follow A, canal 1", liste.currentText())
+        # La piste que la machine a réglée : ce canal va à elle seule.
+        self._choisir(liste, "follow:track_2")
+        self.assertEqual(self._route().follow, "track_2")
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "P2"))
+        self._jouer(page, CLAVIER, 0x90, 60, 100)
+        self.assertEqual(self._recus()[-1], (0x90 | 6, 60, 100))
+        # Un canal imposé.
+        self._choisir(liste, "channel:10")
+        self.assertEqual((self._route().follow, self._route().channel_out),
+                         ("", 10))
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "10"))
+
+    def test_une_piste_sans_canal_attend_et_la_fiche_dit_quoi_regler(self):
+        page, _route = self._branche()
+        self._choisir(page._target_box, "follow:track_3")
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("waiting", "P3"))
+        self.assertIn("Channel Track 3", page._route_text.text())
+        self.assertIn("Le Deluge n'écoute pas cette cible",
+                      page._route_text.text())
+
+    def test_le_niveau_simple_ne_montre_que_les_pistes_reglees(self):
+        from delugeapp.core import midifollow
+
+        self._hub()
+        self.ctx.hub.set_follow(
+            midifollow.FollowSettings(channel_a=1, tracks=((4, 9),)), 1)
+        page, _route = self._branche(avance=False)
+        donnees = [page._target_box.itemData(i)
+                   for i in range(page._target_box.count())]
+        pistes = [d[7:] for d in donnees if d.startswith("follow:")]
+        self.assertEqual(pistes, ["a", "track_4"])
+        self.assertFalse(page._fine.isVisibleTo(page))
+        self.assertFalse(page._monitor_card.isVisibleTo(page))
+        # Le mode avancé les montre toutes, et les réglages fins.
+        self.ctx.settings.interface_level = "avance"
+        page.apply_level()
+        _APP.processEvents()
+        donnees = [page._target_box.itemData(i)
+                   for i in range(page._target_box.count())]
+        self.assertEqual(len([d for d in donnees
+                              if d.startswith("follow:")]), 17)
+        self.assertTrue(page._fine.isVisibleTo(page))
+        self.assertTrue(page._monitor_card.isVisibleTo(page))
+
+    def test_les_octaves_transposent_ce_qui_passe(self):
+        page, _route = self._branche()
+        self.assertEqual(page._transpose_label.text(), "à la hauteur jouée")
+        self._clic(page._octave_up_button)
+        self._clic(page._octave_up_button)
+        self.assertEqual(self._route().transpose, 24)
+        self.assertEqual(page._transpose_label.text(), "+2 octaves")
+        self._jouer(page, CLAVIER, 0x90, 60, 100)
+        self.assertEqual(self._recus()[-1], (0x90, 84, 100))
+        # Changer d'octave touche enfoncée relâche la note où elle sonnait.
+        self._clic(page._octave_down_button)
+        self.assertIn((0x80, 84, 0), self._recus())
+        self.assertEqual(page._transpose_label.text(), "+1 octave")
+        page._transpose_spin.setValue(-7)
+        _APP.processEvents()
+        self.assertEqual(self._route().transpose, -7)
+        self.assertEqual(page._transpose_label.text(), "−7 demi-tons")
+
+    def test_en_service_coupe_sans_retirer(self):
+        page, _route = self._branche()
+        entree = self.ports.ouvertes[CLAVIER]
+        self._clic(page._enabled_box)
+        self.assertFalse(self._route().enabled)
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"), ("off", "A"))
+        self.assertTrue(entree.fermee, "le port du clavier n'est pas rendu")
+        self.assertIn("Coupé.", page._route_text.text())
+        self._clic(page._enabled_box)
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "A"))
+
+    def test_les_cases_ferment_et_ouvrent_chaque_famille(self):
+        page, _route = self._branche()
+        self.assertEqual(
+            {nom: case.isChecked() for nom, case in page._passes.items()},
+            {"notes": True, "bend": True, "controllers": True,
+             "programs": False, "clock": False})
+        self._clic(page._pass_notes)
+        self._clic(page._pass_clock)
+        route = self._route()
+        self.assertFalse(route.notes)
+        self.assertTrue(route.clock)
+        self._jouer(page, CLAVIER, 0x90, 60, 100)
+        self._jouer(page, CLAVIER, 0xFA)
+        self.assertEqual(self._recus(), [(0xFA, 0, 0)])
+
+    def test_l_etendue_et_le_canal_ecoute(self):
+        page, _route = self._branche()
+        self.assertEqual(page._range_label.text(), "tout le clavier")
+        page._low_spin.setValue(48)
+        page._high_spin.setValue(72)
+        _APP.processEvents()
+        route = self._route()
+        self.assertEqual((route.low, route.high), (48, 72))
+        self.assertEqual(page._range_label.text(), "de Do2 à Do4")
+        self._choisir(page._channel_in_box, 2)
+        self.assertEqual(self._route().channel_in, 2)
+        self._jouer(page, CLAVIER, 0x90, 60, 100)       # canal 1 : écarté
+        self._jouer(page, CLAVIER, 0x91, 40, 100)       # hors de l'étendue
+        self._jouer(page, CLAVIER, 0x91, 60, 100)
+        self.assertEqual(self._recus(), [(0x90, 60, 100)])
+
+    def test_apprendre_un_bouton_puis_le_poser_sur_un_reglage(self):
+        page, _route = self._branche(source=SURFACE)
+        self.assertEqual(page._cc_table.rowCount(), 0)
+        self.assertFalse(page._forget_button.isEnabled())
+        self._clic(page._learn_button)
+        self.assertTrue(page._learn_button.isChecked())
+        self.assertIn("Tournez un bouton", self.messages[-1])
+        self._jouer(page, SURFACE, 0xB0 | 5, 21, 64)
+        self.assertEqual(self._route().cc_map, {21: 21})
+        self.assertFalse(page._learn_button.isChecked())
+        self.assertEqual(page._cc_table.rowCount(), 1)
+        self.assertEqual(page._cc_table.item(0, 0).text(), "Contrôleur 21")
+        self.assertIn("Contrôleur 21 appris", self.messages[-1])
+        # La liste propose les réglages que MIDI Follow pilote, par leur
+        # nom ; le filtre est le contrôleur 74 de la table d'usine.
+        choix = page._cc_table.cellWidget(0, 1)
+        self.assertTrue(choix.toolTip())
+        rang = choix.findData(74)
+        self.assertIn("(contrôleur 74)", choix.itemText(rang))
+        self.assertNotIn("Contrôleur 74", choix.itemText(rang))
+        self._choisir(choix, 74)
+        self.assertEqual(self._route().cc_map, {21: 74})
+        self._jouer(page, SURFACE, 0xB0 | 5, 21, 99)
+        self.assertEqual(self._recus()[-1], (0xB0, 74, 99))
+        # Oublié, le bouton repasse sous son numéro.
+        page._cc_table.selectRow(0)
+        self._clic(page._forget_button)
+        self.assertEqual(self._route().cc_map, {})
+        self.assertEqual(page._cc_table.rowCount(), 0)
+
+    def test_un_bouton_tourne_sans_apprendre_n_entre_pas_dans_la_table(self):
+        page, _route = self._branche(source=SURFACE)
+        self._jouer(page, SURFACE, 0xB0, 21, 64)
+        self.assertEqual(self._route().cc_map, {})
+        # Apprendre n'attend que le prochain : celui d'avant ne compte pas.
+        self._clic(page._learn_button)
+        page._beat()
+        self.assertEqual(self._route().cc_map, {})
+        self.assertTrue(page._learn_button.isChecked())
+        # Quitter la page arrête d'apprendre.
+        page.hide()
+        _APP.processEvents()
+        self.assertFalse(page._learn_button.isChecked())
+
+    def test_retirer_relache_ce_que_le_branchement_tenait(self):
+        page, _route = self._branche()
+        self._jouer(page, CLAVIER, 0x90, 60, 100)
+        sortie = self.ports.sorties_ouvertes["@deluge"]
+        self._clic(page._remove_button)
+        self.assertEqual(self.ctx.hub.routes, [])
+        self.assertEqual(sortie.notes_tenues(), set())
+        self.assertIn("relâché", self.messages[-1])
+        self.assertFalse(page._form.isVisibleTo(page))
+
+
+class TestLeHubEnMarche(HubCase):
+    """L'arrêt, le secours et le fusible."""
+
+    def test_tout_eteindre_relache_et_le_dit(self):
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        self._jouer(page, CLAVIER, 0x90, 60, 100)
+        self._clic(page._panic_button)
+        self.assertEqual(
+            self.ports.sorties_ouvertes["@deluge"].notes_tenues(), set())
+        self.assertIn("1 note relâchée", self.messages[-1])
+
+    def test_le_bouton_de_marche_arrete_et_relance(self):
+        from delugeapp import config
+        from delugeapp.core import midihub
+
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        self.assertTrue(page._power_button.isChecked())
+        entree = self.ports.ouvertes[CLAVIER]
+        self._clic(page._power_button)
+        self.assertFalse(self.ctx.hub.enabled)
+        self.assertTrue(entree.fermee)
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("waiting", "A"))
+        self.assertIn("à l'arrêt", page._hint.text())
+        self.assertEqual(self.messages[-1], "Hub MIDI à l'arrêt.")
+        self.assertFalse(midihub.load_config(config.HUB_PATH)[0])
+        self._clic(page._power_button)
+        self.assertTrue(self.ctx.hub.enabled)
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "A"))
+
+    def test_une_source_qui_s_emballe_se_voit_et_se_retablit(self):
+        from delugeapp.core import midihub
+
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        self.assertFalse(page._rearm_button.isVisibleTo(page))
+        with self.assertLogs("delugeapp.core.midihub", level="WARNING"):
+            for _ in range(midihub.REPEAT_MAX + 2):
+                self.ports.jouer(CLAVIER, 0x90, 60, 100)
+            self.ctx.hub.flush()
+        page._beat()
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge")[0], "tripped")
+        self.assertIn("boucle MIDI probable", page._route_text.text())
+        self.assertTrue(page._rearm_button.isVisibleTo(page))
+        self._clic(page._rearm_button)
+        self.assertEqual(self._etat(page, CLAVIER, "@deluge"),
+                         ("active", "A"))
+        self.assertFalse(page._rearm_button.isVisibleTo(page))
+
+    def test_vider_le_moniteur(self):
+        self.ctx.settings.interface_level = "avance"
+        page = self._page()
+        self._pad(page, CLAVIER, SYNTHE_GS)
+        page._beat()
+        for note in (60, 62, 64):
+            self._jouer(page, CLAVIER, 0x90, note, 100)
+        self.assertEqual(page._monitor_list.count(), 3)
+        self._clic(page._clear_button)
+        self.assertEqual(page._monitor_list.count(), 0)
+        # Le hub, lui, n'a rien oublié : la suite s'ajoute.
+        self._jouer(page, CLAVIER, 0x80, 60, 0)
+        self.assertEqual(page._monitor_list.count(), 1)
+        self.assertIn("relâchée", page._monitor_list.item(0).text())
+
+    def test_la_page_ne_bat_que_visible(self):
+        page = self._page()
+        self.assertTrue(page._timer.isActive())
+        page.hide()
+        _APP.processEvents()
+        self.assertFalse(page._timer.isActive())
+        page.show()
+        _APP.processEvents()
+        self.assertTrue(page._timer.isActive())
+
+    def test_la_minuterie_s_arrete_avec_le_contexte(self):
+        """La minuterie est branchée sur une méthode de la page, qui s'arrête
+        d'elle-même une fois le contexte fermé. Branchée sur une fermeture
+        ``guard``, elle tirait sur une page détruite : la suite tombait net
+        (12 novembre 2026)."""
+        page = self._page()
+        self.assertTrue(page._timer.isActive())
+        self.ctx.closed = True
+        page._timer.timeout.emit()
+        _APP.processEvents()
+        self.assertFalse(page._timer.isActive())
+
+    def test_la_page_parle_anglais(self):
+        from delugeapp import i18n
+
+        i18n.set_language("en")
+        self.addCleanup(i18n.set_language, "fr")
+        page = self._page()
+        self._pad(page, CLAVIER, "@deluge")
+        self.assertEqual(_libelle(page._power_button), "Hub running")
+        self.assertIn("MIDI hub: 1 patch active out of 1.",
+                      page._state_label.text())
+        self.assertIn("The selected instrument — MIDI Follow A, channel 1",
+                      page._target_box.currentText())
+        self.assertEqual(page._matrix._sous_titre(
+            self.ctx.hub.sources()[1]), "keyboard or surface")
+
+
+class TestLeHubDansLaFenetre(MainWindowCase):
+    """Le hub vit avec la fenêtre, quelle que soit la page affichée."""
+
+    def _fenetre(self, entrees=(CLAVIER,), sorties=("@deluge", SYNTHE_GS)):
+        from delugeapp.core import midihub
+
+        self.ports = _ports_simules().FauxPorts(entrees, sorties)
+        self.ctx.hub = midihub.MidiHub(self.ports)
+        return self.window()
+
+    def test_la_fenetre_cree_le_hub_sans_ouvrir_de_port(self):
+        """Sans branchement, le hub ne tient aucun port et aucun fil."""
+        win = self.window()
+        hub = self.ctx.hub
+        self.assertIsNotNone(hub)
+        self.assertEqual(hub.routes, [])
+        self.assertIsNone(hub._thread)
+        self.assertEqual(win._marks["Hub"], "M")
+
+    def test_la_pastille_dit_ou_en_sont_les_branchements(self):
+        from unittest import mock
+
+        from delugeapp.core import midiport
+
+        with mock.patch.object(midiport, "available", lambda: True):
+            win = self._fenetre()
+            win._poll_hub()
+            self.assertTrue(win._hub_chip.isVisibleTo(win))
+            self.assertEqual(win._hub_chip.text(), "Hub MIDI")
+            self.ctx.hub.connect(CLAVIER, "@deluge")
+            self.ctx.hub.connect("Surface absente", SYNTHE_GS)
+            win._poll_hub()
+            self.assertEqual(win._hub_chip.text(), "Hub 1/2")
+            self.assertIn("1 branchement en service sur 2",
+                          win._hub_chip.toolTip())
+            # Un clic y mène, d'où que l'on soit.
+            win.go_to("Kits")
+            win._hub_chip.click()
+            _APP.processEvents()
+            self.assertEqual(win._current_key(), "Hub")
+
+    def test_un_clavier_qu_on_branche_s_annonce(self):
+        win = self._fenetre(entrees=())
+        win._poll_hub()                   # le relevé de départ : rien à dire
+        dits = []
+        win.statusBar().messageChanged.connect(dits.append)
+        self.ports.entrees.append(CLAVIER)
+        win._poll_hub()
+        self.assertIn("« KeyStep 37 » branché : le hub MIDI peut le relier "
+                      "au Deluge", dits[-1])
+        self.ports.entrees.remove(CLAVIER)
+        win._poll_hub()
+        self.assertEqual(dits[-1], "« KeyStep 37 » débranché.")
+        # Avec un branchement, il le retrouve en revenant.
+        self.ctx.hub.connect(CLAVIER, "@deluge")
+        self.ports.entrees.append(CLAVIER)
+        win._poll_hub()
+        self.assertIn("ses branchements reprennent", dits[-1])
+        self.assertEqual(self.ctx.hub.state(self.ctx.hub.routes[0].uid),
+                         "active")
+
+    def test_un_clavier_deja_la_au_demarrage_ne_s_annonce_pas(self):
+        win = self._fenetre()
+        dits = []
+        win.statusBar().messageChanged.connect(dits.append)
+        win._poll_hub()
+        win._poll_hub()
+        self.assertEqual([d for d in dits if "branché" in d], [])
+
+    def test_le_hub_relaie_quelle_que_soit_la_page(self):
+        win = self._fenetre()
+        self.ctx.hub.connect(CLAVIER, "@deluge", follow="", channel_out=2)
+        win.go_to("Samples")
+        _APP.processEvents()
+        self.ports.jouer(CLAVIER, 0x90, 60, 100)
+        self.assertTrue(self.ctx.hub.flush())
+        self.assertEqual(self.ports.sorties_ouvertes["@deluge"].recus,
+                         [(0x91, 60, 100)])
+
+    def test_fermer_la_fenetre_relache_enregistre_et_arrete_le_hub(self):
+        from delugeapp import config
+        from delugeapp.core import midihub
+
+        win = self._fenetre()
+        route = self.ctx.hub.connect(CLAVIER, "@deluge", transpose=12)
+        self.ports.jouer(CLAVIER, 0x90, 60, 100)
+        self.ctx.hub.flush()
+        sortie = self.ports.sorties_ouvertes["@deluge"]
+        win.close()
+        _APP.processEvents()
+        self.assertEqual(sortie.notes_tenues(), set())
+        self.assertTrue(sortie.fermee)
+        self.assertIsNone(self.ctx.hub._thread)
+        _marche, lus = midihub.load_config(config.HUB_PATH)
+        self.assertEqual([(r.uid, r.transpose) for r in lus],
+                         [(route.uid, 12)])
+
+    def test_les_branchements_reviennent_a_la_seance_suivante(self):
+        from delugeapp import config
+        from delugeapp.config import AppContext
+        from delugeapp.core import midihub
+
+        midihub.save_config(config.HUB_PATH, True, [
+            midihub.Route(CLAVIER, "@deluge", follow="a", transpose=-12)])
+        ctx = AppContext(settings=self.ctx.settings, sd=self.sd, lib=self.lib,
+                         player=None)
+        hub = ctx.ensure_hub()
+        self.addCleanup(hub.close)
+        self.assertEqual([(r.source, r.transpose) for r in hub.routes],
+                         [(CLAVIER, -12)])
+        # Aucun port réel n'est visible pendant la suite : il attend.
+        self.assertEqual(hub.state(hub.routes[0].uid), "no_source")
+
+    def test_les_reglages_midi_follow_de_la_carte_vont_au_hub(self):
+        """``SETTINGS/MIDIFollow.XML`` : le canal que le Deluge a donné à
+        A, lu sur la carte, devient celui du branchement."""
+        dossier = self.root / "SETTINGS"
+        dossier.mkdir()
+        (dossier / "MIDIFollow.XML").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<defaults>\n'
+            "<settings><channels><a><channel>6</channel></a>"
+            "<track_2><channel>9</channel></track_2></channels>"
+            "</settings></defaults>\n", encoding="utf-8")
+        self._fenetre()
+        self.ctx.refresh_hub_follow()
+        hub = self.ctx.hub
+        self.assertEqual(hub.follow.channel_a, 6)
+        route = hub.connect(CLAVIER, "@deluge")
+        self.assertEqual(hub.channel_for(route), 6)
+        self.assertEqual(hub.advice(route), "")
+        piste = hub.connect("Autre", "@deluge", follow="track_2")
+        self.assertEqual(hub.channel_for(piste), 9)
+
+    def test_un_reglage_change_sur_la_machine_suit_la_synchronisation(self):
+        """Channel A changé sur le Deluge : ``MIDIFollow.XML`` arrive par la
+        synchronisation, et le hub envoie sur le nouveau canal."""
+        win = self._fenetre()
+        hub = self.ctx.hub
+        route = hub.connect(CLAVIER, "@deluge")
+        self.assertEqual(hub.channel_for(route), 1)
+        dossier = self.root / "SETTINGS"
+        dossier.mkdir()
+        (dossier / "MIDIFollow.XML").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<defaults>\n'
+            "<settings><channels><a><channel>12</channel></a></channels>"
+            "</settings></defaults>\n", encoding="utf-8")
+        win._work_received()
+        _APP.processEvents()
+        self.assertEqual(hub.channel_for(route), 12)
+        self.ports.jouer(CLAVIER, 0x90, 60, 100)
+        self.assertTrue(hub.flush())
+        self.assertEqual(self.ports.sorties_ouvertes["@deluge"].recus,
+                         [(0x9B, 60, 100)])
+
+    def test_la_colonne_se_resserre_dans_une_fenetre_basse(self):
+        """Douze pads de 40 pixels et quatre titres demandent 640 pixels :
+        une fenêtre de 640 en laisse 556 à la colonne. Les pads passent à
+        32, et retrouvent leur aise quand la place revient."""
+        from delugeapp.ui.widgets.chrome import NavPad
+
+        win = self.window()
+        win.resize(980, 640)
+        for _ in range(6):
+            _APP.processEvents()
+        self.assertTrue(win._rail_dense)
+        self.assertEqual({b.height() for b in win._buttons.values()},
+                         {NavPad.DENSE})
+        self.assertLessEqual(win._rail.layout().minimumSize().height(),
+                             win._rail.height())
+        win.resize(1200, 860)
+        for _ in range(6):
+            _APP.processEvents()
+        self.assertFalse(win._rail_dense)
+        self.assertEqual({b.height() for b in win._buttons.values()},
+                         {NavPad.HAUTEUR})
+
+    def test_la_page_tient_dans_la_plus_petite_fenetre(self):
+        """À 980 px, cinq cases sur une ligne poussaient toute la page hors
+        de la fenêtre : la grille défile dans son panneau, la page non."""
+        self.ctx.settings.interface_level = "avance"
+        win = self._fenetre(
+            entrees=("@deluge", CLAVIER, SURFACE, BOUCLE),
+            sorties=("@deluge", SYNTHE_GS, BOUCLE, "Autre synthé"))
+        route = self.ctx.hub.connect(SURFACE, "@deluge", cc_map={21: 74})
+        win.resize(980, 640)
+        win.go_to("Hub")
+        for _ in range(6):
+            _APP.processEvents()
+        page = win._pages["Hub"]
+        page.select(route.uid)
+        for _ in range(6):
+            _APP.processEvents()
+        zone = page._scroll
+        self.assertLessEqual(zone.widget().width(), zone.viewport().width())
+        self.assertEqual(zone.horizontalScrollBar().maximum(), 0)
+        self.assertTrue(page._bottom_row.empilee())
+        # La grille, elle, garde sa taille et défile dans son panneau.
+        self.assertGreater(page._matrix.width(),
+                           page._matrix_area.viewport().width())
+
+
+class TestLesFiguresDuManuelSuiventLesPages(WidgetCase):
+    """Les dessins du manuel citent les pages dans l'ordre de la colonne,
+    avec les raccourcis de la fenêtre."""
+
+    def test_l_ordre_et_les_raccourcis(self):
+        from delugeapp.ui import manuel_dessins as dessins
+        from delugeapp.ui.mainwindow import (RAIL_GROUPS, _page_classes,
+                                             _page_marks, _short_name)
+
+        classes = _page_classes()
+        self.assertEqual(list(dessins.ORDRE_PAGES),
+                         [_short_name(c) for c in classes])
+        self.assertEqual(dessins.TOUCHES_PAGES, _page_marks(classes))
+        self.assertEqual(set(dessins.GROUPES_PAGES), set(RAIL_GROUPS))
+        self.assertEqual({cle: classe.ICON for cle, classe in
+                          zip(dessins.ORDRE_PAGES, classes)},
+                         dessins.ICONES_PAGES)
+        self.assertEqual(dessins.FIGURES["pages"][1], len(classes))
 
 
 class TestAutoverification(unittest.TestCase):

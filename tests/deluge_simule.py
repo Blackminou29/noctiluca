@@ -54,6 +54,9 @@ class PortSimule:
         self.last_error = ""
         #: Destinataire direct des SysEx (``MidiIn.set_sysex_tap``).
         self.tap = None
+        #: Destinataire direct des messages courts
+        #: (``MidiIn.set_message_tap``) : le hub.
+        self.court = None
 
     # -- ouverture -------------------------------------------------------- #
 
@@ -107,6 +110,14 @@ class PortSimule:
         self.envoyes.append(("rt", int(status)))
         return self.is_open
 
+    def send(self, status, data1=0, data2=0) -> bool:
+        """Un message court tel quel (``MidiOut.send``) : ce que le hub
+        relaie."""
+        if not self.is_open:
+            return False
+        self.envoyes.append(("court", int(status), int(data1), int(data2)))
+        return True
+
     def all_notes_off(self, channel=None) -> None:
         self.envoyes.append(("panic",))
 
@@ -114,6 +125,9 @@ class PortSimule:
 
     def set_sysex_tap(self, tap) -> None:
         self.tap = tap
+
+    def set_message_tap(self, tap) -> None:
+        self.court = tap
 
     def poll(self, limit: int = 512) -> list[MidiMessage]:
         sortie, self.recus = self.recus[:limit], self.recus[limit:]
@@ -330,6 +344,9 @@ class DelugeSimule:
               stamp: int = 0) -> None:
         port = self.entrees[1]
         if port.is_open:
+            if port.court is not None and port.court(
+                    status, d1, d2, time.perf_counter()):
+                return
             port.recus.append(MidiMessage(status, d1, d2,
                                           int(time.monotonic() * 1000),
                                           int(stamp), b"",

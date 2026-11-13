@@ -43,7 +43,7 @@ ICON_NAMES = (
     "link", "warning", "check", "chevron-right", "chevron-down",
     "chevron-left", "plus",
     "minus", "filter", "grid", "list", "info", "backup", "midi", "atelier",
-    "home", "memo", "loop", "undo", "redo", "mute", "solo",
+    "home", "memo", "loop", "undo", "redo", "mute", "solo", "hub",
 )
 
 
@@ -506,8 +506,21 @@ def _draw_solo(p: QPainter, c: QColor) -> None:
         p.drawPath(path)
 
 
+def _draw_hub(p: QPainter, c: QColor) -> None:
+    """Un nœud et ses quatre branches : le hub, au centre des appareils."""
+    bouts = ((20, 24), (80, 24), (20, 76), (80, 76))
+    _pen(p, c, 6.0)
+    for x, y in bouts:
+        p.drawLine(QPointF(50, 50), QPointF(x, y))
+    _fill(p, c)
+    p.drawEllipse(QPointF(50, 50), 14, 14)
+    for x, y in bouts:
+        p.drawEllipse(QPointF(x, y), 8.5, 8.5)
+
+
 #: Table des fonctions de dessin, par nom d'icône.
 _DRAW = {
+    "hub": _draw_hub,
     "home": _draw_home,
     "memo": _draw_memo,
     "loop": _draw_loop,

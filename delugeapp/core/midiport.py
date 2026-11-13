@@ -394,7 +394,7 @@ class MidiOut:
     l'interface peut fermer le port.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, reset_on_close: bool = True) -> None:
         self._handle = None
         self._device: MidiDevice | None = None
         self._lock = threading.RLock()
@@ -403,6 +403,9 @@ class MidiOut:
         #: Vrai dès qu'un message de canal est parti : à la fermeture, il y
         #: a peut-être quelque chose à éteindre. Sinon, rien.
         self._canal = False
+        #: Faux pour qui relâche lui-même ses notes — le hub, qui sait
+        #: lesquelles il a fait passer : la fermeture n'envoie alors rien.
+        self._reset_on_close = bool(reset_on_close)
         #: Dernière erreur d'ouverture, en clair (vide si aucune).
         self.last_error = ""
 
@@ -468,7 +471,7 @@ class MidiOut:
             if self._handle is None:
                 return
             try:
-                if self._canal:
+                if self._canal and self._reset_on_close:
                     self.all_notes_off()
                     _winmm.midiOutReset(self._handle)
                 code = _winmm.midiOutClose(self._handle)
@@ -737,6 +740,11 @@ class MidiIn:
         #: (:data:`TRANSPORT`), appelé depuis le fil du pilote. Le message
         #: va **aussi** dans la file.
         self._realtime = None
+        #: Destinataire direct de chaque message court — le hub, qui le
+        #: relaie sans attendre que l'interface vide la file. Appelé depuis
+        #: le fil du pilote ; s'il rend ``True``, il garde le message, qui
+        #: n'entre pas dans la file.
+        self._court = None
         #: Dernière erreur d'ouverture, en clair.
         self.last_error = ""
 
@@ -776,6 +784,11 @@ class MidiIn:
                             # l'arrivée, pas quand l'interface vide la file.
                             horloge(statut, (brut >> 8) & 0x7F,
                                     (brut >> 16) & 0x7F, time.perf_counter())
+                        court = self._court
+                        if court is not None and court(
+                                statut, (brut >> 8) & 0xFF,
+                                (brut >> 16) & 0xFF, time.perf_counter()):
+                            return
                         self._push(statut, (brut >> 8) & 0xFF,
                                    (brut >> 16) & 0xFF,
                                    int(param2 or 0) & 0xFFFFFFFF)
@@ -935,6 +948,15 @@ class MidiIn:
         d'horloge ou de transport, dès son arrivée. Il ne doit rien faire de
         long : il est appelé par le fil du pilote. ``None`` le retire."""
         self._realtime = tap
+
+    def set_message_tap(self, tap) -> None:
+        """Confie chaque message court à ``tap(statut, data1, data2,
+        instant) -> bool`` dès son arrivée. S'il rend ``True``, il garde le
+        message, qui n'entre pas dans la file ; sinon le message suit aussi
+        son chemin habituel. Comme le rappel qui l'appelle, il ne fait
+        qu'empiler : ni fonction multimédia, ni verrou, ni attente.
+        ``None`` le retire."""
+        self._court = tap
 
     def poll(self, limit: int = 512) -> list[MidiMessage]:
         """Rend ce qui est arrivé depuis le dernier appel."""

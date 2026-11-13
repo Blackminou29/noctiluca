@@ -1,8 +1,8 @@
 # Améliorations possibles — Noctiluca
 
-**Relevé du 7 novembre 2026**, sur `master` (`c28827d`, v1.0.0 publiée), complété le soir même, repris le 8 novembre, puis le 9 après les essais sur la machine, et le 11 après le travail sur l'atelier.
+**Relevé du 7 novembre 2026**, sur `master` (`c28827d`, v1.0.0 publiée), complété le soir même, repris le 8 novembre, puis le 9 après les essais sur la machine, le 11 après le travail sur l'atelier, et le 13 après le hub MIDI.
 
-Les pistes faites ont été retirées. Leur détail (ce qui a été fait, mesuré et vérifié) est dans `REPRISE.md` : au §3 quinquagies pour le 7 novembre, au §3 unquinquagies pour le 8, au §3 duoquinquagies pour les essais du 9, au §3 triquinquagies pour l'atelier. Il ne reste ici que ce qui n'est pas fait, avec la raison. Tout ce qui reste attend la machine, ta décision, ou quelqu'un d'autre.
+Les pistes faites ont été retirées. Leur détail (ce qui a été fait, mesuré et vérifié) est dans `REPRISE.md` : au §3 quinquagies pour le 7 novembre, au §3 unquinquagies pour le 8, au §3 duoquinquagies pour les essais du 9, au §3 triquinquagies pour l'atelier, au §3 quaterquinquagies pour le hub. Il ne reste ici que ce qui n'est pas fait, avec la raison. Tout ce qui reste attend la machine, ta décision, ou quelqu'un d'autre.
 
 ---
 
@@ -97,6 +97,13 @@ Les essais demandent ta présence (fenêtre UAC). La signature évite l'avertiss
 * **Outils ▸ [Firmware du Deluge…]** le jour d'une nouvelle version stable : la machine s'installe-t-elle avec le `.bin` posé ?
 * **L'atelier** : charger « Calm Down 2 » complété.
 * **L'atelier, depuis le 11 novembre** (REPRISE §3 triquinquagies) : écrire un morceau dont le **volume d'une piste** a été réglé (un synthé baissé, le kit monté), et l'entendre sur la machine — le volume est écrit dans chaque clip de l'instrument (`soundParams`, `kitParams`), relu dans le fichier mais pas encore écouté sur le Deluge. De même un **clip doublé** (huit ou seize mesures) et un coup **doux** (vélocité 40) : mêmes champs que d'habitude, autres valeurs.
+* **Le hub MIDI, depuis le 13 novembre** (REPRISE §3 quaterquinquagies) — tout est éprouvé sur des ports simulés et le Deluge simulé, rien sur un vrai clavier : Windows n'en a jamais vu un sur ce PC.
+  * **Un clavier USB sur le Deluge** : page Hub MIDI ([[Ctrl+M]]), [Brancher sur le Deluge] ; jouer dans un clip de synthé, puis de kit (à partir de la note 36) ; la molette, la pédale ; débrancher le clavier en tenant une note — elle doit s'éteindre.
+  * **Le retard réel** par `winmm` : le moniteur (mode avancé) l'affiche ; ports simulés, 0,04 ms de médiane.
+  * **Une surface et ses boutons** : [Apprendre un bouton], le poser sur « Fréquence du filtre » ; ton Takeover est en Pickup, le bouton doit croiser la valeur avant de la prendre.
+  * **Deux surfaces sur deux pistes** : SHIFT + SELECT ▸ MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel Track 1 et 2, laisser la carte se synchroniser, puis « La piste 1 » et « La piste 2 » dans la fiche. La lecture de `<track_N>` dans `MIDIFollow.XML` vient du code du firmware : sur ta carte, aucune piste n'est encore réglée, la forme écrite par la machine reste à voir.
+  * **Avec Live** : un port en boucle (outils de Windows MIDI Services, ou loopMIDI) doit paraître dans la grille ; y brancher le clavier, le choisir comme entrée dans Live. Que Windows montre ces ports aux programmes `winmm` comme Noctiluca n'est pas vérifié.
+  * Mac et Linux : le hub y est muet, comme tout le MIDI (§3.2).
 * **Relectures** : le manuel devant la machine (surtout la partie III), et l'anglais par quelqu'un qui joue du Deluge en anglais.
 * **Rappels** : *Display Param* est peut-être resté allumé (MIDI-Follow ▸ Display Param). Sur la carte restent, de nos essais : `SONGS/Cool1 DAW.XML` (la copie pour Live) et `SAMPLES/RESAMPLE/ESSAI SIDECHAIN/output_000.wav` (l'export du sidechain). Sur le PC, dans `Desktop\musique\Cool1 — pour le DAW` : les trois sets Live de l'essai. Sur le Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Output est sur ON, et le firmware est la 1.3.0 corrigée (« 1.3.0-dev-156500e-dirty ») ; l'officiel est rangé dans `_BACKUP/firmware-20261109-111704` de la copie de travail. `C:\Users\sebas\dfw` (≈ 2 Go : le firmware cloné et sa chaîne de compilation) sert encore si les relecteurs de #5276 demandent une retouche ; à supprimer ensuite.
 
@@ -104,7 +111,8 @@ Les essais demandent ta présence (fenêtre UAC). La signature évite l'avertiss
 
 ## Ordre proposé
 
-1. **L'installateur** (3.3) : la désinstallation et le refus quand l'application est ouverte ; et les prochains passages sur GitHub (3.1), pour s'assurer que l'interblocage ne revient pas.
-2. **Les points ouverts par les essais** (§4) : la santé, puis la surveillance du prochain gros envoi.
-3. **L'horloge sous Windows** (1.2) : suivre la proposition #5276 jusqu'à son acceptation.
-4. **Le MIDI sur Mac et Linux** (3.2), quand un Mac ou un Linux sera à portée avec le Deluge.
+1. **Le hub MIDI avec un vrai clavier** (§5) : c'est ce qui fait de Noctiluca le centre de ton installation, et rien ne l'a encore éprouvé sur du matériel.
+2. **L'installateur** (3.3) : la désinstallation et le refus quand l'application est ouverte ; et les prochains passages sur GitHub (3.1), pour s'assurer que l'interblocage ne revient pas.
+3. **Les points ouverts par les essais** (§4) : la santé, puis la surveillance du prochain gros envoi.
+4. **L'horloge sous Windows** (1.2) : suivre la proposition #5276 jusqu'à son acceptation.
+5. **Le MIDI sur Mac et Linux** (3.2), quand un Mac ou un Linux sera à portée avec le Deluge.

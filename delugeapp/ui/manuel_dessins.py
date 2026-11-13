@@ -83,21 +83,30 @@ PAPIER = "#FAF8F4"
 FOND_OUVERTURE = "#1C1F26"
 CARTOUCHE = "#101319"
 
-#: Les onze pages, dans l'ordre de la colonne de gauche : l'accueil, ce qui
-#: crée, la bibliothèque et le pont vers le DAW, puis la carte.
-ORDRE_PAGES = ("Dashboard", "Atelier", "Generator", "Toolbox", "Samples",
-               "Synths", "Kits", "Songs", "Daw", "Health", "Settings")
-
-#: Les pages qui ouvrent un groupe de la colonne : Créer, Bibliothèque, La
+#: Les douze pages, dans l'ordre de la colonne de gauche : l'accueil, ce qui
+#: crée, la bibliothèque, ce qui relie — le DAW et le hub MIDI —, puis la
 #: carte.
-GROUPES_PAGES = ("Atelier", "Samples", "Health")
+ORDRE_PAGES = ("Dashboard", "Atelier", "Generator", "Toolbox", "Samples",
+               "Synths", "Kits", "Songs", "Daw", "Hub", "Health", "Settings")
+
+#: Les pages qui ouvrent un groupe de la colonne : Créer, Bibliothèque,
+#: Relier, La carte.
+GROUPES_PAGES = ("Atelier", "Samples", "Daw", "Health")
 
 #: L'icône de chaque page, celle de son pad dans la colonne de gauche.
 ICONES_PAGES = {"Dashboard": "home", "Samples": "samples",
                 "Synths": "synth", "Kits": "kit", "Songs": "song",
-                "Daw": "link",
+                "Daw": "link", "Hub": "hub",
                 "Generator": "wand", "Atelier": "atelier", "Toolbox": "memo",
                 "Health": "health", "Settings": "settings"}
+
+#: La touche du raccourci de chaque page, après ``Ctrl+`` : les chiffres
+#: dans l'ordre de la colonne, la lettre du hub MIDI, la virgule des
+#: Réglages (``mainwindow._page_marks``).
+TOUCHES_PAGES = {"Dashboard": "1", "Atelier": "2", "Generator": "3",
+                 "Toolbox": "4", "Samples": "5", "Synths": "6", "Kits": "7",
+                 "Songs": "8", "Daw": "9", "Hub": "M", "Health": "0",
+                 "Settings": ","}
 
 #: Les couleurs des cinq étapes de l'atelier, celles de sa barre d'étapes.
 COULEURS_ETAPES = (PAD_RED, PAD_PURPLE, PAD_GREEN, PAD_BLUE, PAD_AMBER)
@@ -522,12 +531,16 @@ def _fenetre(libelles: list[str]) -> QImage:
                          cadre.bottom() - barre.bottom() - 3 - 26)
         p.setBrush(QColor("#0E1218"))
         p.drawRect(colonne)
+        # Douze pads et quatre titres dans 445 points : un pas de 31, des
+        # titres de 12 — à 36 et 16, les Réglages sortaient de la fenêtre.
+        pas_pad, pas_titre = 31, 12
         groupes = 0
         for rang, cle in enumerate(ORDRE_PAGES):
             if cle in GROUPES_PAGES:
                 # Le titre du groupe, en petites capitales, et son filet.
                 groupes += 1
-                y_titre = colonne.top() + 8 + rang * 36 + (groupes - 1) * 16
+                y_titre = (colonne.top() + 7 + rang * pas_pad
+                           + (groupes - 1) * pas_titre)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor("#5A6270"))
                 p.drawRoundedRect(QRectF(colonne.left() + 12, y_titre + 2,
@@ -535,11 +548,11 @@ def _fenetre(libelles: list[str]) -> QImage:
                 p.setPen(_crayon(GOLD, 1.0, 0.45))
                 p.drawLine(QPointF(colonne.left() + 56, y_titre + 4),
                            QPointF(colonne.right() - 10, y_titre + 4))
-            y = colonne.top() + 10 + rang * 36 + groupes * 16
-            cellule = QRectF(colonne.left() + 12, y, 26, 26)
+            y = colonne.top() + 8 + rang * pas_pad + groupes * pas_titre
+            cellule = QRectF(colonne.left() + 12, y, 24, 24)
             couleur = PAGE_COLORS[cle]
             if cle == "Samples":
-                _boite(p, QRectF(colonne.left() + 6, y - 5, 138, 36),
+                _boite(p, QRectF(colonne.left() + 6, y - 3, 138, 30),
                        "#1B212B", rayon=8)
                 _pad_icone(p, cellule, couleur, ICONES_PAGES[cle], 0.4)
             else:
@@ -549,9 +562,9 @@ def _fenetre(libelles: list[str]) -> QImage:
                 p.drawRoundedRect(cellule.adjusted(1, 1, -1, -1), 5, 5)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor("#C8CDD5" if cle == "Samples" else "#4A515E"))
-            p.drawRoundedRect(QRectF(colonne.left() + 48, y + 9, 64, 8), 3, 3)
-            if rang < 10:
-                _texte(p, colonne.left() + 136, y + 5, str((rang + 1) % 10),
+            p.drawRoundedRect(QRectF(colonne.left() + 48, y + 8, 64, 8), 3, 3)
+            if TOUCHES_PAGES[cle] != ",":
+                _texte(p, colonne.left() + 136, y + 4, TOUCHES_PAGES[cle],
                        _police(8, 700), "#5A6270", "droite")
 
         # L'en-tête de la page : son treillis, son pad, son titre.
@@ -641,19 +654,20 @@ def _fenetre(libelles: list[str]) -> QImage:
 
 
 def _pages(libelles: list[str]) -> QImage:
-    """Les onze pages, chacune à la couleur de son pad, et leur raccourci :
-    ``Ctrl+1`` à ``Ctrl+0``, puis ``Ctrl+,`` pour les Réglages."""
+    """Les douze pages, chacune à la couleur de son pad, et leur raccourci :
+    ``Ctrl+1`` à ``Ctrl+0``, ``Ctrl+M`` pour le hub MIDI, ``Ctrl+,`` pour
+    les Réglages."""
     largeur, hauteur = 1000.0, 200.0
     with _Toile(largeur, hauteur) as (p, _t):
         pas = largeur / float(len(ORDRE_PAGES))
         for rang, cle in enumerate(ORDRE_PAGES):
             cx = pas * rang + pas / 2.0
-            cellule = QRectF(cx - 28, 22, 56, 56)
+            cellule = QRectF(cx - 26, 22, 52, 52)
             _pad_icone(p, cellule, PAGE_COLORS[cle], ICONES_PAGES[cle], 0.42)
-            _texte(p, cx, 94, _libelle(libelles, rang), _police(13, 700),
+            _texte(p, cx, 92, _libelle(libelles, rang), _police(12, 700),
                    ENCRE, "centre", pas - 4, 2)
-            _texte(p, cx, 158, "Ctrl+%d" % ((rang + 1) % 10) if rang < 10
-                   else "Ctrl+,", _police(11.5, 600), ENCRE_DOUCE, "centre")
+            _texte(p, cx, 158, "Ctrl+" + TOUCHES_PAGES[cle],
+                   _police(11.5, 600), ENCRE_DOUCE, "centre")
     return _t.image
 
 
@@ -1107,7 +1121,7 @@ def _boucle(libelles: list[str]) -> QImage:
 #: Les figures, et combien de libellés chacune attend.
 FIGURES: dict[str, tuple[Callable[[list[str]], QImage], int]] = {
     "fenetre": (_fenetre, 0),
-    "pages": (_pages, 11),
+    "pages": (_pages, 12),
     "flux": (_flux, 10),
     "plan": (_plan, 8),
     "pastille": (_pastille, 6),
