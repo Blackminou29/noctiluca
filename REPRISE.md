@@ -410,6 +410,25 @@ point faisable ici fait, testé, sa ligne retirée aussitôt. Contrat : SPEC §4
   renforcés ou code mort retiré.
 * L'autovérification depuis les sources : « ok decodeur : miniaudio 1.71 », tout en ordre.
 
+### Le premier passage sur GitHub (`0227d3c`, envoyé le soir même)
+
+* **Les trois paquets se sont construits**, autovérification comprise : `miniaudio` est emballé
+  sous Windows, macOS et Linux (« ok decodeur », sans quoi le paquet est refusé).
+* **La suite de tests a échoué sous Ubuntu (3) et macOS (4)**, passé sous Windows. Ce n'était
+  pas le travail du jour : le hub MIDI (`c5b08a6`), envoyé dans le même lot, passait là pour la
+  première fois. Ses tests tournent sur des ports simulés, mais la page demande à
+  `midiport.available()` si la machine parle MIDI, faux hors de Windows (« le hub attend
+  Windows »). `HubCase` tient désormais `available()` pour vrai. Vérifié par un lanceur qui
+  retire winmm (`simuler_hors_windows.py` du scratchpad) : sans le correctif, exactement les
+  trois échecs de GitHub ; avec, verts.
+* Le quatrième, sous macOS seulement : `test_accent_change_sans_tout_casser` lisait le dernier
+  message de la barre d'état, que l'inventaire de la carte (lancé à l'ouverture) écrasait
+  parfois. Il écoute maintenant les messages émis.
+* Le journal macOS signale aussi une famille « DejaVu Sans » absente (127 ms une fois) : elle
+  vient des titres du manuel (`ui/manuel.py`, `manuel_dessins.py`), pas de l'interface.
+* Les journaux complets ne se lisent que connecté : l'utilisateur les télécharge (Actions ▸
+  l'exécution ▸ ⋯ ▸ Download log archive) ; l'état des étapes, lui, est public par l'API.
+
 ### Ce qui attend
 
 * **La machine** (`ameliorations.md` §5) : entendre un arpège, un SVF, un warble et un

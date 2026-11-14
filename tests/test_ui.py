@@ -2556,9 +2556,15 @@ class TestMainWindowActions(MainWindowCase):
 
     def test_accent_change_sans_tout_casser(self):
         win = self.window()
+        # Les messages émis, pas le dernier : l'inventaire de la carte,
+        # lancé à l'ouverture, peut écrire juste après (vu sur le Mac de
+        # GitHub, 14 novembre 2026).
+        messages = []
+        win.statusBar().messageChanged.connect(messages.append)
         win._accent_changed("#2FAF6F")
         _APP.processEvents()
-        self.assertIn("accent", win.statusBar().currentMessage().lower())
+        self.assertTrue(any("accent" in m.lower() for m in messages),
+                        messages)
 
     def test_refresh_all_ne_leve_pas(self):
         win = self.window()
@@ -11885,6 +11891,20 @@ class HubCase(PageCase):
 
     ENTREES = ("@deluge", CLAVIER, SURFACE)
     SORTIES = ("@deluge", SYNTHE_GS)
+
+    def setUp(self):
+        super().setUp()
+        # Les ports simulés valent une machine qui parle MIDI : hors de
+        # Windows, ``midiport`` répond que non, et la page affichait « le
+        # hub attend Windows » (vu sur GitHub, Linux et macOS, 14 novembre
+        # 2026).
+        from unittest import mock
+
+        from delugeapp.core import midiport
+
+        patch = mock.patch.object(midiport, "available", lambda: True)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def _hub(self, entrees=None, sorties=None):
         from delugeapp.core import midifollow, midihub

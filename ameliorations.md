@@ -30,7 +30,7 @@ Mesuré le 8 novembre sur ta carte : **aucun son ne s'en sert** (`timeStretchEna
 
 ### 3.1 Les tests sur GitHub
 
-Au prochain passage sur GitHub (Windows, macOS, Linux) : vérifier que l'interblocage entre Qt et Python corrigé le 9 novembre ne revient pas, et que l'autovérification de chaque paquet dit « ok decodeur » — `miniaudio` (le MP3 et le FLAC à l'envoi) est une dépendance nouvelle du 14 novembre, jamais encore emballée. Journal lisible seulement par toi, connecté.
+Au prochain passage sur GitHub (Windows, macOS, Linux) : vérifier que l'interblocage entre Qt et Python corrigé le 9 novembre ne revient pas, et que les tests du hub MIDI passent hors de Windows (corrigés le 14 novembre, vérifiés ici seulement en simulant une machine sans MIDI). Journal lisible seulement par toi, connecté.
 
 ### 3.2 Le MIDI hors Windows
 
