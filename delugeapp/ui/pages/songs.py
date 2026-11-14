@@ -106,6 +106,9 @@ class SongsPage(Page):
         #: nouvelle demande, ou arrêté, ne joue pas.
         self._render = None
         self._ecoute = 0
+        #: Écoute du morceau entier : ``None`` quand le son joue en flux ;
+        #: sinon les morceaux reçus, joués d'un coup à la fin du calcul.
+        self._flux: list | None = []
 
     # -- construction ------------------------------------------------------- #
 
@@ -132,7 +135,7 @@ class SongsPage(Page):
         self._listen_song_button = tool_button(
             tr("Écouter le morceau"), "play",
             tr("Calculer le morceau entier sur l'ordinateur, sur son "
-               "arrangement, puis le jouer"))
+               "arrangement, et le jouer pendant que la suite se calcule"))
         self._listen_song_button.clicked.connect(
             self.guard(self._listen_song))
         actions.addWidget(self._listen_song_button)
@@ -499,25 +502,40 @@ class SongsPage(Page):
             self._listen_song()
 
     def _listen_song(self) -> None:
-        """Le morceau entier, sur son arrangement."""
+        """Le morceau entier, sur son arrangement : le début joue pendant
+        que la suite se calcule, quand le lecteur sait recevoir le son par
+        morceaux."""
         if self._song is None or self.sd is None:
             self.say(tr("Aucun morceau sélectionné."))
             return
+        if self.player is not None and hasattr(self.player, "play_stream"):
+            self._flux = []
+            self._start_render(self._render_song_progressively, None,
+                               tr("Rendu du morceau"), streamed=True)
+            return
         self._start_render(self._render_song, None, tr("Rendu du morceau"))
 
-    def _start_render(self, fn, row, title: str) -> None:
+    def _start_render(self, fn, row, title: str,
+                      streamed: bool = False) -> None:
         if self.player is None:
             self.say(tr("Aucune sortie audio disponible."))
             return
         self._stop()
         self._ecoute += 1
         self.say(title + "…")
+        extras = {}
+        if streamed:
+            extras["on_progress"] = self.guard(
+                partial(self._stream_chunk, self._ecoute))
+            done = partial(self._stream_end, self._ecoute)
+        else:
+            done = partial(self._play_rendered, self._ecoute)
         self._render = self.run(
             fn, self.sd, self._current, row,
-            on_result=self.guard(partial(self._play_rendered, self._ecoute)),
+            on_result=self.guard(done),
             on_error=self.guard(lambda m: self.say(
                 tr("Rendu impossible : %s") % m)),
-            title=title)
+            title=title, **extras)
 
     @staticmethod
     def _render_clip(sd, rel, row, should_stop=None):
@@ -541,6 +559,62 @@ class SongsPage(Page):
         return daw.render_mix(song, sd, progress=avance_,
                               should_stop=should_stop)
 
+    @staticmethod
+    def _render_song_progressively(sd, rel, _row, progress=None,
+                                   should_stop=None):
+        from ...core import daw
+
+        song = daw.from_deluge(sd.abs(rel))
+        return daw.render_progressively(song, sd, progress=progress,
+                                        should_stop=should_stop)
+
+    def _stream_chunk(self, ecoute: int, payload) -> None:
+        """Un morceau du son est prêt : le premier lance la lecture, les
+        suivants s'y ajoutent. Un lecteur qui ne sait pas (``winsound``)
+        les garde pour la fin du calcul."""
+        audio = getattr(payload, "audio", None)
+        if ecoute != self._ecoute or audio is None:
+            return
+        if self._flux is None:          # la lecture tourne déjà
+            if not self.player.extend_stream(audio):
+                # Une autre lecture l'a remplacée : la suite ne sert plus.
+                self._drop_render()
+            return
+        if not self._flux:
+            try:
+                self.player.set_volume(self.ctx.settings.preview_volume)
+                if self.player.play_stream(audio, 44100):
+                    self._flux = None
+                    self.say(tr("Lecture — la suite du morceau se calcule…"))
+                    return
+            except Exception as exc:  # noqa: BLE001 - audio indisponible
+                log.debug("lecture en flux impossible : %s", exc)
+        self._flux.append(audio)        # joué d'un coup, à la fin du calcul
+
+    def _stream_end(self, ecoute: int, rest) -> None:
+        """Le calcul est fini : la queue du morceau rejoint la lecture, ou,
+        sans flux, le morceau entier se joue d'un coup."""
+        if ecoute != self._ecoute:
+            return
+        flux, self._flux = self._flux, []
+        if flux is None:
+            self._render = None
+            if rest is not None:
+                self.player.extend_stream(rest)
+            self.player.end_stream()
+            self.say(tr("Lecture…"))
+            return
+        if rest is not None:
+            flux.append(rest)
+        audio = None
+        if flux:
+            import numpy as np
+
+            audio = np.concatenate(flux)
+            if audio.shape[0] == 0:
+                audio = None
+        self._play_rendered(ecoute, audio)
+
     def _play_rendered(self, ecoute: int, audio) -> None:
         if ecoute != self._ecoute:
             return                      # dépassé, ou arrêté
@@ -557,8 +631,8 @@ class SongsPage(Page):
             log.debug("lecture impossible : %s", exc)
             self.say(tr("Lecture impossible : %s") % exc)
 
-    def _stop(self) -> None:
-        """Arrête la lecture, et le calcul s'il tourne encore."""
+    def _drop_render(self) -> None:
+        """Oublie le calcul en cours, et l'arrête s'il tourne encore."""
         self._ecoute += 1
         if self._render is not None:
             try:
@@ -566,6 +640,10 @@ class SongsPage(Page):
             except RuntimeError:        # le fil a déjà fini
                 pass
             self._render = None
+
+    def _stop(self) -> None:
+        """Arrête la lecture, et le calcul s'il tourne encore."""
+        self._drop_render()
         if self.player is not None:
             try:
                 self.player.stop()

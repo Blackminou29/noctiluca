@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 
 from ..core import cardimport
 from ..core.delugefiles import WRITE_RATE
-from ..i18n import tr
+from ..i18n import tr, untranslated
 from . import tasks
 from .theme import PAD, PAD_AMBER
 
@@ -57,6 +57,18 @@ def local_paths(mime) -> list[Path]:
             if chemin.exists():
                 sortie.append(chemin)
     return sortie
+
+
+def open_filter() -> str:
+    """Le filtre du dialogue « Envoyer au Deluge » : ce que l'envoi sait
+    poser — les sons compressés quand le décodeur est là."""
+    from ..core import compressed
+
+    motifs = untranslated("*.wav *.WAV *.aif *.aiff *.xml *.XML")
+    if compressed.available():
+        motifs += untranslated(" *.mp3 *.MP3 *.flac *.FLAC *.ogg *.OGG")
+    return (tr("Sons, presets, kits et morceaux du Deluge (%s)") % motifs
+            + ";;" + tr("Tous les fichiers (*)"))
 
 
 def where_it_goes(ctx) -> str:

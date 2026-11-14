@@ -164,6 +164,35 @@ def _audio() -> bool:
     return False
 
 
+def _decodeur() -> bool:
+    """miniaudio, qui décode le MP3, le FLAC et l'Ogg à l'envoi. Faute de
+    pouvoir fabriquer un MP3 ici, il décode un petit WAV : sa bibliothèque
+    compilée est chargée et répond. Absent des sources, c'est un manque ;
+    absent du paquet, un échec."""
+    import numpy as np
+
+    from delugeapp.core import compressed, wav
+
+    if not compressed.available():
+        if getattr(sys, "frozen", False):
+            log.error("ÉCHEC   decodeur : miniaudio absent du paquet")
+            return False
+        log.warning("MANQUE  decodeur : miniaudio absent, le MP3 et le "
+                    "FLAC restent sur le PC")
+        return True
+    with tempfile.TemporaryDirectory(prefix="noctiluca-autotest-") as d:
+        essai = Path(d) / "essai.wav"
+        wav.write(essai, np.zeros((441, 2), np.float32), 44100, 16)
+        son = compressed._ma.decode_file(str(essai))
+    if son.num_frames != 441:
+        log.error("ÉCHEC   decodeur : %d trames décodées sur 441",
+                  son.num_frames)
+        return False
+    log.info("ok      decodeur : miniaudio %s",
+             getattr(compressed._ma, "__version__", "?"))
+    return True
+
+
 def _ecoute() -> bool:
     """Un son rendu par les boucles compilées : numba, llvmlite, et le
     dossier où numba garde son code (un paquet n'a pas de sources à côté
@@ -309,6 +338,7 @@ def run(rapport: str | None = None, fenetre: bool = True) -> int:
                  _verifier("manuel", _manuel),
                  _verifier("tables", _tables),
                  _verifier("audio", _audio),
+                 _verifier("decodeur", _decodeur),
                  _verifier("ecoute", _ecoute)]
         if fenetre:
             bilan.append(_verifier("fenetre", lambda: _fenetre(app)))

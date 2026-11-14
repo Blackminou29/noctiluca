@@ -4156,6 +4156,312 @@ class TestTraitementDuFirmware(unittest.TestCase):
                 self.assertLess(float(np.max(np.abs(got - ref))),
                                 1e-3 * float(np.max(np.abs(ref))))
 
+    @staticmethod
+    def _svf_entier(freq, res, morph, band, x):
+        """``SVFilter`` (``setConfig`` et ``doSVF``, 1.3), en entiers 32 bits
+        comme le firmware : débordements, ``smmul`` et ``smmulr``,
+        ``getTanHUnknown`` sur la table. ``morph`` en Q28."""
+        from delugeapp.core import dsp
+
+        def wrap(v):
+            return ((v + (1 << 31)) & 0xFFFFFFFF) - (1 << 31)
+
+        def m32(a, b):
+            return wrap((a * b) >> 32)
+
+        def m32r(a, b):
+            return wrap((a * b + (1 << 31)) >> 32)
+
+        def lsat(v, s):
+            return max(-(1 << 31), min((1 << 31) - 1, v << s))
+
+        tan = [int(v) for v in dsp.table("tanTable")]
+        tanh = [int(v) for v in dsp.table("tanHSmall")]
+
+        def tanh3(v):
+            w = (max(-(1 << 28), min((1 << 28) - 1, v)) << 3) + (1 << 31)
+            k, s2 = w >> 24, (w >> 8) & 65535
+            return wrap(tanh[k] * (65536 - s2) + tanh[k + 1] * s2) >> 5
+
+        one = (1 << 31) - 1
+        f = lsat(freq, 5)
+        which, further = f >> 25, (f << 6) & 2147483647
+        v1, v2 = tan[which], tan[min(which + 1, 64)]
+        tanned = (wrap((v2 * further) >> 32)
+                  + wrap((v1 * (2147483647 - further)) >> 32)) << 1
+        div = int(288230376151711744.0 / float(134217728 + (tanned >> 1)))
+        fc = m32r(tanned, div) << 4
+        fc = fc + m32(fc, int(one * 0.25))
+        q = one - 4 * res
+        k_in = (q >> 1) + (one >> 1)
+        q = m32r(q, q) << 1
+        m = lsat(morph, 2)
+        half = one >> 1
+        if band and m > half:
+            m = 2 * (m - half)
+            c_low, c_band, c_high = 0, one - m, m
+        elif band:
+            m = 2 * m
+            c_low, c_band, c_high = one - m, m, 0
+        else:
+            c_low, c_band, c_high = one - m, 0, m
+        low = bande = 0
+        out = []
+        for v in x:
+            v = m32(k_in, v)
+            memo = []
+            for _pas in range(2):
+                low = wrap(low + 2 * m32(bande, fc))
+                high = wrap(wrap(v - low) - 2 * m32(bande, q))
+                bande = wrap(2 * m32(high, fc) + bande)
+                memo.append((low, high, bande))
+                if not _pas:
+                    bande = tanh3(bande)
+                    memo[0] = (low, high, bande)
+            lo, hi, ba = (wrap(memo[0][i] + memo[1][i]) for i in range(3))
+            r = m32r(lo, c_low)
+            r = wrap(r + ((hi * c_high + (1 << 31)) >> 32))
+            if band:
+                r = wrap(r + ((ba * c_band + (1 << 31)) >> 32))
+            bande = tanh3(bande)
+            out.append(wrap(3 * r))
+        return np.array(out, dtype=np.float64)
+
+    def test_svf_contre_le_firmware_entier(self):
+        """Le SVF porté suit le calcul entier du firmware : passe-bas,
+        dosages du « morph », bande, résonance jusqu'à la saturation de la
+        bande."""
+        d = self.dsp
+        n = 1500
+        t = np.arange(n)
+        x = np.round(20000000 * np.sin(2 * np.pi * 220 * t / 44100)
+                     + 6000000 * np.sin(2 * np.pi * 3170 * t / 44100))
+        for mode, freq, res, morph in (
+                ("SVF_Notch", 2000000, 0, 0),
+                ("SVF_Notch", 9000000, 400000000, 0),
+                ("SVF_Notch", 40000000, 134217728, 300000000),
+                ("SVF_Band", 9000000, 268435456, 100000000),
+                ("SVF_Band", 20000000, 500000000, 400000000)):
+            with self.subTest(mode=mode, freq=freq, res=res, morph=morph):
+                ref = self._svf_entier(freq, res, morph, mode == "SVF_Band",
+                                       x.astype(np.int64).tolist())
+                cfg = d.svf_config(mode, [freq] * 12, [res] * 12,
+                                   [morph] * 12)
+                got = d.svf_process(x, cfg)
+                self.assertGreater(float(np.max(np.abs(ref))), 1e6)
+                self.assertLess(float(np.max(np.abs(got - ref))),
+                                1e-3 * float(np.max(np.abs(ref))))
+
+    def test_le_morph_du_svf_dose_ses_sorties(self):
+        """« Notch » : du passe-bas (morph 0) au passe-haut (morph au
+        maximum) ; « Band » : passe-bas, bande au milieu, passe-haut. La
+        courbe de l'interface redonne la réponse impulsionnelle."""
+        d = self.dsp
+        freqs = np.array([60.0, 15000.0])
+
+        def niveaux(mode, morph):
+            cfg = d.svf_config(mode, [4e6], [0.0], [morph])
+            return np.abs(d.svf_response(cfg, freqs))
+
+        bas, haut = niveaux("SVF_Notch", 0.0), niveaux("SVF_Notch", 5.3e8)
+        self.assertAlmostEqual(float(bas[0]), 1.5, delta=0.01)   # « × 1,5 »
+        self.assertLess(float(bas[1]), 0.05)
+        self.assertLess(float(haut[0]), 0.05)
+        self.assertGreater(float(haut[1]), 1.0)
+        milieu = niveaux("SVF_Band", 2.684e8)
+        self.assertLess(float(np.max(milieu)), 0.2)
+        cfg = d.svf_config("SVF_Band", [4e6], [0.0], [2.684e8])
+        coupure = np.abs(d.svf_response(cfg, [800.0, 1500.0, 3000.0]))
+        self.assertGreater(float(np.max(coupure)), 1.0)
+
+    def test_un_son_svf_se_filtre_en_passe_bas_et_en_passe_haut(self):
+        """Le SVF d'un son était rendu comme une échelle 12 dB, et son
+        passe-haut comme une échelle : chacun a maintenant le sien."""
+        from delugeapp.core import render
+
+        def centroide(lpf, hpf, cutoff=None, hpf_freq=None):
+            preset = SynthPreset.new("S")
+            son = preset.sound
+            son.osc1.type = "saw"
+            son.unison_num = 1
+            son.patch_cables = []
+            son.lpf_mode, son.hpf_mode = lpf, hpf
+            if cutoff is not None:
+                son.set_param("lpfFrequency", from_display(cutoff, scale=50))
+            if hpf_freq is not None:
+                son.set_param("hpfFrequency", from_display(hpf_freq,
+                                                           scale=50))
+            mono = render.render_sound(son, note=36, seconds=0.5,
+                                       effects=False).mean(axis=1)
+            return analysis.spectral(mono, 44100)["centroid"], mono
+
+        ouvert, _ = centroide("SVF_Notch", "off")
+        ferme, svf = centroide("SVF_Notch", "off", cutoff=15)
+        _c, echelle = centroide("12dB", "off", cutoff=15)
+        self.assertLess(ferme, 0.6 * ouvert)
+        self.assertGreater(float(np.max(np.abs(svf - echelle))), 0.01)
+        coupe_bas, haut_svf = centroide("SVF_Notch", "SVF_Notch", hpf_freq=30)
+        self.assertGreater(coupe_bas, 1.3 * ouvert)
+        _c, haut_echelle = centroide("SVF_Notch", "HPLadder", hpf_freq=30)
+        self.assertGreater(float(np.max(np.abs(haut_svf - haut_echelle))),
+                           0.01)
+
+    @staticmethod
+    def _warble_entier(x_l, x_r, rate, depth, offset_param, feedback_param):
+        """``processOneModFXSample<WARBLE, stéréo>`` et ses deux LFO
+        « warbler » (``lfo.h``), en entiers 32 bits comme le firmware, à la
+        graine de ``waves.cpp``."""
+        def wrap(v):
+            return ((v + (1 << 31)) & 0xFFFFFFFF) - (1 << 31)
+
+        def m32(a, b):
+            return wrap((a * b) >> 32)
+
+        def m32r(a, b):
+            return wrap((a * b + (1 << 31)) >> 32)
+
+        a = feedback_param >> 1
+        b = 2147483647 - ((a + 1073741824) >> 2) * 3
+        c = m32(b, b)
+        d = m32(b, c)
+        feedback = wrap(2147483648 - (d << 2))
+        k_offset = ((511 << 16) + (3 << 16)) >> 1
+        offset = k_offset + m32(k_offset, offset_param)
+        amount = m32(offset, depth) << 1
+        cong = [380116160]
+        lfos = [[0, 0, 0, 0], [0, 0, 0, 0]]     # phase, valeur, cible, vitesse
+        incs = [rate, m32(rate, int(0.97 * 2147483647)) << 1]
+
+        def render(lfo, inc):
+            inc = (inc * 2) & 0xFFFFFFFF
+            if lfo[0] + inc > 0xFFFFFFFF:
+                cong[0] = (69069 * cong[0] + 1234567) & 0xFFFFFFFF
+                lfo[2] = wrap(cong[0])
+                lfo[3] = 0
+            lfo[3] = wrap(lfo[3] + m32(wrap(lfo[2] - lfo[1]), inc >> 8))
+            lfo[1] = max(-(1 << 31), min((1 << 31) - 1, lfo[1] + lfo[3]))
+            lfo[0] = (lfo[0] + inc) & 0xFFFFFFFF
+            return lfo[1]
+
+        buf = [[0] * 512, [0] * 512]
+        write = 0
+        out = [[], []]
+        for v_l, v_r in zip(x_l, x_r):
+            valeurs = [render(lfos[0], incs[0]), render(lfos[1], incs[1])]
+            for ch, v in ((0, v_l), (1, v_r)):
+                t = m32(valeurs[ch], amount) + offset
+                s2 = (t & 65535) << 15
+                s1 = (65535 << 15) - s2
+                pos = write - (t >> 16)
+                sortie = m32r(buf[ch][pos & 511], s1) \
+                    + m32r(buf[ch][(pos - 1) & 511], s2)
+                buf[ch][write] = wrap(m32r(sortie, feedback) + v)
+                out[ch].append(wrap(sortie << 2))
+            write = (write + 1) & 511
+        return np.array(out, dtype=np.float64)
+
+    def test_tape_warble_contre_le_firmware_entier(self):
+        """Le « tape warble » porté suit le calcul entier du firmware : LFO
+        aléatoires lissés, retard modulé, rétroaction, sortie mouillée
+        seule. Il était rendu comme un chorus."""
+        d = self.dsp
+        n = 30000
+        t = np.arange(n)
+        x = np.round(20000000 * np.sin(2 * np.pi * 220 * t / 44100)
+                     + 6000000 * np.sin(2 * np.pi * 3170 * t / 44100))
+        stereo = np.stack([x, np.roll(x, 37)])
+        for rate, depth, offset, feedback in (
+                (194783, 526133494, 0, 0),
+                (600000, 1000000000, 700000000, -500000000)):
+            with self.subTest(rate=rate, offset=offset):
+                ref = self._warble_entier(
+                    stereo[0].astype(np.int64).tolist(),
+                    stereo[1].astype(np.int64).tolist(), rate, depth, offset,
+                    feedback)
+                got, _ = d.mod_fx(stereo, "TapeWarble", rate, depth, offset,
+                                  feedback, 1.0)
+                self.assertGreater(float(np.max(np.abs(ref))), 1e7)
+                self.assertLess(float(np.max(np.abs(got - ref))),
+                                1e-3 * float(np.max(np.abs(ref))))
+        # Rien que le retard : silence le temps du premier passage.
+        self.assertLess(float(np.max(np.abs(got[:, :100]))), 1.0)
+
+    @staticmethod
+    def _melange(secondes=3.0, gain_db=0.0):
+        t = np.arange(int(44100 * secondes)) / 44100.0
+        return np.stack([np.sin(2 * np.pi * 110 * t) * (1 + np.sin(3 * t)),
+                         np.sin(2 * np.pi * 165 * t) * (1 + np.cos(3 * t))]) \
+            * float(1 << 24) * 10 ** (gain_db / 20)
+
+    def test_le_compresseur_maitre_au_repos_garde_le_gain_de_base(self):
+        """Seuil nul, volume d'usine : la sortie d'avant — gain fixe puis
+        saturation —, vérifiée contre la machine, à 10⁻⁵ près."""
+        d = self.dsp
+        x = self._melange()
+        avant = np.stack([d.tanh_antialiased(c * d._COMPRESSOR_SCALE, 3)[0]
+                          for c in x]) * (128.0 / d.Q31)
+        self.assertLess(float(np.max(np.abs(d.output_stage(x) - avant))),
+                        1e-5)
+
+    def test_le_compresseur_maitre_limite_et_comprime(self):
+        """À seuil nul, il limite quand sa sortie dépasse le volume du
+        morceau : un mélange poussé de 24 dB, ou un morceau au volume
+        baissé. Réglé, il comprime et rattrape le niveau."""
+        d = self.dsp
+
+        def niveau(y):
+            return 20 * np.log10(np.sqrt(np.mean(y[:, 44100:] ** 2)))
+
+        fort = self._melange(gain_db=24.0)
+        repos = d.MasterCompressor()
+        sans = np.stack([d.tanh_antialiased(c * d._COMPRESSOR_SCALE, 3)[0]
+                         for c in fort]) * (128.0 / d.Q31)
+        self.assertLess(niveau(d.output_stage(fort, repos)), niveau(sans) - 0.5)
+        x = self._melange()
+        bas = d.MasterCompressor(final_volume=float(1 << 20))
+        self.assertLess(niveau(d.output_stage(x, bas)),
+                        niveau(d.output_stage(x)) - 2.0)
+        regle = d.MasterCompressor(threshold=float(1 << 30),
+                                   ratio=float(1 << 30))
+        comprime = d.output_stage(x, regle)
+        self.assertNotAlmostEqual(niveau(comprime), niveau(d.output_stage(x)),
+                                  delta=0.5)
+
+    def test_le_compresseur_maitre_est_causal(self):
+        """Le gain d'un bloc vient de la sortie du précédent : le début d'un
+        rendu partiel, coupé entre deux blocs de 128, est celui du rendu
+        complet (l'écoute en flux). Un bloc tronqué, lui, a sa propre
+        rampe — comme une fenêtre plus courte sur la machine."""
+        d = self.dsp
+        x = self._melange(gain_db=24.0)
+        regle = d.MasterCompressor(threshold=float(1 << 30), hpf=float(1 << 30))
+        plein = d.output_stage(x, regle)
+        coupe = 391 * d.BLOCK
+        debut = d.output_stage(x[:, :coupe], regle)
+        np.testing.assert_array_equal(debut, plein[:, :coupe])
+
+    def test_le_compresseur_maitre_sans_numba(self):
+        """Sans numba, chaque bloc d'un coup : la même sortie, détection
+        filtrée et mélange sec compris."""
+        d = self.dsp
+        x = self._melange(secondes=1.0, gain_db=20.0)
+        for comp in (d.MasterCompressor(),
+                     d.MasterCompressor(threshold=float(1 << 30),
+                                        hpf=float(1 << 30),
+                                        blend=float(1 << 30))):
+            with self.subTest(comp=comp):
+                (a, r, seuil, fraction, hpf_a, er, volume, wet,
+                 dry) = d._compressor_constants(comp)
+                gain = min(np.exp(comp.base_gain + er), 31.0)
+                courant = np.floor(gain * volume) * 256.0
+                blocs = np.empty((2, x.shape[1]))
+                d._compressor_blocks(x, a, r, seuil, fraction, hpf_a, er,
+                                     volume, wet, dry, comp.base_gain,
+                                     courant, blocs)
+                attendu = d.output_stage(x, comp)
+                np.testing.assert_allclose(blocs * (128.0 / d.Q31), attendu,
+                                           atol=1e-6)
+
     def test_compensation_de_niveau_des_filtres(self):
         """``filterGain`` : l'échelle froide divise par deux sans
         résonance, rend 1,25 au réglage 25 et 1,5 en butée ; le « drive »
@@ -11114,6 +11420,104 @@ class TestEnvoyerAuDeluge(unittest.TestCase):
         self.assertEqual(wav.probe(sur_la_carte).bit_depth, 24)
         self.assertTrue(np.array_equal(avant, apres))
 
+    # -- les sons compressés : décodés en WAV ------------------------------- #
+
+    def _compresse(self, nom):
+        """Un son de ``tests/donnees``, copié sur le PC : la sinusoïde de
+        :func:`_son` sur un dixième de seconde, compressée par ffmpeg 8.1
+        (FLAC 16 et 24 bits ; MP3 mono à 22 kHz, 64 kb/s ; Vorbis ; et un
+        Opus dans un ``.ogg``, que le décodeur ne lit pas)."""
+        import shutil
+
+        from delugeapp.core import compressed
+
+        if not compressed.available():
+            self.skipTest("miniaudio absent")
+        cible = self.pc / nom
+        shutil.copyfile(Path(__file__).parent / "donnees" / nom, cible)
+        return cible
+
+    def test_un_flac_arrive_en_wav_a_l_echantillon_pres(self):
+        for nom, profondeur in (("sinus16.flac", 16), ("sinus24.flac", 24)):
+            with self.subTest(nom):
+                self._compresse(nom)
+                plan = self._plan(nom)
+                rel = "SAMPLES/" + nom.replace(".flac", ".wav")
+                self.assertEqual(self._rels(plan, "convert"), [rel])
+                item = plan.of("convert")[0]
+                self.assertIn("FLAC", item.reason)
+                resultat = self.ci.apply_import(plan, self.sd)
+                self.assertEqual(resultat.converted, [rel])
+                sur_la_carte = self.carte / rel
+                # Le câble transporte le WAV, pas le FLAC : le plan le savait.
+                self.assertEqual(item.size, sur_la_carte.stat().st_size)
+                self.assertEqual(wav.deluge_problem(sur_la_carte), ("", False))
+                info = wav.probe(sur_la_carte)
+                self.assertEqual((info.bit_depth, info.channels,
+                                  info.sample_rate, info.frames),
+                                 (profondeur, 2, 44100, 4410))
+                attendu, _ = wav.read(_son(self.pc / "ref.wav", duree=0.1,
+                                           profondeur=profondeur, canaux=2))
+                relu, _ = wav.read(sur_la_carte)
+                # Au plus un pas de quantification : la sinusoïde de
+                # référence est recalculée ici, sur un autre processeur
+                # peut-être.
+                self.assertLessEqual(float(np.max(np.abs(relu - attendu))),
+                                     1.0 / 2 ** (profondeur - 1) + 1e-9)
+
+    def test_un_mp3_garde_sa_frequence_et_ses_canaux(self):
+        """``miniaudio`` rend tout en stéréo à 44,1 kHz si on le laisse
+        faire : un MP3 mono à 22 kHz doit arriver tel qu'il est."""
+        self._compresse("sinus22k.mp3")
+        plan = self._plan("sinus22k.mp3", dest="SAMPLES/DRUMS/Kick")
+        rel = "SAMPLES/DRUMS/Kick/sinus22k.wav"
+        self.assertEqual(self._rels(plan, "convert"), [rel])
+        self.assertEqual(self.ci.apply_import(plan, self.sd).errors, [])
+        info = wav.probe(self.carte / rel)
+        self.assertEqual((info.channels, info.sample_rate, info.bit_depth,
+                          info.frames), (1, 22050, 16, 2205))
+        attendu, _ = wav.read(_son(self.pc / "ref.wav", duree=0.1,
+                                   taux=22050))
+        relu, _ = wav.read(self.carte / rel)
+        # Calé sur l'original : le décodeur retire le délai de l'encodeur.
+        correlation = np.corrcoef(attendu.ravel(), relu.ravel())[0, 1]
+        self.assertGreater(correlation, 0.99)
+
+    def test_un_ogg_deja_la_en_wav_est_numerote(self):
+        self._compresse("sinus.ogg")
+        deja = _son(self.carte / "SAMPLES/sinus.wav", 90)
+        avant = deja.read_bytes()
+        plan = self._plan("sinus.ogg")
+        self.assertEqual(self._rels(plan, "convert"), ["SAMPLES/sinus 2.wav"])
+        self.assertEqual(self.ci.apply_import(plan, self.sd).errors, [])
+        self.assertEqual(deja.read_bytes(), avant)
+        self.assertEqual(wav.probe(self.carte / "SAMPLES/sinus 2.wav")
+                         .channels, 2)
+
+    def test_ce_que_le_decodeur_ne_lit_pas_reste_sur_le_pc(self):
+        self._compresse("opus.ogg")
+        (self.pc / "abime.mp3").write_bytes(b"ID3" + bytes(40))
+        (self.pc / "chanson.m4a").write_bytes(b"\x00" * 8)
+        plan = self._plan("opus.ogg", "abime.mp3", "chanson.m4a")
+        self.assertEqual(plan.items, [])
+        self.assertEqual(len(plan.ignored), 3)
+        for chemin, raison in plan.ignored:
+            self.assertIn("exportez-le en WAV", raison, chemin)
+        self.assertIn("Opus", dict(plan.ignored)[str(self.pc / "opus.ogg")])
+
+    def test_sans_decodeur_les_sons_compresses_restent_sur_le_pc(self):
+        import shutil
+        from unittest import mock
+
+        from delugeapp.core import compressed
+
+        shutil.copyfile(Path(__file__).parent / "donnees" / "sinus16.flac",
+                        self.pc / "sinus16.flac")
+        with mock.patch.object(compressed, "_ma", None):
+            plan = self._plan("sinus16.flac")
+        self.assertEqual(plan.items, [])
+        self.assertIn("exportez-le en WAV", plan.ignored[0][1])
+
     def test_quatre_canaux_sont_refuses(self):
         _son(self.pc / "quad.wav", canaux=4)
         plan = self._plan("quad.wav")
@@ -11598,6 +12002,137 @@ class TestEchangesAvecLeDeluge(unittest.TestCase):
                                               self.carte), {})
 
 
+class TestLArpegiateur(unittest.TestCase):
+    """``core/arpeggio.py`` : l'écoute ignorait l'arpégiateur — un son
+    arpégé jouait ses accords tenus. Les suites attendues sont celles du
+    code du firmware 1.3 (``calculateNextNoteAndOrOctave``), déroulé à la
+    main."""
+
+    @staticmethod
+    def _suite(note_mode, octave_mode, octaves=2, notes=(60, 64, 67),
+               repeats=1, combien=10):
+        from delugeapp.core import arpeggio
+        from delugeapp.core.accomp import NoteEvent
+
+        s = arpeggio.ArpSettings(note_mode, octave_mode, octaves, repeats,
+                                 7, 0.5)
+        sortie = arpeggio.expand([NoteEvent(0, 16, p, 90) for p in notes], s)
+        return [e.note for e in sortie[:combien]], sortie
+
+    def test_l_ordre_des_notes_et_des_octaves(self):
+        for modes, attendu in (
+                (("up", "up"), [60, 64, 67, 72, 76, 79, 60, 64, 67, 72]),
+                (("down", "down"), [79, 76, 72, 67, 64, 60, 79, 76, 72, 67]),
+                # Aller-retour : la note du haut deux fois, pas celle du bas.
+                (("upDown", "up"), [60, 64, 67, 67, 64, 60, 72, 76, 79, 79]),
+                # Alterné : demi-tour à l'octave du haut, sans répéter.
+                (("up", "alt"), [60, 64, 67, 72, 76, 79, 76, 72, 67, 64]),
+                (("down", "alt"), [79, 76, 72, 67, 64, 60, 64, 67, 72, 76])):
+            with self.subTest(modes=modes):
+                self.assertEqual(self._suite(*modes)[0], attendu)
+        self.assertEqual(self._suite("up", "up", repeats=2)[0],
+                         [60, 60, 64, 64, 67, 67, 72, 72, 76, 76])
+        notes, sortie = self._suite("random", "random", combien=16)
+        self.assertLessEqual(set(notes), {60, 64, 67, 72, 76, 79})
+        self.assertEqual(len(sortie), 16)       # un pas par double-croche
+
+    def test_les_pas_la_duree_et_les_mains(self):
+        """Une note enfoncée entre deux pas attend le suivant ; relâcher
+        celle qui sonne l'éteint ; la durée est la moitié du pas au réglage
+        neutre."""
+        from delugeapp.core import arpeggio
+        from delugeapp.core.accomp import NoteEvent
+
+        s = arpeggio.ArpSettings("up", "up", 1, 1, 7, 0.5)
+        sortie = arpeggio.expand([NoteEvent(0, 8, 60, 90),
+                                  NoteEvent(2.5, 8, 64, 80)], s)
+        self.assertEqual([(e.start, e.note) for e in sortie[:6]],
+                         [(0.0, 60), (1.0, 60), (2.0, 60), (3.0, 64),
+                          (4.0, 60), (5.0, 64)])
+        self.assertEqual(sortie[3].velocity, 80)
+        self.assertTrue(all(e.length == 0.5 for e in sortie))
+        # Une note plus grave ajoutée : la position suit la note qui sonnait
+        # (``whichNoteCurrentlyOnPostArp++``), le pas suivant reprend en bas.
+        sortie = arpeggio.expand([NoteEvent(0, 8, 64, 90),
+                                  NoteEvent(1.5, 8, 60, 90)], s)
+        self.assertEqual([e.note for e in sortie[:4]], [64, 64, 60, 64])
+        sortie = arpeggio.expand([NoteEvent(0, 8, 60, 90),
+                                  NoteEvent(0, 3.2, 64, 90)], s)
+        self.assertAlmostEqual(sortie[3].length, 0.2)
+        self.assertEqual(sortie[3].note, 64)
+        # Niveau 6 : une croche par pas ; durée au quart du pas.
+        s6 = arpeggio.ArpSettings("up", "up", 1, 1, 6, 0.25)
+        sortie = arpeggio.expand([NoteEvent(0, 8, 60, 90)], s6)
+        self.assertEqual([e.start for e in sortie], [0.0, 2.0, 4.0, 6.0])
+        self.assertEqual(sortie[0].length, 0.5)
+
+    def test_les_reglages_d_un_son(self):
+        """Ancien mode (« both » : notes montantes, octaves alternées) ou
+        modes communautaires ; sans synchronisation, rien ; la durée vient
+        d'``arpeggiatorGate``."""
+        from delugeapp.core import arpeggio
+
+        son = SynthPreset.new("A").sound
+        self.assertIsNone(arpeggio.settings_of(son))
+        son.arp.mode = "both"
+        s = arpeggio.settings_of(son)
+        self.assertEqual((s.note_mode, s.octave_mode, s.gate),
+                         ("up", "alt", 0.5))
+        son.arp.arp_mode, son.arp.note_mode = "arp", "upDown"
+        son.arp.octave_mode = "random"
+        son.set_param("arpeggiatorGate", 1 << 30)
+        s = arpeggio.settings_of(son)
+        self.assertEqual((s.note_mode, s.octave_mode, s.gate),
+                         ("upDown", "random", 0.75))
+        son.arp.sync_level = 0
+        self.assertIsNone(arpeggio.settings_of(son))
+
+    def test_la_repetition_des_pas_se_lit_et_s_ecrit(self):
+        import xml.etree.ElementTree as ET
+
+        from delugeapp.core.model import Arpeggiator
+
+        el = ET.fromstring('<arpeggiator arpMode="arp" stepRepeat="3" />')
+        arp = Arpeggiator.from_xml(el)
+        self.assertEqual(arp.step_repeat, 3)
+        sortie = ET.Element("arpeggiator")
+        arp.to_xml(sortie)
+        self.assertEqual(sortie.get("stepRepeat"), "3")
+        sortie = ET.Element("arpeggiator")
+        Arpeggiator().to_xml(sortie)
+        self.assertIsNone(sortie.get("stepRepeat"))
+
+    def test_un_son_arpege_s_entend_note_par_note(self):
+        """Le rendu d'un accord tenu par un son arpégé est, à l'échantillon
+        près, celui de ses notes arpégées jouées par le même son éteint ;
+        l'aperçu d'un preset arpège aussi."""
+        import copy
+
+        from delugeapp.core import arpeggio, render
+        from delugeapp.core.accomp import NoteEvent
+
+        son = SynthPreset.new("ARP").sound
+        son.arp.mode = "up"
+        accord = [NoteEvent(0, 8, p, 90) for p in (48, 52, 55)]
+        arpege = render.render_parts({"a": accord}, {"a": son}, bpm=120,
+                                     normalize=False)
+        eteint = copy.deepcopy(son)
+        eteint.arp.mode = "off"
+        notes = arpeggio.expand(accord, arpeggio.settings_of(son))
+        attendu = render.render_parts({"a": notes}, {"a": eteint}, bpm=120,
+                                      normalize=False)
+        tenu = render.render_parts({"a": accord}, {"a": eteint}, bpm=120,
+                                   normalize=False)
+        n = min(arpege.shape[0], attendu.shape[0])
+        np.testing.assert_array_equal(arpege[:n], attendu[:n])
+        self.assertGreater(float(np.max(np.abs(arpege[:n] - tenu[:n]))),
+                           0.01)
+        apercu = render.render_sound(son, note=48, seconds=1.0)
+        sans = render.render_sound(eteint, note=48, seconds=1.0)
+        self.assertEqual(apercu.shape, sans.shape)
+        self.assertGreater(float(np.max(np.abs(apercu - sans))), 0.01)
+
+
 class TestPontDaw(unittest.TestCase):
     """Le pont entre le Deluge et les DAW : ``daw`` (vers le DAW) et
     ``dawimport`` (depuis le DAW), sur une carte factice."""
@@ -11791,10 +12326,83 @@ class TestPontDaw(unittest.TestCase):
         crete = float(np.max(np.abs(somme)))
         attendu = somme * min(1.0, 0.999 / crete)
         n = min(attendu.shape[0], mix.shape[0])
-        self.assertLess(float(np.max(np.abs(attendu[:n] - mix[:n]))), 1e-3)
+        # Le mélange passe une fois par la saturation du compresseur maître,
+        # chaque piste y passe seule : 0,003 de pleine échelle d'écart
+        # (−50 dB), mesuré le 14 novembre 2026.
+        self.assertLess(float(np.max(np.abs(attendu[:n] - mix[:n]))), 5e-3)
         self.assertLessEqual(float(np.max(np.abs(mix))), 0.999 + 1e-6)
         self.assertIsNone(daw.render_mix(song, self.sd,
                                          should_stop=lambda: True))
+
+    def test_le_rendu_progressif_coupe_entre_deux_blocs(self):
+        """Un rendu partiel qui s'arrête avant sa fenêtre (un passage
+        silencieux) : la tranche livrée finit sur un bloc entier de 128 —
+        le compresseur maître calcule un bloc tronqué autrement."""
+        from unittest import mock
+
+        from delugeapp.core import daw
+
+        song = daw.from_deluge(self._morceau())
+
+        def court(_song, _sd, should_stop=None, until=None, contained=True):
+            n = 9000 if until is None else int(until * 1000) + 77
+            return np.zeros((n, 2), dtype=np.float32)
+
+        recus = []
+        with mock.patch.object(daw, "render_mix", court):
+            daw.render_progressively(song, self.sd, first=4.0,
+                                     progress=recus.append)
+        self.assertEqual(len(recus), 2)
+        bornes = np.cumsum([r.audio.shape[0] for r in recus])
+        self.assertEqual([int(b) % 128 for b in bornes], [0, 0])
+
+    def test_le_compresseur_maitre_du_morceau_est_lu_et_entendu(self):
+        """L'``audioCompressor`` du morceau — pas ceux de ses sons — et son
+        volume règlent la sortie de l'écoute du morceau entier."""
+        import xml.etree.ElementTree as ET
+
+        from delugeapp.core import daw
+
+        chemin = self._morceau()
+        song = daw.from_deluge(chemin)
+        comp = song.compressor
+        self.assertEqual((comp.threshold, comp.ratio, comp.blend),
+                         (0.0, float(1 << 30), float((1 << 31) - 1)))
+        self.assertEqual(comp.final_volume, float(1 << 24))
+        repos = daw.render_mix(song, self.sd, contained=False)
+        arbre = ET.parse(chemin)
+        arbre.getroot().find("audioCompressor").set("thresh", "1610612736")
+        arbre.write(chemin, encoding="utf-8", xml_declaration=True)
+        regle = daw.from_deluge(chemin)
+        self.assertEqual(regle.compressor.threshold, 1610612736.0)
+        comprime = daw.render_mix(regle, self.sd, contained=False)
+        self.assertEqual(comprime.shape, repos.shape)
+        self.assertGreater(float(np.max(np.abs(comprime - repos))), 0.01)
+
+    def test_le_debut_joue_pendant_que_la_suite_se_calcule(self):
+        """Le calcul est causal : les premiers temps d'un rendu partiel
+        sont ceux du rendu complet, et les morceaux livrés s'enchaînent
+        sans couture."""
+        from delugeapp.core import daw
+
+        song = daw.from_deluge(self._morceau())
+        self.assertTrue(8.0 < daw.song_length(song) <= 16.0)
+        recus = []
+        reste = daw.render_progressively(song, self.sd, first=4.0,
+                                         progress=recus.append)
+        # Fenêtres de 4, 8, puis le tout : deux morceaux d'avance.
+        self.assertEqual(len(recus), 2)
+        self.assertTrue(all(r.message for r in recus))
+        self.assertEqual(recus[0].audio.shape[0],
+                         round(song.seconds(4.0) * 44100))
+        suite = np.concatenate([r.audio for r in recus] + [reste])
+        plein = np.clip(daw.render_mix(song, self.sd, contained=False),
+                        -1.0, 1.0)
+        self.assertEqual(suite.shape, plein.shape)
+        self.assertLess(float(np.max(np.abs(suite - plein))), 1e-6)
+        self.assertGreater(float(np.max(np.abs(recus[1].audio))), 0.01)
+        self.assertIsNone(daw.render_progressively(
+            song, self.sd, should_stop=lambda: True))
 
     def test_aller_retour_par_les_trois_formats(self):
         from delugeapp.core import daw, dawimport

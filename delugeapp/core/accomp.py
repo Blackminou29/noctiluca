@@ -39,12 +39,17 @@ class NoteEvent:
 
     ``start`` et ``length`` sont en pas de double-croche ; ``velocity`` est
     un pourcentage (1 à 100), comme dans :class:`~delugeapp.core.rhythm.Step`.
+    ``probability`` (pour cent), ``iterance`` et ``fill`` sont la condition
+    de la note sur la machine (:mod:`.conditions`).
     """
 
     start: float
     length: float
     note: int
     velocity: int = 90
+    probability: int = 100
+    iterance: int = 0
+    fill: int = 0
 
 
 #: Rythmes d'accords : ``(début, durée)`` en pas, pour une mesure.

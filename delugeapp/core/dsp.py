@@ -251,6 +251,9 @@ def prepare(should_stop=None) -> bool:
                                                 [0.0] * nb),
                             ladder_jitter(n, rng)[0]),
         lambda: hpf_process(silence, hpf_config([2e6] * nb, [0.0] * nb)),
+        lambda: svf_process(silence, svf_config("SVF_Notch", [2e6] * nb,
+                                                [0.0] * nb)),
+        lambda: output_stage(stereo),
         lambda: oscillator("saw", inc, n, 0, amp, None, MASK32,
                            out=np.empty(n)),
         lambda: oscillator("square", inc, n, 0, amp, pulse),
@@ -1795,6 +1798,155 @@ def _hpf_loop(x, gs, c3s, cls, c_as, c_outs, p_rs, out, tab, grid,
 
 
 # --------------------------------------------------------------------------- #
+# Filtre à variables d'état (SVF)
+# --------------------------------------------------------------------------- #
+#
+# ``dsp/filter/svf.cpp`` (1.3, 102cf9f) : le même code sert de passe-bas et
+# de passe-haut — le passe-haut reçoit son « morph » inversé. Deux pas par
+# échantillon (la coupure monte d'autant), la bande saturée à chaque pas
+# (``getTanHUnknown(bande, 3)``). Ni gigue ni compensation de niveau : le
+# gain du filtre passe tel quel.
+
+#: ``getTanHUnknown(x, 3)`` : entrée et plafond.
+_IN3, _TOP3 = 8.0 / Q31, float(1 << 26)
+
+
+@dataclass
+class SvfConfig:
+    """Les coefficients d'un SVF, un par bloc (tableaux), rapportés à 1."""
+
+    f: np.ndarray        # coupure : fc × 1,125
+    q: np.ndarray        # amortissement, (1 − 4·résonance)²
+    k_in: np.ndarray     # gain d'entrée, √ de l'amortissement en gros
+    c_low: np.ndarray    # dosage des sorties passe-bas, bande, passe-haut
+    c_band: np.ndarray
+    c_high: np.ndarray
+    band: bool           # mode « SVF_Band » : la bande est dosée aussi
+    gain: np.ndarray     # facteur du gain des oscillateurs : 1, toujours
+
+
+def svf_config(mode: str, freq, res, morph=None) -> SvfConfig:
+    """``SVFilter::setConfig`` pour chaque bloc.
+
+    :param mode: ``SVF_Band`` ou ``SVF_Notch``.
+    :param freq: valeur finale de la fréquence (``curveFrequency``).
+    :param res: valeur finale de la résonance (0 à 2²⁹).
+    :param morph: valeur finale du « morph », en Q28 — ``configure`` la
+        passe en Q31 ; pour le passe-haut, déjà inversée par l'appelant.
+    """
+    if morph is None:
+        morph = 0.0
+    arrays = np.broadcast_arrays(
+        np.atleast_1d(np.asarray(freq, dtype=np.float64)),
+        np.atleast_1d(np.asarray(res, dtype=np.float64)),
+        np.atleast_1d(np.asarray(morph, dtype=np.float64)))
+    freq, res, morph = (np.array(a, dtype=np.float64) for a in arrays)
+    _t, g = curve_frequency(freq)
+    # Le commentaire du firmware dit « × 1,25 » ; le code ajoute
+    # fc·2²⁹/2³², soit un huitième.
+    f = g * 1.125
+    damping = (Q31 - 4.0 * np.clip(res, 0.0, Q31 / 4.0)) / Q31
+    k_in = damping / 2.0 + 0.5
+    q = damping * damping
+    m = np.clip(morph * 4.0, 0.0, Q31 - 1.0) / Q31
+    band = mode == "SVF_Band"
+    if band:
+        haut = m > 0.5
+        m2 = np.where(haut, 2.0 * (m - 0.5), 2.0 * m)
+        c_low = np.where(haut, 0.0, 1.0 - m2)
+        c_band = np.where(haut, 1.0 - m2, m2)
+        c_high = np.where(haut, m2, 0.0)
+    else:
+        c_low, c_band, c_high = 1.0 - m, np.zeros_like(m), m
+    return SvfConfig(f, q, k_in, c_low, c_band, c_high, band,
+                     np.ones_like(f))
+
+
+def svf_process(x: np.ndarray, cfg: SvfConfig,
+                state: list[float] | None = None) -> np.ndarray:
+    """Le SVF, échantillon par échantillon (``SVFilter::doSVF``).
+    ``state`` : le passe-bas et la bande, mis à jour sur place."""
+    n = x.size
+    if state is None:
+        state = [0.0, 0.0]
+    out = _out(n)
+    state[:] = _svf_loop(
+        _seq(x), _seq(cfg.f), _seq(cfg.q), _seq(cfg.k_in), _seq(cfg.c_low),
+        _seq(cfg.c_band), _seq(cfg.c_high), out, _tanh_list(),
+        *(float(s) for s in state))
+    return _result(out)
+
+
+def svf_response(cfg: SvfConfig, freqs, block: int = 0) -> np.ndarray:
+    """Réponse complexe du SVF d'un bloc, pour l'affichage : une impulsion
+    assez faible pour que les saturations restent au gain unité, passée
+    par le filtre lui-même, puis sa transformée de Fourier — les deux pas
+    par échantillon n'ont pas d'expression simple en z."""
+    taille = 1 << 14
+    un = SvfConfig(*(np.full(taille // BLOCK, float(getattr(cfg, k)[block]))
+                     for k in ("f", "q", "k_in", "c_low", "c_band",
+                               "c_high")), cfg.band, np.ones(1))
+    impulsion = np.zeros(taille)
+    impulsion[0] = 1000.0
+    reponse = np.fft.rfft(svf_process(impulsion, un)) / 1000.0
+    axe = np.fft.rfftfreq(taille, 1.0 / SR)
+    freqs = np.asarray(freqs, dtype=np.float64)
+    return (np.interp(freqs, axe, reponse.real)
+            + 1j * np.interp(freqs, axe, reponse.imag))
+
+
+@_Boucle
+def _svf_loop(x, fs, qs, k_ins, c_lows, c_bands, c_highs, out, tab,
+              low, band):
+    """Les échantillons de :func:`svf_process`, bloc par bloc. Rend le
+    passe-bas et la bande. Les ``>> 32`` du firmware valent ici des
+    moitiés : ``2·(a·fc >> 32)`` est ``a·f``."""
+    n = len(x)
+    in3, top3 = _IN3, _TOP3
+    for b in range(len(fs)):
+        f = fs[b]
+        q = qs[b]
+        k = k_ins[b] * 0.5
+        c_low = c_lows[b] * 0.5
+        c_band = c_bands[b] * 0.5
+        c_high = c_highs[b] * 0.5
+        start = b * BLOCK
+        stop = min(n, start + BLOCK)
+        for i in range(start, stop):
+            v = (x[i] + DENORMAL_GUARD) * k
+            low = low + band * f
+            high = v - low - band * q
+            band = high * f + band
+            w = band * in3
+            w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
+            p = (w + 1.0) * 128.0
+            j = int(p)
+            if j > 255:
+                j = 255
+            band = top3 * (tab[j] + (tab[j + 1] - tab[j]) * (p - j))
+            low_i = low
+            high_i = high
+            band_i = band
+            # Le second pas : la coupure double.
+            low = low + band * f
+            high = v - low - band * q
+            band = high * f + band
+            r = ((low_i + low) * c_low + (high_i + high) * c_high
+                 + (band_i + band) * c_band)
+            w = band * in3
+            w = 1.0 if not w <= 1.0 else (-1.0 if w < -1.0 else w)
+            p = (w + 1.0) * 128.0
+            j = int(p)
+            if j > 255:
+                j = 255
+            band = top3 * (tab[j] + (tab[j + 1] - tab[j]) * (p - j))
+            # Chaque produit perdait une moitié ; le firmware les rend, et
+            # ajoute la moitié encore « pour égaler les échelles ».
+            out[i] = 3.0 * r
+    return low, band
+
+
+# --------------------------------------------------------------------------- #
 # Saturation de la voix
 # --------------------------------------------------------------------------- #
 
@@ -2321,7 +2473,8 @@ def _mod_fx_volume_cut(feedback: float) -> float:
 def mod_fx(stereo: np.ndarray, kind: str, rate_inc: float, depth: float,
            offset_param: float, feedback_param: float,
            post_fx: float) -> tuple[np.ndarray, float]:
-    """``ModFXProcessor::processModFX`` : chorus, flanger, phaser.
+    """``ModFXProcessor::processModFX`` : chorus, flanger, phaser, « tape
+    warble », dimension.
 
     :param rate_inc: incrément de phase du LFO (``modFXRate`` final).
     :param depth: ``modFXDepth`` final (neutre 526 133 494).
@@ -2346,8 +2499,15 @@ def mod_fx(stereo: np.ndarray, kind: str, rate_inc: float, depth: float,
         times = lfo * _FLANGER_AMPLITUDE / Q32 + _FLANGER_OFFSET
         return _flanger(stereo, times, -times + 2.0 * _FLANGER_OFFSET,
                         feedback / Q31), post_fx
-    # Chorus, chorus stéréo, dimension — et le « tape warble », approché
-    # par un chorus.
+    if kind == "TapeWarble":
+        feedback = _mod_fx_feedback(feedback_param)
+        post_fx = post_fx * _mod_fx_volume_cut(feedback) * 2.0
+        offset = _FLANGER_OFFSET + math.floor(_FLANGER_OFFSET * offset_param
+                                              / Q32)
+        amount = math.floor(offset * depth / Q32) * 2.0
+        return _warble(stereo, int(rate_inc), amount, offset,
+                       feedback / Q31), post_fx
+    # Chorus, chorus stéréo, dimension.
     centre = math.floor(offset_param / 2.0) + 1073741824.0
     offset = _MOD_FX_MAX * centre / Q32
     amount = offset * depth / Q32 * 4.0
@@ -2432,6 +2592,99 @@ def _flanger_loop(dry, times, feedback, buf, out):
         buf[write] = wet + v
         out[i] = v + wet
         write = (write + 1) & (size - 1)
+
+
+#: La graine de ``CONG`` dans ``waves.cpp``. La machine la reprend d'un
+#: compteur au démarrage : sa suite est imprévisible, celle-ci reproductible.
+CONG_SEED = 380116160
+
+
+def _warble(stereo: np.ndarray, rate_inc: int, amount: float, offset: float,
+            feedback: float) -> np.ndarray:
+    """Le « tape warble » (``processOneModFXSample<WARBLE>``) : un retard
+    modulé avec rétroaction, dont on n'entend que la sortie retardée,
+    chaque canal mené par son LFO « warbler » — une cible tirée au hasard
+    à chaque tour de phase, rejointe par une vitesse elle-même filtrée,
+    d'où une courbe lisse —, le second tournant à 97 % du premier."""
+    n = stereo.shape[1]
+    out = np.zeros((2, n))
+    if n == 0:
+        return out
+    # ``render`` double l'incrément d'un « warbler » ; le second tourne à
+    # ``smmul(taux, 0,97·2³¹) << 1``.
+    inc1 = (2 * int(rate_inc)) & MASK32
+    inc2 = (2 * (((int(rate_inc) * 2083059137) >> 32) << 1)) & MASK32
+    left, right = _out(n), _out(n)
+    _warble_loop(_seq(stereo[0] + DENORMAL_GUARD),
+                 _seq(stereo[1] + DENORMAL_GUARD), float(inc1), float(inc2),
+                 float(amount), float(offset), float(feedback),
+                 _zeros(_MOD_FX_SIZE), _zeros(_MOD_FX_SIZE), float(CONG_SEED),
+                 left, right)
+    out[0], out[1] = _result(left), _result(right)
+    return out
+
+
+@_Boucle
+def _warble_loop(dry_l, dry_r, inc1, inc2, amount, offset, feedback, buf_l,
+                 buf_r, cong, out_l, out_r):
+    """Les échantillons de :func:`_warble`. Les entiers du firmware sont
+    tenus en flottants exacts : la différence à la cible repliée sur 32
+    bits comme sur la machine, la valeur tenue saturée."""
+    size = len(buf_l)
+    top, bottom = Q31 - 1.0, -Q31
+    phase1 = 0.0
+    phase2 = 0.0
+    hold1 = target1 = speed1 = 0.0
+    hold2 = target2 = speed2 = 0.0
+    k1 = float(int(inc1) >> 8)
+    k2 = float(int(inc2) >> 8)
+    write = 0
+    for i in range(len(dry_l)):
+        # Les deux LFO, dans l'ordre où le firmware tire ``CONG``.
+        for which in range(2):
+            if which == 0:
+                phase, inc, k = phase1, inc1, k1
+                hold, target, speed = hold1, target1, speed1
+            else:
+                phase, inc, k = phase2, inc2, k2
+                hold, target, speed = hold2, target2, speed2
+            if phase + inc > MASK32:
+                cong = (69069.0 * cong + 1234567.0) % 4294967296.0
+                target = cong - 4294967296.0 if cong >= Q31 else cong
+                speed = 0.0
+            d = target - hold
+            if d >= Q31:
+                d -= 4294967296.0
+            elif d < -Q31:
+                d += 4294967296.0
+            # La vitesse, entière aussi, ne déborde pas : une nouvelle cible
+            # la remet à zéro bien avant.
+            speed += math.floor(d * k / 4294967296.0)
+            hold = hold + speed
+            hold = top if hold > top else (bottom if hold < bottom else hold)
+            phase = (phase + inc) % 4294967296.0
+            if which == 0:
+                phase1, hold1, target1, speed1 = phase, hold, target, speed
+            else:
+                phase2, hold2, target2, speed2 = phase, hold, target, speed
+        # Le retard de chaque canal, lu entre deux cases, puis réinjecté.
+        for which in range(2):
+            t = math.floor((hold1 if which == 0 else hold2) * amount
+                           / 4294967296.0) + offset
+            step = int(t // 65536.0)
+            frac = (t - step * 65536.0) / 65536.0
+            p1 = (write - step) & (size - 1)
+            p2 = (p1 - 1) & (size - 1)
+            if which == 0:
+                delayed = (buf_l[p1] * (1.0 - frac) + buf_l[p2] * frac) * 0.5
+                buf_l[write] = delayed * feedback * 0.5 + dry_l[i]
+                out_l[i] = delayed * 4.0
+            else:
+                delayed = (buf_r[p1] * (1.0 - frac) + buf_r[p2] * frac) * 0.5
+                buf_r[write] = delayed * feedback * 0.5 + dry_r[i]
+                out_r[i] = delayed * 4.0
+        write = (write + 1) & (size - 1)
+    return cong
 
 
 def _phaser(stereo: np.ndarray, lfo: np.ndarray, depth: float,
@@ -2959,15 +3212,247 @@ _COMPRESSOR_SCALE = math.exp(SONG_COMPRESSOR_GAIN) \
 OUTPUT_GAIN = _COMPRESSOR_SCALE * 128.0 / Q31
 
 
-def output_stage(stereo: np.ndarray) -> np.ndarray:
+@dataclass
+class MasterCompressor:
+    """Le compresseur maître d'un morceau (``RMSFeedbackCompressor``,
+    réglé par l'``audioCompressor`` du morceau) : positions des boutons de
+    0 à 2³¹, comme le fichier les écrit. Les valeurs par défaut sont celles
+    d'un morceau neuf (le constructeur, puis ``setBaseGain(0.85)``)."""
+
+    attack: float = float(5 << 24)
+    release: float = float(5 << 24)
+    threshold: float = 0.0
+    ratio: float = float(64 << 24)
+    #: Le passe-haut de la détection (« compHPF »).
+    hpf: float = 0.0
+    #: La part compressée (« compBlend ») ; le reste est le son sec.
+    blend: float = Q31 - 1.0
+    #: ``songVolume >> 3`` (``AudioEngine::renderSongFX``) : la référence du
+    #: seuil. 2²⁴ au volume d'un morceau neuf.
+    final_volume: float = float(1 << 24)
+    base_gain: float = SONG_COMPRESSOR_GAIN
+
+
+def _compressor_constants(comp: MasterCompressor) -> tuple:
+    """Les grandeurs de ``setup`` et d'``updateER`` (``rms_feedback.h``)."""
+    attack_ms = 0.5 + (math.exp(2.0 * comp.attack / Q31) - 1.0) * 10.0
+    release_ms = 50.0 + (math.exp(2.0 * comp.release / Q31) - 1.0) * 50.0
+    a = (-1000.0 / SR) / attack_ms
+    r = (-1000.0 / SR) / release_ms
+    threshold = 1.0 - 0.8 * (comp.threshold / Q31)
+    fraction = 0.5 + (comp.ratio / Q31) / 2.0
+    fc = (math.exp(1.5 * comp.hpf / Q31) - 1.0) * 30.0 / SR
+    hpf_a = float(int(fc / (1.0 + fc) * Q31))
+    song_db = math.log(comp.final_volume + 1e-10)
+    thresh_db = song_db * threshold
+    er = max((song_db - thresh_db - 1.0) * fraction, 0.0)
+    # ``masterVolumeAdjustment >> 1``, puis ``>> 9`` : en 13.18.
+    volume = float(int(_MASTER_VOLUME / 2.0) >> 9)
+    wet = min(max(comp.blend, 0.0), Q31 - 1.0)
+    return (a, r, thresh_db, fraction, hpf_a, er, volume, wet,
+            Q31 - 1.0 - wet)
+
+
+def output_stage(stereo: np.ndarray,
+                 compressor: MasterCompressor | None = None) -> np.ndarray:
     """Du mélange (``(2, n)``, échelle entière) à la sortie audio, pleine
-    échelle 1 : gain du morceau et du compresseur maître, puis la saturation
-    adoucie de ce dernier (``getTanHAntialiased``, saturation 3), qui, aux
-    niveaux d'écoute, moyenne deux échantillons successifs — −1,6 dB à
-    8 kHz, −7,6 dB à 16 kHz, mesurés sur la machine. :data:`OUTPUT_GAIN`
-    en est la part linéaire."""
-    x = np.asarray(stereo, dtype=np.float64) * _COMPRESSOR_SCALE
-    out = np.empty_like(x)
-    for c in range(x.shape[0]):
-        out[c], _ = tanh_antialiased(x[c], 3)
+    échelle 1 : le compresseur maître (``RMSFeedbackCompressor::render``),
+    puis sa saturation adoucie (``getTanHAntialiased``, saturation 3), qui,
+    aux niveaux d'écoute, moyenne deux échantillons successifs — −1,6 dB à
+    8 kHz, −7,6 dB à 16 kHz, mesurés sur la machine.
+
+    Au repos — seuil nul, tout compressé, comme les 56 morceaux de la carte
+    de l'utilisateur —, le gain est celui de base : :data:`OUTPUT_GAIN` en
+    est la part linéaire. Le compresseur agit pourtant encore, en
+    limiteur : quand la moyenne quadratique de sa sortie dépasse le volume
+    du morceau (au réglage d'usine, 12 dB au-dessus de l'écrêtage ; plus
+    bas pour un morceau au volume baissé). Il se règle par blocs de 128
+    échantillons, sur la sortie du bloc précédent : c'est un compresseur à
+    rétroaction. Le calcul part d'une machine qui tournait déjà, en
+    silence : gain établi, rien de comprimé."""
+    comp = compressor or MasterCompressor()
+    x = np.asarray(stereo, dtype=np.float64)
+    if x.ndim == 1:
+        x = x[None, :]
+    if x.shape[0] == 1:
+        x = np.vstack([x, x])
+    (a, r, thresh_db, fraction, hpf_a, er, volume, wet,
+     dry) = _compressor_constants(comp)
+    gain = min(math.exp(comp.base_gain + er), 31.0)
+    current = math.floor(gain * volume) * 256.0
+    n = x.shape[1]
+    out = np.empty((2, n))
+    if n == 0:
+        return out
+    if compiled():
+        _compressor_loop(np.ascontiguousarray(x[0]),
+                         np.ascontiguousarray(x[1]), a, r, thresh_db,
+                         fraction, hpf_a, er, volume, wet, dry,
+                         comp.base_gain, current, _tanh_grid(), out)
+    else:
+        _compressor_blocks(x, a, r, thresh_db, fraction, hpf_a, er, volume,
+                           wet, dry, comp.base_gain, current, out)
     return out * (128.0 / Q31)
+
+
+def _envelope(current: float, desired: float, k_up: float, k_down: float,
+              n: float) -> float:
+    """``RMSFeedbackCompressor::runEnvelope``."""
+    k = k_up if desired > current else k_down
+    return desired + math.exp(k * n) * (current - desired)
+
+
+def _compressor_blocks(x, a, r, thresh_db, fraction, hpf_a, er, volume,
+                       wet, dry, base_gain, current, out):
+    """:func:`_compressor_loop` sans numba : chaque bloc d'un coup."""
+    state = rms = mean = 0.0
+    lasts = [Q31, Q31]
+    memory = [0.0, 0.0]
+    level = [current, current]
+    n = x.shape[1]
+    for start in range(0, n, BLOCK):
+        stop = min(n, start + BLOCK)
+        count = stop - start
+        # ``updateER`` : la cible ne bouge pas, l'enveloppe y reste.
+        state = _envelope(state, max(0.0, rms - thresh_db), a, r, count)
+        gain = min(math.exp(base_gain + er - state * fraction), 31.0)
+        target = gain * volume
+        steps = np.arange(1, count + 1, dtype=np.float64)
+        heard = []
+        for c in range(2):
+            inc = float(int((target - math.floor(level[c] / 256.0))
+                            / count)) * 256.0
+            ramp = level[c] + inc * steps
+            level[c] = float(ramp[-1])
+            y, lasts[c] = tanh_antialiased(x[c, start:stop] * ramp * 16.0
+                                           / Q32, 3, lasts[c])
+            if wet < Q31 - 1.0:
+                y = (y * wet / Q32 + x[c, start:stop] * dry / Q32) * 2.0
+            out[c, start:stop] = y
+            if hpf_a > 0.0:
+                high = np.empty(count)
+                mem = memory[c]
+                for i in range(count):
+                    d = (y[i] - mem) * hpf_a / Q31
+                    low = d + mem
+                    mem = low + d
+                    high[i] = y[i] - low
+                memory[c] = mem
+                heard.append(np.abs(high))
+            else:
+                heard.append(np.abs(y))
+        s = np.maximum(heard[0], heard[1])
+        total = float(np.sum(np.floor(s * s / Q32)))
+        ns = 2.0 * count
+        mean = ((total / Q31) / ns * ns + mean) / (1.0 + ns)
+        rms = math.log(max(Q31 * math.sqrt(mean), 1.0))
+
+
+@_Boucle
+def _compressor_loop(xl, xr, a, r, thresh_db, fraction, hpf_a, er, volume,
+                     wet, dry, base_gain, current, grid, out):
+    """Le compresseur maître, bloc par bloc (``render`` puis ``calcRMS``) :
+    le gain d'un bloc vient de la sortie du précédent."""
+    n = len(xl)
+    top, bottom = Q31 - 1.0, -Q31
+    scale = 32768.0 / 16.0           # >> (3 + 1)
+    state = 0.0
+    rms = 0.0
+    mean = 0.0
+    last_l = Q31
+    last_r = Q31
+    mem_l = 0.0
+    mem_r = 0.0
+    level_l = current
+    level_r = current
+    blend = wet < Q31 - 1.0
+    start = 0
+    while start < n:
+        stop = min(n, start + BLOCK)
+        count = stop - start
+        # ``updateER`` : la cible ne bouge pas, l'enveloppe y reste.
+        over = rms - thresh_db
+        if over < 0.0:
+            over = 0.0
+        k = a if over > state else r
+        state = over + math.exp(k * count) * (state - over)
+        gain = math.exp(base_gain + er - state * fraction)
+        if gain > 31.0:
+            gain = 31.0
+        target = gain * volume
+        inc_l = float(int((target - math.floor(level_l / 256.0)) / count)) \
+            * 256.0
+        inc_r = float(int((target - math.floor(level_r / 256.0)) / count)) \
+            * 256.0
+        total = 0.0
+        for i in range(start, stop):
+            # Gauche : le volume en rampe, puis la saturation adoucie
+            # (``tanH2d`` lue entre l'échantillon précédent et celui-ci).
+            level_l += inc_l
+            work = xl[i] * level_l * 16.0 / Q32 * 8.0
+            work = top if not work <= top else (
+                bottom if work < bottom else work)
+            work += Q31
+            cx = work / 33554432.0
+            ix = int(cx)
+            if ix > 127:
+                ix = 127
+            fx = cx - ix
+            cy = last_l / 67108864.0
+            iy = int(cy)
+            if iy > 63:
+                iy = 63
+            fy = cy - iy
+            row = grid[iy]
+            v1 = row[ix] + (row[ix + 1] - row[ix]) * fx
+            row = grid[iy + 1]
+            v2 = row[ix] + (row[ix + 1] - row[ix]) * fx
+            yl = (v1 + (v2 - v1) * fy) * scale
+            last_l = work
+            if blend:
+                yl = (yl * wet / Q32 + xl[i] * dry / Q32) * 2.0
+            out[0, i] = yl
+            # Droite, de même.
+            level_r += inc_r
+            work = xr[i] * level_r * 16.0 / Q32 * 8.0
+            work = top if not work <= top else (
+                bottom if work < bottom else work)
+            work += Q31
+            cx = work / 33554432.0
+            ix = int(cx)
+            if ix > 127:
+                ix = 127
+            fx = cx - ix
+            cy = last_r / 67108864.0
+            iy = int(cy)
+            if iy > 63:
+                iy = 63
+            fy = cy - iy
+            row = grid[iy]
+            v1 = row[ix] + (row[ix + 1] - row[ix]) * fx
+            row = grid[iy + 1]
+            v2 = row[ix] + (row[ix + 1] - row[ix]) * fx
+            yr = (v1 + (v2 - v1) * fy) * scale
+            last_r = work
+            if blend:
+                yr = (yr * wet / Q32 + xr[i] * dry / Q32) * 2.0
+            out[1, i] = yr
+            # La détection : passe-haut d'un pôle (``BasicFilterComponent``),
+            # le plus fort des deux canaux, au carré.
+            d = (yl - mem_l) * hpf_a / Q31
+            low = d + mem_l
+            mem_l = low + d
+            hl = abs(yl - low)
+            d = (yr - mem_r) * hpf_a / Q31
+            low = d + mem_r
+            mem_r = low + d
+            hr = abs(yr - low)
+            s = hl if hl > hr else hr
+            total += math.floor(s * s / Q32)
+        # ``calcRMS`` : une moyenne lissée d'un pôle, puis son logarithme.
+        ns = 2.0 * count
+        mean = ((total / Q31) / ns * ns + mean) / (1.0 + ns)
+        level = Q31 * math.sqrt(mean)
+        rms = math.log(level if level > 1.0 else 1.0)
+        start = stop
+    return rms

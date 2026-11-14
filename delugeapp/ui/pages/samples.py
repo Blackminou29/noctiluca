@@ -1455,13 +1455,13 @@ class SamplesPage(Page):
         choisi dans l'arbre s'il y en a un."""
         from PyQt6.QtWidgets import QFileDialog
 
+        from ..sendfiles import open_filter
+
         depart = Path.home() / "Downloads"
         choisis, _filtre = QFileDialog.getOpenFileNames(
             self, tr("Envoyer au Deluge"),
             str(depart if depart.is_dir() else Path.home()),
-            tr("Sons, presets, kits et morceaux du Deluge "
-               "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;"
-               "Tous les fichiers (*)"))
+            open_filter())
         if choisis:
             dossier = self._folder if self._folder.upper().startswith(
                 "SAMPLES") else ""

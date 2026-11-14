@@ -57,7 +57,7 @@ from pathlib import Path
 import numpy as np
 
 from ..i18n import N_, decimal, plural, tr
-from . import dxml
+from . import automation, conditions, dxml
 from .fixedpoint import format_fixed, parse_fixed
 from .model import Note, encode_notes, ticks_per_bar
 from .sdcard import SDCard, check_name, safe_deluge_name
@@ -870,6 +870,9 @@ class ClipSpec:
     name: str = ""
     playing: bool = True
     colour: int | None = None
+    #: L'automation d'un clip de synthé : ``{nom de preset: [(tick, valeur
+    #: d'écran)]}``, ticks du clip (:mod:`.automation`).
+    automation: dict = field(default_factory=dict)
 
     @property
     def note_count(self) -> int:
@@ -946,7 +949,9 @@ def _clean_notes(notes: list[Note], length: int) -> list[Note]:
             kept[-1].length = max(1, pos - kept[-1].pos)
         kept.append(Note(pos=pos, length=span, velocity=velocity,
                          condition=int(note.condition), lift=int(note.lift
-                                                                 or 64)))
+                                                                 or 64),
+                         iterance=int(note.iterance or 0),
+                         fill=int(note.fill or 0)))
     return kept
 
 
@@ -957,7 +962,8 @@ def events_to_rows(events, length: int, offset: float = 0.0
 
     ``offset`` (en pas) est retranché : il ramène une section au début de son
     clip. Les vélocités en pourcentage deviennent 1–127 comme dans
-    :meth:`~delugeapp.core.rhythm.Pattern.to_notes`.
+    :meth:`~delugeapp.core.rhythm.Pattern.to_notes` ; la condition d'une
+    note (:mod:`.conditions`) la suit.
     """
     rows: dict[int, list[Note]] = {}
     for event in events or ():
@@ -965,8 +971,11 @@ def events_to_rows(events, length: int, offset: float = 0.0
         span = max(1, int(round(float(event.length) * STEP)))
         velocity = max(1, min(127, int(int(event.velocity) * 127 // 100)))
         rows.setdefault(int(event.note), []).append(
-            Note(pos=pos, length=span, velocity=velocity, condition=20,
-                 lift=64))
+            Note(pos=pos, length=span, velocity=velocity,
+                 condition=conditions.probability_byte(
+                     getattr(event, "probability", 100)),
+                 lift=64, iterance=int(getattr(event, "iterance", 0) or 0),
+                 fill=int(getattr(event, "fill", 0) or 0)))
     out = {y: _clean_notes(notes, length) for y, notes in rows.items()}
     return {y: notes for y, notes in out.items() if notes}
 
@@ -999,15 +1008,18 @@ def pattern_rows(pattern, row_map: dict[str, int], length: int | None = None,
             pos_steps = float(step.pos)
             if not first <= pos_steps < last:
                 continue
-            probability = int(getattr(step, "probability", 100) or 100)
-            condition = 20 if probability >= 100 else max(
-                0, min(20, int(probability / 5)))
+            # Jamais 0 : dans un morceau c1.2, l'octet 0 veut dire
+            # « remplissage » (conditions.probability_byte).
+            condition = conditions.probability_byte(
+                getattr(step, "probability", 100) or 100)
             rows.setdefault(int(row), []).append(Note(
                 pos=int(round((pos_steps - first) * per_step)),
                 length=max(1, int(round(float(getattr(step, "length", 1)
                                               or 1) * per_step))),
                 velocity=max(1, min(127, int(step.velocity * 127 // 100))),
-                condition=condition, lift=64))
+                condition=condition, lift=64,
+                iterance=int(getattr(step, "iterance", 0) or 0),
+                fill=int(getattr(step, "fill", 0) or 0)))
     out = {y: _clean_notes(notes, length) for y, notes in rows.items()}
     return {y: notes for y, notes in out.items() if notes}, int(length)
 
@@ -1025,6 +1037,12 @@ def fold(rows: dict[int, list[Note]], length: int
     bars = length // BAR
     if bars <= 1 or bars * BAR != length:
         return rows, length
+    # Une itération compte les répétitions du clip : replié, il en ferait
+    # quatre fois plus, et « 1 sur 2 » ne voudrait plus dire la même chose.
+    last = conditions.ALWAYS + len(conditions.LEGACY_ITERANCES)
+    if any(n.iterance or conditions.ALWAYS < n.condition <= last
+           for notes in rows.values() for n in notes):
+        return rows, length
     for period_bars in range(1, bars):
         if bars % period_bars:
             continue
@@ -1032,7 +1050,7 @@ def fold(rows: dict[int, list[Note]], length: int
         if _repeats(rows, period, bars // period_bars):
             folded = {y: [Note(pos=n.pos, length=n.length,
                                velocity=n.velocity, condition=n.condition,
-                               lift=n.lift)
+                               lift=n.lift, iterance=n.iterance, fill=n.fill)
                           for n in notes if n.pos < period]
                       for y, notes in rows.items()}
             return {y: n for y, n in folded.items() if n}, period
@@ -1048,7 +1066,7 @@ def _repeats(rows: dict[int, list[Note]], period: int, count: int) -> bool:
                 return False
             slices.setdefault(note.pos // period, []).append(
                 (within, note.length, note.velocity, note.condition,
-                 note.lift))
+                 note.lift, note.iterance, note.fill))
         reference = slices.get(0, [])
         if not reference:
             return False
@@ -1216,6 +1234,12 @@ def _clip_element(spec: SongSpec, clip: ClipSpec, name: str,
             arp.set(key, value)
         params = copy.deepcopy(track.params)
         params.tag = "soundParams"
+        # L'automation du clip vit dans le réglage même : sa valeur, puis
+        # ses nœuds (``AutoParam::writeToFile``).
+        for key, nodes in (getattr(clip, "automation", None) or {}).items():
+            if nodes:
+                dxml.set_(params, key, automation.encode(
+                    key, nodes, 1, int(clip.length)))
         el.append(params)
 
     controls = ET.SubElement(el, "columnControls")

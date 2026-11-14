@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..i18n import N_, plural, tr
+from . import conditions
 
 if TYPE_CHECKING:                  # import circulaire à l'exécution
     from .model import Note
@@ -51,6 +52,10 @@ class Step:
     #: un arrondi ; c'est ce champ qui permet de réappliquer un groove depuis
     #: le motif droit, et à la grille d'afficher le pas à sa place.
     grid: int | None = None
+    #: Itération (« 1 sur 2 »…) et remplissage du coup, comme le firmware
+    #: les écrit (:mod:`.conditions`) ; 0 : aucun.
+    iterance: int = 0
+    fill: int = 0
 
 
 def cell(step: Step) -> int:
@@ -130,11 +135,14 @@ class Pattern:
                 pos = max(0, min(pos, self.length_ticks - 1))
                 length = max(1, int(round(float(step.length) * per_step)))
                 velocity = max(1, min(127, int(step.velocity * 127 // 100)))
-                # Le Deluge code la probabilité de 0 à 20 par pas de 5 %.
-                condition = (20 if step.probability >= 100
-                             else max(0, min(20, int(step.probability / 5))))
+                # Le Deluge code la probabilité de 1 à 20 par pas de 5 % —
+                # jamais 0, qui veut dire « remplissage » dans un morceau
+                # c1.2.
+                condition = conditions.probability_byte(step.probability)
                 notes.append(Note(pos=pos, length=length, velocity=velocity,
-                                  condition=condition, lift=64))
+                                  condition=condition, lift=64,
+                                  iterance=int(step.iterance or 0),
+                                  fill=int(step.fill or 0)))
             out[int(row)] = notes
         return out
 
@@ -519,7 +527,8 @@ def loop(pattern: Pattern, bars: int) -> Pattern:
                 if position < total:
                     copy = Step(pos=position, velocity=step.velocity,
                                 length=step.length,
-                                probability=step.probability)
+                                probability=step.probability,
+                                iterance=step.iterance, fill=step.fill)
                     out.tracks[track].append(copy)
     return out
 
@@ -679,7 +688,7 @@ def _copy(pattern: Pattern, name_suffix: str = "") -> Pattern:
                     ppq=pattern.ppq)
     for track, steps in pattern.tracks.items():
         clone.tracks[track] = [Step(s.pos, s.velocity, s.length, s.probability,
-                                    s.grid)
+                                    s.grid, s.iterance, s.fill)
                                for s in steps]
     return clone
 

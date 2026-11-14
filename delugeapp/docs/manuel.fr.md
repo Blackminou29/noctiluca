@@ -421,7 +421,7 @@ Le morceau composé, le bouton devient [Recomposer le morceau] : il fait un morc
 - **Volume** règle le niveau de la piste dans le morceau, au cran de la machine — de 0 à 50 —, avec sa valeur en décibels : celui du son pour un synthé, celui du kit pour une batterie. C'est ici que se fait l'équilibre : il s'entend dès l'écoute suivante, s'écrit avec le morceau, et **reste celui de la piste** quand elle change de son — [Autre son] ne défait pas un équilibre réglé. Une piste MIDI ou CV, dont le son est ailleurs, n'en a pas.
 - Une piste MIDI ou CV montre son **canal**, qui se change ici.
 
-Pour une batterie, **Le kit** liste ses rangées et le son de chacune. [Écouter la rangée] joue la rangée choisie telle que le kit la joue ; si l'écoute au clic est réglée ([Réglages](#reglages-ecoute)), la choisir suffit. Une rangée ne vous plaît pas ? [Autre son pour la rangée] : un autre son du même rôle la remplace — de la même machine d'abord, d'une voisine ensuite —, sans toucher au reste du kit, et s'entend aussitôt.
+Pour une batterie, **Le kit** liste ses rangées et le son de chacune. [Écouter la rangée] joue la rangée choisie telle que le kit la joue ; si l'écoute au clic est réglée ([Réglages](#reglages-ecoute)), la choisir suffit. Une rangée ne vous plaît pas ? [Autre son pour la rangée] : un autre son du même rôle la remplace — de la même machine d'abord, d'une voisine ensuite —, sans toucher au reste du kit, et s'entend aussitôt. Vous cherchez *la* bonne caisse claire ? [Choisir l'échantillon…], ou un double-clic sur la rangée, montre tous les sons de votre bibliothèque qui peuvent la jouer, la même machine en tête : un clic en écoute un, [Utiliser ce son] le prend (voir [Construire un kit](#construire-kit)). La flèche de retour, ou [[Ctrl+Z]], rend l'ancien.
 
 **Variantes dans le style** : [Proposer 8 variantes] en propose huit du son de la piste. Chacune ne touche qu'**un** aspect : soit un aspect tiré à nouveau — le timbre, le filtre, les enveloppes, le mouvement, l'espace, la largeur, les modulations —, soit un curseur poussé — plus brillant, plus sombre, plus sale, plus large, plus d'espace… Le reste du son ne bouge pas, et rien ne sort du genre. Un clic écoute une variante ; un double-clic, ou [Adopter], la donne à la piste.
 
@@ -471,6 +471,7 @@ Sous la grille, les clips de la piste :
 - [Doubler la longueur] le rend deux fois plus long en répétant son contenu, jusqu'à seize mesures — le geste de la machine : quatre mesures en deviennent huit, dont on varie la seconde moitié.
 - [Supprimer le clip] le retire ; les sections qui le jouaient se taisent pour cette piste.
 - [Clip en MIDI…], en mode avancé, écrit le clip dans un fichier `.mid`, hors de la carte ; une batterie part sur le canal 10.
+- [Importer un clip MIDI…], en mode avancé, fait le chemin inverse : un fichier `.mid` — une ligne de basse jouée dans le DAW, un rythme trouvé ailleurs — devient un clip neuf de la piste choisie. S'il a plusieurs pistes, l'application demande laquelle reprendre (pour une batterie, celles du canal 10 sont proposées d'abord). Les temps du fichier deviennent des pas, son tempo est ignoré : le clip prend celui du morceau, et dure les mesures entières que ses notes occupent, seize au plus. Pour une batterie, chaque note prend le rôle que lui donne la batterie General MIDI — 36 la grosse caisse, 38 la caisse claire, 42 la charley fermée… ; une note sans rôle est laissée de côté, et la barre d'état le dit.
 - Pour un synthé, **Hauteur** : [Octave −] et [Octave +] déplacent toutes ses notes d'une octave — une basse composée trop haut se descend d'un clic.
 
 | Pour un synthé | Pour une batterie |
@@ -482,8 +483,45 @@ Sous la grille, les clips de la piste :
 | **réponse** — la première moitié gardée, la seconde lui répond | **doublée** — des charleys deux fois plus serrés |
 | **octave** — des sauts d'octave, ou le registre déplacé | **demi-temps** — la caisse claire sur le troisième temps |
 | **fin** — la dernière mesure prépare le retour au début | **montée** — un roulement qui s'accélère jusqu'à la fin |
+| **vivante** — des notes en plus, à 50 %, et quelques-unes à 75 % : la ligne change d'un tour à l'autre | **vivante** — coups fantômes au hasard, une charley ouverte une fois sur deux, une relance tous les quatre tours |
+| | **roulement FILL** — un roulement qui ne joue que le bouton FILL tenu ; le motif qu'il remplace se tait pendant ce temps |
 
 Une variation garde la tonalité et la progression : une note qui bouge reste dans la gamme, et la quinte d'une basse est celle de l'accord du moment.
+
+### Les conditions des notes {#atelier-conditions}
+
+Comme sur la machine, une note peut ne pas jouer à chaque tour du clip : c'est ce qui fait vivre une boucle de quatre mesures pendant toute une section. L'atelier les écrit dans le morceau, et l'ordinateur les fait entendre selon les règles du firmware.
+
+- **Une probabilité** — 75 %, 50 %, 25 % : à chaque tour, la note est tirée au sort. Deux notes de même probabilité, au même instant, partagent leur tirage ; quand toutes les notes d'un instant sont incertaines et que leurs probabilités font 100 %, **une seule** joue — 30 % et 70 % font un « ou bien, ou bien ».
+- **Une itération** — « 1 sur 2 » joue au premier tour, au troisième, au cinquième… ; « 2 sur 2 » aux autres ; « 1 sur 4 » une fois tous les quatre tours : une relance en fin de phrase.
+- **Le remplissage** — une note **Remplissage** ne joue que pendant que vous tenez le bouton FILL du Deluge ; une note **Sauf remplissage** se tait pendant ce temps. Un roulement prêt à lancer en direct.
+
+!!! attention Le bouton FILL est à régler sur la machine
+    Le bouton FILL du Deluge, c'est SYNC-SCALING, une fois `SETTINGS` ▸ `COMMUNITY FEATURES` ▸ `Sync Scaling Action` réglé sur `Fill mode` (`FILL` sur l'écran à sept segments). D'usine, il garde son rôle de synchronisation, et une note de remplissage ne joue jamais — sauf par la commande MIDI globale « FILL », qu'on peut apprendre à un contrôleur. Quand votre carte dit que le réglage manque, l'atelier vous le rappelle en posant un remplissage.
+
+Une note n'en porte qu'une à la fois : c'est ce que garde un morceau du format de l'atelier (c1.2), que la machine 1.3 relit tel quel. La grille les montre : une note incertaine est plus petite et plus sombre, à proportion de sa chance de jouer ; un cartouche dit sa condition — « 50 », « 1/2 », « F » — ou, quand la case est trop petite, un point blanc ; un liseré d'or pointillé entoure une note de remplissage, un liseré plein une note « sauf remplissage ». La ligne sous la grille compte les notes qui ont une condition.
+
+**Poser une condition**, en mode avancé : au-dessus de la grille, la liste **Clic gauche** — d'ordinaire « Poser ou retirer des notes » — propose les conditions. Choisissez-en une, puis cliquez sur les notes ou les coups à marquer ; un second clic sur une note qui l'a déjà la rend à « Toujours ». Revenez à « Poser ou retirer des notes » pour dessiner de nouveau. Chaque condition posée se défait.
+
+**À l'écoute**, un clip qui porte des conditions se déroule sur assez de tours pour qu'on les entende — deux pour du hasard, quatre pour un « 1 sur 4 », huit mesures au plus — et la boucle tourne sur ces tours-là ; une note de remplissage se tait, comme sur la machine sans le bouton FILL. Dans une section, chaque clip compte ses tours depuis le début de la section.
+
+### L'automation d'un clip {#atelier-automation}
+
+Comme sur la machine, un clip de synthé peut faire bouger un réglage de son son d'un bout à l'autre : une coupure qui s'ouvre sur une montée, un volume qui monte sur une intro, un panoramique qui balance. En mode avancé, dans les réglages fins du clip, la rangée **Automation** :
+
+- le réglage — Coupure, Résonance, Volume ou Panoramique ;
+- la forme — **montée** (de la première valeur à la seconde), **descente**, **vague** (jusqu'au milieu, puis retour), **par mesure** (la montée recommence à chaque mesure), **balancement** (d'une valeur à l'autre à chaque temps) ;
+- les deux valeurs, au cran de la machine ; la seconde est proposée à la valeur du son, la première vingt crans dessous.
+
+[Poser la courbe] la pose sur le clip — une courbe du même réglage est remplacée — et elle s'entend aussitôt, l'écoute suivant la courbe note par note ; [Retirer la courbe] rend au réglage la valeur du son. La grille la trace en marches blanches, son nom et ses valeurs en tête ; la ligne sous la grille la rappelle. Un clip venu du Deluge ne se retouche pas : sa copie, si ([Dupliquer]). Un clip doublé double sa courbe.
+
+Le morceau écrit garde la courbe dans le clip, au format de la machine : la valeur, puis un nœud par double-croche où elle change. Un clip qui en porte n'est pas replié sur sa plus courte boucle, la courbe courant sur toute sa longueur. Ouvrir un morceau du Deluge reprend les courbes de ses clips — en marches comme en nœuds interpolés — et l'atelier les fait entendre.
+
+!!! astuce Une montée d'un clic
+    À l'étape Structure, choisissez la section qui prépare le refrain, puis [Montée du filtre] : chaque synthé qui y joue reçoit une copie de son clip, à la durée de la section (seize mesures au plus), dont la coupure s'ouvre de vingt crans sous la valeur du son jusqu'à elle. Les autres sections gardent leurs clips ; la flèche de retour défait le tout.
+
+!!! astuce Une boucle qui respire
+    Partez d'un clip qui vous plaît, puis [Varier] ▸ **vivante** : rien de ce qui fait le motif ne change, mais la machine y ajoute, d'un tour à l'autre, ce qu'un batteur ajouterait. Et [Varier] ▸ **roulement FILL** donne une version à jouer en direct : laissez-la tourner, tenez FILL au moment voulu.
 
 ### Les réglages fins, en mode avancé
 
@@ -529,6 +567,8 @@ Une exception : si ce nom est celui d'un morceau **que l'atelier a écrit**, et 
 Le panneau **Le Deluge** dit où partira le morceau : sur la copie de travail, il monte sur la machine de lui-même, quelques secondes après l'écriture. [Deluge en direct…] ouvre la fenêtre de la machine ; [Synchroniser] échange tout de suite avec elle.
 
 En mode avancé, [Morceau en MIDI…] écrit le morceau entier dans un fichier `.mid`, hors de la carte : une piste par piste, la batterie en piste 10, le nom des sections en repères.
+
+[Morceau en audio…], en mode avancé lui aussi, calcule le morceau entier **tel que l'ordinateur l'entend** — les mêmes calculs que l'écoute de l'atelier, ceux du firmware — et l'écrit en WAV 24 bits à l'endroit que vous choisirez : **le mélange seul**, ou **le mélange et une piste par fichier** (« NOM - Basse.wav », « NOM - Batterie.wav »…). Toutes reçoivent le même gain, celui qui ramène le mélange sous la pleine échelle : glissées ensemble dans un DAW, les pistes redonnent le mélange. Les conditions des notes y jouent comme à l'écoute, leur hasard changeant d'une section à l'autre ; une note de remplissage se tait. Le calcul part en arrière-plan — une quinzaine de secondes pour trois minutes — et vous pouvez continuer à travailler ; rien n'est écrit sur la carte. Une piste MIDI ou CV, dont le vrai son est hors du Deluge, y joue avec un son du style.
 
 ## Ouvrir un morceau du Deluge, et le compléter {#atelier-completer}
 
@@ -594,14 +634,16 @@ Dessous :
 
 - **Rôle du son** — ce que le son doit faire dans un morceau : Basse, Lead, Nappe, Pincé, Clavier, Accord bref, Effet, Bourdon, Arpège, Cloche. Une basse ne se règle pas comme une nappe.
 - En mode avancé, **Moteur** — [Choisi par le genre], qui donne les sons les plus typés, ou Soustractive, FM, Ring mod.
-- En mode avancé encore, **Graine** — le nombre qui rend un son reproductible : deux générations avec la même graine et les mêmes réglages donnent **exactement** le même son. Le dé en tire une nouvelle.
+- En mode avancé encore, **Graine** — celle du son affiché, le nombre qui le rend reproductible : deux générations avec la même graine et les mêmes réglages donnent **exactement** le même son. Tapez-en une, puis [[Entrée]] : le générateur refait ce son-là.
 
-En mode avancé, **six curseurs** orientent le résultat : **Brillance** (le filtre), **Mouvement** (LFO et enveloppe de modulation), **Espace** (réverbération et délai), **Saleté** (distorsion, résonance, réduction numérique), **Largeur** (unisson, désaccord, chorus) et **Complexité** (le nombre de modulations).
+En mode avancé, **six curseurs** orientent le résultat : **Brillance** (le filtre), **Mouvement** (LFO et enveloppe de modulation), **Espace** (réverbération et délai), **Saleté** (distorsion, résonance, réduction numérique), **Largeur** (unisson, désaccord, chorus) et **Complexité** (le nombre de modulations). Ils orientent le prochain son, et **retouchent le son affiché** quand c'est le générateur qui l'a fait : même graine, même genre, seuls bougent les réglages que règle le curseur.
+
+Les réglages de gauche **suivent le son affiché** : une variante adoptée, un son rappelé de l'historique ou tiré [Au hasard] y remettent son genre, son rôle, sa graine et ses curseurs.
 
 ## Générer et écouter {#generer}
 
-- [Générer] fabrique un preset complet à partir du genre, du rôle, des curseurs et de la graine. Rien n'est encore écrit sur la carte.
-- [Au hasard] tire un genre, un rôle et une graine, puis génère.
+- [Générer] fabrique **un autre son** du genre et du rôle choisis, sous une nouvelle graine, à chaque clic. Rien n'est encore écrit sur la carte.
+- [Au hasard] tire un genre, un rôle et des curseurs, puis génère.
 - [Muter], en mode avancé, repart du son actuel et en change quelques réglages : de quoi explorer autour d'une idée qui plaît.
 - [Écouter] joue le son — calculé par l'ordinateur, ou par le Deluge s'il est branché et l'écoute réglée sur lui.
 - [Modifier le son…], en mode avancé, ouvre l'éditeur du son courant : chaque réglage à la main, au cran de la machine et en clair (voir [Modifier un son à la main](#atelier-modifier-son)). Le son retouché rejoint l'historique.
@@ -612,13 +654,24 @@ Au centre, le son obtenu : son nom et sa description, sa forme d'onde et son spe
     Un oscillateur muet, un filtre fermé, une enveloppe sans attaque ni tenue sont rattrapés avant l'écriture.
 
 !!! retenir L'écoute de l'ordinateur refait les calculs du Deluge
-    Formes d'onde, filtres, saturation, FM, effets, réverbération et niveaux : l'ordinateur reprend, étage par étage, ce que calcule le firmware de la machine (1.3). Un decay de 13 dure 1,8 seconde ici comme sur le Deluge, une basse au filtre fermé reste sombre, un son poussé sature au même endroit. Le LFO 1 court d'une note à l'autre, comme sur la machine, et le glissé suit la fréquence. Restent approchés la lecture des échantillons, plus simple, et l'étirement ; pour l'entendre tel quel, faites-le jouer par la machine : [Essayer dans l'atelier], puis écrivez le morceau.
+    Formes d'onde, filtres, saturation, FM, effets, réverbération et niveaux : l'ordinateur reprend, étage par étage, ce que calcule le firmware de la machine (1.3). Un decay de 13 dure 1,8 seconde ici comme sur le Deluge, une basse au filtre fermé reste sombre, un son poussé sature au même endroit. Le LFO 1 court d'une note à l'autre, comme sur la machine, et le glissé suit la fréquence. Le filtre SVF, le « tape warble », l'arpégiateur et le compresseur maître du morceau sont ceux du firmware. Restent approchés la lecture des échantillons, plus simple, l'étirement, et ce que l'arpégiateur tire au sort ; pour l'entendre tel quel, faites-le jouer par la machine : [Essayer dans l'atelier], puis écrivez le morceau.
+
+## Retoucher, garder {#retoucher}
+
+Sous le nom du son, **Retoucher** : cinq paires de pads, une par curseur — Brillance, Saleté, Espace, Largeur, Mouvement. Le pad **−** et le pad **+** poussent le curseur d'un cinquième de sa course : *plus sombre* ou *plus brillant*, *plus propre* ou *plus sale*, *plus sec* ou *plus d'espace*, *plus étroit* ou *plus large*, *plus statique* ou *plus de mouvement*. C'est **le même son** : chaque décision du générateur a son propre tirage, et seuls bougent les réglages que ce curseur règle. Un son retouché à la main garde ses retouches. Chaque retouche rejoint l'historique, avec son nom : « ORAGE SUB · Plus sombre ».
+
+Les pads ne s'allument que pour un son fait par le générateur : un preset venu de la carte, un fondu ou une mutation n'ont pas de réglages à refaire — [Modifier le son…] les retouche à la main.
+
+En mode avancé, **Garder en générant** : huit pads, un par aspect du son — [Moteur], [Timbre], [Filtre], [Enveloppes], [Mouvement], [Largeur], [Espace], [Modulations]. Un pad allumé reste quand [Générer] tire un autre son : gardez le filtre et les enveloppes d'une basse qui sonne juste, et faites défiler les timbres.
+
+!!! astuce Trouver, puis affiner
+    [Générer] jusqu'à un son qui vous accroche ; allumez ce qui vous plaît (le timbre, les enveloppes) et générez encore ; puis les pads de **Retoucher** pour le régler à l'oreille, et [Produire 8 variantes] pour explorer autour.
 
 ## Variations, historique, fondu {#variations}
 
 À droite :
 
-- [Produire 8 variantes] crée huit cousins du son actuel. **Un clic** sur une variante l'écoute, **un double-clic** l'adopte.
+- [Produire 8 variantes] crée huit cousins du son actuel. **Un clic** sur une variante l'écoute, **un double-clic** l'adopte. Pour un son du générateur, ce sont des variantes **dans le style** : chacune tire à nouveau un seul aspect (« Autre filtre », « Autres enveloppes ») ou pousse un seul curseur (« Plus sale »), sans quitter le genre ni le rôle, et garde les retouches faites à la main. Pour un son venu d'ailleurs, chaque variante en déplace un peu tous les réglages.
 - **Historique** : chaque son généré s'y empile ; un double-clic le rappelle.
 - En mode avancé, **Fondre** : choisissez un son dans l'historique, réglez le curseur — à gauche le son courant, à droite le son choisi — puis cliquez [Fondre]. Les réglages continus se mélangent selon le dosage ; les choix tranchés, comme les formes d'onde, basculent à mi-chemin.
 - En mode avancé, [Générer un lot dans un dossier…] fabrique d'un coup jusqu'à 64 presets du genre choisi et les écrit dans un sous-dossier de `SYNTHS`.
@@ -637,8 +690,9 @@ L'onglet [Kit de batterie] assemble un kit **à partir de vos échantillons**. L
 - **Nom du kit** est le nom du fichier qui sera écrit dans `KITS`.
 - En mode avancé, **Graine** : même graine, même kit.
 - En mode avancé, **Dossier à privilégier**, facultatif, limite la recherche à un dossier de la carte, par exemple `SAMPLES/Artists/…`.
+- **Rangées** : un pad par rôle — [Kick], [Snare], [HatC], [HatO], [Clap], [Rim], [TomL], [TomM], [TomH], [Crash], [Ride], [Shaker], puis les percussions [China], [ConL], [ConM], [ConH], [Cowbell], [Block], [Claves], [Tambourine], [Guiro], [Timpany]. Ceux que le genre conseille s'allument quand vous le choisissez ; allumez ou éteignez les autres à votre goût — un kit de house sans tom, un kit de lo-fi avec un tambourin. Un rôle dont votre bibliothèque n'a aucun échantillon reste éteint. [Celles du genre] revient aux rangées conseillées. Le kit range les rangées allumées dans l'ordre du genre, la grosse caisse en bas.
 
-[Construire le kit] l'assemble — rien n'est encore écrit. [Écouter le kit] joue ses rangées l'une après l'autre. Une rangée ne vous plaît pas ? Choisissez-la dans la liste, puis [Autre son] : un autre son du même rôle la remplace, de la même machine d'abord, d'une machine voisine ensuite. [Enregistrer dans KITS] l'écrit dans `KITS`, sous le nom du kit ; si ce nom est déjà pris, l'application demande avant de remplacer le fichier. [Essayer dans l'atelier] en fait la batterie du morceau de l'atelier, ou du prochain.
+[Construire le kit] l'assemble — rien n'est encore écrit. [Écouter le kit] joue ses rangées l'une après l'autre. Une rangée ne vous plaît pas ? Choisissez-la dans la liste, puis [Autre son] : un autre son du même rôle la remplace, de la même machine d'abord, d'une machine voisine ensuite. Ou [Choisir l'échantillon…] (ou un double-clic sur la rangée) : la liste de **tous** les sons de votre bibliothèque qui peuvent la jouer, ceux de la même machine en tête, puis ceux qui conviennent au genre. **Un clic en écoute un** ; un filtre resserre la liste par le nom ou la machine ; [Utiliser ce son] le met à la rangée — son nom, son volume et son panoramique suivent son rôle. [Enregistrer dans KITS] l'écrit dans `KITS`, sous le nom du kit ; si ce nom est déjà pris, l'application demande avant de remplacer le fichier. [Essayer dans l'atelier] en fait la batterie du morceau de l'atelier, ou du prochain.
 
 !!! attention Le kit puise dans l'index
     Sans analyse de la carte, le générateur de kits ne trouve aucun échantillon. Lancez d'abord [Analyser la carte], sur l'accueil.
@@ -899,7 +953,7 @@ Un preset ou un échantillon marqué « ABSENT » rendra le morceau muet par end
 
 ## Écouter {#ecouter-morceau}
 
-- [Écouter le morceau] calcule le morceau entier sur l'ordinateur, sur son arrangement — ou ses sections dans l'ordre, répétées autant de fois que le morceau le dit —, avec les sons et les réglages de chaque clip, puis le joue. Le calcul prend son temps : un quart de minute environ pour un morceau de trois minutes, que la barre d'état suit piste par piste. Pour entendre vite, écoutez un clip.
+- [Écouter le morceau] calcule le morceau entier sur l'ordinateur, sur son arrangement — ou ses sections dans l'ordre, répétées autant de fois que le morceau le dit —, avec les sons et les réglages de chaque clip, et le joue **pendant que la suite se calcule** : le début sonne au bout d'une seconde ou deux, la suite le rejoint avant que la lecture l'atteigne. Avec la sortie de secours de Windows (celle qui joue un fichier entier), il faut attendre la fin du calcul : un quart de minute environ pour un morceau de trois minutes.
 - Dans l'onglet [Clips], [Écouter le clip] joue le clip choisi sur toute sa boucle, comme la machine le joue ; un double-clic sur un clip fait de même, et [[Espace]] aussi.
 - [Arrêter] coupe l'écoute, et le calcul s'il tourne encore.
 
@@ -1343,7 +1397,8 @@ Les règles :
 - **rien d'existant n'est remplacé** : un fichier identique est laissé — même rangé ailleurs sur la carte, où le plan dit qu'il est déjà ; un homonyme différent fait numéroter le nouveau (« Kick 2.wav ») ;
 - les noms deviennent **transmissibles** : sans accents ni caractères interdits (« Été » devient « Ete »), et les presets du pack suivent ;
 - un fichier que le Deluge refuserait — un WAV à en-tête étendu, comme en écrivent beaucoup de logiciels — est **converti sans perte audible** ;
-- ce qui n'est pas pour le Deluge — un MP3, un fichier à quatre canaux, de la documentation — reste sur le PC, et le plan dit pourquoi.
+- un **MP3, un FLAC ou un Ogg Vorbis**, que la machine ne lit pas, arrive sur la carte **en WAV** (« Kick.flac » devient « Kick.wav »), à sa fréquence et à ses canaux d'origine ; un FLAC 24 bits reste en 24 bits, à l'échantillon près. Le plan compte la taille du WAV, bien plus lourd qu'un MP3, dans le temps du câble ;
+- ce qui n'est pas pour le Deluge — un M4A, un Opus, un fichier à quatre canaux, de la documentation — reste sur le PC, et le plan dit pourquoi.
 
 Les fichiers partent ensuite en arrière-plan sur le Deluge, ou à sa prochaine connexion. La sauvegarde ouverte en lecture seule refuse les envois : « Rien n'est écrit ici ».
 

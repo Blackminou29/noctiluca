@@ -53,4 +53,23 @@ TEXTS = {
     "les notes sortiraient de l'étendue du clavier":
         "the notes would leave the range of the keyboard",
     "section inconnue": "unknown section",
+    # Un clip depuis un fichier MIDI (13 novembre 2026)
+    "Piste %d": "Track %d",
+    "piste MIDI inconnue": "unknown MIDI track",
+    "aucune note à reprendre dans cette piste":
+        "no note to take from this track",
+    "MIDI importé": "imported MIDI",
+    "aucune note de batterie General MIDI dans cette piste":
+        "no General MIDI drum note in this track",
+    # Le morceau entier en audio
+    "Piste %d sur %d : %s": "Track %d of %d: %s",
+    "aucune piste ne sonne : placez des clips dans les sections":
+        "no track plays: place clips in the sections",
+    "Écriture de %s": "Writing %s",
+    "Piste": "Track",
+    # L'automation d'un clip (14 novembre 2026)
+    "seul un clip de synthé porte une automation":
+        "only a synth clip carries automation",
+    "réglage inconnu : %s": "unknown setting: %s",
+    "montée": "build-up",
 }

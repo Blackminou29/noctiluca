@@ -42,4 +42,22 @@ TEXTS = {
     "montée": "build-up",
     "un roulement qui s'accélère jusqu'à la fin":
         "a roll that speeds up to the end",
+    "vivante": "alive",
+    "des notes en plus qui ne jouent qu'une fois sur deux, au hasard, et "
+    "quelques-unes incertaines : sur le Deluge, la ligne change d'un tour à "
+    "l'autre":
+        "extra notes that only play one time in two, at random, and a few "
+        "uncertain ones: on the Deluge, the line changes from one loop to "
+        "the next",
+    "coups fantômes au hasard, une charley ouverte une fois sur deux, une "
+    "relance tous les quatre tours : sur le Deluge, le motif change d'un "
+    "tour à l'autre":
+        "random ghost hits, an open hi-hat one time in two, a pickup every "
+        "four loops: on the Deluge, the pattern changes from one loop to "
+        "the next",
+    "roulement FILL": "FILL roll",
+    "un roulement qui ne joue que le bouton FILL tenu sur la machine ; le "
+    "motif qu'il remplace se tait pendant ce temps":
+        "a roll that only plays while the machine's FILL button is held; "
+        "the pattern it replaces falls silent meanwhile",
 }

@@ -99,10 +99,10 @@ TEXTS = {
     "Ouvrir dans l'atelier": "Open in the studio",
     "Choisissez d'abord un morceau.": "Choose a song first.",
     "Écouter le morceau": "Play the song",
-    "Calculer le morceau entier sur l'ordinateur, sur son arrangement, puis "
-    "le jouer":
-        "Compute the whole song on the computer, along its arrangement, then "
-        "play it",
+    "Calculer le morceau entier sur l'ordinateur, sur son arrangement, et "
+    "le jouer pendant que la suite se calcule":
+        "Compute the whole song on the computer, along its arrangement, and "
+        "play it while the rest is being computed",
     "Écouter le clip": "Play the clip",
     "Calculer le clip choisi comme la machine le joue, puis le jouer "
     "(double-clic sur un clip : de même)":
@@ -120,6 +120,8 @@ TEXTS = {
         "Nothing sounds here: an empty clip, or a MIDI, CV or audio track, "
         "which only the Deluge plays.",
     "Lecture…": "Playing…",
+    "Lecture — la suite du morceau se calcule…":
+        "Playing — the rest of the song is being computed…",
     "Lecture impossible : %s": "Playback failed: %s",
     "Aucune sortie audio disponible.": "No audio output available.",
 }

@@ -292,10 +292,12 @@ TEXTS = {
     "Autre accord": "Another chord",
     "Le son de la piste": "The track's sound",
     "Le kit": "The kit",
-    "Une rangée ne vous plaît pas ? Choisissez-la, puis « Autre son "
-    "pour la rangée » : le reste du kit ne bouge pas.":
-        "Don't like a row? Select it, then “Another sound for the row”: "
-        "the rest of the kit stays as it is.",
+    "Une rangée ne vous plaît pas ? Choisissez-la, puis « Autre son pour la "
+    "rangée », ou « Choisir l'échantillon… » pour l'écouter parmi tous ceux "
+    "de son rôle : le reste du kit ne bouge pas.":
+        "Don't like a row? Select it, then “Another sound for the row”, or "
+        "“Choose the sample…” to hear it among all those of its role: the "
+        "rest of the kit stays as it is.",
     "Autre son pour la rangée": "Another sound for the row",
     "Clip en MIDI…": "Clip to MIDI…",
     "Groove": "Groove",
@@ -316,11 +318,14 @@ TEXTS = {
     "Deluge en direct…": "Deluge Live…",
     "Synchroniser": "Sync",
     "Exporter": "Export",
-    "Le morceau entier dans un fichier MIDI, pour un logiciel de MAO : "
-    "une piste par piste, la batterie sur le canal 10, le nom des "
-    "sections en repères.":
-        "The whole song in a MIDI file, for a DAW: one track per track, "
-        "the drums on channel 10, the section names as markers.",
+    "Le morceau entier hors de la carte : en MIDI pour un logiciel de MAO — "
+    "une piste par piste, la batterie sur le canal 10, le nom des sections "
+    "en repères —, ou en audio, tel que l'ordinateur l'entend : le mélange "
+    "en WAV, et à la demande une piste par fichier.":
+        "The whole song off the card: as MIDI for a DAW — one track per "
+        "track, the drums on channel 10, the section names as markers —, or "
+        "as audio, the way the computer hears it: the mix as a WAV, and on "
+        "request one track per file.",
     "Morceau en MIDI…": "Song to MIDI…",
     "Étape précédente": "Previous step",
     "Composer le morceau": "Compose the song",
@@ -569,4 +574,80 @@ TEXTS = {
     "compteur.":
         "It will take the genre's tempo, %d BPM, unless you set the "
         "counter.",
+    # Les conditions des notes (13 novembre 2026)
+    "Clic gauche": "Left click",
+    "Poser ou retirer des notes": "Place or remove notes",
+    "%d avec une condition : la machine ne les joue pas à chaque tour.":
+        "%d with a condition: the machine does not play them every loop.",
+    "Clic gauche : poser ou retirer des notes.":
+        "Left click: place or remove notes.",
+    "Clic gauche : « %s » sur la note touchée ; un second clic la rend à "
+    "« Toujours ».":
+        "Left click: “%s” on the note you touch; a second click returns it "
+        "to “Always”.",
+    "Pas de note à cette case : « Poser ou retirer des notes » en pose une.":
+        "No note in this cell: “Place or remove notes” places one.",
+    "condition d'une note": "a note's condition",
+    "%s, pas %d : %s.": "%s, step %d: %s.",
+    "Choisir l'échantillon…": "Choose the sample…",
+    "échantillon d'une rangée": "a row's sample",
+    # Un clip depuis un fichier MIDI
+    "Importer un clip MIDI…": "Import a MIDI clip…",
+    "Choisissez d'abord une piste.": "Choose a track first.",
+    "Importer un clip MIDI": "Import a MIDI clip",
+    "Fichier MIDI (*.mid *.midi)": "MIDI file (*.mid *.midi)",
+    "Fichier MIDI illisible : %s": "Unreadable MIDI file: %s",
+    "Ce fichier MIDI n'a aucune note.": "This MIDI file has no note.",
+    "%s — %d note(s)": "%s — %d note(s)",
+    "La piste du fichier à reprendre dans « %s » :":
+        "The file's track to take into “%s”:",
+    "clip MIDI importé": "imported MIDI clip",
+    "Rien à importer : %s.": "Nothing to import: %s.",
+    "Clip %s : %d note(s) sur %d mesure(s), depuis %s.":
+        "Clip %s: %d note(s) over %d bar(s), from %s.",
+    "%d laissée(s) de côté : sans rôle de batterie, ou au-delà de seize "
+    "mesures.":
+        "%d left out: with no drum role, or beyond sixteen bars.",
+    # Le morceau en audio
+    "Morceau en audio…": "Song to audio…",
+    "Le mélange seul": "The mix only",
+    "Le mélange, et une piste par fichier": "The mix, and one track per file",
+    "Un export audio est déjà en cours.":
+        "An audio export is already running.",
+    "Exporter le morceau en audio": "Export the song as audio",
+    "Que faut-il écrire ?": "What should be written?",
+    "Fichier WAV (*.wav)": "WAV file (*.wav)",
+    "Rendu du morceau… (une quinzaine de secondes pour trois minutes)":
+        "Rendering the song… (about fifteen seconds for three minutes)",
+    "Rendu du morceau": "Rendering the song",
+    "Export audio arrêté.": "Audio export stopped.",
+    "Morceau exporté en audio : %s.": "Song exported as audio: %s.",
+    "Morceau exporté en audio : %s, et %d piste(s) à côté.":
+        "Song exported as audio: %s, and %d track(s) next to it.",
+    "Export audio impossible : %s.": "Audio export impossible: %s.",
+    # L'automation d'un clip
+    "Automation": "Automation",
+    "Poser la courbe": "Set the curve",
+    "Retirer la courbe": "Remove the curve",
+    "Montée du filtre": "Filter build-up",
+    "Automation : %s.": "Automation: %s.",
+    "automation d'un clip": "a clip's automation",
+    "Pas d'automation : %s.": "No automation: %s.",
+    "Clip %s : %s, %s.": "Clip %s: %s, %s.",
+    "Ce clip n'a pas de courbe de ce réglage.":
+        "This clip has no curve for this setting.",
+    "automation retirée": "automation removed",
+    "Clip %s : plus de courbe de %s.": "Clip %s: no more %s curve.",
+    "Choisissez d'abord une section.": "Choose a section first.",
+    "montée du filtre": "filter build-up",
+    "Aucun synthé ne joue dans cette section.":
+        "No synth plays in this section.",
+    "« %s » : la coupure de %d synthé(s) s'ouvre sur toute la section — des "
+    "copies des clips, les autres sections gardent les leurs.":
+        "“%s”: the cutoff of %d synth(s) opens over the whole section — "
+        "copies of the clips, the other sections keep theirs.",
+    "Sur votre Deluge, SYNC-SCALING n'est pas encore le bouton FILL : "
+    "SETTINGS ▸ COMMUNITY FEATURES ▸ Sync Scaling Action ▸ Fill mode.":
+        "On your Deluge, SYNC-SCALING is not the FILL button yet: SETTINGS ▸ "
+        "COMMUNITY FEATURES ▸ Sync Scaling Action ▸ Fill mode.",
 }

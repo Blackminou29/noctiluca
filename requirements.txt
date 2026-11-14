@@ -28,3 +28,9 @@ numba>=0.60
 # l'application démarre et fonctionne, mais les boutons d'écoute restent
 # inactifs (`delugeapp.core.audio_out` le détecte seul).
 sounddevice>=0.4 ; python_version >= "3.8"
+
+# Décode le MP3, le FLAC et l'Ogg Vorbis envoyés au Deluge, qui ne lit que
+# le WAV et l'AIFF : ils arrivent sur la carte en WAV. Sans ce paquet, ils
+# restent sur le PC, avec le conseil de les exporter en WAV
+# (`delugeapp.core.compressed` le détecte seul). Testé avec miniaudio 1.71.
+miniaudio>=1.59

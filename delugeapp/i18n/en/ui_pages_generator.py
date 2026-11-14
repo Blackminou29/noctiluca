@@ -39,11 +39,12 @@ TEXTS = {
     "Soustractive": "Subtractive",
     "Ring mod": "Ring mod",
     "Graine": "Seed",
-    "Deux générations avec la même graine donnent exactement le même son. "
-    "Notez-la pour retrouver un preset.":
-        "Two generations with the same seed give exactly the same sound. "
-        "Write it down to get a preset back.",
-    "Nouvelle graine au hasard": "New random seed",
+    "La graine du son affiché. Deux générations avec la même graine et les "
+    "mêmes réglages donnent exactement le même son : tapez-en une, puis "
+    "Entrée, pour retrouver un preset.":
+        "The seed of the sound shown. Two generations with the same seed and "
+        "the same settings give exactly the same sound: type one, then "
+        "Enter, to get a preset back.",
     "Réglages": "Settings",
     "Aucun son généré": "No sound generated",
     "Choisissez un genre et un rôle, puis cliquez « Générer ».":
@@ -82,13 +83,15 @@ TEXTS = {
     "rangée est réglée comme le Deluge la crée : l'échantillon joué jusqu'au "
     "bout et sensible à la vélocité ; volume et panoramique suivent les kits "
     "de la carte, toms en éventail. Une rangée ne vous plaît pas ? "
-    "Choisissez-la, puis « Autre son ».":
+    "Choisissez-la, puis « Autre son » — ou « Choisir l'échantillon… » pour "
+    "l'écouter parmi tous ceux de son rôle.":
         "The kit is built around a drum machine or a bank from your library "
         "(909, Linndrum, an artist kit…), chosen for the genre; the roles it "
         "lacks are filled in from elsewhere. Each row is set up the way the "
         "Deluge creates it: the sample played to the end and velocity "
         "sensitive; volume and pan follow the card's kits, with toms spread "
-        "out. Don't like a row? Select it, then “Another sound”.",
+        "out. Don't like a row? Select it, then “Another sound” — or "
+        "“Choose the sample…” to hear it among all those of its role.",
     "Nom du kit": "Kit name",
     "MON KIT": "MY KIT",
     "Dossier à privilégier": "Preferred folder",
@@ -160,4 +163,53 @@ TEXTS = {
     "Essayer dans l'atelier": "Try in the studio",
     "Écouter le kit": "Play the kit",
     "Rôle du son": "Role of the sound",
+    # Retoucher, garder, variantes dans le style (13 novembre 2026)
+    "Plus sombre": "Darker",
+    "Plus brillant": "Brighter",
+    "Plus propre": "Cleaner",
+    "Plus sale": "Dirtier",
+    "Plus sec": "Drier",
+    "Plus d'espace": "More space",
+    "Plus étroit": "Narrower",
+    "Plus large": "Wider",
+    "Plus statique": "More static",
+    "Plus de mouvement": "More movement",
+    "Timbre": "Timbre",
+    "Filtre": "Filter",
+    "Enveloppes": "Envelopes",
+    "Modulations": "Modulation",
+    "Garder en générant": "Keep when generating",
+    "Les aspects allumés restent quand « Générer » tire un autre son.":
+        "The lit aspects stay when “Generate” draws another sound.",
+    "Allumé, « Générer » tire un autre son sans toucher à ceci : %s":
+        "When lit, “Generate” draws another sound without touching this: %s",
+    "Retoucher": "Touch up",
+    "Le même son, poussé dans une direction ; le reste ne bouge pas.":
+        "The same sound, pushed in one direction; the rest does not move.",
+    "%s — le même son, le reste ne bouge pas  (rien n'est écrit sur la "
+    "carte)":
+        "%s — the same sound, the rest does not move  (nothing is written "
+        "to the card)",
+    "Preset généré : %s — gardés : %s": "Preset generated: %s — kept: %s",
+    "Générez un son : ces pads le pousseront dans une direction.":
+        "Generate a sound: these pads will push it in one direction.",
+    "Ce son ne vient pas du générateur : il ne sait pas le refaire. "
+    "« Modifier le son… » le retouche à la main.":
+        "This sound does not come from the generator: it cannot remake it. "
+        "“Edit the sound…” touches it up by hand.",
+    "%s : le curseur est déjà en butée.": "%s: the slider is already at "
+                                          "its end.",
+    "%s : %s": "%s: %s",
+    "Retouché : %s": "Touched up: %s",
+    # Les rangées d'un kit, l'échantillon choisi (13 novembre 2026)
+    "Choisir l'échantillon…": "Choose the sample…",
+    "Rangées": "Rows",
+    "Celles du genre": "The genre's",
+    "Rallume les rangées que le genre conseille, et elles seules":
+        "Lights up again the rows the genre suggests, and only them",
+    "Allumée, le kit aura une rangée « %s »":
+        "When lit, the kit will have a “%s” row",
+    "La bibliothèque n'a aucun échantillon « %s »":
+        "The library has no “%s” sample",
+    "Allumez au moins une rangée.": "Light up at least one row.",
 }

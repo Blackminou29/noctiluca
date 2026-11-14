@@ -267,10 +267,6 @@ TEXTS = {
     "Fichier introuvable.": "File not found.",
     "Lecture impossible : %s": "Playback failed: %s",
     "Envoyer au Deluge": "Send to the Deluge",
-    "Sons, presets, kits et morceaux du Deluge (*.wav *.WAV *.aif *.aiff "
-    "*.xml *.XML);;Tous les fichiers (*)":
-        "Deluge sounds, presets, kits and songs (*.wav *.WAV *.aif *.aiff "
-        "*.xml *.XML);;All files (*)",
     "Note : %d/5": "Rating: %d/5",
     "Sélectionnez la boucle à découper dans la liste.":
         "Select the loop to slice in the list.",

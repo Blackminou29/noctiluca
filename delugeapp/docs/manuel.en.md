@@ -421,7 +421,7 @@ On the left, the **Tracks** column, shared by the sounds and the clips, each tra
 - **Volume** sets the track's level in the song, in the machine's steps — from 0 to 50 —, with its value in decibels: the sound's for a synth, the kit's for drums. This is where the balance is made: you hear it at the next listen, it is written with the song, and it **stays the track's** when its sound changes — [Another sound] does not undo a balance you have set. A MIDI or CV track, whose sound is elsewhere, has none.
 - A MIDI or CV track shows its **channel**, which can be changed here.
 
-For drums, **The kit** lists its rows and the sound of each one. [Play the row] plays the chosen row as the kit plays it; if listening on click is set ([Settings](#reglages-ecoute)), choosing it is enough. Don't like a row? [Another sound for the row]: another sound of the same role replaces it — from the same machine first, then from a neighbouring one —, without touching the rest of the kit, and you hear it at once.
+For drums, **The kit** lists its rows and the sound of each one. [Play the row] plays the chosen row as the kit plays it; if listening on click is set ([Settings](#reglages-ecoute)), choosing it is enough. Don't like a row? [Another sound for the row]: another sound of the same role replaces it — from the same machine first, then from a neighbouring one —, without touching the rest of the kit, and you hear it at once. Looking for *the* right snare? [Choose the sample…], or a double-click on the row, shows all the sounds in your library that can play it, the same machine first: a click plays one, [Use this sound] takes it (see [Building a kit](#construire-kit)). The back arrow, or [[Ctrl+Z]], gives the old one back.
 
 **Variations in the style**: [Suggest 8 variations] offers eight of the track's sound. Each one touches **a single** facet: either a facet drawn again — the timbre, the filter, the envelopes, the movement, the space, the width, the modulations —, or a slider pushed — brighter, darker, dirtier, wider, more space… The rest of the sound does not move, and nothing leaves the genre. A click plays a variation; a double-click, or [Adopt], gives it to the track.
 
@@ -471,6 +471,7 @@ Below the grid, the track's clips:
 - [Double the length] makes it twice as long by repeating its content, up to sixteen bars — the machine's own gesture: four bars become eight, of which you vary the second half.
 - [Delete the clip] removes it; the sections that played it fall silent for that track.
 - [Clip to MIDI…], in advanced mode, writes the clip to a `.mid` file, off the card; drums go on channel 10.
+- [Import a MIDI clip…], in advanced mode, goes the other way: a `.mid` file — a bass line played in the DAW, a beat found elsewhere — becomes a new clip of the chosen track. If it has several tracks, the application asks which one to take (for drums, those on channel 10 are offered first). The file's timing becomes steps, its tempo is ignored: the clip takes the song's, and lasts the whole bars its notes take up, sixteen at most. For drums, each note takes the role the General MIDI drum map gives it — 36 the kick, 38 the snare, 42 the closed hi-hat…; a note with no role is left out, and the status bar says so.
 - For a synth, **Pitch**: [Octave −] and [Octave +] move all its notes by an octave — a bass line composed too high comes down in one click.
 
 | For a synth | For drums |
@@ -482,8 +483,45 @@ Below the grid, the track's clips:
 | **answer** — the first half kept, the second answers it | **doubled** — hi-hats twice as tight |
 | **octave** — octave leaps, or the register moved | **half-time** — the snare on the third beat |
 | **ending** — the last bar leads back to the start | **build-up** — a roll that speeds up to the end |
+| **alive** — extra notes at 50 %, and a few at 75 %: the line changes from one loop to the next | **alive** — random ghost hits, an open hi-hat one time in two, a pickup every four loops |
+| | **FILL roll** — a roll that only plays while FILL is held; the pattern it replaces falls silent meanwhile |
 
 A variation keeps the key and the progression: a note that moves stays in the scale, and a bass's fifth is the one of the chord of the moment.
+
+### Note conditions {#atelier-conditions}
+
+As on the machine, a note need not play at every loop of the clip: that is what keeps a four-bar loop alive through a whole section. The studio writes them into the song, and the computer plays them by the firmware's rules.
+
+- **A probability** — 75 %, 50 %, 25 %: at each loop, the note is drawn at random. Two notes with the same probability, at the same instant, share their draw; when all the notes of an instant are uncertain and their probabilities add up to 100 %, **only one** plays — 30 % and 70 % make an “either, or”.
+- **An iteration** — “1 of 2” plays at the first loop, the third, the fifth…; “2 of 2” at the others; “1 of 4” once every four loops: a pickup at the end of a phrase.
+- **Fill** — a **Fill** note only plays while you hold the Deluge's FILL button; a **Not fill** note falls silent meanwhile. A roll ready to launch live.
+
+!!! attention The FILL button is set on the machine
+    The Deluge's FILL button is SYNC-SCALING, once `SETTINGS` ▸ `COMMUNITY FEATURES` ▸ `Sync Scaling Action` is set to `Fill mode` (`FILL` on the seven-segment display). Out of the box it keeps its sync role, and a fill note never plays — except through the global MIDI command “FILL”, which can be learnt by a controller. When your card says the setting is missing, the studio reminds you as you set a fill.
+
+A note carries only one at a time: that is what a song in the studio's format (c1.2) keeps, and the 1.3 machine reads it as it is. The grid shows them: an uncertain note is smaller and darker, in proportion to its chance of playing; a label gives its condition — “50”, “1/2”, “F” — or, when the cell is too small, a white dot; a dotted gold outline surrounds a fill note, a solid one a “not fill” note. The line under the grid counts the notes that have a condition.
+
+**Setting a condition**, in advanced mode: above the grid, the **Left click** list — normally “Place or remove notes” — offers the conditions. Pick one, then click the notes or hits to mark; a second click on a note that already has it returns it to “Always”. Go back to “Place or remove notes” to draw again. Each condition you set can be undone.
+
+**When listening**, a clip that carries conditions unrolls over enough loops for you to hear them — two for chance, four for a “1 of 4”, eight bars at most — and the loop runs over those; a fill note stays silent, as on the machine without the FILL button. In a section, each clip counts its loops from the start of the section.
+
+### A clip's automation {#atelier-automation}
+
+As on the machine, a synth clip can move one of its sound's settings from one end to the other: a cutoff that opens on a build-up, a volume rising on an intro, a swinging pan. In advanced mode, in the clip's fine settings, the **Automation** row:
+
+- the setting — Cutoff, Resonance, Volume or Pan;
+- the shape — **build-up** (from the first value to the second), **fall**, **wave** (up to the middle, then back), **each bar** (the rise starts again each bar), **swing** (from one value to the other on each beat);
+- the two values, at the machine's step; the second is offered at the sound's value, the first twenty steps below.
+
+[Set the curve] puts it on the clip — a curve of the same setting is replaced — and you hear it at once, listening following the curve note by note; [Remove the curve] gives the setting back the sound's value. The grid draws it as white steps, its name and values on top; the line under the grid recalls it. A clip from the Deluge is not touched: its copy is ([Duplicate]). A doubled clip doubles its curve.
+
+The written song keeps the curve in the clip, in the machine's format: the value, then one node per sixteenth where it changes. A clip that carries one is not folded down to its shortest loop, since the curve runs over its whole length. Opening a song from the Deluge takes back its clips' curves — in steps as well as interpolated nodes — and the studio plays them.
+
+!!! astuce A build-up in one click
+    In the Structure step, choose the section that leads into the chorus, then [Filter build-up]: each synth playing there gets a copy of its clip, as long as the section (sixteen bars at most), whose cutoff opens from twenty steps below the sound's value up to it. The other sections keep their clips; the back arrow undoes it all.
+
+!!! astuce A loop that breathes
+    Start from a clip you like, then [Vary] ▸ **alive**: nothing that makes the pattern changes, but the machine adds to it, from one loop to the next, what a drummer would add. And [Vary] ▸ **FILL roll** gives a version to play live: let it run, hold FILL when you want.
 
 ### Fine settings, in advanced mode
 
@@ -529,6 +567,8 @@ One exception: if that name is a song **the studio wrote**, and neither you nor 
 **The Deluge** panel says where the song will go: on the working copy, it goes up to the machine by itself, a few seconds after the write. [Deluge Live…] opens the machine's window; [Sync] exchanges with it right away.
 
 In advanced mode, [Song to MIDI…] writes the whole song to a `.mid` file, off the card: one track per track, the drums on track 10, the section names as markers.
+
+[Song to audio…], also in advanced mode, computes the whole song **the way the computer hears it** — the same computations as the studio's listening, the firmware's — and writes it as a 24-bit WAV wherever you choose: **the mix only**, or **the mix and one track per file** (“NAME - Bass.wav”, “NAME - Drums.wav”…). They all get the same gain, the one that brings the mix under full scale: dropped together into a DAW, the tracks give back the mix. Note conditions play as they do when listening, their chance changing from one section to the next; a fill note stays silent. The computation runs in the background — about fifteen seconds for three minutes — and you can keep working; nothing is written to the card. A MIDI or CV track, whose real sound lives outside the Deluge, plays with a sound of the style.
 
 ## Opening a Deluge song, and completing it {#atelier-completer}
 
@@ -594,14 +634,16 @@ Below:
 
 - **Role of the sound** — what the sound must do in a song: Bass, Lead, Pad, Pluck, Keys, Stab, FX, Drone, Arpeggio, Bell. A bass isn't set up like a pad.
 - In advanced mode, **Engine** — [Chosen by the genre], which gives the most characteristic sounds, or Subtractive, FM, Ring mod.
-- In advanced mode too, **Seed** — the number that makes a sound reproducible: two generations with the same seed and the same settings give **exactly** the same sound. The die draws a new one.
+- In advanced mode too, **Seed** — the seed of the sound shown, the number that makes it reproducible: two generations with the same seed and the same settings give **exactly** the same sound. Type one, then [[Enter]]: the generator makes that very sound again.
 
-In advanced mode, **six sliders** steer the result: **Brightness** (the filter), **Movement** (LFOs and modulation envelope), **Space** (reverb and delay), **Dirt** (distortion, resonance, bit reduction), **Width** (unison, detune, chorus) and **Complexity** (the number of modulations).
+In advanced mode, **six sliders** steer the result: **Brightness** (the filter), **Movement** (LFOs and modulation envelope), **Space** (reverb and delay), **Dirt** (distortion, resonance, bit reduction), **Width** (unison, detune, chorus) and **Complexity** (the number of modulations). They steer the next sound, and **touch up the sound shown** when the generator made it: same seed, same genre, only the settings that slider controls move.
+
+The settings on the left **follow the sound shown**: an adopted variation, a sound recalled from the history or drawn with [Random] puts its genre, role, seed and sliders back there.
 
 ## Generating and listening {#generer}
 
-- [Generate] makes a complete preset from the genre, role, sliders and seed. Nothing is written to the card yet.
-- [Random] draws a genre, a role and a seed, then generates.
+- [Generate] makes **another sound** of the chosen genre and role, under a new seed, at every click. Nothing is written to the card yet.
+- [Random] draws a genre, a role and sliders, then generates.
 - [Mutate], in advanced mode, starts from the current sound and changes a few settings: a way to explore around an idea you like.
 - [Listen] plays the sound — computed by the computer, or by the Deluge if it is connected and listening is set to it.
 - [Edit the sound…], in advanced mode, opens the editor of the current sound: each setting by hand, at the machine's step and in plain terms (see [Editing a sound by hand](#atelier-modifier-son)). The edited sound joins the history.
@@ -612,13 +654,24 @@ In the middle, the resulting sound: its name and description, its waveform and s
     A silent oscillator, a closed filter, an envelope with neither attack nor sustain are caught before writing.
 
 !!! retenir Listening on the computer redoes the Deluge's computations
-    Waveforms, filters, saturation, FM, effects, reverb and levels: the computer repeats, stage by stage, what the machine's firmware (1.3) computes. A decay of 13 lasts 1.8 seconds here as on the Deluge, a bass with a closed filter stays dark, a pushed sound saturates at the same point. LFO 1 runs on from one note to the next, as on the machine, and glide follows the frequency. Sample playback, which is simpler, and time-stretching remain approximate; to hear it exactly, have the machine play it: [Try in the studio], then write the song.
+    Waveforms, filters, saturation, FM, effects, reverb and levels: the computer repeats, stage by stage, what the machine's firmware (1.3) computes. A decay of 13 lasts 1.8 seconds here as on the Deluge, a bass with a closed filter stays dark, a pushed sound saturates at the same point. LFO 1 runs on from one note to the next, as on the machine, and glide follows the frequency. The SVF filter, the tape warble, the arpeggiator and the song's master compressor are the firmware's own. Sample playback, which is simpler, time-stretching, and whatever the arpeggiator leaves to chance remain approximate; to hear it exactly, have the machine play it: [Try in the studio], then write the song.
+
+## Touching up, keeping {#retoucher}
+
+Under the sound's name, **Touch up**: five pairs of pads, one per slider — Brightness, Dirt, Space, Width, Movement. The **−** pad and the **+** pad push the slider by a fifth of its travel: *darker* or *brighter*, *cleaner* or *dirtier*, *drier* or *more space*, *narrower* or *wider*, *more static* or *more movement*. It is **the same sound**: each of the generator's decisions has its own draw, and only the settings that slider controls move. A sound edited by hand keeps its edits. Each touch-up joins the history, with its name: “ORAGE SUB · Darker”.
+
+The pads only light up for a sound the generator made: a preset from the card, a morph or a mutation has no settings to redo — [Edit the sound…] touches them up by hand.
+
+In advanced mode, **Keep when generating**: eight pads, one per aspect of the sound — [Engine], [Timbre], [Filter], [Envelopes], [Movement], [Width], [Space], [Modulation]. A lit pad stays when [Generate] draws another sound: keep the filter and envelopes of a bass that sounds right, and scroll through the timbres.
+
+!!! astuce Find, then refine
+    [Generate] until a sound catches you; light up what you like (the timbre, the envelopes) and generate again; then the **Touch up** pads to set it by ear, and [Make 8 variations] to explore around it.
 
 ## Variations, history, morph {#variations}
 
 On the right:
 
-- [Make 8 variations] creates eight cousins of the current sound. **One click** on a variation plays it, **a double-click** adopts it.
+- [Make 8 variations] creates eight cousins of the current sound. **One click** on a variation plays it, **a double-click** adopts it. For a sound from the generator, these are variations **in the style**: each one draws a single aspect again (“Another filter”, “Other envelopes”) or pushes a single slider (“Dirtier”), without leaving the genre or the role, and keeps the edits made by hand. For a sound from elsewhere, each variation shifts all its settings a little.
 - **History**: every generated sound piles up there; a double-click brings it back.
 - In advanced mode, **Morph**: pick a sound in the history, set the slider — the current sound on the left, the chosen sound on the right — then click [Morph]. Continuous settings blend according to the amount; clear-cut choices, like waveforms, switch over halfway.
 - In advanced mode, [Generate a batch into a folder…] makes up to 64 presets of the chosen genre at once and writes them into a subfolder of `SYNTHS`.
@@ -637,8 +690,9 @@ The [Drum kit] tab assembles a kit **from your samples**. The kit is built aroun
 - **Kit name** is the name of the file written into `KITS`.
 - In advanced mode, **Seed**: same seed, same kit.
 - In advanced mode, **Preferred folder**, optional, limits the search to one folder of the card, for instance `SAMPLES/Artists/…`.
+- **Rows**: one pad per role — [Kick], [Snare], [HatC], [HatO], [Clap], [Rim], [TomL], [TomM], [TomH], [Crash], [Ride], [Shaker], then the percussion [China], [ConL], [ConM], [ConH], [Cowbell], [Block], [Claves], [Tambourine], [Guiro], [Timpany]. Those the genre suggests light up when you choose it; light up or switch off the others as you like — a house kit with no tom, a lo-fi kit with a tambourine. A role your library has no sample for stays off. [The genre's] goes back to the suggested rows. The kit orders the lit rows in the genre's order, the kick at the bottom.
 
-[Build the kit] assembles it — nothing is written yet. [Play the kit] plays its rows one after the other. Don't like a row? Pick it in the list, then [Another sound]: another sound of the same role replaces it, from the same machine first, then from a neighbouring one. [Save to KITS] writes it into `KITS` under the kit's name; if the name is already taken, the application asks before replacing the file. [Try in the studio] makes it the drums of the studio's song, or of the next one.
+[Build the kit] assembles it — nothing is written yet. [Play the kit] plays its rows one after the other. Don't like a row? Pick it in the list, then [Another sound]: another sound of the same role replaces it, from the same machine first, then from a neighbouring one. Or [Choose the sample…] (or a double-click on the row): the list of **all** the sounds in your library that can play it, those of the same machine first, then those that suit the genre. **A click plays one**; a filter narrows the list by name or machine; [Use this sound] puts it on the row — its name, volume and pan follow its role. [Save to KITS] writes it into `KITS` under the kit's name; if the name is already taken, the application asks before replacing the file. [Try in the studio] makes it the drums of the studio's song, or of the next one.
 
 !!! attention The kit draws on the index
     Without a scan of the card, the kit builder finds no samples. Run [Scan card], on the home page, first.
@@ -899,7 +953,7 @@ A preset or sample marked “MISSING” will leave the song silent in places on 
 
 ## Listening {#ecouter-morceau}
 
-- [Play the song] computes the whole song on the computer, along its arrangement — or its sections in order, repeated as many times as the song says — with each clip's own sounds and settings, then plays it. The computation takes its time: about a quarter of a minute for a three-minute song, which the status bar follows track by track. To hear something quickly, listen to a clip.
+- [Play the song] computes the whole song on the computer, along its arrangement — or its sections in order, repeated as many times as the song says — with each clip's own sounds and settings, and plays it **while the rest is being computed**: the beginning sounds after a second or two, and the rest catches up before playback reaches it. With Windows' fallback output (the one that plays a whole file), you have to wait for the end of the computation: about a quarter of a minute for a three-minute song.
 - In the [Clips] tab, [Play the clip] plays the chosen clip over its whole loop, the way the machine plays it; double-clicking a clip does the same, and so does [[Space]].
 - [Stop] stops the playback, and the computation if it is still running.
 
@@ -1343,7 +1397,8 @@ The rules:
 - **nothing existing is replaced**: an identical file is left alone — even stored elsewhere on the card, where the plan says it already is; a different file with the same name gets the new one numbered (“Kick 2.wav”);
 - names become **transferable**: no accents or forbidden characters (“Été” becomes “Ete”), and the pack's presets follow;
 - a file the Deluge would refuse — a WAV with an extended header, as much software writes — is **converted with no audible loss**;
-- what isn't for the Deluge — an MP3, a four-channel file, documentation — stays on the PC, and the plan says why.
+- an **MP3, FLAC or Ogg Vorbis** file, which the machine can't read, arrives on the card **as a WAV** (“Kick.flac” becomes “Kick.wav”), at its original sample rate and channel count; a 24-bit FLAC stays 24-bit, sample for sample. The plan counts the size of the WAV, much heavier than an MP3, in the cable time;
+- what isn't for the Deluge — an M4A, an Opus file, a four-channel file, documentation — stays on the PC, and the plan says why.
 
 The files then go to the Deluge in the background, or at its next connection. The backup, open read-only, refuses anything sent to it: “Nothing is written here”.
 

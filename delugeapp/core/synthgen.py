@@ -26,8 +26,10 @@ genre sans en sortir brutalement : à 0,5 on obtient le centre du profil.
 
 from __future__ import annotations
 
+import copy
 import logging
 import random
+import re
 from dataclasses import dataclass, field, replace
 
 from ..i18n import N_, tr, untranslated
@@ -858,13 +860,14 @@ def _ensure_audible(sound: Sound) -> None:
 # Variantes
 # --------------------------------------------------------------------------- #
 
-def randomize(seed: int | None = None, role: str = "") -> SynthPreset:
-    """Preset entièrement au hasard : genre, rôle et curseurs tirés au sort."""
+def random_options(seed: int | None = None, role: str = "") -> GenOptions:
+    """Des réglages entièrement au hasard : genre, rôle et curseurs tirés au
+    sort. Les garder permet ensuite de retoucher le son dans son style."""
     value = seed if seed is not None else random.randrange(1 << 30)
     rng = random.Random(value)
     from .genres import genre_keys
 
-    opts = GenOptions(
+    return GenOptions(
         genre=rng.choice(genre_keys()),
         role=role if role in ROLES else rng.choice(ROLES),
         seed=value,
@@ -875,7 +878,11 @@ def randomize(seed: int | None = None, role: str = "") -> SynthPreset:
         width=rng.random(),
         complexity=rng.random(),
     )
-    return generate(opts)
+
+
+def randomize(seed: int | None = None, role: str = "") -> SynthPreset:
+    """Preset entièrement au hasard : genre, rôle et curseurs tirés au sort."""
+    return generate(random_options(seed, role))
 
 
 def mutate(preset: SynthPreset, amount: float = 0.25,
@@ -1065,6 +1072,52 @@ def rerolled(opts: GenOptions, facet: str, seed: int) -> GenOptions:
     return out
 
 
+def facet_seed(opts: GenOptions, facet: str) -> int | None:
+    """La graine qui règle un aspect : la sienne, sinon la graine générale."""
+    return (opts.facets or {}).get(facet, opts.seed)
+
+
+def reseeded(opts: GenOptions, seed: int, keep=()) -> GenOptions:
+    """Les réglages de ``opts`` sous une nouvelle graine générale : un autre
+    son, sauf pour les aspects de ``keep``, qui gardent la graine qui les
+    réglait — on tire une nouvelle basse en gardant son filtre.
+
+    Les aspects qui ne sont pas gardés perdent leur graine propre : ils
+    suivent la nouvelle graine générale.
+    """
+    out = _copy_options(opts)
+    out.seed = int(seed)
+    out.facets = {}
+    for facet in keep:
+        if facet not in FACETS:
+            raise ValueError(tr("aspect inconnu : %s") % facet)
+        value = facet_seed(opts, facet)
+        if value is not None and int(value) != int(seed):
+            out.facets[facet] = int(value)
+    return out
+
+
+def restyled(before: GenOptions, after: GenOptions,
+             edited: Sound | None = None) -> SynthPreset:
+    """Le preset que donnent ``after``, réglages voisins de ``before``.
+
+    ``edited`` est le son de ``before`` retouché à la main : ses retouches
+    sont reportées sur le nouveau son (:func:`.soundedit.carry_edits`), qui
+    garde aussi son nom — « Plus sombre » sur une basse retouchée donne la
+    même basse retouchée, en plus sombre.
+    """
+    preset = generate(after)
+    if edited is None:
+        return preset
+    from .soundedit import carry_edits
+
+    sound = carry_edits(generate(before).sound, edited, preset.sound)
+    sound.name = edited.name
+    preset.sound = sound
+    preset.name = sound.name
+    return preset
+
+
 @dataclass
 class Variant:
     """Une variante d'un preset généré : son libellé (clé française,
@@ -1133,6 +1186,45 @@ def style_variations(opts: GenOptions, n: int = 8,
             preset.name = preset.sound.name
         out.append(Variant(label=label, options=options, preset=preset,
                            changed=key))
+    return out
+
+
+def edited_variations(opts: GenOptions, edited: Sound, n: int = 8,
+                      seed: int | None = None, prepare=None) -> list[Variant]:
+    """Variantes dans le style d'un son **retouché à la main** : chacune
+    garde les retouches (:func:`.soundedit.carry_edits`), et ne change au
+    son que ce que la variante change au son généré.
+
+    ``prepare(son)`` s'applique au son généré comme à chaque variante avant
+    la comparaison — l'atelier y éteint l'arpégiateur et y repose le volume
+    de la piste. Une variante que les retouches rendent identique au son
+    (la coupure déjà au maximum pour « Plus brillant ») est écartée, et la
+    suivante prend sa place.
+    """
+    from .soundedit import carry_edits
+
+    start = generate(opts).sound
+    if prepare is not None:
+        prepare(start)
+    # Le nom donné à la main, sans le numéro d'une variante adoptée.
+    base = re.sub(r"\s+\d{1,2}$", "", edited.name or "").strip() or opts.name
+    spare = len(VARIABLE_FACETS) + len(NUDGES) // 2
+    out: list[Variant] = []
+    for variant in style_variations(opts, max(n, spare), seed=seed):
+        if len(out) >= n:
+            break
+        sound = carry_edits(start, edited, variant.preset.sound)
+        if prepare is not None:
+            prepare(sound)
+        probe = copy.copy(sound)
+        probe.name = edited.name
+        if probe == edited:
+            continue
+        sound.name = safe_deluge_name("%s %d" % (base[:56], len(out) + 2))
+        variant.preset.sound = sound
+        variant.preset.name = sound.name
+        variant.retouched = True
+        out.append(variant)
     return out
 
 

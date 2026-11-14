@@ -14,16 +14,18 @@ machine** (communautaire 1.3, commit ``102cf9f``), étage par étage, par
   ``1/√n`` *avant* le filtre, bruit uniforme, FM à deux modulateurs
   additionnés qui modulent les deux porteuses, modulation en anneau ;
   échelle à transistors échantillon par échantillon avec ses compensations
-  de niveau ; volume et enveloppe 1 après le filtre ; saturation adoucie.
+  de niveau, ou filtre à variables d'état (SVF, en passe-bas comme en
+  passe-haut) ; volume et enveloppe 1 après le filtre ; saturation adoucie.
 * **Le son** : panoramique linéaire, réduction d'échantillonnage et de
   résolution, chorus, flanger ou phaser, égaliseur, delay (ping-pong,
   analogique), envoi vers la réverbération, volume post-effets — le réglage
   ``volume`` d'un preset est ce volume-là, et non celui de la voix.
 * **Le morceau** : une réverbération partagée (« Mutable », celle d'un
-  morceau neuf, ou Freeverb), puis le compresseur maître au repos et la
-  sortie (gain de base 0,85 du compresseur d'un morceau, et sa saturation
-  adoucie qui arrondit l'extrême aigu) : un mélange de 2²⁴ sort à 0,29 de
-  pleine échelle.
+  morceau neuf, ou Freeverb), puis le compresseur maître et la sortie
+  (:func:`.dsp.output_stage` : gain de base 0,85 du compresseur d'un
+  morceau, compression à rétroaction réglée par le morceau — limiteur
+  même à seuil nul —, et sa saturation adoucie qui arrondit l'extrême
+  aigu) : un mélange de 2²⁴ sort à 0,29 de pleine échelle.
 
 Les signaux circulent à l'échelle des entiers du firmware (±2³¹) jusqu'à la
 sortie. Les échantillons se lisent comme sur la machine : en stéréo s'ils le
@@ -44,6 +46,7 @@ et de numba s'il est installé.
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import os
@@ -179,7 +182,13 @@ def _u(sound: Sound, key: str, default: float = 25.0) -> float:
     réglage absent (la hauteur générale d'un preset qui ne la porte pas
     tombait à −4 octaves), et montre le panoramique en bipolaire, 0 au
     centre — lu comme un réglage 0, il envoyait tout à gauche.
+
+    Un réglage automatisé (``sound._auto``, posé pour une note par
+    :func:`_render_voice`) rend un tableau : une valeur par bloc de la note.
     """
+    auto = getattr(sound, "_auto", None)
+    if auto and key in auto:
+        return auto[key]
     if key not in getattr(sound, "params", {}):
         return float(laws.unit(default))
     try:
@@ -441,8 +450,11 @@ def _ramp(values: np.ndarray, n: int, start: float,
 # --------------------------------------------------------------------------- #
 
 _LPF_MODES = {"12db": "12dB", "24db": "24dB", "24dbdrive": "24dBDrive",
-              # Le SVF n'est pas porté : aucun son de la carte ne s'en sert.
-              "svf_band": "12dB", "svf_notch": "12dB"}
+              "svf_band": "SVF_Band", "svf_notch": "SVF_Notch"}
+#: Le passe-haut : l'échelle, ou le SVF au « morph » inversé.
+_HPF_MODES = {"hpladder": "HPLadder", "svf_band": "SVF_Band",
+              "svf_notch": "SVF_Notch"}
+_SVF = ("SVF_Band", "SVF_Notch")
 
 
 def _community_at_least(firmware: str, version: tuple[int, ...]) -> bool:
@@ -470,7 +482,7 @@ def _filter_modes(sound: Sound) -> tuple[str | None, str | None, str]:
     lpf = str(sound.lpf_mode or "24dB").lower()
     hpf = str(sound.hpf_mode or "HPLadder").lower()
     lpf_mode = None if lpf == "off" else _LPF_MODES.get(lpf, "24dB")
-    hpf_mode = None if hpf == "off" else "HPLadder"
+    hpf_mode = None if hpf == "off" else _HPF_MODES.get(hpf, "HPLadder")
     if sound.mode == "fm" and not _community_at_least(sound.firmware,
                                                       (1, 2, 0)):
         lpf_mode = hpf_mode = None
@@ -485,10 +497,18 @@ def _filtered(x: np.ndarray, route: str, lpf, hpf, jitter: np.ndarray
     (``FilterSet::renderLong``). ``lpf``/``hpf`` : configurations ou
     ``None``."""
     def low(signal):
-        return signal if lpf is None else dsp.lpf_process(signal, lpf, jitter)
+        if lpf is None:
+            return signal
+        if isinstance(lpf, dsp.SvfConfig):
+            return dsp.svf_process(signal, lpf)
+        return dsp.lpf_process(signal, lpf, jitter)
 
     def high(signal):
-        return signal if hpf is None else dsp.hpf_process(signal, hpf)
+        if hpf is None:
+            return signal
+        if isinstance(hpf, dsp.SvfConfig):
+            return dsp.svf_process(signal, hpf)
+        return dsp.hpf_process(signal, hpf)
 
     if route == "L2H":
         return high(low(x))
@@ -505,7 +525,8 @@ def _filter_configs(mode: str, cutoff: float, resonance: float, hpf: float):
     freq = dsp.get_exp(NEUTRAL["lpfFrequency"],
                        laws.exp_octaves("lpfFrequency", cutoff))
     res = NEUTRAL["lpfResonance"] * (1.0 + float(laws.unit(resonance)))
-    lpf = dsp.lpf_config(mode, [float(freq)], [res])
+    lpf = (dsp.svf_config if mode in _SVF else dsp.lpf_config)(
+        mode, [float(freq)], [res])
     hcfg = None
     if hpf >= 0:
         hfreq = dsp.get_exp(NEUTRAL["hpfFrequency"],
@@ -527,7 +548,11 @@ def filter_response(freqs, cutoff: float, resonance: float,
         lpf_mode, round(float(cutoff), 2), round(float(resonance), 2),
         -1.0 if hpf is None else round(float(hpf), 2))
     freqs = np.asarray(freqs, dtype=np.float64)
-    response = dsp.lpf_response(lpf, freqs) * float(lpf.gain[0])
+    if isinstance(lpf, dsp.SvfConfig):
+        # Sans compensation : la voix ne corrige pas le niveau d'un SVF.
+        response = dsp.svf_response(lpf, freqs)
+    else:
+        response = dsp.lpf_response(lpf, freqs) * float(lpf.gain[0])
     if hcfg is not None:
         response = response * dsp.hpf_response(hcfg, freqs) \
             * float(hcfg.gain[0])
@@ -790,12 +815,20 @@ def _lfo1_phase(sound: Sound, start: int, bpm: float) -> int | None:
 def _render_voice(sound: Sound, note: int, n: int, gate: float,
                   velocity: float, sd: SDCard | None, bpm: float,
                   glide_from: float, rng: np.random.Generator,
-                  lfo1_phase: int | None = None) -> np.ndarray:
+                  lfo1_phase: int | None = None, auto=None) -> np.ndarray:
     """Une note du son (``Voice::render``), ``(2, n)`` à l'échelle entière,
     avant les effets du son. ``lfo1_phase`` : là où en est le LFO 1 global
-    quand la note part (:func:`_lfo1_phase`)."""
+    quand la note part (:func:`_lfo1_phase`). ``auto`` : les réglages
+    automatisés du clip pendant la note, ``{nom de preset: entiers du
+    fichier, un par bloc}`` — ils prennent la place du réglage, comme un
+    bouton tourné."""
     block = dsp.BLOCK
     nb = -(-n // block)
+    if auto:
+        sound = copy.copy(sound)
+        sound._auto = {key: np.clip(np.asarray(values, dtype=np.float64)
+                                    [:nb] / 2147483648.0, -1.0, 1.0)
+                       for key, values in auto.items()}
     osc1, osc2 = sound.osc1, sound.osc2
     if osc1 is None or osc2 is None:
         log.debug("son sans oscillateur : rendu silencieux")
@@ -875,6 +908,7 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
     has_filters = lpf_mode is not None or hpf_mode is not None
     do_lpf = lpf_mode is not None and (
         lpf_mode == "24dBDrive" or _patched(sound, "lpfFrequency")
+        or "lpfFrequency" in (auto or {})
         or int(sound.param("lpfFrequency", 0x7FFFFFFF)) < 0x7FFFFFD2
         or int(sound.param("lpfMorph", INT32_MIN)) > INT32_MIN)
     do_hpf = hpf_mode is not None and (
@@ -886,13 +920,22 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
     filter_gain = np.full(nb, 2.0 * neutral_unison)
     lpf = hpf = None
     if do_lpf:
-        lpf = dsp.lpf_config(
+        lpf = (dsp.svf_config if lpf_mode in _SVF else dsp.lpf_config)(
             lpf_mode, _final_exp(sound, "lpfFrequency", mod, nb, 50.0),
             _final_linear(sound, "lpfResonance", mod, nb, 0.0),
             _final_linear(sound, "lpfMorph", mod, nb, 0.0))
         filter_gain = filter_gain * lpf.gain
     filter_gain = np.floor(filter_gain * 1720000000.0 / dsp.Q32) * 2.0
-    if do_hpf:
+    if do_hpf and hpf_mode in _SVF:
+        # ``FilterSet::setConfig`` : la résonance quantifiée comme pour
+        # l'échelle, le « morph » inversé (passe-haut, bande, puis bas).
+        res = _final_linear(sound, "hpfResonance", mod, nb, 0.0)
+        hpf = dsp.svf_config(
+            hpf_mode, _final_exp(sound, "hpfFrequency", mod, nb, 0.0),
+            np.floor(res / float(1 << 21)) * float(1 << 21),
+            float((1 << 29) - 1)
+            - _final_linear(sound, "hpfMorph", mod, nb, 0.0))
+    elif do_hpf:
         hpf = dsp.hpf_config(_final_exp(sound, "hpfFrequency", mod, nb, 0.0),
                              _final_linear(sound, "hpfResonance", mod, nb,
                                            0.0))
@@ -1085,7 +1128,7 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
     if len(channels) == 1:
         channels.append(channels[0])
     out[0], out[1] = channels
-    if _patched(sound, "pan"):
+    if _patched(sound, "pan") or "pan" in (auto or {}):
         pan = _final_hybrid(sound, "pan", mod, nb) * float(1 << 30)
         left, right = dsp.pan_amplitudes(pan)
         out[0] *= np.repeat(left, block)[:n]
@@ -1202,7 +1245,8 @@ def _sidechain_source(sound: Sound, hits, bpm: float) -> np.ndarray | None:
 
 
 def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
-                 limit_feedback: bool, side: np.ndarray | None = None
+                 limit_feedback: bool, side: np.ndarray | None = None,
+                 volume: np.ndarray | None = None
                  ) -> tuple[np.ndarray, np.ndarray]:
     """Les effets du son entier, voix additionnées (``Sound::render``) :
     panoramique, réduction, mod FX, égaliseur, delay, puis l'envoi vers la
@@ -1214,6 +1258,9 @@ def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
     :param side: la source *sidechain* du son par bloc
         (:func:`_sidechain_source`) : elle module le volume d'après l'envoi
         vers la réverbération — le pompage.
+    :param volume: l'automation du volume du son (entiers du fichier, un
+        par bloc) : le volume post-effets suit la courbe, par la même loi
+        que le réglage, une rampe dans chaque bloc.
     """
     rest = {"velocity": 0.0, "note": 0.0, "random": 0.0, "aftertouch": 0.0}
     mod = _patch(sound, rest, only=set(rest))
@@ -1281,6 +1328,19 @@ def _sound_chain(sound: Sound, stereo: np.ndarray, bpm: float,
     send = (out[0] + out[1]) * send_and_post * 2.0 / dsp.Q32 \
         if reverb_amount > 0 else np.zeros(n)
     dry = out * (post_reverb * post_fx / float(1 << 54))
+    if volume is not None and len(volume):
+        # Le volume automatisé, rapporté au réglage fixe qui a servi
+        # ci-dessus : la même loi, bloc par bloc.
+        moving = copy.copy(sound)
+        moving._auto = {"volume": np.clip(np.asarray(volume, np.float64)
+                                          / 2147483648.0, -1.0, 1.0)}
+        blocks = _final_volume(moving, "volumePostFX", mod, len(volume),
+                               40.0)
+        still = float(_final_volume(sound, "volumePostFX", mod, 1, 40.0)[0])
+        ratio = blocks / max(still, 1.0)
+        gain = _ramp(ratio, n, float(ratio[0]))
+        dry = dry * gain[None, :]
+        send = send * gain
     return dry, send
 
 
@@ -1363,15 +1423,47 @@ def render_sound(sound: Sound, note: int = 48, seconds: float = 2.5,
     Le niveau est celui de la sortie du Deluge, au volume du morceau que
     l'atelier écrit ; une crête au-delà de 0,99 ramène le tout sous 0,99,
     là où la machine écrêterait. Ne lève jamais : un son impossible à
-    rendre donne un tableau silencieux.
+    rendre donne un tableau silencieux. Un son dont l'arpégiateur est
+    allumé arpège la note tenue (:mod:`.arpeggio`).
     """
-    audio = _render_float(sound, note, seconds, sr, gate, velocity, sd, bpm,
-                          glide_from, effects)
+    from . import arpeggio
+
+    if effects and arpeggio.settings_of(sound) is not None:
+        audio = _arpeggiated(sound, note, seconds, sr, gate, velocity, sd,
+                             bpm)
+    else:
+        audio = _render_float(sound, note, seconds, sr, gate, velocity, sd,
+                              bpm, glide_from, effects)
     if effects:
         peak = float(np.max(np.abs(audio)))
         if peak > 0.99:
             audio *= 0.99 / peak
     return audio
+
+
+def _arpeggiated(sound: Sound, note: int, seconds: float, sr: int,
+                 gate: float, velocity: float, sd: SDCard | None,
+                 bpm: float) -> np.ndarray:
+    """La note tenue d'un aperçu, arpégée par :func:`render_parts` puis
+    ramenée à la durée demandée."""
+    from .accomp import NoteEvent
+
+    frames = max(1, int(float(seconds) * int(sr)))
+    tempo = float(bpm) if bpm and bpm > 0 else PREVIEW_BPM
+    steps = float(seconds) * float(gate) * tempo / 15.0
+    try:
+        audio = render_parts(
+            {"son": [NoteEvent(0.0, steps, int(note),
+                               max(1, min(100, round(velocity * 100))))]},
+            {"son": sound}, bpm=tempo, sr=sr, sd=sd, normalize=False)
+    except Exception:  # noqa: BLE001 - rempart : on rend du silence
+        log.exception("aperçu arpégé impossible")
+        audio = None
+    out = np.zeros((frames, 2), dtype=np.float32)
+    if audio is not None:
+        n = min(frames, audio.shape[0])
+        out[:n] = audio[:n]
+    return out
 
 
 def _render_float(sound: Sound, note: int, seconds: float, sr: int,
@@ -1534,7 +1626,8 @@ def _run_all(tasks: list, should_stop=None) -> list | None:
 
 def _voice_task(sound: Sound, key: tuple, note: int, count: int,
                 gate: float, velocity: float, sd: SDCard | None,
-                tempo: float, glide: float, lfo1_phase: int | None = None):
+                tempo: float, glide: float, lfo1_phase: int | None = None,
+                auto=None):
     """Le calcul d'une voix de :func:`render_parts`, pour :func:`_run_all`.
 
     Son hasard (phases de départ, gigue du filtre, *random*) lui est propre,
@@ -1544,11 +1637,51 @@ def _voice_task(sound: Sound, key: tuple, note: int, count: int,
         rng = np.random.default_rng((_graine(sound.name), _graine(repr(key))))
         try:
             return _render_voice(sound, note, count, gate, velocity, sd,
-                                 tempo, glide, rng, lfo1_phase)
+                                 tempo, glide, rng, lfo1_phase, auto)
         except Exception as exc:  # noqa: BLE001
             log.exception("note impossible à rendre : %s", exc)
             return np.zeros((2, count))
     return task
+
+
+#: Les réglages automatisés qui se lisent note par note (``Voice``) ; le
+#: volume, lui, est celui du son entier, après les effets.
+_VOICE_AUTO = ("lpfFrequency", "lpfResonance", "pan")
+
+#: Une partie dont le rendu est repris du cache (:func:`render_parts`).
+_CACHED = object()
+
+
+def _part_fingerprint(name: str, events, sound, curves, tempo: float, n: int,
+                      tail: float, hits) -> str:
+    """L'empreinte de tout ce qui fait le rendu d'une partie : ses notes,
+    son son, ses courbes, le tempo, la longueur, la queue, et les coups de
+    sidechain quand le son les suit."""
+    import hashlib
+    import pickle
+
+    notes = [(float(e.start), float(e.length), int(e.note),
+              int(e.velocity)) for e in events]
+    payload = pickle.dumps((name, notes, sound, curves, round(float(tempo), 6),
+                            int(n), round(float(tail), 6),
+                            None if hits is None else tuple(hits)),
+                           protocol=4)
+    return hashlib.sha1(payload).hexdigest()
+
+
+def _auto_blocks(nodes, start: int, nb: int, step_samples: float
+                 ) -> np.ndarray:
+    """Une courbe ``[(pas, entier du fichier)]`` lue bloc par bloc, pour
+    ``nb`` blocs partant de l'échantillon ``start`` : la valeur du dernier
+    nœud passé (celle du premier avant lui)."""
+    steps = np.array([float(s) for s, _v in nodes], dtype=np.float64)
+    values = np.array([float(v) for _s, v in nodes], dtype=np.float64)
+    order = np.argsort(steps, kind="stable")
+    steps, values = steps[order], values[order]
+    where = (float(start) + np.arange(int(nb)) * dsp.BLOCK) \
+        / max(1e-9, float(step_samples))
+    index = np.searchsorted(steps, where + 1e-9, side="right") - 1
+    return values[np.clip(index, 0, len(values) - 1)]
 
 
 def _sidechain_hits(parts: dict, sounds: dict, n: int, step_s: float,
@@ -1604,8 +1737,23 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                  sr: int = 44100, sd: SDCard | None = None,
                  tail: float = 0.8, should_stop=None,
                  normalize: bool = True,
-                 sidechain_hits=None) -> np.ndarray | None:
+                 sidechain_hits=None,
+                 automation: dict | None = None,
+                 cache: dict | None = None,
+                 output: bool = True) -> np.ndarray | None:
     """Rend des parties d'accompagnement, chacune avec son son.
+
+    ``automation`` : ``{partie: {nom de preset: [(pas, entier du
+    fichier)]}}`` — l'automation des clips (:mod:`.automation`), en pas du
+    rendu. Coupure, résonance et panoramique se lisent note par note, bloc
+    par bloc ; le volume, sur le son entier. Sans elle, rien ne change.
+
+    ``cache`` : un dictionnaire que l'appelant garde d'un rendu à l'autre.
+    Chaque partie y laisse son rendu (voix et effets du son, avant la
+    réverbération commune), sous l'empreinte de tout ce qui le fait ; une
+    partie inchangée le reprend. Seules la réverbération et la sortie se
+    recalculent : le résultat est celui d'un rendu complet, à
+    l'échantillon près.
 
     :param parts: ``{nom: [NoteEvent]}`` (cf. :mod:`delugeapp.core.accomp`),
         positions en pas de double-croche.
@@ -1630,7 +1778,10 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     de chaque son ; le mélange se fait toujours dans le même ordre, si bien
     qu'un rendu redonne le même son à l'échantillon près.
     ``normalize=False`` laisse la crête telle quelle (:func:`mix` ramène
-    le mélange avec la batterie).
+    le mélange avec la batterie). ``output=False`` rend le mélange avant
+    la sortie (échelle entière, sans compresseur maître ni sa saturation) :
+    des clips qu'on additionne passent ensuite ensemble par
+    :func:`.dsp.output_stage`, comme sur la machine.
 
     **Le sidechain** : chaque note d'un son qui en envoie
     (``sideChainSend``) est un coup ; les sons câblés depuis la source
@@ -1638,9 +1789,14 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     suit le plus réverbéré d'entre eux. ``sidechain_hits`` — ``[(secondes,
     force)]`` — remplace les coups des parties : ceux du morceau entier,
     quand une piste se rend seule (:mod:`.daw`).
+
+    **L'arpégiateur** d'un son transforme d'abord ses notes tenues
+    (:mod:`.arpeggio`).
     """
+    from . import arpeggio
     from .accomp import total_steps
 
+    parts = arpeggio.apply(parts, sounds)
     tempo = float(bpm) if bpm and bpm > 0 else 120.0
     step_s = 60.0 / tempo / 4.0
     tails = {name: max(float(tail), tail_seconds(sound))
@@ -1656,10 +1812,26 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     plans = []
     jobs: dict[tuple, int] = {}       # voix → nombre d'échantillons
     tasks = []
+    step_samples = step_s * rate
+    hits = _sidechain_hits(parts, sounds, n, step_s, sidechain_hits)
+    fingerprints: dict[str, str] = {}
     for name, events in (parts or {}).items():
         sound = (sounds or {}).get(name)
         if sound is None:
             continue
+        if cache is not None:
+            fingerprints[name] = _part_fingerprint(
+                name, events, sound, (automation or {}).get(name), tempo, n,
+                tails.get(name, float(tail)),
+                hits if _sidechain_cable(sound) else None)
+            known = cache.get(name)
+            if known is not None and known[0] == fingerprints[name] \
+                    and known[2]:
+                # Rien n'a changé dans cette partie : son rendu sert encore.
+                plans.append((name, sound, _CACHED))
+                continue
+        curves = {k: v for k, v in ((automation or {}).get(name) or {})
+                  .items() if k in _VOICE_AUTO and v}
         mono = sound.polyphonic in ("mono", "legato")
         glides = (sound.polyphonic != "legato"
                   and _display(sound, "portamento", 0.0) > 0)
@@ -1685,17 +1857,26 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
             phase1 = _lfo1_phase(sound, start, tempo)
             key = (int(event.note), round(held, 3), round(seconds, 2),
                    int(event.velocity) // 5, glide, phase1)
+            if curves:
+                # Une note automatisée ne sonne comme aucune autre : sa
+                # courbe dépend de l'instant où elle part.
+                key = key + (start,)
             voice_key = (name, key)
             count = jobs.get(voice_key)
             if count is None:
                 count = jobs[voice_key] = max(1, int(round(seconds * rate)))
+                auto = None
+                if curves:
+                    blocks = -(-count // dsp.BLOCK)
+                    auto = {k: _auto_blocks(v, start, blocks, step_samples)
+                            for k, v in curves.items()}
                 tasks.append(_voice_task(
                     sound, key, int(event.note), count,
                     min(1.0, held / seconds),
                     # ``NoteEvent.velocity`` est un pourcentage : 100 % joue
                     # la vélocité 127.
                     max(1.0, min(100.0, float(event.velocity))) / 100.0,
-                    sd, tempo, glide, phase1))
+                    sd, tempo, glide, phase1, auto))
             previous = event
             if start >= n:
                 continue
@@ -1715,11 +1896,12 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     if rendered is None:
         return None
     voices = {keys[i]: voice for i, voice in zip(order, rendered)}
-    hits = _sidechain_hits(parts, sounds, n, step_s, sidechain_hits)
 
     # -- chaque son entier dans ses effets ------------------------------ #
     def chain(name, sound, placed):
         def task():
+            if placed is _CACHED:
+                return cache[name][1]
             mixed = np.zeros((2, n))
             for voice_key, start, end in placed:
                 voice = voices[voice_key]
@@ -1727,9 +1909,15 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                 if end - start < voice.shape[1] and chunk.shape[1] > fade:
                     chunk[:, -fade:] *= np.linspace(1.0, 0.0, fade)[None, :]
                 mixed[:, start:end] += chunk
+            volume = ((automation or {}).get(name) or {}).get("volume")
+            if volume:
+                volume = _auto_blocks(volume, 0, -(-n // dsp.BLOCK),
+                                      step_samples)
             try:
                 return _sound_chain(sound, mixed, tempo, False,
-                                    _sidechain_source(sound, hits, tempo))
+                                    _sidechain_source(sound, hits, tempo),
+                                    volume=volume if volume is not None
+                                    and len(volume) else None)
             except Exception as exc:  # noqa: BLE001
                 log.exception("effets impossibles pour %s : %s", name, exc)
                 return None
@@ -1738,6 +1926,11 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     chained = _run_all([chain(*plan) for plan in plans], should_stop)
     if chained is None:
         return None
+    if cache is not None:
+        for (name, _sound, placed), result in zip(plans, chained):
+            if placed is not _CACHED and result is not None \
+                    and name in fingerprints:
+                cache[name] = (fingerprints[name], result, bool(placed))
     dry_total = np.zeros((2, n))
     send_total = np.zeros(n)
     for result in chained:
@@ -1749,6 +1942,8 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     if ducking is not None:
         reverberation = reverberation * ducking[None, :]
     mixed = dry_total + reverberation
+    if not output:
+        return _resampled(mixed.T, frames)
     out = _resampled(dsp.output_stage(mixed).T, frames).astype(np.float32)
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if normalize and peak > 0.98:

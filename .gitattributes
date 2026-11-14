@@ -3,3 +3,5 @@
 *.sh text eol=lf
 packaging/linux/AppRun text eol=lf
 packaging/linux/*.desktop text eol=lf
+# Les sons de référence des tests (MP3, FLAC, Ogg) : jamais convertis.
+tests/donnees/** binary

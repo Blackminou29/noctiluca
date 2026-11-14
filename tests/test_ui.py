@@ -1874,6 +1874,132 @@ class TestEcouterUnMorceau(PageCase):
         self.assertEqual(self.lecteur.joues, [])
 
 
+class TestLeMorceauJoueEnSeCalculant(PageCase):
+    """Un lecteur qui reçoit le son par morceaux : le début du morceau
+    joue pendant que la suite se calcule."""
+
+    def setUp(self):
+        super().setUp()
+
+        class Lecteur:
+            available = True
+            is_playing = False
+
+            def __init__(self):
+                self.joues, self.flux, self.fins = [], [], 0
+                self.accepte, self.allonge = True, True
+
+            def set_volume(self, _v):
+                pass
+
+            def play_array(self, donnees, taux, loop=False):
+                self.joues.append((donnees.shape[0], taux))
+
+            def play_stream(self, donnees, taux):
+                if self.accepte:
+                    self.flux.append(("début", donnees.shape[0], taux))
+                return self.accepte
+
+            def extend_stream(self, donnees):
+                self.flux.append(("suite", donnees.shape[0]))
+                return self.allonge
+
+            def end_stream(self):
+                self.fins += 1
+
+            def stop(self):
+                pass
+
+        self.lecteur = Lecteur()
+        self.ctx.player = self.lecteur
+        # Le morceau commun dure un demi-temps : quatre mesures de basse.
+        from delugeapp.core import songwriter as sw
+        from delugeapp.core.model import Note
+
+        basse = sw.synth_track(SynthPreset.load(
+            self.root / "SYNTHS" / "BASSE.XML"))
+        spec = sw.SongSpec(
+            name="LONG", bpm=120.0, tracks=[basse],
+            clips=[sw.ClipSpec(track=0, length=4 * sw.BAR, section=0,
+                               rows={36: [Note(pos=p, length=48,
+                                               velocity=100)
+                                          for p in range(0, 4 * sw.BAR,
+                                                         96)]})],
+            sections=[sw.SectionSpec("A", 4 * sw.BAR)])
+        fait = sw.write_song(self.sd, spec, apply=True)
+        self.assertTrue(fait.applied, fait.error)
+        scan.scan_card(self.sd, self.lib)
+
+    _attendre = TestEcouterUnMorceau._attendre
+
+    def _page(self):
+        from delugeapp.ui.pages.songs import SongsPage
+
+        page = self.open(SongsPage)
+        for ligne in range(page._table.model().rowCount()):
+            page._table.selectRow(ligne)
+            if page._current.endswith("LONG.XML"):
+                break
+        self.assertTrue(page._current.endswith("LONG.XML"))
+        self.messages = []
+        page.status.connect(self.messages.append)
+        return page
+
+    def _ecouter(self, page):
+        """[Écouter le morceau], des fenêtres de quatre temps : le morceau
+        d'essai en donne plusieurs."""
+        from unittest import mock
+
+        from delugeapp.core import daw
+
+        vrai = daw.render_progressively
+        song = daw.from_deluge(page.sd.abs(page._current))
+        self.assertGreater(daw.song_length(song), 8.0)
+        with mock.patch.object(daw, "render_progressively",
+                               lambda *a, **k: vrai(*a, first=4.0, **k)):
+            page._listen_song_button.click()
+            self._attendre()
+        return song
+
+    def test_le_debut_joue_et_la_suite_s_y_ajoute(self):
+        from delugeapp.core import daw
+
+        page = self._page()
+        song = self._ecouter(page)
+        flux = self.lecteur.flux
+        self.assertEqual(flux[0][0], "début")
+        self.assertEqual(flux[0][1:], (round(song.seconds(4.0) * 44100),
+                                       44100))
+        self.assertGreater(len(flux), 2)
+        self.assertTrue(all(f[0] == "suite" for f in flux[1:]))
+        self.assertEqual(self.lecteur.fins, 1)
+        self.assertEqual(self.lecteur.joues, [], "joué d'un coup")
+        plein = daw.render_mix(song, page.sd, contained=False)
+        self.assertEqual(sum(f[1] for f in flux), plein.shape[0])
+        self.assertIsNone(page._render)
+        self.assertEqual(self.messages[-1], "Lecture…")
+
+    def test_sans_flux_le_morceau_joue_a_la_fin(self):
+        self.lecteur.accepte = False            # winsound
+        page = self._page()
+        song = self._ecouter(page)
+        from delugeapp.core import daw
+
+        plein = daw.render_mix(song, page.sd, contained=False)
+        self.assertEqual(self.lecteur.joues, [(plein.shape[0], 44100)])
+        self.assertEqual(self.lecteur.fins, 0)
+
+    def test_une_autre_lecture_arrete_le_calcul(self):
+        self.lecteur.allonge = False            # le lecteur a été repris
+        page = self._page()
+        self._ecouter(page)
+        self.assertEqual(self.lecteur.flux[1][0], "suite")
+        self.assertEqual(len(self.lecteur.flux), 2, "le calcul a continué")
+        self.assertEqual(self.lecteur.fins, 0)
+        self.assertEqual(self.lecteur.joues, [])
+        self.assertIsNone(page._render)
+
+
 class TestGeneratorPage(PageCase):
 
     def _page(self):
@@ -5432,6 +5558,191 @@ class TestFondreDansLeGenerateur(PageCase):
         self.assertEqual(len(page._history), 3)
 
 
+class TestLeGenerateurRetoucheEtGarde(PageCase):
+    """[Générer] tire un autre son, les pads « Retoucher » poussent le son
+    affiché, « Garder en générant » retient des aspects, les curseurs
+    retouchent, les variantes restent dans le style (13 novembre 2026).
+
+    Mesuré avant : au niveau simple, où la graine est cachée, recliquer
+    [Générer] redonnait exactement le même son."""
+
+    def _page(self, niveau="simple"):
+        from delugeapp.ui.pages.generator import GeneratorPage
+
+        self.ctx.settings.interface_level = niveau
+        page = self.open(GeneratorPage)
+        self.messages = []
+        page.status.connect(self.messages.append)
+        return page
+
+    @staticmethod
+    def _pad(page, libelle):
+        return next(b for b in page._nudge_buttons
+                    if b.property("nudge") == libelle)
+
+    @staticmethod
+    def _valeur(page, cle):
+        from delugeapp.core import soundedit
+
+        return soundedit.value(page._preset.sound, cle)
+
+    def test_generer_tire_un_autre_son_a_chaque_clic(self):
+        page = self._page()
+        _bouton(page, "Générer").click()
+        premier = page._preset
+        _bouton(page, "Générer").click()
+        self.assertIsNot(page._preset, premier)
+        self.assertNotEqual(page._preset_options.seed,
+                            self._seed_de(premier, page))
+        self.assertNotEqual(page._preset.sound, premier.sound)
+        # La graine affichée est celle du son affiché.
+        self.assertEqual(page._seed.value(), page._preset_options.seed)
+
+    def _seed_de(self, preset, page):
+        return page._history_meta[id(preset)][0].seed
+
+    def test_une_graine_tapee_refait_le_son(self):
+        from PyQt6.QtTest import QTest
+
+        page = self._page("avance")
+        _bouton(page, "Générer").click()
+        graine, son = page._preset_options.seed, page._preset.sound
+        _bouton(page, "Générer").click()
+        self.assertNotEqual(page._preset.sound, son)
+        page._seed.lineEdit().setText(str(graine))
+        QTest.keyClick(page._seed, Qt.Key.Key_Return)
+        _APP.processEvents()
+        self.assertEqual(page._preset_options.seed, graine)
+        self.assertEqual(page._preset.sound, son)
+
+    def test_plus_sombre_garde_le_meme_son(self):
+        page = self._page()
+        _bouton(page, "Générer").click()
+        avant = page._preset
+        graine = page._preset_options.seed
+        brillance = page._macros["brightness"].value()
+        coupure = self._valeur(page, "lpfFrequency")
+        with self.assertNoLogs("delugeapp.ui", level="ERROR"):
+            self._pad(page, "Plus sombre").click()
+        self.assertIsNot(page._preset, avant)
+        self.assertEqual(page._preset_options.seed, graine)
+        self.assertEqual(page._preset.sound.name, avant.sound.name)
+        self.assertEqual(page._preset.sound.osc1.type, avant.sound.osc1.type)
+        self.assertEqual(page._macros["brightness"].value(), brillance - 20)
+        self.assertLessEqual(self._valeur(page, "lpfFrequency"), coupure)
+        self.assertIn("Plus sombre", page._history_list.item(0).text())
+        self.assertTrue(self.messages[-1].startswith("Plus sombre"))
+
+    def test_un_pad_en_butee_le_dit(self):
+        page = self._page()
+        page._macros["brightness"].setValue(100)
+        _bouton(page, "Générer").click()
+        historique = len(page._history)
+        self._pad(page, "Plus brillant").click()
+        self.assertEqual(len(page._history), historique)
+        self.assertIn("déjà en butée", self.messages[-1])
+
+    def test_un_son_venu_de_la_carte_eteint_les_pads(self):
+        from delugeapp.core.model import SynthPreset
+
+        page = self._page()
+        self.assertFalse(self._pad(page, "Plus sale").isEnabled())
+        page.start_from(SynthPreset.load(self.root / "SYNTHS" / "BASSE.XML"))
+        self.assertFalse(self._pad(page, "Plus sale").isEnabled())
+        self.assertIn("ne vient pas du générateur", page._nudge_hint.text())
+        _bouton(page, "Générer").click()
+        self.assertTrue(self._pad(page, "Plus sale").isEnabled())
+
+    def test_garder_le_filtre_et_les_enveloppes(self):
+        page = self._page("avance")
+        _bouton(page, "Générer").click()
+        avant = page._preset.sound
+        page._keep_buttons["filtre"].click()
+        page._keep_buttons["enveloppes"].click()
+        _bouton(page, "Générer").click()
+        apres = page._preset.sound
+        self.assertNotEqual(page._preset_options.seed,
+                            self._seed_de(page._history[1], page))
+        for cle in ("lpfFrequency", "lpfResonance"):
+            self.assertEqual(apres.display(cle), avant.display(cle), cle)
+        self.assertEqual(apres.lpf_mode, avant.lpf_mode)
+        self.assertEqual((apres.env1.attack, apres.env1.decay,
+                          apres.env1.sustain, apres.env1.release),
+                         (avant.env1.attack, avant.env1.decay,
+                          avant.env1.sustain, avant.env1.release))
+        self.assertIn("gardés : filtre, enveloppes", self.messages[-1])
+        # Éteints, ils suivent de nouveau la graine.
+        page._keep_buttons["filtre"].click()
+        page._keep_buttons["enveloppes"].click()
+        self.assertEqual(page._kept_facets(), [])
+
+    def test_un_curseur_retouche_le_son_affiche(self):
+        from PyQt6.QtTest import QTest
+
+        from delugeapp.ui.pages.generator import SLIDER_DELAY_MS
+
+        page = self._page("avance")
+        _bouton(page, "Générer").click()
+        graine = page._preset_options.seed
+        historique = len(page._history)
+        espace = page._macros["space"]
+        espace.setFocus()
+        QTest.keyClick(espace, Qt.Key.Key_PageUp)
+        QTest.keyClick(espace, Qt.Key.Key_PageUp)
+        _pump(SLIDER_DELAY_MS + 150)
+        self.assertEqual(len(page._history), historique + 1)
+        self.assertEqual(page._preset_options.seed, graine)
+        self.assertAlmostEqual(page._preset_options.space,
+                               espace.value() / 100.0)
+        self.assertIn("Espace %d" % espace.value(),
+                      page._history_list.item(0).text())
+
+    def test_les_variantes_restent_dans_le_style(self):
+        from delugeapp.core import synthgen
+
+        page = self._page()
+        _bouton(page, "Générer").click()
+        genre = page._preset_options.genre
+        _bouton(page, "Produire 8 variantes").click()
+        self.assertEqual(page._variation_list.count(), 8)
+        attendus = set(synthgen.FACET_LABELS.values()) | set(synthgen.NUDGES)
+        libelles = [page._variation_list.item(i).text().split(".  ", 1)[1]
+                    for i in range(8)]
+        self.assertTrue(set(libelles) <= attendus, libelles)
+        rang = next(i for i, l in enumerate(libelles) if l.startswith("Plus"))
+        cle, _sens = synthgen.NUDGES[libelles[rang]]
+        avant = page._macros[cle].value()
+        liste = page._variation_list
+        liste.setCurrentRow(rang)
+        # QTest.mouseDClick n'arrive pas à la liste sous la plateforme
+        # « offscreen » (vérifié) : le signal du double-clic, comme ailleurs.
+        liste.itemDoubleClicked.emit(liste.item(rang))
+        _APP.processEvents()
+        self.assertNotEqual(page._macros[cle].value(), avant)
+        self.assertEqual(page._preset_options.genre, genre)
+        self.assertIn(libelles[rang], page._history_list.item(0).text())
+
+    def test_une_retouche_a_la_main_survit_aux_pads(self):
+        from unittest import mock
+
+        from delugeapp.core import synthgen
+        from delugeapp.ui.widgets.soundeditor import SoundEditorDialog
+
+        page = self._page("avance")
+        _bouton(page, "Générer").click()
+        options = page._preset_options
+        with mock.patch.object(SoundEditorDialog, "exec",
+                               _exec_avec_retouche):
+            page._edit_button.click()
+        self.assertTrue(page._preset_edited)
+        self._pad(page, "Plus sombre").click()
+        self.assertTrue(page._preset_edited)
+        # Le filtre ouvert à fond l'est resté, d'autant de crans.
+        sombre = synthgen.generate(synthgen.nudged(options, "Plus sombre"))
+        self.assertGreater(self._valeur(page, "lpfFrequency"),
+                           sombre.sound.display("lpfFrequency"))
+
+
 class TestAuditDUsageReel(MainWindowCase):
     """Ce que l'audit sur la carte de l'utilisateur a montré (14 octobre)."""
 
@@ -5563,6 +5874,83 @@ class TestAutreSonDuKit(PageCase):
         self.assertIn("Choisissez d'abord une rangée", messages[-1])
 
 
+def _choisir_le_dernier(dialogue):
+    """Remplace ``exec`` du choix d'échantillon : l'utilisateur écoute le
+    dernier son de la liste, puis le prend."""
+    from PyQt6.QtWidgets import QDialog
+
+    dialogue._list.setCurrentRow(dialogue._list.count() - 1)
+    dialogue._use_button.click()
+    return QDialog.DialogCode.Accepted
+
+
+class TestLesRangeesDuKitAuChoix(PageCase):
+    """Les rangées voulues, et l'échantillon d'une rangée choisi à l'oreille
+    (13 novembre 2026)."""
+
+    def _page(self):
+        from PyQt6.QtWidgets import QTabWidget
+
+        from delugeapp.ui.pages.generator import GeneratorPage
+
+        page = self.open(GeneratorPage)
+        page.findChild(QTabWidget).setCurrentIndex(1)
+        self.messages = []
+        page.status.connect(self.messages.append)
+        return page
+
+    def test_les_rangees_du_genre_et_celles_qu_on_allume(self):
+        page = self._page()
+        # La carte du test n'a que des grosses caisses et des caisses
+        # claires : les autres rôles s'éteignent.
+        self.assertTrue(page._kit_roles["Kick"].isEnabled())
+        self.assertFalse(page._kit_roles["Cowbell"].isEnabled())
+        self.assertTrue(page._kit_roles["Kick"].isChecked())
+        page._kit_roles["Snare"].click()
+        self.assertFalse(page._kit_roles["Snare"].isChecked())
+        _bouton(page, "Construire le kit").click()
+        self.assertEqual([r.name for r in page._kit.rows], ["KICK"])
+        # Plus rien d'allumé : on le dit, rien ne se construit.
+        page._kit_roles["Kick"].click()
+        _bouton(page, "Construire le kit").click()
+        self.assertEqual(self.messages[-1], "Allumez au moins une rangée.")
+        _bouton(page, "Celles du genre").click()
+        self.assertTrue(page._kit_roles["Kick"].isChecked())
+        self.assertTrue(page._kit_roles["Snare"].isChecked())
+
+    def test_choisir_l_echantillon_d_une_rangee(self):
+        from unittest import mock
+
+        from delugeapp.ui.rowsampledialog import RowSampleDialog
+
+        page = self._page()
+        _bouton(page, "Construire le kit").click()
+        rang = [r.name for r in page._kit.rows].index("KICK")
+        avant = page._kit.rows[rang].file_name
+        page._kit_result.setCurrentRow(rang)
+        joues = []
+        lecteur = _FauxLecteur()
+        lecteur.play_file = lambda chemin, loop=False: joues.append(chemin)
+        self.ctx.player = lecteur
+        with mock.patch.object(RowSampleDialog, "exec", _choisir_le_dernier):
+            _bouton(page, "Choisir l'échantillon…").click()
+        apres = page._kit.rows[rang].file_name
+        self.assertNotEqual(apres, avant)
+        self.assertIn(apres.rsplit("/", 1)[-1],
+                      page._kit_result.item(rang).text())
+        # Choisir un son le joue, sur la carte.
+        self.assertTrue(joues)
+        self.assertTrue(str(joues[-1]).endswith(apres.rsplit("/", 1)[-1]))
+
+    def test_rien_a_choisir_on_le_dit(self):
+        page = self._page()
+        _bouton(page, "Construire le kit").click()
+        rang = [r.name for r in page._kit.rows].index("SNARE")
+        page._kit_result.setCurrentRow(rang)
+        _bouton(page, "Choisir l'échantillon…").click()
+        self.assertIn("pas d'autre son", self.messages[-1])
+
+
 class TestVarierDansLeGenerateur(MainWindowCase):
     """La page Presets annonçait ce passage ; il n'existait pas."""
 
@@ -5588,6 +5976,24 @@ class TestVarierDansLeGenerateur(MainWindowCase):
 # --------------------------------------------------------------------------- #
 # La façade : refonte graphique d'après le guide (14 octobre 2026)
 # --------------------------------------------------------------------------- #
+
+class TestLesPolicesSelonLeSysteme(unittest.TestCase):
+    """Une famille absente coûte 100 à 170 ms au démarrage (journal macOS de
+    GitHub) : chaque système reçoit des polices qu'il a."""
+
+    def test_chaque_systeme_a_les_siennes(self):
+        import sys
+
+        self.assertEqual(theme.fonts_for("win32"), ("Segoe UI", "Consolas"))
+        self.assertEqual(theme.fonts_for("darwin"), ("Helvetica Neue",
+                                                     "Menlo"))
+        self.assertEqual(theme.fonts_for("linux"), ("DejaVu Sans",
+                                                    "DejaVu Sans Mono"))
+        self.assertEqual((theme.FONT_UI, theme.FONT_MONO),
+                         theme.fonts_for(sys.platform))
+        self.assertIn("Segoe UI" if sys.platform.startswith("win")
+                      else theme.FONT_UI, theme.qss(theme.GOLD))
+
 
 class TestLaFacadeTheme(unittest.TestCase):
     """La partie colorée du thème, et les teintes nouvelles."""
@@ -7247,6 +7653,41 @@ class TestEnvoyerAuDelugeFenetre(MainWindowCase):
             self.assertTrue(_attendre_les_fils(
                 lambda: (self.root / "SAMPLES/DRUMS/Kick/loose.wav").is_file()))
 
+    def test_un_flac_s_envoie_et_arrive_en_wav(self):
+        import shutil
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        from delugeapp.core import compressed
+
+        if not compressed.available():
+            self.skipTest("miniaudio absent")
+        self._dialogue(True)
+        flac = self.pc / "sinus24.flac"
+        shutil.copyfile(Path(__file__).parent / "donnees" / flac.name, flac)
+        win = self.window()
+        win.go_to("Samples")
+        page = win._pages["Samples"]
+        filtres = []
+
+        def choisir(_parent, _titre, _depart, filtre, *a, **k):
+            filtres.append(filtre)
+            return [str(flac)], ""
+
+        with mock.patch.object(QFileDialog, "getOpenFileNames", choisir):
+            page._send_button.click()
+            self.assertTrue(_attendre_les_fils(
+                lambda: (self.root / "SAMPLES/sinus24.wav").is_file()))
+        self.assertIn("*.flac", filtres[0])
+        self.assertIn("*.mp3", filtres[0])
+        info = wav.probe(self.root / "SAMPLES/sinus24.wav")
+        self.assertEqual((info.bit_depth, info.frames), (24, 4410))
+        with mock.patch.object(compressed, "_ma", None):
+            from delugeapp.ui.sendfiles import open_filter
+
+            self.assertNotIn("*.flac", open_filter())
+
     def test_un_son_se_glisse_hors_de_la_liste(self):
         win = self.window()
         win.go_to("Samples")
@@ -8493,6 +8934,8 @@ class TestLAtelierClips(AtelierCase):
     """Les clips et leurs variations."""
 
     def test_varier_ajoute_un_clip_et_garde_l_original(self):
+        from delugeapp.core import variation
+
         page = self._page()
         self._composer(page)
         self._onglet(page, 2)
@@ -8502,7 +8945,7 @@ class TestLAtelierClips(AtelierCase):
         notes = [(e.start, e.note) for e in original.events]
         avant = len(piste.clips)
         actions = page._vary_menu.actions()
-        self.assertEqual(len(actions), 7)
+        self.assertEqual(len(actions), len(variation.MELODIC))
         actions[1].trigger()                 # « notes »
         _APP.processEvents()
         self.assertEqual(len(piste.clips), avant + 1)
@@ -10190,6 +10633,379 @@ class TestLAtelierMuetEtSolo(AtelierCase):
         self.assertEqual(page._muted, set())
 
 
+class TestLesConditionsDansLaGrille(EcouteCase):
+    """Le pinceau « Clic gauche », les variations « vivante » et
+    « roulement FILL », et l'écoute qui déroule les tours (13 novembre
+    2026)."""
+
+    def _batterie(self, page):
+        self._avance(page)
+        self._composer(page)
+        piste, clip = self._clip_de(page, "Batterie")
+        return piste, clip
+
+    def _pinceau(self, page, libelle):
+        rang = page._brush.findText(libelle)
+        self.assertGreaterEqual(rang, 0, libelle)
+        page._brush.setCurrentIndex(rang)
+        page._brush.activated.emit(rang)
+
+    def _case(self, page, rangee, pas):
+        from PyQt6.QtTest import QTest
+
+        vue = page._clip_view
+        QTest.mouseClick(vue, Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier,
+                         vue.cell_center(rangee, pas).toPoint())
+        _APP.processEvents()
+
+    def test_le_pinceau_pose_une_probabilite_puis_la_retire(self):
+        from delugeapp.core import conditions
+
+        page = self._page()
+        piste, clip = self._batterie(page)
+        self.assertTrue(page._brush_tools.isVisibleTo(page))
+        coup = sorted(clip.pattern.tracks["Kick"], key=lambda s: s.pos)[0]
+        case = rhythm.cell(coup)
+        coups = sum(len(h) for h in clip.pattern.tracks.values())
+        self._pinceau(page, "50 %")
+        self.assertIn("50 %", self.messages[-1])
+        self._case(page, "Kick", case)
+        self.assertEqual(conditions.of(coup).probability, 50)
+        self.assertEqual(sum(len(h) for h in clip.pattern.tracks.values()),
+                         coups)
+        self.assertIn("Kick, pas %d : 50 %%" % (case + 1), self.messages[-1])
+        self.assertIn("avec une condition", page._clip_info.text())
+        # Un second clic rend la note à « Toujours ».
+        self._case(page, "Kick", case)
+        self.assertTrue(conditions.of(coup).always)
+        # Défaire rend la probabilité.
+        self._clic(page._undo_button)
+        coup = next(s for s in page._clip().pattern.tracks["Kick"]
+                    if rhythm.cell(s) == case)
+        self.assertEqual(conditions.of(coup).probability, 50)
+
+    def test_le_pinceau_pose_une_iteration_et_un_remplissage(self):
+        from delugeapp.core import conditions
+
+        page = self._page()
+        _piste, clip = self._batterie(page)
+        coups = sorted(clip.pattern.tracks["Kick"], key=lambda s: s.pos)
+        self._pinceau(page, "1 sur 2")
+        self._case(page, "Kick", rhythm.cell(coups[0]))
+        self.assertEqual(conditions.iterance_of(coups[0].iterance), (2, 1))
+        self._pinceau(page, "Remplissage")
+        self._case(page, "Kick", rhythm.cell(coups[1]))
+        self.assertEqual(coups[1].fill, conditions.FILL)
+        # Une seule condition à la fois, comme dans un morceau c1.2.
+        self._case(page, "Kick", rhythm.cell(coups[0]))
+        self.assertEqual((coups[0].iterance, coups[0].fill),
+                         (0, conditions.FILL))
+
+    def test_une_case_vide_ne_prend_rien(self):
+        page = self._page()
+        _piste, clip = self._batterie(page)
+        vide = next(p for p in range(clip.steps) if all(
+            rhythm.cell(s) != p for s in clip.pattern.tracks["Kick"]))
+        coups = sum(len(h) for h in clip.pattern.tracks.values())
+        defaire = page._undo_button.toolTip()
+        self._pinceau(page, "25 %")
+        self._case(page, "Kick", vide)
+        self.assertIn("Pas de note à cette case", self.messages[-1])
+        self.assertEqual(sum(len(h) for h in clip.pattern.tracks.values()),
+                         coups)
+        self.assertEqual(page._undo_button.toolTip(), defaire)
+        # Revenu à « Poser ou retirer », le clic pose un coup.
+        self._pinceau(page, "Poser ou retirer des notes")
+        self._case(page, "Kick", vide)
+        self.assertEqual(sum(len(h) for h in clip.pattern.tracks.values()),
+                         coups + 1)
+
+    def test_vivante_s_ecoute_sur_deux_tours(self):
+        from delugeapp.core import atelier, conditions
+
+        page = self._page()
+        piste, _clip = self._batterie(page)
+        avant = len(piste.clips)
+        page._vary_menu.actions()[-2].trigger()        # « vivante »
+        _APP.processEvents()
+        self.assertEqual(len(piste.clips), avant + 1)
+        clip = page._clip()
+        self.assertIs(clip, piste.clips[-1])
+        self.assertGreater(atelier.clip_conditions(clip), 0)
+        self._clic(page._listen_clip_button)
+        audio, boucle = self._joue()
+        self.assertTrue(boucle)
+        tours = conditions.cycle(
+            [s for h in clip.pattern.tracks.values() for s in h],
+            limit=max(1, atelier.CONDITION_BARS // clip.bars))
+        self.assertGreaterEqual(tours, 2)
+        tempo = page._project.style.tempo()
+        self.assertEqual(audio.shape[0], round(
+            clip.bars * tours * 4 * 60.0 / tempo * 44100))
+
+    def test_roulement_fill_attend_le_bouton(self):
+        from delugeapp.core import atelier, conditions
+
+        page = self._page()
+        piste, _clip = self._batterie(page)
+        page._vary_menu.actions()[-1].trigger()        # « roulement FILL »
+        _APP.processEvents()
+        clip = page._clip()
+        roulement = [s for h in clip.pattern.tracks.values() for s in h
+                     if s.fill == conditions.FILL]
+        self.assertTrue(roulement)
+        # À l'écoute, sans le bouton, le roulement se tait.
+        _parts, jouee, _mesures = atelier.clip_parts(page._project,
+                                                     piste.uid, clip.key)
+        self.assertFalse(any(s.fill == conditions.FILL
+                             for h in jouee.tracks.values() for s in h))
+        # La carte du test ne dit rien de son bouton FILL : pas d'alerte.
+        self.assertNotIn("SYNC-SCALING", self.messages[-1])
+
+    def test_le_bouton_fill_qui_n_en_est_pas_un_se_signale(self):
+        """Sur la carte de l'utilisateur, SYNC-SCALING n'est pas réglé en
+        « Fill mode » : les notes de remplissage n'y joueraient jamais."""
+        page = self._page()
+        self._batterie(page)
+        reglages = Path(self.ctx.sd.root) / "SETTINGS"
+        reglages.mkdir(exist_ok=True)
+        (reglages / "CommunityFeatures.XML").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<runtimeFeatureSettings>'
+            '<setting name="syncScalingAction" value="0"></setting>'
+            '</runtimeFeatureSettings>\n', encoding="utf-8")
+        self._pinceau(page, "Remplissage")
+        self.assertIn("Sync Scaling Action ▸ Fill mode", self.messages[-1])
+        page._vary_menu.actions()[-1].trigger()        # « roulement FILL »
+        _APP.processEvents()
+        self.assertIn("SYNC-SCALING", self.messages[-1])
+        self._pinceau(page, "50 %")
+        self.assertNotIn("SYNC-SCALING", self.messages[-1])
+
+
+class TestLAutomationDansLAtelier(AtelierCase):
+    """[Poser la courbe], [Retirer la courbe], [Montée du filtre], et
+    l'écoute qui reçoit les courbes (14 novembre 2026)."""
+
+    def _accords(self, page):
+        self._avance(page)
+        self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Accords", page._clip_tracks)
+        self._choisir(page._clip_list, 0)
+        return piste, page._clip()
+
+    def test_poser_et_retirer_une_courbe(self):
+        page = self._page()
+        piste, clip = self._accords(page)
+        self.assertTrue(page._auto_tools.isVisibleTo(page))
+        self.assertFalse(page._auto_clear_button.isEnabled())
+        haut = page._auto_high.value()
+        self.assertEqual(haut, atelier_core().current_value(piste,
+                                                            "lpfFrequency"))
+        self._clic(page._auto_apply_button)
+        self.assertIn("lpfFrequency", clip.automation)
+        self.assertEqual(clip.automation["lpfFrequency"][-1][1], haut)
+        self.assertTrue(page._clip_view.automation_points("lpfFrequency"))
+        self.assertIn("Coupure", self.messages[-1])
+        self.assertIn("Automation : Coupure", page._clip_info.text())
+        self._clic(page._auto_clear_button)
+        self.assertNotIn("lpfFrequency", clip.automation)
+        self.assertFalse(page._clip_view.automation_points("lpfFrequency"))
+        # Défaire rend la courbe.
+        self._clic(page._undo_button)
+        self.assertIn("lpfFrequency", page._clip().automation)
+
+    def test_une_batterie_n_a_pas_d_automation(self):
+        page = self._page()
+        self._accords(page)
+        self._piste(page, "Batterie", page._clip_tracks)
+        self._choisir(page._clip_list, 0)
+        self.assertFalse(page._auto_tools.isVisibleTo(page))
+
+    def test_l_ecoute_recoit_la_courbe(self):
+        from unittest import mock
+
+        from delugeapp.ui.pages import atelier as page_atelier
+
+        page = self._page()
+        piste, clip = self._accords(page)
+        self._clic(page._auto_apply_button)
+        recu = []
+
+        def faux_rendu(parts, sons, batterie, tempo, kit=None, sd=None,
+                       mesures=0, automation=None, cache=None,
+                       should_stop=None):
+            recu.append((automation, cache))
+            return None
+
+        with mock.patch.object(page_atelier, "_render_mix", faux_rendu):
+            self._clic(page._listen_clip_button)
+            self.assertTrue(_attendre_les_fils(lambda: bool(recu)))
+        cle = "Accords#%d" % piste.uid
+        self.assertIn("lpfFrequency", recu[-1][0][cle])
+        # Le cache de la page suit les écoutes : un geste ne refait que ce
+        # qu'il change.
+        self.assertIs(recu[-1][1], page._render_cache)
+
+    def test_la_montee_du_filtre(self):
+        page = self._page()
+        piste, _clip = self._accords(page)
+        self._onglet(page, 3)
+        projet = page._project
+        index = max(range(len(projet.sections)),
+                    key=lambda i: projet.sections[i].bars)
+        page._matrix.sectionClicked.emit(index)
+        _APP.processEvents()
+        avant = dict(projet.sections[index].cells)
+        self._clic(page._rise_button)
+        apres = projet.sections[index].cells
+        self.assertNotEqual(apres[piste.uid], avant[piste.uid])
+        neuf = piste.clip(apres[piste.uid])
+        self.assertIn("lpfFrequency", neuf.automation)
+        self.assertIn("s'ouvre sur toute la section", self.messages[-1])
+        self._clic(page._undo_button)
+        self.assertEqual(page._project.sections[index].cells[piste.uid],
+                         avant[piste.uid])
+
+
+def atelier_core():
+    from delugeapp.core import atelier
+
+    return atelier
+
+
+class TestUnClipMidiDansLAtelier(AtelierCase):
+    """[Importer un clip MIDI…] : un fichier MIDI devient un clip de la
+    piste (13 novembre 2026)."""
+
+    def _fichier(self):
+        from delugeapp.core import midifile
+
+        chemin = Path(self._tmp.name) / "idee.mid"
+        basse = midifile.MidiTrack(name="Bass", channel=0)
+        for rang, note in enumerate((45, 48, 52, 50)):
+            basse.add(rang * 96, note, 100, 48)
+        batterie = midifile.MidiTrack(name="Drums", channel=9)
+        for temps in range(4):
+            batterie.add(temps * 96, 36, 120, 24)
+        midifile.write_midi(chemin, [basse, batterie], bpm=97, ppq=96)
+        return chemin
+
+    def _importer(self, page, piste_midi):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QFileDialog, QInputDialog
+
+        with mock.patch.object(QFileDialog, "getOpenFileName",
+                               return_value=(str(self._fichier()), "")), \
+                mock.patch.object(QInputDialog, "getItem",
+                                  side_effect=lambda *a, **k: (next(
+                                      l for l in a[3]
+                                      if l.startswith(piste_midi)), True)):
+            self._clic(page._midi_clip_button)
+
+    def test_une_basse_venue_d_un_fichier_midi(self):
+        page = self._page()
+        self._avance(page)
+        self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Basse", page._clip_tracks)
+        avant = len(piste.clips)
+        self.assertTrue(page._midi_clip_button.isVisibleTo(page))
+        self._importer(page, "Bass")
+        self.assertEqual(len(piste.clips), avant + 1)
+        clip = page._clip()
+        self.assertIs(clip, piste.clips[-1])
+        self.assertEqual([e.note for e in clip.events], [45, 48, 52, 50])
+        self.assertIn("4 note(s) sur 1 mesure(s), depuis idee.mid",
+                      self.messages[-1])
+        # Un geste comme un autre : il se défait.
+        self._clic(page._undo_button)
+        self.assertEqual(len(page._track().clips), avant)
+
+    def test_une_batterie_prend_le_canal_10(self):
+        page = self._page()
+        self._avance(page)
+        self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Batterie", page._clip_tracks)
+        self._importer(page, "Drums")
+        clip = page._clip()
+        self.assertIs(clip, piste.clips[-1])
+        self.assertEqual(sorted(clip.pattern.tracks), ["Kick"])
+
+    def test_un_fichier_illisible_le_dit(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        page = self._page()
+        self._avance(page)
+        self._composer(page)
+        self._onglet(page, 2)
+        piste = self._piste(page, "Basse", page._clip_tracks)
+        faux = Path(self._tmp.name) / "faux.mid"
+        faux.write_bytes(b"pas du MIDI")
+        avant = len(piste.clips)
+        with mock.patch.object(QFileDialog, "getOpenFileName",
+                               return_value=(str(faux), "")):
+            self._clic(page._midi_clip_button)
+        self.assertIn("Fichier MIDI illisible", self.messages[-1])
+        self.assertEqual(len(piste.clips), avant)
+
+
+class TestLeMorceauEnAudio(AtelierCase):
+    """[Morceau en audio…] : le mélange en WAV, et une piste par fichier
+    (13 novembre 2026)."""
+
+    def test_le_melange_et_une_piste_par_fichier(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QFileDialog, QInputDialog
+
+        page = self._page()
+        self._avance(page)
+        projet = self._composer(page)
+        # Une section courte : le rendu reste rapide.
+        projet.sections = projet.sections[:1]
+        projet.sections[0].bars = 2
+        self._onglet(page, 4)
+        self.assertTrue(page._audio_button.isVisibleTo(page))
+        sortie = Path(self._tmp.name) / "MORCEAU"
+        with mock.patch.object(
+                QInputDialog, "getItem",
+                side_effect=lambda *a, **k: (a[3][1], True)), \
+                mock.patch.object(QFileDialog, "getSaveFileName",
+                                  return_value=(str(sortie), "")):
+            self._clic(page._audio_button)
+        self.assertFalse(page._audio_button.isEnabled())
+        self.assertTrue(_attendre_les_fils(
+            lambda: "exporté en audio" in (self.messages[-1]
+                                           if self.messages else "")),
+            self.messages[-3:])
+        self.assertTrue((Path(self._tmp.name) / "MORCEAU.wav").exists())
+        pistes = list(Path(self._tmp.name).glob("MORCEAU - *.wav"))
+        self.assertTrue(pistes)
+        self.assertIn("%d piste(s) à côté" % len(pistes), self.messages[-1])
+        self.assertTrue(page._audio_button.isEnabled())
+
+    def test_annuler_n_ecrit_rien(self):
+        from unittest import mock
+
+        from PyQt6.QtWidgets import QInputDialog
+
+        page = self._page()
+        self._avance(page)
+        self._composer(page)
+        self._onglet(page, 4)
+        with mock.patch.object(QInputDialog, "getItem",
+                               return_value=("", False)):
+            self._clic(page._audio_button)
+        self.assertFalse(page._exporting)
+        self.assertFalse(list(Path(self._tmp.name).glob("*.wav")))
+
+
 class TestLAtelierDessineALaMain(AtelierCase):
     """Tirer une note, forcer un coup, partir d'un clip vide ou d'une copie,
     doubler, changer d'octave."""
@@ -10597,6 +11413,33 @@ class TestLesRangeesDuKitSEcoutent(EcouteCase):
         self.ctx.settings.autoplay = True
         self._choisir(page._kit_rows, 0)
         self._joue()
+
+    def test_choisir_l_echantillon_d_une_rangee(self):
+        """Le son choisi dans la liste prend la rangée, s'entend, et se
+        défait (13 novembre 2026)."""
+        from unittest import mock
+
+        from delugeapp.core import kitgen
+        from delugeapp.ui.rowsampledialog import RowSampleDialog
+
+        page = self._page()
+        piste = self._kit(page)
+        self.assertFalse(page._pick_row_button.isEnabled())
+        rang = next((i for i, r in enumerate(piste.kit.rows)
+                     if len(kitgen.row_candidates(piste.kit, i, self.lib,
+                                                  "techno")) > 1), None)
+        if rang is None:
+            self.skipTest("la carte jetable n'a qu'un son par rôle")
+        self._choisir(page._kit_rows, rang)
+        self.assertTrue(page._pick_row_button.isEnabled())
+        avant = piste.kit.rows[rang].file_name
+        self.lecteur.play_file = lambda chemin, loop=False: None
+        with mock.patch.object(RowSampleDialog, "exec", _choisir_le_dernier):
+            self._clic(page._pick_row_button)
+        self.assertNotEqual(page._track().kit.rows[rang].file_name, avant)
+        self._joue()                       # le son tiré s'entend aussitôt
+        self._clic(page._undo_button)
+        self.assertEqual(page._track().kit.rows[rang].file_name, avant)
 
 
 class TestLesBrouillonsDansLAtelier(AtelierCase):
@@ -11819,3 +12662,23 @@ class TestAutoverification(unittest.TestCase):
             code, texte = self._rapport()
         self.assertEqual(code, 1)
         self.assertIn("vérification refusée", texte)
+
+    def test_le_decodeur_manque_aux_sources_et_manquerait_au_paquet(self):
+        """miniaudio est facultatif depuis les sources ; un paquet, lui,
+        doit l'emporter — sans lui, le MP3 et le FLAC restent sur le PC."""
+        import sys
+        from unittest import mock
+
+        from delugeapp import autotest
+        from delugeapp.core import compressed
+
+        if compressed.available():
+            with self.assertLogs("delugeapp.autotest", "INFO") as journal:
+                self.assertTrue(autotest._decodeur())
+            self.assertIn("ok      decodeur", journal.output[-1])
+        with mock.patch.object(compressed, "_ma", None):
+            with self.assertLogs("delugeapp.autotest", "WARNING"):
+                self.assertTrue(autotest._decodeur())
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                    self.assertLogs("delugeapp.autotest", "ERROR"):
+                self.assertFalse(autotest._decodeur())

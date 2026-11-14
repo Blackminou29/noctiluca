@@ -62,8 +62,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ...core import (atelier, atelierstore, genres as genres_mod, rhythm,
-                     theory, variation)
+from ...core import (atelier, atelierstore, automation, conditions,
+                     genres as genres_mod, rhythm, theory, variation)
 from ...i18n import N_, plural, tr
 from ..theme import PAD, PAD_CYAN
 from ..widgets.atelierviews import (STEP_COLORS, ClipView, SectionMatrix,
@@ -235,6 +235,14 @@ class AtelierPage(Page):
         self._project: atelier.Project | None = None
         self._uid: int | None = None
         self._clip_key: str | None = None
+        #: Un export audio calcule dans un fil.
+        self._exporting = False
+        #: La piste pour laquelle la rangée « Automation » a ses valeurs.
+        self._auto_for: int | None = None
+        #: Le rendu de chaque partie et de la batterie, d'une écoute à
+        #: l'autre : un geste ne refait que ce qu'il change
+        #: (:func:`render.render_parts`).
+        self._render_cache: dict = {}
         self._section = 0
         self._variants: list = []
         self._genre = "techno"
@@ -841,8 +849,9 @@ class AtelierPage(Page):
         # choisit — ce que faisait l'onglet Kit du générateur.
         self._kit_card = Card(tr("Le kit"))
         hint = QLabel(tr("Une rangée ne vous plaît pas ? Choisissez-la, puis "
-                         "« Autre son pour la rangée » : le reste du kit ne "
-                         "bouge pas."))
+                         "« Autre son pour la rangée », ou « Choisir "
+                         "l'échantillon… » pour l'écouter parmi tous ceux de "
+                         "son rôle : le reste du kit ne bouge pas."))
         hint.setProperty("role", "subtitle")
         hint.setWordWrap(True)
         self._kit_card.body().addWidget(hint)
@@ -865,6 +874,16 @@ class AtelierPage(Page):
         line.addWidget(self._kit_row_button)
         line.addStretch(1)
         self._kit_card.body().addLayout(line)
+        line = QHBoxLayout()
+        line.setSpacing(6)
+        self._pick_row_button = tool_button(tr("Choisir l'échantillon…"),
+                                            "list")
+        self._pick_row_button.clicked.connect(self.guard(self._pick_row_sample))
+        line.addWidget(self._pick_row_button)
+        line.addStretch(1)
+        self._kit_card.body().addLayout(line)
+        self._kit_rows.itemDoubleClicked.connect(
+            self.guard(lambda _i: self._pick_row_sample()))
         column.addWidget(self._kit_card, 1)
 
         self._variants_card = Card(tr("Variantes dans le style"))
@@ -947,6 +966,23 @@ class AtelierPage(Page):
         line.addWidget(self._live_button)
         clips.body().addLayout(line)
 
+        # Le pinceau des conditions : un clic gauche pose une probabilité,
+        # une itération ou un remplissage sur la note touchée, comme la
+        # machine les règle note par note.
+        self._brush_tools = avance(QWidget())
+        line = RangeeSouple(self._brush_tools)
+        line.addWidget(QLabel(tr("Clic gauche")))
+        self._brush = QComboBox()
+        self._brush.addItem(tr("Poser ou retirer des notes"), -1)
+        for index, choice in enumerate(conditions.CHOICES):
+            self._brush.addItem(choice.label(), index)
+        self._brush.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._brush.activated.connect(self.guard(
+            lambda _i: self._brush_changed()))
+        line.addWidget(self._brush)
+        clips.body().addWidget(self._brush_tools)
+
         self._clip_view = ClipView()
         self._clip_view.hitToggled.connect(self.guard(self._hit_toggled))
         self._clip_view.noteToggled.connect(self.guard(self._note_toggled))
@@ -990,6 +1026,11 @@ class AtelierPage(Page):
                                                     "export"))
         self._clip_midi_button.clicked.connect(self.guard(self._clip_to_midi))
         line.addWidget(self._clip_midi_button)
+        self._midi_clip_button = avance(tool_button(
+            tr("Importer un clip MIDI…"), "import"))
+        self._midi_clip_button.clicked.connect(
+            self.guard(self._import_midi_clip))
+        line.addWidget(self._midi_clip_button)
         clips.body().addLayout(line)
 
         # Le registre d'un clip de synthé : une basse composée trop haut se
@@ -1091,6 +1132,39 @@ class AtelierPage(Page):
         hint.setProperty("role", "subtitle")
         line.addWidget(hint)
         colonne.addWidget(self._feel_tools)
+
+        # L'automation d'un clip de synthé : un réglage qui bouge au cours
+        # du clip, comme un bouton qu'on tourne en enregistrant.
+        self._auto_tools = QWidget()
+        line = RangeeSouple(self._auto_tools)
+        line.addWidget(QLabel(tr("Automation")))
+        self._auto_param = QComboBox()
+        for param, label in automation.AUTOMATABLE.items():
+            self._auto_param.addItem(tr(label), param)
+        self._auto_param.activated.connect(self.guard(
+            lambda _i: self._auto_param_changed()))
+        line.addWidget(self._auto_param)
+        self._auto_shape = QComboBox()
+        for shape in automation.SHAPES:
+            self._auto_shape.addItem(tr(shape), shape)
+        line.addWidget(self._auto_shape)
+        self._auto_low = QSpinBox()
+        self._auto_high = QSpinBox()
+        for spin in (self._auto_low, self._auto_high):
+            spin.setRange(0, 50)
+        line.addWidget(self._auto_low)
+        line.addWidget(QLabel("→"))
+        line.addWidget(self._auto_high)
+        self._auto_apply_button = tool_button(tr("Poser la courbe"), "check")
+        self._auto_apply_button.clicked.connect(
+            self.guard(self._apply_automation))
+        line.addWidget(self._auto_apply_button)
+        self._auto_clear_button = tool_button(tr("Retirer la courbe"),
+                                              "minus")
+        self._auto_clear_button.clicked.connect(
+            self.guard(self._clear_automation))
+        line.addWidget(self._auto_clear_button)
+        colonne.addWidget(self._auto_tools)
         return outils
 
     # -- étape 4 : la structure ------------------------------------------- #
@@ -1189,6 +1263,9 @@ class AtelierPage(Page):
         self._copy_section_button.clicked.connect(
             self.guard(self._copy_section))
         line.addWidget(self._copy_section_button)
+        self._rise_button = tool_button(tr("Montée du filtre"), "filter")
+        self._rise_button.clicked.connect(self.guard(self._rise_section))
+        line.addWidget(self._rise_button)
         self._remove_section_button = tool_button(tr("Retirer la section"),
                                                   "minus")
         self._remove_section_button.clicked.connect(
@@ -1285,9 +1362,12 @@ class AtelierPage(Page):
         column.addWidget(machine)
 
         export = avance(Card(tr("Exporter")))
-        hint = QLabel(tr("Le morceau entier dans un fichier MIDI, pour un "
-                         "logiciel de MAO : une piste par piste, la batterie "
-                         "sur le canal 10, le nom des sections en repères."))
+        hint = QLabel(tr("Le morceau entier hors de la carte : en MIDI pour "
+                         "un logiciel de MAO — une piste par piste, la "
+                         "batterie sur le canal 10, le nom des sections en "
+                         "repères —, ou en audio, tel que l'ordinateur "
+                         "l'entend : le mélange en WAV, et à la demande une "
+                         "piste par fichier."))
         hint.setProperty("role", "subtitle")
         hint.setWordWrap(True)
         export.body().addWidget(hint)
@@ -1295,6 +1375,9 @@ class AtelierPage(Page):
         self._midi_button = tool_button(tr("Morceau en MIDI…"), "export")
         self._midi_button.clicked.connect(self.guard(self._song_to_midi))
         line.addWidget(self._midi_button)
+        self._audio_button = tool_button(tr("Morceau en audio…"), "wave")
+        self._audio_button.clicked.connect(self.guard(self._song_to_audio))
+        line.addWidget(self._audio_button)
         line.addStretch(1)
         export.body().addLayout(line)
         column.addWidget(export)
@@ -1439,6 +1522,8 @@ class AtelierPage(Page):
         self._complete_card.setVisible(has and bool(project.song_rel))
         self._listen_song_button.setEnabled(has and bool(project.sections))
         self._midi_button.setEnabled(has and bool(project.sections))
+        self._audio_button.setEnabled(has and bool(project.sections)
+                                      and not self._exporting)
         for widget in (self._add_track_button, self._new_kind,
                        self._new_part, self._add_section_button,
                        self._structure_button):
@@ -1465,6 +1550,7 @@ class AtelierPage(Page):
         self._listen_row_button.setEnabled(row_chosen)
         self._kit_row_button.setEnabled(
             row_chosen and self.ctx.has_card and track.existing is None)
+        self._pick_row_button.setEnabled(self._kit_row_button.isEnabled())
         external = track is not None and track.kind in ("midi", "cv")
         self._channel.setVisible(external)
         self._channel_label.setVisible(external)
@@ -1492,6 +1578,13 @@ class AtelierPage(Page):
         feels = atelier.feels_for(track.part) if track is not None \
             and not drums and track.existing is None else ()
         self._feel_tools.setVisible(bool(feels))
+        curved = track is not None and track.kind == "synth" \
+            and clip is not None
+        self._auto_tools.setVisible(curved)
+        self._auto_apply_button.setEnabled(curved and own)
+        self._auto_clear_button.setEnabled(
+            curved and own and bool(clip.automation.get(
+                self._auto_param.currentData() or "")))
         sections = project.sections if has else []
         current = 0 <= self._section < len(sections)
         for widget in (self._section_name, self._section_bars,
@@ -1499,6 +1592,9 @@ class AtelierPage(Page):
                        self._remove_section_button, self._left_button,
                        self._right_button, self._copy_section_button):
             widget.setEnabled(current)
+        self._rise_button.setEnabled(current and any(
+            t.kind == "synth" and sections[self._section].cells.get(t.uid)
+            for t in project.tracks))
         self._compose_button.setText(
             tr("Recomposer le morceau") if has and not project.song_rel
             else tr("Composer le morceau"))
@@ -2205,6 +2301,7 @@ class AtelierPage(Page):
                 project.written.setdefault(rel, sha)
         self._project = project
         self._sound_history = {}
+        self._render_cache = {}
         self._uid = project.tracks[0].uid if project.tracks else None
         self._clip_key = None
         self._section = 0
@@ -2664,6 +2761,36 @@ class AtelierPage(Page):
         # On tire un autre son pour l'entendre.
         self._listen_kit_row(quiet=True)
 
+    def _pick_row_sample(self) -> None:
+        """L'échantillon de la rangée choisie, choisi à l'oreille parmi tous
+        ceux de son rôle ; le reste du kit ne bouge pas."""
+        track = self._track()
+        kit = getattr(track, "kit", None) if track is not None else None
+        index = self._kit_rows.currentRow()
+        if kit is None or not 0 <= index < len(kit.rows):
+            self.say(tr("Choisissez d'abord une rangée du kit."))
+            return
+        if self.card_or_warn() is None:
+            return
+        from ...core import kitgen
+        from ..rowsampledialog import choose_row_sample
+
+        chosen = choose_row_sample(self, kit, index,
+                                   genre=self._project.style.genre)
+        if chosen is None:
+            return
+        self._checkpoint(N_("échantillon d'une rangée"))
+        slot = kitgen.use_sample(kit, index, chosen)
+        if slot is None:
+            self._drop_checkpoint()
+            return
+        self._fill_kit_rows()
+        self._update_actions()
+        self.say(tr("%s : %s (%s).") % (kit.rows[index].name,
+                                        slot.rel.rsplit("/", 1)[-1],
+                                        tr(slot.family)))
+        self._listen_kit_row(quiet=True)
+
     def _choose_from_card(self) -> None:
         track = self._track()
         if track is None or track.kind not in ("synth", "kit"):
@@ -2895,10 +3022,20 @@ class AtelierPage(Page):
                                          if r not in rows]
             self._clip_view.set_clip(clip, part_color(track.part), rows,
                                      editable=editable)
+            if self._auto_for != track.uid:
+                self._auto_defaults()
             used = [s.name for s in self._project.sections
                     if s.cells.get(track.uid) == clip.key]
             text = tr("%d note(s) sur %d mesure(s).") % (clip.note_count,
                                                          clip.bars)
+            marked = atelier.clip_conditions(clip)
+            if marked:
+                text += " " + tr("%d avec une condition : la machine ne les "
+                                 "joue pas à chaque tour.") % marked
+            if clip.automation:
+                text += " " + tr("Automation : %s.") % ", ".join(
+                    automation.describe(param, nodes)
+                    for param, nodes in sorted(clip.automation.items()))
             if clip.existing is not None:
                 text += " " + tr("Déjà dans le morceau d'origine : "
                                  "« Dupliquer » en fait une copie à "
@@ -2918,11 +3055,147 @@ class AtelierPage(Page):
             self._clip_info.setText(text)
         self._update_actions()
 
+    # -- l'automation d'un clip --------------------------------------------- #
+
+    def _auto_param_changed(self) -> None:
+        self._auto_defaults()
+        self._update_actions()
+
+    def _auto_defaults(self) -> None:
+        """Le réglage choisi : ses bornes, et une courbe proposée qui part
+        sous la valeur du son pour monter jusqu'à elle."""
+        self._auto_for = self._uid
+        param = self._auto_param.currentData() or "lpfFrequency"
+        lo, hi = automation.bounds(param)
+        track = self._track()
+        top = atelier.current_value(track, param) if track is not None \
+            else hi
+        for spin in (self._auto_low, self._auto_high):
+            spin.setRange(lo, hi)
+        if param in automation.BIPOLAR:
+            self._auto_low.setValue(lo)
+            self._auto_high.setValue(hi)
+        else:
+            self._auto_low.setValue(max(lo, top - 20))
+            self._auto_high.setValue(top)
+
+    def _apply_automation(self) -> None:
+        track = self._track()
+        clip = self._clip()
+        if track is None or clip is None or self._on_the_deluge(clip):
+            return
+        param = self._auto_param.currentData() or "lpfFrequency"
+        shape = self._auto_shape.currentData() or "montée"
+        self._checkpoint(N_("automation d'un clip"))
+        try:
+            nodes = atelier.set_automation(
+                self._project, track.uid, clip.key, param, shape,
+                self._auto_low.value(), self._auto_high.value())
+        except ValueError as exc:
+            self._drop_checkpoint()
+            self.say(tr("Pas d'automation : %s.") % exc)
+            return
+        self._show_clip()
+        self.say(tr("Clip %s : %s, %s.") % (
+            clip.key, automation.describe(param, nodes), tr(shape)))
+
+    def _clear_automation(self) -> None:
+        track = self._track()
+        clip = self._clip()
+        if track is None or clip is None or self._on_the_deluge(clip):
+            return
+        param = self._auto_param.currentData() or "lpfFrequency"
+        if param not in clip.automation:
+            self.say(tr("Ce clip n'a pas de courbe de ce réglage."))
+            return
+        self._checkpoint(N_("automation retirée"))
+        atelier.clear_automation(self._project, track.uid, clip.key, param)
+        self._show_clip()
+        self.say(tr("Clip %s : plus de courbe de %s.")
+                 % (clip.key, tr(automation.AUTOMATABLE[param]).lower()))
+
+    def _rise_section(self) -> None:
+        """[Montée du filtre] : la coupure de chaque synthé de la section
+        s'ouvre sur toute sa durée (:func:`atelier.section_rise`)."""
+        project = self._project
+        if project is None or not 0 <= self._section < len(project.sections):
+            self.say(tr("Choisissez d'abord une section."))
+            return
+        self._checkpoint(N_("montée du filtre"))
+        made = atelier.section_rise(project, self._section)
+        if not made:
+            self._drop_checkpoint()
+            self.say(tr("Aucun synthé ne joue dans cette section."))
+            return
+        self._refresh()
+        self.say(tr("« %s » : la coupure de %d synthé(s) s'ouvre sur toute "
+                    "la section — des copies des clips, les autres "
+                    "sections gardent les leurs.")
+                 % (tr(project.sections[self._section].name), len(made)))
+
+    # -- les conditions des notes ----------------------------------------- #
+
+    def _brush_condition(self):
+        """La condition que pose le clic gauche, ou ``None`` : il pose et
+        retire des notes."""
+        index = self._brush.currentData()
+        if index is None or int(index) < 0:
+            return None
+        return conditions.CHOICES[int(index)]
+
+    def _brush_changed(self) -> None:
+        cond = self._brush_condition()
+        if cond is None:
+            self.say(tr("Clic gauche : poser ou retirer des notes."))
+        else:
+            self.say(tr("Clic gauche : « %s » sur la note touchée ; un second "
+                        "clic la rend à « Toujours ».") % cond.label()
+                     + (self._fill_warning() if cond.fill else ""))
+
+    def _fill_warning(self) -> str:
+        """Ce qu'il faut ajouter quand on pose un remplissage alors que le
+        Deluge de la carte ne joue pas le bouton FILL."""
+        if conditions.fill_button_ready(self.sd if self.ctx.has_card
+                                        else None) is False:
+            return " " + tr("Sur votre Deluge, SYNC-SCALING n'est pas encore "
+                            "le bouton FILL : SETTINGS ▸ COMMUNITY FEATURES ▸ "
+                            "Sync Scaling Action ▸ Fill mode.")
+        return ""
+
+    def _condition_at(self, track, clip, target, step: int, cond) -> None:
+        """Pose ``cond`` sur la note ou le coup de la case — ou la rend à
+        « Toujours » si elle l'avait déjà."""
+        if self._on_the_deluge(clip):
+            return
+        current = atelier.condition_at(self._project, track.uid, clip.key,
+                                       target, step)
+        name = tr(target) if track.is_drums \
+            else theory.note_to_name(int(target))
+        if current is None:
+            self.say(tr("Pas de note à cette case : « Poser ou retirer des "
+                        "notes » en pose une."))
+            return
+        if current == cond:
+            cond = conditions.Condition()
+        self._checkpoint(N_("condition d'une note"))
+        if track.is_drums:
+            atelier.set_hit_condition(self._project, track.uid, clip.key,
+                                      target, step, cond)
+        else:
+            atelier.set_note_condition(self._project, track.uid, clip.key,
+                                       int(target), step, cond)
+        self._show_clip()
+        self.say(tr("%s, pas %d : %s.") % (name, step + 1, cond.label()))
+
     def _hit_toggled(self, row: str, step: int) -> None:
         """Un clic dans la grille de la batterie."""
         track = self._track()
         clip = self._clip()
         if track is None or clip is None or not track.is_drums:
+            return
+        cond = self._brush_condition()
+        if cond is not None:
+            self._condition_at(track, clip, row, step, cond)
             return
         if self._on_the_deluge(clip):
             return
@@ -2948,6 +3221,10 @@ class AtelierPage(Page):
         clip = self._clip()
         if track is None or clip is None or track.is_drums:
             return
+        cond = self._brush_condition()
+        if cond is not None:
+            self._condition_at(track, clip, note, step, cond)
+            return
         if self._on_the_deluge(clip):
             return
         self._checkpoint(N_("note"))
@@ -2963,6 +3240,10 @@ class AtelierPage(Page):
         track = self._track()
         clip = self._clip()
         if track is None or clip is None or track.is_drums:
+            return
+        cond = self._brush_condition()
+        if cond is not None:
+            self._condition_at(track, clip, note, step, cond)
             return
         if self._on_the_deluge(clip):
             return
@@ -3070,7 +3351,9 @@ class AtelierPage(Page):
         self._clip_key = new.key
         self._fill_clips()
         self.say(tr("Clip %s : « %s » de %s. Écoutez-le, puis placez-le dans "
-                    "une section.") % (new.key, tr(how), clip.key))
+                    "une section.") % (new.key, tr(how), clip.key)
+                 + (self._fill_warning() if how == variation.FILL_ROLL
+                    else ""))
 
     def _new_clip(self) -> None:
         track = self._track()
@@ -3313,6 +3596,60 @@ class AtelierPage(Page):
             midifile.parts_to_midi(Path(chosen),
                                    {track.part: list(clip.events)}, bpm)
         self.say(tr("Clip exporté : %s") % Path(chosen).name)
+
+    def _import_midi_clip(self) -> None:
+        """Un fichier MIDI devient un clip neuf de la piste choisie — une
+        ligne de basse faite dans le DAW, un rythme téléchargé."""
+        track = self._track()
+        if track is None or self._project is None:
+            self.say(tr("Choisissez d'abord une piste."))
+            return
+        chosen, _f = QFileDialog.getOpenFileName(
+            self, tr("Importer un clip MIDI"), "",
+            tr("Fichier MIDI (*.mid *.midi)"))
+        if not chosen:
+            return
+        from pathlib import Path
+
+        from ...core import midifile
+
+        try:
+            data = midifile.read_midi(Path(chosen))
+        except (OSError, ValueError) as exc:
+            self.say(tr("Fichier MIDI illisible : %s") % exc)
+            return
+        choices = atelier.midi_choices(data, drums=track.is_drums)
+        if not choices:
+            self.say(tr("Ce fichier MIDI n'a aucune note."))
+            return
+        index = choices[0][0]
+        if len(choices) > 1:
+            labels = [tr("%s — %d note(s)") % (name, count)
+                      for _i, name, count in choices]
+            label, ok = QInputDialog.getItem(
+                self, tr("Importer un clip MIDI"),
+                tr("La piste du fichier à reprendre dans « %s » :")
+                % atelier.track_label(track), labels, 0, False)
+            if not ok:
+                return
+            index = choices[labels.index(label)][0]
+        self._checkpoint(N_("clip MIDI importé"))
+        try:
+            clip, dropped = atelier.import_midi_clip(self._project, track.uid,
+                                                     data, index)
+        except ValueError as exc:
+            self._drop_checkpoint()
+            self.say(tr("Rien à importer : %s.") % exc)
+            return
+        self._clip_key = clip.key
+        self._fill_clips()
+        message = tr("Clip %s : %d note(s) sur %d mesure(s), depuis %s.") % (
+            clip.key, clip.note_count, clip.bars, Path(chosen).name)
+        if dropped:
+            message += " " + tr("%d laissée(s) de côté : sans rôle de "
+                                "batterie, ou au-delà de seize mesures.") \
+                % dropped
+        self.say(message)
 
     # -- jouer sur le Deluge --------------------------------------------- #
 
@@ -3709,7 +4046,9 @@ class AtelierPage(Page):
                     if t.is_drums and t.kit is not None), None)
         # Le rendu part dans un fil, et l'on continue de dessiner pendant
         # qu'il calcule : il reçoit ses propres notes, son propre motif, et
-        # un kit dont ni les rangées ni le volume ne bougeront sous lui.
+        # un kit dont ni les rangées ni le volume ne bougeront sous lui ;
+        # l'automation des clips aussi (:class:`atelier.Parts`).
+        curves = copy.deepcopy(getattr(parts, "automation", None) or {})
         parts = {k: [copy.copy(e) for e in v] for k, v in parts.items()}
         drums = copy.deepcopy(drums)
         if kit is not None:
@@ -3722,7 +4061,7 @@ class AtelierPage(Page):
         self._start_listening(
             _render_mix, parts, sounds, drums, tempo, kit,
             self.sd if self.ctx.has_card else None,
-            int(bars) if looped else 0,
+            int(bars) if looped else 0, curves, self._render_cache,
             title=title, heard=heard, bpm=tempo, loop=looped,
             seamless=seamless and looped)
         return looped
@@ -4073,6 +4412,68 @@ class AtelierPage(Page):
                     "nom des sections en repères.") % (
             Path(chosen).name, pistes, len(project.sections)))
 
+    #: Les deux façons d'exporter en audio.
+    _AUDIO_CHOICES = (N_("Le mélange seul"),
+                      N_("Le mélange, et une piste par fichier"))
+
+    def _song_to_audio(self) -> None:
+        """Le morceau entier en WAV, tel que l'ordinateur l'entend — le
+        mélange, et à la demande une piste par fichier pour un DAW. Le rendu
+        part dans un fil ; rien n'est écrit sur la carte."""
+        project = self._project
+        if project is None:
+            return
+        if self._exporting:
+            self.say(tr("Un export audio est déjà en cours."))
+            return
+        labels = [tr(c) for c in self._AUDIO_CHOICES]
+        choice, ok = QInputDialog.getItem(
+            self, tr("Exporter le morceau en audio"),
+            tr("Que faut-il écrire ?"), labels, 0, False)
+        if not ok:
+            return
+        stems = labels.index(choice) == 1
+        chosen, _f = QFileDialog.getSaveFileName(
+            self, tr("Exporter le morceau en audio"),
+            "%s.wav" % (self._song_name.text().strip()
+                        or self._default_name(project)),
+            tr("Fichier WAV (*.wav)"))
+        if not chosen:
+            return
+        from pathlib import Path
+
+        if not chosen.lower().endswith(".wav"):
+            chosen += ".wav"
+        self._exporting = True
+        self._audio_button.setEnabled(False)
+        self.say(tr("Rendu du morceau… (une quinzaine de secondes pour trois "
+                    "minutes)"))
+        self.run(atelier.export_audio, atelier.clone_project(project),
+                 Path(chosen), self.sd if self.ctx.has_card else None,
+                 stems=stems,
+                 on_result=self.guard(self._audio_written),
+                 on_error=self.guard(self._audio_failed),
+                 title=tr("Rendu du morceau"))
+
+    def _audio_done(self) -> None:
+        self._exporting = False
+        self._audio_button.setEnabled(True)
+
+    def _audio_written(self, files) -> None:
+        self._audio_done()
+        if not files:
+            self.say(tr("Export audio arrêté."))
+            return
+        if len(files) == 1:
+            self.say(tr("Morceau exporté en audio : %s.") % files[0].name)
+        else:
+            self.say(tr("Morceau exporté en audio : %s, et %d piste(s) à "
+                        "côté.") % (files[0].name, len(files) - 1))
+
+    def _audio_failed(self, message: str) -> None:
+        self._audio_done()
+        self.say(tr("Export audio impossible : %s.") % message)
+
 
 def _render_row(pattern, kit, sd, bpm: float):
     """Un coup d'une rangée de kit, tel que le kit le joue (fil séparé)."""
@@ -4082,8 +4483,23 @@ def _render_row(pattern, kit, sd, bpm: float):
                                  tail=1.2)
 
 
+def _drum_fingerprint(drums, kit, bpm: float) -> str:
+    """L'empreinte d'une batterie à rendre : ses coups, son kit, le tempo."""
+    import hashlib
+    import pickle
+
+    hits = sorted((name, float(s.pos), int(s.velocity), int(s.length))
+                  for name, steps in drums.tracks.items() for s in steps)
+    rows = [(r.name, r.sound) for r in getattr(kit, "rows", None) or []]
+    return hashlib.sha1(pickle.dumps(
+        (int(drums.steps), hits, rows,
+         sorted((getattr(kit, "params", None) or {}).items()),
+         round(float(bpm), 6)), protocol=4)).hexdigest()
+
+
 def _render_mix(parts: dict, sounds: dict, drums, bpm: float, kit=None,
-                sd=None, loop_bars: int = 0, should_stop=None):
+                sd=None, loop_bars: int = 0, automation=None, cache=None,
+                should_stop=None):
     """Les parties et la batterie mêlées (fil séparé) ; ``None`` si l'arrêt
     est demandé en cours de rendu. ``loop_bars`` : le rendu est ramené à ce
     nombre de mesures, sa queue repliée sur le début — prêt à tourner en
@@ -4093,18 +4509,30 @@ def _render_mix(parts: dict, sounds: dict, drums, bpm: float, kit=None,
     additionne telles quelles et seul le mélange est ramené sous la pleine
     échelle — ramenés chacun de leur côté, puis dosés à 0,85, ils perdaient
     l'équilibre du morceau. La carte sert aussi aux parties : un son à
-    échantillon y jouait une dent de scie."""
+    échantillon y jouait une dent de scie.
+
+    ``cache`` : celui de la page, d'une écoute à l'autre — une partie ou une
+    batterie inchangée reprend son rendu (:func:`render.render_parts`)."""
     from ...core import render
 
     tonal = render.render_parts(parts, sounds, bpm=bpm, sr=44100, sd=sd,
                                 should_stop=should_stop,
-                                normalize=False) if parts else None
+                                normalize=False, automation=automation,
+                                cache=cache) if parts else None
     if should_stop is not None and should_stop():
         return None
     beat = None
     if drums is not None and drums.tracks:
-        beat = render.render_pattern(drums, bpm=bpm, sr=44100, kit=kit, sd=sd,
-                                     normalize=False)
+        key = _drum_fingerprint(drums, kit, bpm) if cache is not None \
+            else None
+        known = cache.get("#batterie") if cache is not None else None
+        if known is not None and known[0] == key:
+            beat = known[1]
+        else:
+            beat = render.render_pattern(drums, bpm=bpm, sr=44100, kit=kit,
+                                         sd=sd, normalize=False)
+            if cache is not None:
+                cache["#batterie"] = (key, beat)
     if tonal is None and beat is None:
         return None
     mixed = render.mix(*(t for t in (tonal, beat) if t is not None))

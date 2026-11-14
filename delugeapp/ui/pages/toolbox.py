@@ -573,14 +573,16 @@ class ToolboxPage(Page):
             f"<td style='padding:6px 0;border-bottom:1px solid #2F343E'>"
             f"{tr(text)}</td></tr>"
             for title, text in CHEATSHEET)
+        from ..theme import FONT_UI
+
         browser.setHtml(
-            "<html><body style=\"font-family:'Segoe UI',sans-serif;"
+            "<html><body style=\"font-family:'%s',sans-serif;"
             "color:#F2F4F8\">"
             "<h2 style='color:#C79A22'>%s</h2>"
             "<p style='color:#7A828F'>%s</p>"
             "<table style='border-collapse:collapse'>%s</table>"
             "</body></html>" % (
-                tr("Valeurs et limites du Deluge"),
+                FONT_UI, tr("Valeurs et limites du Deluge"),
                 tr("Mesuré sur une carte réelle, ou documenté par le "
                    "firmware."), rows))
         return browser

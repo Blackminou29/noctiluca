@@ -190,6 +190,29 @@ def suggest_slots(genre: str) -> list[str]:
     return list(GENRE_SLOTS.get(key, DEFAULT_SLOTS))
 
 
+#: Tous les rôles qu'un kit peut demander : ceux d'un kit par défaut, puis
+#: les percussions que des genres appellent.
+ROLES: tuple[str, ...] = DEFAULT_SLOTS + tuple(
+    role for role in ROLE_VOLUME if role not in DEFAULT_SLOTS
+    and role != "Other")
+
+
+def ordered_slots(genre: str, wanted) -> list[str]:
+    """Les rôles choisis, dans l'ordre où le kit les range : ceux que le
+    genre conseille, dans son ordre (la grosse caisse en bas), puis les
+    autres dans l'ordre de :data:`ROLES`."""
+    wanted = set(wanted or ())
+    suggested = [r for r in suggest_slots(genre) if r in wanted]
+    return suggested + [r for r in ROLES if r in wanted
+                        and r not in suggested]
+
+
+def available_roles(lib: Library) -> set[str]:
+    """Les rôles pour lesquels la bibliothèque a au moins un échantillon."""
+    return {role for roles in library_families(lib).values()
+            for role, rows in roles.items() if rows}
+
+
 # --------------------------------------------------------------------------- #
 # Familles et rôles
 # --------------------------------------------------------------------------- #
@@ -528,8 +551,15 @@ def reroll_row(kit: Kit, index: int, lib: Library, genre: str = "techno",
         candidates = _free(family) if family else []
     if not candidates:
         return None
+    return _replace_row(kit, int(index), role, rng.choice(candidates), family)
 
-    chosen = rng.choice(candidates)
+
+def _replace_row(kit: Kit, index: int, role: str, chosen, family: str
+                 ) -> KitSlot:
+    """Met l'échantillon ``chosen`` (une ligne d'index) à la rangée
+    ``index`` : son nom reste, volume, panoramique et polyphonie suivent le
+    rôle, comme à la construction."""
+    old = kit.rows[index]
     tmp = Kit.new("TMP")
     tmp.rows = []
     new_row = tmp.add_row(old.name or safe_deluge_name(role.upper()),
@@ -540,13 +570,64 @@ def reroll_row(kit: Kit, index: int, lib: Library, genre: str = "techno",
     slot = KitSlot(role=role, rel=chosen["rel"], name=Path(chosen["rel"]).stem,
                    family=family)
     for k, existing in enumerate(getattr(kit, "slots", None) or []):
-        if norm_rel(existing.rel or "") == norm_rel(old.file_name or "")                 and existing.rel:
+        if existing.rel and norm_rel(existing.rel) == norm_rel(
+                old.file_name or ""):
             kit.slots[k] = _Chosen(role=role, rel=slot.rel, name=slot.name,
                                    family=family,
                                    info={"duration": _float(chosen, "duration"),
                                          "frames": _int(chosen, "frames")})
             break
     return slot
+
+
+def row_candidates(kit: Kit, index: int, lib: Library,
+                   genre: str = "techno", limit: int = 400) -> list[dict]:
+    """Les échantillons de la bibliothèque qui peuvent jouer la rangée
+    ``index`` : ceux de son rôle, **la même famille d'abord** — le kit garde
+    sa couleur —, puis les familles du genre, de la plus proche à la plus
+    lointaine, puis les autres, chacune dans l'ordre des noms.
+
+    Le son actuel de la rangée vient en tête (``current``) ; les autres
+    échantillons du kit sont écartés. Chaque candidat :
+    ``{"rel", "name", "family", "duration", "frames", "current"}``.
+    """
+    if not 0 <= int(index) < len(kit.rows):
+        return []
+    old = kit.rows[int(index)]
+    role = row_role(old)
+    here = norm_rel(old.file_name or "")
+    used = {norm_rel(r.file_name) for r in kit.rows if r.file_name} - {here}
+    family = family_of(old.file_name) if old.file_name else ""
+    families = library_families(lib)
+    order = sorted(families, key=lambda name: (
+        name != family, -_affinity(genre, name), name.casefold()))
+    out: list[dict] = []
+    if old.file_name:
+        out.append({"rel": old.file_name, "name": Path(old.file_name).stem,
+                    "family": family, "duration": None, "frames": None,
+                    "current": True})
+    for name in order:
+        for row in families[name].get(role, []):
+            rel = norm_rel(row["rel"])
+            if rel in used or rel == here:
+                continue
+            out.append({"rel": row["rel"], "name": Path(row["rel"]).stem,
+                        "family": name, "duration": _float(row, "duration"),
+                        "frames": _int(row, "frames"), "current": False})
+            if len(out) >= int(limit):
+                return out
+    return out
+
+
+def use_sample(kit: Kit, index: int, candidate: dict) -> KitSlot | None:
+    """Met à la rangée ``index`` l'échantillon choisi parmi
+    :func:`row_candidates`. ``None`` si la rangée n'existe pas ou si c'est
+    déjà son son."""
+    if not 0 <= int(index) < len(kit.rows) or candidate.get("current"):
+        return None
+    role = row_role(kit.rows[int(index)])
+    return _replace_row(kit, int(index), role, candidate,
+                        str(candidate.get("family") or ""))
 
 
 def kit_from_folder(sd: SDCard, folder: str, name: str = "") -> Kit:

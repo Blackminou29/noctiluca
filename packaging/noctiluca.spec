@@ -48,7 +48,7 @@ LANGUES_QT = ("fr",)
 
 #: Les distributions dont la licence accompagne le paquet.
 DISTRIBUTIONS = ("PyQt6", "PyQt6-Qt6", "PyQt6-sip", "numpy", "numba",
-                 "llvmlite", "sounddevice", "cffi", "pycparser")
+                 "llvmlite", "sounddevice", "miniaudio", "cffi", "pycparser")
 
 
 def _modules():

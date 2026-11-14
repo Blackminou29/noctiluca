@@ -165,8 +165,9 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                             "réécrire. Rien n'est modifié"),
         "@_listen_song_button": N_("Calcule le morceau entier sur "
                                    "l'ordinateur, sur son arrangement et avec "
-                                   "les sons de chaque clip, puis le joue. "
-                                   "Rien n'est écrit"),
+                                   "les sons de chaque clip, et le joue "
+                                   "pendant que la suite se calcule. Rien "
+                                   "n'est écrit"),
         "@_listen_clip_button": N_("Calcule le clip choisi comme la machine le "
                                    "joue, sur toute sa boucle, puis le joue. "
                                    "Un double-clic sur un clip fait de même"),
@@ -246,9 +247,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
 
     # ---------------------------------------------------------------- #
     "Generator": {
-        "Générer": N_("Fabrique un preset complet à partir du genre, du rôle "
-                      "et de la graine ci-dessous  (rien n'est encore écrit "
-                      "sur la carte)"),
+        "Générer": N_("Fabrique un autre son du genre et du rôle choisis, sous "
+                      "une nouvelle graine à chaque clic — sauf pour les "
+                      "aspects allumés dans « Garder en générant »  (rien "
+                      "n'est encore écrit sur la carte)"),
         "Au hasard": N_("Tire un genre, un rôle et une graine au hasard, puis "
                         "génère"),
         "Muter": N_("Repart du son actuel et en change quelques réglages : de "
@@ -286,8 +288,10 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                      "typés"),
         "@_seed": N_("Deux générations avec la même graine et les mêmes "
                      "réglages donnent exactement le même son"),
-        "Produire 8 variantes": N_("Crée huit cousins du son actuel ; un clic "
-                                   "les écoute, un double-clic en adopte un"),
+        "Produire 8 variantes": N_("Crée huit cousins du son actuel, dans son "
+                                   "style : chacun change un seul aspect ou "
+                                   "pousse un seul curseur. Un clic les "
+                                   "écoute, un double-clic en adopte un"),
         "Fondre": N_("Mélange le son courant avec celui choisi dans "
                      "l'historique : les réglages se mélangent selon le "
                      "dosage, les formes d'onde basculent à mi-chemin"),
@@ -311,7 +315,14 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                         "d'abord, puis d'une machine voisine — sans toucher "
                         "au reste du kit  (rien n'est encore écrit)"),
         "@_kit_genre": N_("Oriente le choix des sons : une grosse caisse "
-                          "techno ne ressemble pas à une grosse caisse funk"),
+                          "techno ne ressemble pas à une grosse caisse funk ; "
+                          "il rallume les rangées que le genre conseille"),
+        "@_pick_sample_button": N_("Ouvre la liste de tous les sons de votre "
+                                   "bibliothèque qui peuvent jouer la rangée "
+                                   "choisie, la même machine d'abord ; un "
+                                   "clic en écoute un, « Utiliser ce son » le "
+                                   "met à la rangée  (rien n'est encore "
+                                   "écrit)"),
         "@_kit_seed": N_("Même graine, même kit : de quoi retrouver un "
                          "assemblage qui vous plaisait"),
         "@_kit_name": N_("Nom du fichier qui sera écrit dans KITS/"),
@@ -421,6 +432,41 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                                "d'abord, puis d'une voisine — sans toucher "
                                "au reste du kit  (rien n'est écrit sur la "
                                "carte)"),
+        "@_pick_row_button": N_("Ouvre la liste de tous les sons de votre "
+                                "bibliothèque qui peuvent jouer la rangée "
+                                "choisie, la même machine d'abord ; un clic "
+                                "en écoute un, « Utiliser ce son » le met à "
+                                "la rangée  (rien n'est écrit sur la "
+                                "carte)"),
+        "@_auto_param": N_("Le réglage du son que la courbe fait bouger au "
+                           "cours du clip : coupure, résonance, volume ou "
+                           "panoramique"),
+        "@_auto_shape": N_("La forme de la courbe : montée, descente, vague, "
+                           "montée à chaque mesure, balancement à chaque "
+                           "temps"),
+        "@_auto_low": N_("La première valeur de la courbe, au cran de la "
+                         "machine : d'où part une montée"),
+        "@_auto_high": N_("La seconde valeur de la courbe : où arrive une "
+                          "montée ; proposée à la valeur du son"),
+        "@_auto_apply_button": N_("Pose la courbe sur le clip : le réglage "
+                                  "suit la forme d'un bout à l'autre du clip, "
+                                  "et s'entend aussitôt. Une courbe du même "
+                                  "réglage est remplacée  (rien n'est écrit "
+                                  "sur la carte)"),
+        "@_auto_clear_button": N_("Retire du clip la courbe du réglage "
+                                  "choisi : il reprend la valeur du son"),
+        "@_rise_button": N_("La montée d'un morceau d'un geste : chaque synthé "
+                            "de la section joue une copie de son clip, à la "
+                            "durée de la section, dont la coupure s'ouvre "
+                            "jusqu'à la valeur du son. Les autres sections "
+                            "gardent leurs clips  (rien n'est écrit sur la "
+                            "carte)"),
+        "@_midi_clip_button": N_("Fait d'un fichier MIDI un clip neuf de la "
+                                 "piste choisie — une ligne faite dans le "
+                                 "DAW, un rythme ; une batterie General MIDI "
+                                 "trouve ses rangées. On choisit la piste du "
+                                 "fichier s'il en a plusieurs  (rien n'est "
+                                 "écrit sur la carte)"),
         "@_clip_midi_button": N_("Écrit le clip choisi dans un fichier .mid, "
                                  "à l'endroit que vous choisirez — hors de "
                                  "la carte ; une batterie part sur le canal "
@@ -462,6 +508,13 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                             "à l'endroit que vous choisirez — hors de la "
                             "carte : une piste par piste, la batterie en "
                             "piste 10, le nom des sections en repères"),
+        "@_audio_button": N_("Calcule le morceau entier, tel que "
+                             "l'ordinateur l'entend, et l'écrit en WAV "
+                             "24 bits à l'endroit que vous choisirez — le "
+                             "mélange, et à la demande une piste par "
+                             "fichier, de même gain : glissées ensemble "
+                             "dans un DAW, elles redonnent le mélange. Rien "
+                             "n'est écrit sur la carte"),
         "@_write_button": N_("**Écrit sur la carte.** Crée dans SONGS un "
                              "morceau neuf : une section du Deluge par "
                              "section du projet, leurs clips, leurs "
@@ -529,8 +582,15 @@ EXPLICATIONS: dict[str, dict[str, str]] = {
                             "s'y inscrit. Recliquez pour arrêter"),
         "@_vary_button": N_("Une variation du clip, ajoutée à la piste : "
                             "rythme, notes, plus ou moins de notes, réponse, "
-                            "octave, fin de phrase — pour une batterie, "
-                            "ornements, remplissage, cassure, montée…"),
+                            "octave, fin de phrase, vivante — pour une "
+                            "batterie, ornements, remplissage, cassure, "
+                            "montée, roulement FILL…"),
+        "@_brush": N_("Ce que fait un clic gauche dans la grille : poser ou "
+                      "retirer des notes, ou poser sur la note touchée une "
+                      "condition de la machine — une probabilité, « 1 sur "
+                      "2 », le remplissage du bouton FILL. Un second clic "
+                      "la rend à « Toujours »  (rien n'est écrit sur la "
+                      "carte)"),
         "@_new_clip_button": N_("Un clip neuf pour la piste, sur la "
                                 "progression du morceau"),
         "@_clip_bars": N_("Longueur du prochain clip, neuf ou vide"),

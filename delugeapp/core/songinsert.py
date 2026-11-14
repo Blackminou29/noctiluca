@@ -334,6 +334,9 @@ class NewClip:
     name: str = ""
     new_track: int = -1
     copy_of: int | None = None
+    #: L'automation du clip d'une piste neuve, ``{nom de preset: [(tick du
+    #: morceau, valeur d'écran)]}`` (:mod:`.automation`).
+    automation: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -603,7 +606,7 @@ def plan_insert(sd: SDCard, target: SongTarget, new_tracks: list,
             spec_clip = songwriter.ClipSpec(
                 track=clip.new_track, length=int(clip.length),
                 rows=clip.rows, section=int(clip.section), name=clip.name,
-                playing=False)
+                playing=False, automation=dict(clip.automation or {}))
             colour = (clip.new_track * 13) % 72 - 60
             element = songwriter._clip_element(
                 spec, spec_clip, names[clip.new_track], colour,

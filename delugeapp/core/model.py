@@ -730,6 +730,8 @@ class Arpeggiator:
     note_mode: str = ""
     octave_mode: str = ""
     mpe_velocity: str = ""
+    #: Chaque pas joué autant de fois (``stepRepeat``, communautaire).
+    step_repeat: int = 1
 
     @property
     def is_on(self) -> bool:
@@ -749,6 +751,7 @@ class Arpeggiator:
             note_mode=_txt(el, "noteMode", ""),
             octave_mode=_txt(el, "octaveMode", ""),
             mpe_velocity=_txt(el, "mpeVelocity", ""),
+            step_repeat=_int(el, "stepRepeat", 1),
         )
 
     def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
@@ -762,6 +765,8 @@ class Arpeggiator:
                             ("mpeVelocity", self.mpe_velocity)):
             if value:
                 _set(el, name, value, dialect)
+        if self.step_repeat != 1:
+            _set(el, "stepRepeat", self.step_repeat, dialect)
 
 
 @dataclass
@@ -1745,26 +1750,45 @@ def encode_notes(notes: Iterable[Note], with_lift: bool = True,
     ``noteDataWithSplitProb`` d'un morceau 1.3, tel que l'écrit
     ``NoteRow::writeToFile`` : probabilité 20 pour « toujours », itération
     et fill à zéro (« aucune »).
+
+    Une note qui porte une itération ou un remplissage
+    (:mod:`.conditions`) les voit ramenés, en 20 et 22, à l'octet de
+    condition d'un morceau c1.2 ; un octet c1.2 (remplissage 0, itération
+    21 à 55), en 28, à ses trois champs — comme le firmware 1.3 les relit.
     """
+    from . import conditions
+
     step = int(width) if width else (22 if with_lift else 20)
     parts = ["0x"]
     for note in notes:
         parts.append("%08X" % (int(note.pos) & 0xFFFFFFFF))
         parts.append("%08X" % (int(note.length) & 0xFFFFFFFF))
         parts.append("%02X" % (int(note.velocity) & 0xFF))
+        condition = int(note.condition)
+        iterance = int(getattr(note, "iterance", 0) or 0)
+        fill = int(getattr(note, "fill", 0) or 0)
         if step == 28:
             parts.append("%02X" % (int(note.lift or _DEFAULT_LIFT) & 0xFF))
-            condition = int(note.condition)
-            # Une ancienne itération (octet >= 0x80) n'a pas de place ici :
-            # la note joue toujours plutôt que de jouer au hasard.
-            probability = condition if 0 <= condition <= _ALWAYS else _ALWAYS
+            last = _ALWAYS + len(conditions.LEGACY_ITERANCES)
+            if not (iterance or fill) and (condition in (0, 128)
+                                           or _ALWAYS < condition <= last):
+                pct, iterance, fill = conditions.from_legacy(condition)
+                condition = conditions.probability_byte(pct)
+            # Le bit 7 (« suit la probabilité précédente ») passe tel quel,
+            # comme le firmware 1.3 le garde en relisant un morceau c1.2.
+            probability = (condition if 1 <= (condition & 0x7F) <= _ALWAYS
+                           and condition < (_ALWAYS | 0x80) else _ALWAYS)
             parts.append("%02X" % probability)
-            parts.append("%04X" % (int(getattr(note, "iterance", 0)) & 0xFFFF))
-            parts.append("%02X" % (int(getattr(note, "fill", 0)) & 0xFF))
+            parts.append("%04X" % (iterance & 0xFFFF))
+            parts.append("%02X" % (fill & 0xFF))
             continue
+        if iterance or fill:
+            condition = conditions.legacy_byte(
+                conditions.percent(condition) if 1 <= condition < _ALWAYS
+                else 100, iterance, fill)
         if step == 22:
             parts.append("%02X" % (int(note.lift or _DEFAULT_LIFT) & 0xFF))
-        parts.append("%02X" % (int(note.condition) & 0xFF))
+        parts.append("%02X" % (condition & 0xFF))
     return "".join(parts)
 
 
@@ -1848,6 +1872,9 @@ class Clip:
     channel: int = -1
     #: Suffixe d'un canal MIDI partagé par plusieurs pistes (−1 : aucun).
     suffix: int = -1
+    #: Les réglages automatisés du clip d'un synthé, tels qu'écrits dans ses
+    #: ``soundParams`` (:mod:`.automation`) : ``{nom de preset: texte}``.
+    automation: dict = field(default_factory=dict)
 
     @property
     def bars(self) -> float:
@@ -1895,6 +1922,14 @@ class Clip:
         if rows is not None:
             clip.note_rows = [NoteRow.from_xml(r, dialect)
                               for r in dxml.iter_children(rows, "noteRow")]
+        params = dxml.get_child(el, "soundParams")
+        if params is not None:
+            from . import automation
+
+            for key in automation.AUTOMATABLE:
+                text = dxml.get(params, key)
+                if automation.is_curve(text):
+                    clip.automation[key] = str(text).strip()
         return clip
 
     def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:

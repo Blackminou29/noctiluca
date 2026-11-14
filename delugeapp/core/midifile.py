@@ -43,6 +43,26 @@ GM_DRUMS: dict[str, int] = {
     "Tambourine": 54, "Guiro": 73, "Timpany": 47, "Other": 41,
 }
 
+#: Les autres notes de la batterie General MIDI, rapportées aux rôles des
+#: kits (:data:`GM_DRUMS` n'en garde qu'une par rôle).
+GM_DRUM_EXTRA: dict[int, str] = {
+    35: "Kick", 40: "Snare", 44: "HatC", 41: "TomL", 43: "TomL",
+    48: "TomM", 53: "Ride", 59: "Ride", 55: "Crash", 57: "Crash",
+    58: "Other", 60: "ConH", 61: "ConL", 69: "Shaker", 82: "Shaker",
+    77: "Block", 74: "Guiro"}
+
+
+def drum_role(pitch: int) -> str:
+    """Le rôle de kit d'une note de batterie General MIDI (« Kick » pour 36
+    ou 35…), ``""`` pour une note qui n'en a pas."""
+    pitch = int(pitch)
+    for role, note in GM_DRUMS.items():
+        # « Timpany » et « Other » partagent leur note avec un tom.
+        if note == pitch and role not in ("Timpany", "Other"):
+            return role
+    role = GM_DRUM_EXTRA.get(pitch, "")
+    return "" if role == "Other" else role
+
 
 @dataclass
 class MidiTrack:

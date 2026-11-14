@@ -38,10 +38,6 @@ TEXTS = {
         "The Deluge does not open its card over USB: plug it in, with "
         "firmware 1.3 or later.",
     "Envoyer au Deluge": "Send to the Deluge",
-    "Sons, presets, kits et morceaux du Deluge (*.wav *.WAV *.aif *.aiff "
-    "*.xml *.XML);;Tous les fichiers (*)":
-        "Deluge sounds, presets, kits and songs (*.wav *.WAV *.aif *.aiff "
-        "*.xml *.XML);;All files (*)",
     "Envoyer un dossier au Deluge": "Send a folder to the Deluge",
     "Choisissez d'abord la carte, dans les réglages.":
         "Choose the card first, in the settings.",

@@ -52,6 +52,12 @@ TEXTS = {
     "%d fichier(s) posé(s) sur la carte": "%d file(s) put on the card",
     "dont %d converti(s)": "%d of them converted",
     "conversion impossible : %s": "conversion failed: %s",
+    "décodage impossible : %s": "decoding failed: %s",
+    "le décodeur ne le lit pas (Opus, ou fichier abîmé) : exportez-le en "
+    "WAV depuis votre logiciel":
+        "the decoder cannot read it (Opus, or a damaged file): export it as "
+        "WAV from your software",
+    "format %s": "%s format",
     "toujours refusé après conversion : %s":
         "still refused after conversion: %s",
     "Copie sur la carte : %d / %d — %s": "Copying to the card: %d / %d — %s",

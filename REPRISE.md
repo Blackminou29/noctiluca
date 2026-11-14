@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 13 novembre 2026 (le hub MIDI, §3 quaterquinquagies)
+**Dernière mise à jour :** 14 novembre 2026 (ce qui restait du relevé, §3 sexquinquagies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -40,6 +40,8 @@ morceau d'un clic — et a **deux niveaux**, simple et avancé — voir §3 quad
 **Les essais sur la machine sont faits** : sidechain, Steinway, table d'onde, favori, envoi d'un pack, atelier en direct, synchronisation différée, et le DAW — Live joue les sons du Deluge depuis un set déjà routé, le Deluge mène l'horloge ; celle de Live ne passait pas sous Windows 11, et un **firmware corrigé**, compilé et installé sur sa machine, la fait suivre — voir §3 duoquinquagies.
 **L'atelier s'écoute en boucle et se dessine** : une boucle qui suit ce qu'on change sans se relancer, un clip entendu avec le morceau, des pistes qu'on coupe ou qu'on isole, des notes tirées à la souris, un volume par piste, et des brouillons où chaque morceau remplacé ou écrit se retrouve — voir §3 triquinquagies.
 **Le PC est au centre** : le hub MIDI relie claviers, surfaces de contrôle, Deluge et DAW — une baie de brassage en pads, l'instrument sélectionné ou une piste du Deluge pour cible, aucune note coincée, une boucle MIDI coupée d'office — voir §3 quaterquinquagies.
+**L'atelier et le générateur vont plus loin** : un son se retouche d'un pad (plus sombre, plus sale…) et garde ce qu'on aime quand on en tire un autre ; les notes portent les conditions de la machine (probabilité, « 1 sur 2 », remplissage), entendues sur le PC selon le firmware ; un kit se compose rangée par rangée, son échantillon choisi à l'oreille ; un fichier MIDI devient un clip ; le morceau sort en WAV, mélange et pistes — voir §3 quinquinquagies.
+**Le relevé se vide** : l'automation d'un clip s'écrit et s'entend, un morceau entier joue pendant que la suite se calcule, les MP3 et FLAC arrivent sur la carte en WAV, et l'écoute porte le filtre SVF, le compresseur maître, le « tape warble » et l'arpégiateur du firmware — voir §3 sexquinquagies.
 **Objet :** ce qui a été construit, ce qui a été mesuré, et ce qu'il faut savoir avant
 de modifier quoi que ce soit.
 
@@ -332,6 +334,202 @@ signaux, et `Page.run()` pour les travaux longs.
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
 
 ---
+
+## 3 sexquinquagies. Ce qui restait du relevé (14 novembre 2026)
+
+**La demande** : « supprimer tout ce qui a été fait du fichier ameliorations.md et continuer à
+intégrer le reste. Supprimer la ligne du fichier dès que la tâche est réalisée. » Le fichier a
+d'abord été nettoyé (en-tête : « une ligne s'efface dès que la tâche est faite »), puis chaque
+point faisable ici fait, testé, sa ligne retirée aussitôt. Contrat : SPEC §4.54 et §5.39.
+
+### Ce qui a été fait, dans l'ordre
+
+1. **Les polices selon le système** (`theme.fonts_for`) : Qt cherchait 100 à 170 ms un
+   remplaçant à « Segoe UI » au démarrage sous macOS (journal de GitHub).
+2. **Le signalement du nom 0xFF** (contrôleur Novation), en anglais, dans
+   `C:\Users\sebas\dfw\ISSUE-nom-0xFF.md` : à poster par lui, c'est son compte.
+3. **L'automation d'un clip** (`core/automation.py`) : coupure, résonance, volume,
+   panoramique ; cinq formes ; [Montée du filtre] sur une section ; écrite au format
+   `AutoParam`, relue d'un morceau de la carte, **entendue** sur le PC.
+4. **Le cache de l'écoute** : une boucle de section ne recalcule que la partie touchée
+   (1,90 → 0,27 s, même son).
+5. **Le morceau entier en flux** (page Morceaux) : le début joue pendant que la suite se
+   calcule. Downtempo (173 s) : premier son à **2,9 s au lieu de 41**, total 66 s (104 avant
+   que la dernière fenêtre, presque entière, soit remplacée par le morceau entier), dernière
+   tranche prête 13 s avant d'être jouée ; le flux, essayé dans le vrai lecteur à volume nul,
+   n'a jamais rattrapé le calcul (12 à 52 s d'avance).
+6. **MP3, FLAC, Ogg à l'envoi** (`core/compressed.py`, **miniaudio**, déjà dans son Python,
+   roues pour les trois systèmes vérifiées sur PyPI) : arrivés en WAV, FLAC à l'échantillon
+   près. Nouvelle dépendance des paquets (`requirements-construction.txt`, licence dans le
+   paquet, avis de tiers, étape « decodeur » de l'autovérification) : **jamais encore
+   emballée**, à surveiller au prochain passage GitHub (`ameliorations.md` §3.1).
+7. **Le filtre SVF** (passe-bas et passe-haut), **le compresseur maître** (limiteur compris,
+   réglages lus dans le morceau, une seule sortie pour le mélange), **le « tape warble »**,
+   **l'arpégiateur** (que l'écoute ignorait : un son arpégé jouait ses accords tenus) —
+   chacun d'après le code du firmware 1.3, vérifié contre une transcription entière.
+
+### Ce que la mesure a montré
+
+* **`decode_file` de miniaudio rend tout en stéréo 44,1 kHz** si on ne lui donne pas les
+  canaux et la fréquence : un MP3 mono à 22 kHz devenait stéréo, un FLAC 96 kHz perdait sa
+  fréquence. Le test le garde.
+* **Le SVF : le commentaire du firmware dit « × 1,25 », le code fait × 1,125.** Porté selon
+  le code ; la variante du commentaire s'écarte jusqu'à 100 % de la référence entière.
+* **Sa carte** : les 303 `audioCompressor` ont un seuil nul, les 56 morceaux le volume
+  d'usine ; le limiteur n'agit alors qu'à ~12 dB au-dessus de l'écrêtage (mesuré : à +18 dB
+  d'un mélange de test). Au repos, la nouvelle sortie égale l'ancienne à 10⁻⁶ près.
+* **Une seule sortie pour le mélange** (plus clip par clip) : sur le downtempo, très chaud
+  (crête 2,5 fois la pleine échelle avant la remise sous 0 dBFS), le son change à −37 dB RMS.
+  La machine sature la somme : la nouvelle écoute est la plus fidèle.
+* Le générateur aléatoire `CONG` est réensemencé par un compteur au démarrage de la machine :
+  le warble et les tirages de l'arpège ne peuvent pas être ceux de la machine ; ils suivent
+  la graine du fichier, reproductibles.
+
+### Mes erreurs, relevées
+
+* `daw.render_mix` coupait une tranche du rendu progressif au milieu d'un bloc de 128 quand
+  un rendu partiel finissait avant sa fenêtre : le compresseur calcule un bloc tronqué
+  autrement. Vu par le test de causalité du compresseur, corrigé, test dédié.
+* Deux classes de test qui héritaient d'une classe voisine relançaient ses tests avec un
+  autre lecteur : réécrites autonomes.
+* Une mutation qui laissait un `if` vide cassait la syntaxe (21 erreurs) : elle ne prouvait
+  rien ; remplacée par une instruction neutre.
+* Le repli sur 32 bits de la vitesse du LFO « warbler » ne sert jamais (une cible neuve la
+  remet à zéro bien avant) : retiré, dit en commentaire.
+
+### Vérifié
+
+* **1 656 tests au vert**, sous pytest (343 s) et sous unittest (330 s) — 43 nouveaux. Les
+  tests qui lisent le manuel, relancés après sa dernière retouche : verts.
+* Ses réglages, son brouillon et la copie de la carte : aucune écriture ce jour (dernière :
+  13 novembre, 21 h 22, par l'application elle-même) ; la carte n'a été que lue.
+* **Mutations** (`retirer_correctifs_1314.py`, filtres « courbe », « cache », « flux »,
+  « compressé », « SVF », « compresseur », « warble », « arpège »…) : toutes les nouveautés
+  font échouer leurs tests ; quatre ne le faisaient pas au premier passage (garde winsound,
+  coupe entre deux blocs, note ajoutée sous celle qui sonne, repli de vitesse) — tests
+  renforcés ou code mort retiré.
+* L'autovérification depuis les sources : « ok decodeur : miniaudio 1.71 », tout en ordre.
+
+### Ce qui attend
+
+* **La machine** (`ameliorations.md` §5) : entendre un arpège, un SVF, un warble et un
+  compresseur réglé contre l'écoute du PC ; sa carte n'en contient aucun.
+* **GitHub** : la première construction avec miniaudio.
+* **Reste au relevé, faisable ici mais long** : l'étirement des échantillons, le balayage
+  d'une table d'onde, les tirages de l'arpégiateur communautaire, le découpage de
+  `test_core.py`.
+
+## 3 quinquinquagies. L'atelier et le générateur, plus puissants (13–14 novembre 2026)
+
+**La demande** : « améliorer encore la puissance et les fonctionnalités des fonctions atelier
+et générateur ». Consigne large : d'abord le journal, sa carte, son brouillon, les pages
+rendues en PNG ; puis cinq améliorations, chacune finie avant la suivante (cœur, interface,
+explications, traduction, manuel, tests qui cliquent). Contrat : SPEC §4.53 et §5.38.
+
+### Ce que la mesure a montré, avant d'écrire
+
+* **Sur sa carte** (56 morceaux, lecture seule) : 13 morceaux portent des **probabilités** de
+  notes, 8 des **itérations**, 4 de l'**automation** (18 courbes : volume 9, coupure 5,
+  résonance 2, panoramique 2 — j'avais d'abord compté 11 morceaux, `clipInstances` pris pour
+  une courbe ; corrigé le 14 novembre en relisant chaque courbe). Il s'en sert sur
+  la machine ; l'atelier ne savait ni les écrire ni les entendre, et `from_song` les jetait.
+* **Le générateur, rendu en PNG** : au niveau simple, la graine est cachée et [Générer] la
+  reprenait — **recliquer redonnait exactement le même son**. Les huit variantes de la page
+  mutaient tout au hasard alors que le cœur savait, depuis le 23 octobre, varier dans le style
+  (aspects, poussées) ; l'atelier s'en servait, pas le générateur.
+* **Le code du firmware 1.3** (`C:\Users\sebas\dfw`) pour les conditions : dans un morceau c1.2,
+  l'octet de condition **0 est le remplissage**, 128 le « sauf remplissage », 21 à 55 une
+  itération de l'ancien menu (`iterance_migration.cpp`), le bit 7 une probabilité liée. Deux
+  notes de même probabilité au même instant partagent leur tirage ; incertaines et sommant
+  100 %, une seule joue (`InstrumentClip`, « sum to 100 »).
+* **Le bouton FILL n'existe qu'une fois réglé** : c'est SYNC-SCALING, si *SETTINGS ▸ COMMUNITY
+  FEATURES ▸ Sync Scaling Action* est sur *Fill mode* (`view.cpp`, `runtime_feature_settings`),
+  ou la commande MIDI globale « FILL ». Sur sa carte, `syncScalingAction="0"` : **une note de
+  remplissage n'y jouerait jamais**. L'atelier le lit dans `SETTINGS/CommunityFeatures.XML` et
+  le rappelle quand on pose un remplissage (`conditions.fill_button_ready`).
+
+### Ce qui a été construit
+
+1. **Générateur — retoucher, garder, varier dans le style.** [Générer] tire une nouvelle graine
+   à chaque clic ; la graine tapée puis Entrée refait son son. Pads **Retoucher** (plus sombre /
+   plus brillant… sur cinq curseurs), qui gardent les retouches à la main
+   (`synthgen.restyled`) ; **Garder en générant** (avancé) : huit aspects qui restent quand
+   [Générer] tire un autre son (`synthgen.reseeded`) ; les curseurs retouchent le son affiché ;
+   les réglages de gauche suivent le son (variante adoptée, historique, [Au hasard] qui garde
+   désormais ses réglages) ; les huit variantes sont celles du style, nommées par ce qu'elles
+   changent. Variantes d'un son retouché mises en commun avec l'atelier
+   (`synthgen.edited_variations`).
+2. **Atelier — les conditions des notes** (`core/conditions.py`) : probabilité, itération,
+   remplissage, écrits dans le morceau (octet c1.2, trois champs en 1.3), relus d'un morceau de
+   la carte, **entendus sur le PC selon les règles du firmware** (un clip conditionné se
+   déroule sur ses tours, huit mesures au plus). Pinceau « Clic gauche » (avancé), grille qui
+   les montre (note plus petite et plus sombre selon sa chance, cartouche, liserés d'or),
+   variations **vivante** (synthé et batterie) et **roulement FILL**.
+3. **Kits — les rangées au choix** : 22 pads de rôle dans le générateur (ceux du genre
+   allumés, ceux que la bibliothèque n'a pas éteints), et **[Choisir l'échantillon…]** (générateur
+   et atelier) : tous les sons du rôle, la même machine d'abord, un clic les écoute
+   (`ui/rowsampledialog.py`, `kitgen.row_candidates`, `use_sample`). C'était au relevé
+   (`ameliorations.md` §3.4, « à faire si tu en sens le besoin »).
+4. **[Importer un clip MIDI…]** : un `.mid` devient un clip neuf ; une batterie General MIDI
+   trouve ses rangées (`midifile.drum_role`, rôles communs avec `dawimport`).
+5. **[Morceau en audio…]** : le morceau entier en WAV 24 bits, tel que l'ordinateur l'entend ;
+   le mélange, et à la demande une piste par fichier, **de même gain**.
+
+### Mesuré
+
+* **Garder un aspect** : 660 tirages par aspect (22 genres × 10 rôles × 3 graines), filtre,
+  enveloppes et timbre — l'aspect gardé n'a **jamais** bougé, le reste a changé à chaque fois.
+* **Export audio, sur une copie de son brouillon** (downtempo, 72 mesures, 2 min 56 s, quatre
+  pistes jouées, échantillons lus dans la copie de travail) : **11,6 à 14,5 s** ; la somme des
+  pistes redonne le mélange à 4·10⁻⁷ près (l'arrondi du 24 bits) ; aucune piste muette
+  (valeurs efficaces 0,02 à 0,06). Empreinte du brouillon réel identique avant et après.
+* Correspondance des octets c1.2 vérifiée contre `iterance_migration.cpp` sur les valeurs de sa
+  carte (21 = 1 sur 2, 24 = 2 sur 3, 26 = 1 sur 4).
+
+### Mes erreurs, relevées
+
+* **Deux tests faux, pas le code** : j'avais écrit que deux notes à 50 % au même instant
+  jouent « toutes ou aucune » ; elles font 100 %, et le firmware n'en joue qu'**une**. En
+  corrigeant le test, j'ai vu que la variation « vivante » tombait dans ce cas pour une relance
+  d'accord de deux notes : elles passent à 45 % (un seul tirage, l'accord entier ou rien).
+  Puis un test qui comptait les notes conditionnées d'un motif généré, qui en portait déjà une.
+* **Un ancien test se trompait sur le firmware** : il prenait un octet ≥ 0x80 pour « une
+  itération d'avant 1.3 » et le faisait jouer toujours ; c'est une probabilité liée (et 128 le
+  « sauf remplissage »). Corrigé avec le code (`TestNotesDuFirmware13`).
+* **Un défaut ancien trouvé en chemin** : `int(p / 5)` donnait l'octet 0 à une probabilité sous
+  5 % — dans un morceau c1.2, un coup de remplissage. Désormais jamais 0.
+* La première grille montrait les conditions par un point de deux pixels : invisible à
+  taille réelle (cases de 8 px), lisible seulement en zoom. D'où la note réduite selon sa
+  chance.
+* L'onglet Kit à 980 × 700 : les nouveaux pads se chevauchaient (vu au rendu) — il défile.
+* Un correctif passé par un heredoc Python, un autre par `sed -i`, malgré la règle : relus,
+  intacts (ni `\` ni CRLF en jeu), mais l'outil d'édition suffisait.
+
+### Vérifié
+
+* **1 613 tests au vert**, sous unittest (253 s) et sous pytest (252 s) : 798 du cœur, 584
+  d'interface, 135 de l'atelier, 66 du hub, 30 de la traduction — 158 nouveaux.
+* **Une des trois suites complètes sous pytest s'est arrêtée sans bilan**, vers 85 %, dans des
+  tests anciens (envois au Deluge simulé, interface en anglais) ; `test_ui.py` seul, puis la
+  suite complète relancée, sont passés entiers. Cause inconnue, non reproduite : à surveiller.
+* **33 nouveautés retirées tour à tour** (`retirer_correctifs_1314.py` du scratchpad) : toutes
+  font échouer leurs tests — trois ne le faisaient pas au premier passage (relecture des
+  conditions d'un synthé, sons du kit écartés, note 58 sans rôle) ; tests renforcés, revérifiés.
+  Fichiers rendus à l'octet après chaque essai.
+* Rendus en PNG dans la vraie fenêtre : générateur (son, retouches, variantes, aspects gardés,
+  onglet Kit) et atelier (clips « vivante », roulement FILL, étape Sons) — français et anglais,
+  simple et avancé, 1 360 et 980 px — avec une copie de son brouillon ; empreinte du brouillon
+  réel et de `settings.json` inchangées.
+* L'autovérification depuis les sources : tout en ordre, 184 modules, 3 209 textes anglais.
+  Aucun paquet construit : les modules neufs (`conditions`, `rowsampledialog`) y entrent par
+  `collect_submodules`, ce que seule une construction prouvera.
+
+### Ce qui attend la machine
+
+* **Entendre sur le Deluge** un morceau écrit avec des conditions : une note à 50 %, une
+  charley « 2 sur 2 », un roulement FILL (bouton SYNC-SCALING/FILL tenu). L'octet est celui que
+  le firmware relit (code lu), jamais encore joué par la machine.
+* La même chose dans un morceau 1.3 complété (trois champs).
 
 ## 3 quaterquinquagies. Le hub MIDI : l'ordinateur au centre (12–13 novembre 2026)
 

@@ -40,7 +40,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 from ..i18n import N_, tr
-from . import accomp, rhythm, sketch, synthgen, theory, variation
+from . import (accomp, automation, conditions, rhythm, sketch, synthgen,
+               theory, variation)
 from .accomp import STEPS_PER_BAR, NoteEvent
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,10 @@ __all__ = [
     "duplicate_clip", "double_clip", "transpose_clip", "accent_hit",
     "accent_note", "duplicate_section", "context_parts", "track_volume",
     "set_track_volume", "describe_volume", "keep_level", "KIT_VOLUME",
+    "set_hit_condition", "set_note_condition", "clip_conditions",
+    "condition_at", "midi_choices", "import_midi_clip", "song_parts",
+    "render_tracks", "export_audio",
+    "clip_items", "tile_clip", "CONDITION_BARS",
 ]
 
 #: Natures de piste, comme sur le Deluge.
@@ -166,6 +171,10 @@ class AtelierClip:
     #: Index du clip dans les ``sessionClips`` du morceau importé : un clip
     #: qui est déjà sur le Deluge ne se réécrit pas.
     existing: int | None = None
+    #: L'automation d'un clip de synthé (:mod:`.automation`) : ``{nom de
+    #: preset: [(pas, valeur d'écran)]}`` — une coupure qui s'ouvre, un
+    #: volume qui monte.
+    automation: dict = field(default_factory=dict)
 
     @property
     def steps(self) -> int:
@@ -520,6 +529,89 @@ def empty_clip(project: Project, uid: int,
     return clip
 
 
+#: Canal des percussions d'un fichier MIDI (le 10, compté de zéro).
+GM_DRUM_CHANNEL = 9
+
+
+def midi_choices(data, drums: bool = False) -> list[tuple[int, str, int]]:
+    """Les pistes d'un fichier MIDI (:class:`midifile.MidiFileData`) qui
+    peuvent faire un clip : ``(rang, nom, notes)``. Pour une batterie, celles
+    du canal 10 d'abord ; pour un synthé, les autres d'abord."""
+    out = []
+    for index, (name, notes) in enumerate(data.tracks):
+        if not notes:
+            continue
+        percussion = sum(1 for n in notes if n[4] == GM_DRUM_CHANNEL)
+        out.append((index, name or tr("Piste %d") % (index + 1), len(notes),
+                    percussion * 2 >= len(notes)))
+    out.sort(key=lambda c: (c[3] != bool(drums), c[0]))
+    return [(index, name, count) for index, name, count, _p in out]
+
+
+def import_midi_clip(project: Project, uid: int, data, index: int
+                     ) -> tuple[AtelierClip, int]:
+    """Un clip neuf de la piste, fait des notes de la piste ``index`` du
+    fichier MIDI ``data`` : ``(clip, notes laissées de côté)``.
+
+    Les temps du fichier deviennent des pas de double-croche (sa résolution
+    lue, son tempo ignoré : le clip prend celui du morceau) ; le clip dure
+    les mesures entières que les notes occupent, :data:`MAX_BARS` au plus.
+    Pour une batterie, chaque note prend le rôle que lui donne la batterie
+    General MIDI (36 la grosse caisse, 42 la charley fermée…) ; une note
+    sans rôle est laissée de côté, comme celle qui dépasse seize mesures.
+    ``ValueError`` si rien ne reste.
+    """
+    from . import midifile
+
+    track = project.track(uid)
+    if track is None:
+        raise ValueError(tr("piste inconnue"))
+    if not 0 <= int(index) < len(data.tracks):
+        raise ValueError(tr("piste MIDI inconnue"))
+    notes = data.tracks[int(index)][1]
+    per_tick = STEPS_PER_BAR / 4.0 / max(1, int(data.ppq))
+    limit = MAX_BARS * STEPS_PER_BAR
+    dropped, kept = 0, []
+    for tick, pitch, velocity, duration, _channel in notes:
+        start = round(int(tick) * per_tick, 3)
+        if start >= limit:
+            dropped += 1
+            continue
+        kept.append((start, max(0.25, round(int(duration) * per_tick, 3)),
+                     int(pitch), max(1, min(100, int(velocity) * 100 // 127))))
+    if not kept:
+        raise ValueError(tr("aucune note à reprendre dans cette piste"))
+    end = max(start + (length if not track.is_drums else 0.0)
+              for start, length, _p, _v in kept)
+    bars = max(1, min(MAX_BARS, int(-(-max(end, 0.001) // STEPS_PER_BAR))))
+    clip = AtelierClip(key=next_key(track), bars=bars,
+                       origin=N_("MIDI importé"))
+    if track.is_drums:
+        clip.pattern = rhythm.Pattern(name="", steps=clip.steps)
+        taken: set[tuple[str, int]] = set()
+        for start, length, pitch, velocity in kept:
+            role = midifile.drum_role(pitch)
+            cell = int(round(start))
+            if not role or (role, cell) in taken or cell >= clip.steps:
+                dropped += 1
+                continue
+            taken.add((role, cell))
+            clip.pattern.add(role, rhythm.Step(
+                pos=start, velocity=velocity,
+                length=max(1, int(round(length)))))
+        if not clip.note_count:
+            raise ValueError(tr("aucune note de batterie General MIDI dans "
+                                "cette piste"))
+    else:
+        events = [NoteEvent(start, length, pitch, velocity)
+                  for start, length, pitch, velocity in kept]
+        clip.events = variation.clean_part(events, clip.steps,
+                                           mono=track.mono)
+        dropped += len(kept) - len(clip.events)
+    track.clips.append(clip)
+    return clip, dropped
+
+
 def duplicate_clip(project: Project, uid: int, key: str) -> AtelierClip:
     """Une copie du clip, ajoutée à la piste : on la retouche sans toucher à
     l'original.
@@ -565,10 +657,123 @@ def double_clip(project: Project, uid: int, key: str) -> AtelierClip:
                     twin.grid = int(hit.grid) + steps
                 hits.append(twin)
         clip.pattern.steps = steps * 2
-    clip.events.extend(NoteEvent(e.start + steps, e.length, e.note,
-                                 e.velocity) for e in list(clip.events))
+    clip.events.extend(dataclasses.replace(e, start=e.start + steps)
+                       for e in list(clip.events))
+    for param, nodes in list(clip.automation.items()):
+        clip.automation[param] = automation.tile(nodes, steps, steps * 2)
     clip.bars = int(clip.bars) * 2
     return clip
+
+
+# --------------------------------------------------------------------------- #
+# L'automation d'un clip (14 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+def current_value(track: AtelierTrack, param: str) -> int:
+    """La valeur d'écran du réglage dans le son de la piste — là d'où part
+    une courbe qu'on pose."""
+    from . import soundedit
+
+    if track.preset is None:
+        return 25 if param not in automation.BIPOLAR else 0
+    value = soundedit.value(track.preset.sound, param)
+    lo, hi = automation.bounds(param)
+    return max(lo, min(hi, int(round(float(value)))))
+
+
+def set_automation(project: Project, uid: int, key: str, param: str,
+                   shape: str, low: int, high: int) -> list:
+    """Pose sur le clip ``key`` une courbe du réglage ``param``
+    (:data:`automation.AUTOMATABLE`) : une forme de :data:`automation.SHAPES`
+    entre deux valeurs d'écran. Une courbe du même réglage est remplacée.
+    Rend les nœuds posés. Un clip de batterie, MIDI ou CV n'en porte pas :
+    ``ValueError``, comme pour un clip déjà sur le Deluge."""
+    track, clip = _editable_clip(project, uid, key)
+    if track.kind != "synth" or clip.pattern is not None:
+        raise ValueError(tr("seul un clip de synthé porte une automation"))
+    if param not in automation.AUTOMATABLE:
+        raise ValueError(tr("réglage inconnu : %s") % param)
+    nodes = automation.shape_nodes(shape, clip.steps, low, high, param)
+    clip.automation[param] = nodes
+    return nodes
+
+
+def clear_automation(project: Project, uid: int, key: str,
+                     param: str | None = None) -> int:
+    """Retire du clip la courbe de ``param``, ou toutes. Rend combien."""
+    _track, clip = _editable_clip(project, uid, key)
+    if param is None:
+        count = len(clip.automation)
+        clip.automation.clear()
+        return count
+    return 1 if clip.automation.pop(param, None) is not None else 0
+
+
+def clip_curves(clip: AtelierClip, steps: int, offset: int = 0) -> dict:
+    """Les courbes du clip bouclées sur ``steps`` pas, décalées de
+    ``offset``, en entiers du fichier : ce que l'écoute lit
+    (:func:`render.render_parts`)."""
+    out = {}
+    for param, nodes in (clip.automation or {}).items():
+        tiled = automation.tile(nodes, clip.steps, steps, offset)
+        if tiled:
+            out[param] = [(s, automation.raw(param, v)) for s, v in tiled]
+    return out
+
+
+class Parts(dict):
+    """Les parties d'une écoute, ``{clé: [NoteEvent]}``, et leur automation
+    (``.automation`` : ``{clé: {nom de preset: [(pas, entier)]}}``). Un
+    dictionnaire comme avant pour tout le reste."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.automation: dict = {}
+
+    def add_curves(self, key: str, curves: dict) -> None:
+        if not curves:
+            return
+        mine = self.automation.setdefault(key, {})
+        for param, nodes in curves.items():
+            mine.setdefault(param, []).extend(nodes)
+
+
+def section_rise(project: Project, index: int, param: str = "lpfFrequency",
+                 depth: int = 20) -> list[tuple[int, str]]:
+    """**Ouvrir le filtre sur une section** — la montée d'un morceau d'un
+    seul geste : pour chaque synthé qui joue dans la section, une copie de
+    son clip, allongée à la durée de la section (seize mesures au plus) en
+    répétant ses notes, porte une courbe qui monte de ``depth`` crans sous
+    la valeur du son jusqu'à elle ; la section joue la copie. Rend
+    ``[(uid, clé du clip neuf)]``. L'original ne bouge pas : les autres
+    sections le jouent toujours."""
+    if not 0 <= int(index) < len(project.sections):
+        raise ValueError(tr("section inconnue"))
+    section = project.sections[int(index)]
+    target = max(1, min(MAX_BARS, int(section.bars)))
+    made = []
+    for track in project.tracks:
+        key = section.cells.get(track.uid)
+        source = track.clip(key) if key else None
+        if track.kind != "synth" or source is None or not source.events:
+            continue
+        clip = AtelierClip(key=next_key(track), bars=target,
+                           events=[], origin=N_("montée"), parent=source.key)
+        for start in range(0, target * STEPS_PER_BAR, source.steps):
+            for event in source.events:
+                if event.start + start < target * STEPS_PER_BAR:
+                    clip.events.append(dataclasses.replace(
+                        event, start=event.start + start))
+        clip.events = variation.clean_part(clip.events, clip.steps,
+                                           mono=track.mono)
+        top = current_value(track, param)
+        clip.automation = copy.deepcopy(source.automation)
+        clip.automation[param] = automation.shape_nodes(
+            "montée", clip.steps, top - int(depth), top, param)
+        track.clips.append(clip)
+        section.cells[track.uid] = clip.key
+        made.append((track.uid, clip.key))
+    return made
 
 
 def transpose_clip(project: Project, uid: int, key: str,
@@ -636,6 +841,68 @@ def accent_note(project: Project, uid: int, key: str, note: int,
     for event in touched:
         event.velocity = level
     return level
+
+
+def _apply_condition(items, condition: conditions.Condition) -> None:
+    for item in items:
+        item.probability = int(condition.probability)
+        item.iterance = int(condition.iterance)
+        item.fill = int(condition.fill)
+
+
+def set_hit_condition(project: Project, uid: int, key: str, row: str,
+                      step: int, condition: conditions.Condition) -> bool:
+    """Pose une condition (:mod:`.conditions`) sur le coup de la case
+    ``step`` de la rangée ``row`` : une probabilité, une itération (« 1 sur
+    2 ») ou un remplissage — une seule à la fois, comme dans un morceau
+    c1.2. Rend faux s'il n'y a pas de coup à cette case."""
+    _track, clip = _editable_clip(project, uid, key)
+    if clip.pattern is None:
+        return False
+    hits = [s for s in clip.pattern.tracks.get(str(row), [])
+            if rhythm.cell(s) == int(step)]
+    _apply_condition(hits, condition)
+    return bool(hits)
+
+
+def set_note_condition(project: Project, uid: int, key: str, note: int,
+                       step: int, condition: conditions.Condition) -> bool:
+    """Pose une condition sur la note de hauteur ``note`` qui sonne à la
+    case ``step``. Rend faux si la case est vide."""
+    track, clip = _editable_clip(project, uid, key)
+    if track.is_drums or clip.pattern is not None:
+        return False
+    touched = [e for e in clip.events if int(e.note) == int(note)
+               and float(e.start) <= int(step)
+               < float(e.start) + float(e.length)]
+    _apply_condition(touched, condition)
+    return bool(touched)
+
+
+def condition_at(project: Project, uid: int, key: str, target, step: int
+                 ) -> conditions.Condition | None:
+    """La condition de la note — rangée ``target`` d'une batterie, hauteur
+    ``target`` d'un synthé — qui sonne à la case ``step`` ; ``None`` si la
+    case est vide."""
+    track = project.track(uid)
+    clip = track.clip(key) if track is not None else None
+    if clip is None:
+        return None
+    if clip.pattern is not None:
+        found = [s for s in clip.pattern.tracks.get(str(target), [])
+                 if rhythm.cell(s) == int(step)]
+    else:
+        found = [e for e in clip.events if int(e.note) == int(target)
+                 and float(e.start) <= int(step)
+                 < float(e.start) + float(e.length)]
+    return conditions.of(found[0]) if found else None
+
+
+def clip_conditions(clip: AtelierClip) -> int:
+    """Combien de notes du clip portent une condition."""
+    return sum(1 for item in clip_items(clip)
+               if conditions.has_condition(
+                   item[1] if isinstance(item, tuple) else item))
 
 
 def set_cell(project: Project, section_index: int, uid: int,
@@ -946,39 +1213,17 @@ def sound_variations(project: Project, uid: int, n: int = 8,
     track = project.track(uid)
     if track is None or track.options is None:
         return []
+    def prepare(sound) -> None:
+        _arp_off(sound)
+        _level_sound(sound, track.level)
+
     if not track.edited or track.preset is None:
         out = synthgen.style_variations(track.options, n, seed=seed)
         for variant in out:
-            _arp_off(variant.preset.sound)
-            _level_sound(variant.preset.sound, track.level)
+            prepare(variant.preset.sound)
         return out
-    from .sdcard import safe_deluge_name
-    from .soundedit import carry_edits
-
-    start = _generate(track.options).sound
-    edited = track.preset.sound
-    # Le nom donné à la main, sans le numéro d'une variante adoptée.
-    base = re.sub(r"\s+\d{1,2}$", "", edited.name or "").strip() \
-        or track.options.name
-    spare = len(synthgen.VARIABLE_FACETS) + len(synthgen.NUDGES) // 2
-    out: list[synthgen.Variant] = []
-    for variant in synthgen.style_variations(track.options, max(n, spare),
-                                             seed=seed):
-        if len(out) >= n:
-            break
-        sound = carry_edits(start, edited, variant.preset.sound)
-        _arp_off(sound)
-        _level_sound(sound, track.level)
-        probe = copy.copy(sound)
-        probe.name = edited.name
-        if probe == edited:
-            continue
-        sound.name = safe_deluge_name("%s %d" % (base[:56], len(out) + 2))
-        variant.preset.sound = sound
-        variant.preset.name = sound.name
-        variant.retouched = True
-        out.append(variant)
-    return out
+    return synthgen.edited_variations(track.options, track.preset.sound, n,
+                                      seed=seed, prepare=prepare)
 
 
 def adopt_sound(project: Project, uid: int,
@@ -1100,17 +1345,89 @@ def describe_volume(track: AtelierTrack) -> str:
 # Écouter
 # --------------------------------------------------------------------------- #
 
+#: Mesures qu'une écoute de clip déroule au plus pour faire entendre ses
+#: conditions (un « 1 sur 8 » sur un clip d'une mesure en demande huit).
+CONDITION_BARS = 8
+
+
+def clip_items(clip: AtelierClip) -> list:
+    """Les notes d'un clip, une batterie en ``(rangée, coup)``."""
+    if clip.pattern is not None:
+        return [(name, hit) for name, hits in clip.pattern.tracks.items()
+                for hit in hits]
+    return list(clip.events)
+
+
+def _condition_rng(project: Project, track: AtelierTrack,
+                   clip: AtelierClip, salt="") -> random.Random:
+    """Le hasard des probabilités d'un clip, pour l'écoute : le même d'un
+    rendu à l'autre, pour qu'un geste ne rebatte pas toutes les cartes."""
+    return random.Random("%s|%s|%s|%s" % (project.ident, track.uid, clip.key,
+                                          salt))
+
+
+def tile_clip(clip: AtelierClip, steps: int, rng=None, fill: bool = False
+              ) -> tuple[list[NoteEvent], rhythm.Pattern | None]:
+    """Le clip bouclé sur ``steps`` pas, chaque répétition ne jouant que ce
+    que ses conditions laissent jouer (:func:`conditions.playing`) :
+    ``(notes, motif)``. ``fill`` : le bouton FILL est tenu."""
+    steps = max(1, int(steps))
+    length = max(1, int(clip.pattern.steps if clip.pattern is not None
+                        else clip.steps) or clip.steps)
+    if clip.pattern is not None:
+        out = rhythm.Pattern(name=clip.pattern.name, steps=steps,
+                             ppq=clip.pattern.ppq)
+        for name in clip.pattern.tracks:
+            out.tracks[name] = []
+        items = clip_items(clip)
+        for repeat, offset in enumerate(range(0, steps, length)):
+            for name, hit in conditions.playing(
+                    items, repeat, rng, get=lambda item: item[1],
+                    fill_held=fill, ending=offset + length >= steps):
+                position = float(hit.pos) + offset
+                if position < steps:
+                    out.tracks[name].append(dataclasses.replace(
+                        hit, pos=position,
+                        grid=None if hit.grid is None
+                        else int(hit.grid) + offset))
+        return [], out
+    events: list[NoteEvent] = []
+    for repeat, offset in enumerate(range(0, steps, length)):
+        for event in conditions.playing(clip.events, repeat, rng,
+                                        fill_held=fill,
+                                        ending=offset + length >= steps):
+            start = event.start + offset
+            if start < steps:
+                events.append(dataclasses.replace(event, start=start))
+    return events, None
+
+
 def clip_parts(project: Project, uid: int, key: str
                ) -> tuple[dict, rhythm.Pattern | None, int]:
     """Ce qu'il faut pour écouter un clip seul : ``(parties, batterie,
-    mesures)``."""
+    mesures)``.
+
+    Un clip qui porte des conditions (:mod:`.conditions`) se déroule sur
+    assez de répétitions pour qu'on les entende — deux pour du hasard, le
+    plus petit commun multiple des itérations, :data:`CONDITION_BARS`
+    mesures au plus : ``mesures`` est alors un multiple de la sienne."""
     track = project.track(uid)
     clip = track.clip(key) if track is not None else None
     if clip is None:
         return {}, None, 0
+    repeats = conditions.cycle(
+        [item[1] if isinstance(item, tuple) else item
+         for item in clip_items(clip)],
+        limit=max(1, CONDITION_BARS // max(1, int(clip.bars))))
+    bars = int(clip.bars) * repeats
+    events, pattern = tile_clip(clip, bars * STEPS_PER_BAR,
+                                _condition_rng(project, track, clip))
     if track.is_drums:
-        return {}, clip.pattern, clip.bars
-    return {_part_key(track): list(clip.events)}, None, clip.bars
+        return Parts(), pattern, bars
+    parts = Parts({_part_key(track): events})
+    parts.add_curves(_part_key(track), clip_curves(clip,
+                                                   bars * STEPS_PER_BAR))
+    return parts, None, bars
 
 
 def _part_key(track: AtelierTrack) -> str:
@@ -1172,9 +1489,11 @@ def context_parts(project: Project, uid: int, key: str,
 
 def _mixed_parts(project: Project, cells: dict, bars: int, only=None
                  ) -> tuple[dict, rhythm.Pattern | None]:
-    """Les clips de ``cells`` (piste -> clé), bouclés sur ``bars`` mesures."""
+    """Les clips de ``cells`` (piste -> clé), bouclés sur ``bars`` mesures,
+    leurs conditions jouées répétition par répétition, leur automation
+    avec eux (:class:`Parts`)."""
     steps = bars * STEPS_PER_BAR
-    parts: dict[str, list[NoteEvent]] = {}
+    parts = Parts()
     drums: rhythm.Pattern | None = None
     for track in project.tracks:
         if only is not None and track.uid not in only:
@@ -1183,22 +1502,17 @@ def _mixed_parts(project: Project, cells: dict, bars: int, only=None
         clip = track.clip(key) if key else None
         if clip is None:
             continue
+        rng = _condition_rng(project, track, clip)
         if track.is_drums and clip.pattern is not None:
-            looped = rhythm.loop(clip.pattern, bars)
+            _events, looped = tile_clip(clip, steps, rng)
             if drums is None:
                 drums = looped
             else:
                 for name, hits in looped.tracks.items():
                     drums.tracks.setdefault(name, []).extend(hits)
             continue
-        events: list[NoteEvent] = []
-        for offset in range(0, steps, clip.steps):
-            for event in clip.events:
-                start = event.start + offset
-                if start < steps:
-                    events.append(NoteEvent(start, event.length, event.note,
-                                            event.velocity))
-        parts[_part_key(track)] = events
+        parts[_part_key(track)] = tile_clip(clip, steps, rng)[0]
+        parts.add_curves(_part_key(track), clip_curves(clip, steps))
     return parts, drums
 
 
@@ -1214,6 +1528,163 @@ def fullest_section(project: Project) -> int:
         if playing and (best_key is None or key > best_key):
             best, best_key = index, key
     return best
+
+
+# --------------------------------------------------------------------------- #
+# Le morceau entier, en audio (13 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+def song_parts(project: Project, only=None
+               ) -> tuple[dict, rhythm.Pattern | None, int]:
+    """Le morceau entier, section après section : ``(parties, batterie,
+    mesures)``. Dans chaque section, chaque clip boucle sur toute sa durée,
+    ses conditions jouées tour par tour — leur hasard change d'une section
+    à l'autre, comme sur la machine. ``only`` : les ``uid`` des pistes qui
+    sonnent."""
+    total = sum(int(s.bars) for s in project.sections)
+    parts = Parts()
+    drums: rhythm.Pattern | None = None
+    offset = 0
+    for number, section in enumerate(project.sections):
+        steps = int(section.bars) * STEPS_PER_BAR
+        for track in project.tracks:
+            if only is not None and track.uid not in only:
+                continue
+            key = section.cells.get(track.uid)
+            clip = track.clip(key) if key else None
+            if clip is None:
+                continue
+            events, looped = tile_clip(
+                clip, steps, _condition_rng(project, track, clip, number))
+            if looped is not None:
+                if drums is None:
+                    drums = rhythm.Pattern(name="", steps=total
+                                           * STEPS_PER_BAR)
+                for name, hits in looped.tracks.items():
+                    drums.tracks.setdefault(name, []).extend(
+                        dataclasses.replace(hit, pos=float(hit.pos) + offset,
+                                            grid=None) for hit in hits)
+                continue
+            parts.setdefault(_part_key(track), []).extend(
+                dataclasses.replace(e, start=e.start + offset)
+                for e in events)
+            parts.add_curves(_part_key(track),
+                             clip_curves(clip, steps, offset))
+        offset += steps
+    # Une courbe ne déborde pas de sa section : là où le clip joué n'en
+    # porte pas, le réglage reprend la valeur du son.
+    offset = 0
+    for section in project.sections:
+        for track in project.tracks:
+            curves = parts.automation.get(_part_key(track))
+            clip = track.clip(section.cells.get(track.uid) or "")
+            if not curves or clip is None:
+                continue
+            for param, nodes in curves.items():
+                if param not in (clip.automation or {}):
+                    nodes.append((float(offset), _static_raw(track, param)))
+        offset += int(section.bars) * STEPS_PER_BAR
+    for curves in parts.automation.values():
+        for nodes in curves.values():
+            nodes.sort(key=lambda node: node[0])
+    return parts, drums, total
+
+
+def _static_raw(track: AtelierTrack, param: str) -> int:
+    """L'entier du réglage dans le son de la piste."""
+    if track.preset is not None and param in track.preset.sound.params:
+        return int(track.preset.sound.param(param))
+    return automation.raw(param, current_value(track, param))
+
+
+def render_tracks(project: Project, sd=None, sr: int = 44100,
+                  should_stop=None, progress=None) -> list | None:
+    """Chaque piste du morceau entier, rendue par l'ordinateur comme à
+    l'écoute de l'atelier (:mod:`.render`) : ``[(piste, audio)]``, l'audio
+    stéréo au niveau de la machine, **sans** normalisation — leur somme est
+    le mélange. Une piste qui ne joue dans aucune section n'y est pas.
+    ``None`` si l'arrêt est demandé."""
+    from . import render
+
+    tempo = project.style.tempo()
+    sounds = listen_sounds(project)
+    playing = [t for t in project.tracks
+               if any(s.cells.get(t.uid) for s in project.sections)]
+    out = []
+    for rank, track in enumerate(playing, 1):
+        if should_stop is not None and should_stop():
+            return None
+        if progress is not None:
+            progress(tr("Piste %d sur %d : %s") % (rank, len(playing),
+                                                    track_label(track)))
+        parts, drums, _bars = song_parts(project, only={track.uid})
+        audio = None
+        if track.is_drums:
+            if drums is not None and drums.tracks and track.kit is not None:
+                audio = render.render_pattern(drums, bpm=tempo, sr=sr,
+                                              kit=track.kit, sd=sd,
+                                              normalize=False)
+        elif parts:
+            audio = render.render_parts(
+                parts, {k: v for k, v in sounds.items() if k in parts},
+                bpm=tempo, sr=sr, sd=sd, should_stop=should_stop,
+                normalize=False, automation=parts.automation)
+        if audio is not None and audio.size:
+            out.append((track, audio))
+    return out
+
+
+def export_audio(project: Project, path, sd=None, stems: bool = False,
+                 sr: int = 44100, should_stop=None, progress=None
+                 ) -> list | None:
+    """Écrit le morceau entier en WAV (24 bits) : le mélange à ``path`` et,
+    avec ``stems``, une piste par fichier à côté (« NOM - Basse.wav »).
+
+    Toutes reçoivent le **même** gain — celui qui ramène le mélange sous la
+    pleine échelle : glissées ensemble dans un DAW, les pistes redonnent le
+    mélange. Rien n'est écrit sur la carte. Rend les fichiers écrits, ou
+    ``None`` si l'arrêt est demandé ; ``ValueError`` si rien ne sonne."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from . import wav
+    from .sdcard import safe_deluge_name
+
+    rendered = render_tracks(project, sd=sd, sr=sr, should_stop=should_stop,
+                             progress=progress)
+    if rendered is None:
+        return None
+    if not rendered:
+        raise ValueError(tr("aucune piste ne sonne : placez des clips dans "
+                            "les sections"))
+    frames = max(a.shape[0] for _t, a in rendered)
+    mixed = np.zeros((frames, 2), dtype=np.float32)
+    for _track, audio in rendered:
+        mixed[:audio.shape[0]] += audio
+    peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
+    gain = 0.98 / peak if peak > 0.98 else 1.0
+    target = Path(path)
+    written = []
+    if progress is not None:
+        progress(tr("Écriture de %s") % target.name)
+    wav.write(target, mixed * gain, sr, bit_depth=24)
+    written.append(target)
+    if stems:
+        names: list[str] = []
+        for track, audio in rendered:
+            name = safe_deluge_name(track_label(track)) or tr("Piste")
+            base, number = name, 2
+            while name in names:
+                name = "%s %d" % (base, number)
+                number += 1
+            names.append(name)
+            stem = np.zeros((frames, 2), dtype=np.float32)
+            stem[:audio.shape[0]] = audio * gain
+            out = target.with_name("%s - %s.wav" % (target.stem, name))
+            wav.write(out, stem, sr, bit_depth=24)
+            written.append(out)
+    return written
 
 
 #: Ordre des rangées d'un kit quand rien d'autre ne le dit : celui des
@@ -1376,14 +1847,21 @@ def to_song_spec(project: Project, name: str, sd=None, lib=None):
                 rows = songwriter.events_to_rows(clip.events, length)
             if not rows:
                 continue
-            rows, length = songwriter.fold(rows, length)
+            curves = {} if track.kind != "synth" else {
+                param: [(int(step) * songwriter.STEP, value)
+                        for step, value in nodes]
+                for param, nodes in (clip.automation or {}).items() if nodes}
+            # Une courbe court sur tout le clip : replié, il la couperait.
+            if not curves:
+                rows, length = songwriter.fold(rows, length)
             if length > span:
                 length = span
             clips.append(songwriter.ClipSpec(
                 track=index[track.uid], length=length, rows=rows,
                 section=number, playing=number == 0,
                 name="%s %s" % (tr(section.name),
-                                songwriter.part_label(track.part))))
+                                songwriter.part_label(track.part)),
+                automation=curves))
     if not clips:
         raise ValueError(tr("aucune section ne joue de clip"))
     key_root, mode = songwriter.key_of(project.style.root,
@@ -1436,21 +1914,22 @@ def arrangement_parts(project: Project) -> tuple[dict, list[tuple[float, str]]]:
             if clip is None:
                 continue
             events = parts.setdefault(names[track.uid], [])
+            # Les itérations comptent les répétitions dans la section ; une
+            # note incertaine s'écrit (un fichier MIDI n'a pas de hasard),
+            # une note de remplissage non (elle attend le bouton FILL).
+            played, looped = tile_clip(clip, steps)
             if track.is_drums:
-                if clip.pattern is None:
+                if looped is None:
                     continue
-                for event in accomp.drum_part(clip.pattern, int(section.bars)):
+                for event in accomp.drum_part(looped, int(section.bars)):
                     if event.start < steps:
                         events.append(NoteEvent(offset + event.start,
                                                 event.length, event.note,
                                                 event.velocity))
                 continue
-            for start in range(0, steps, max(1, clip.steps)):
-                for event in clip.events:
-                    if start + event.start < steps:
-                        events.append(NoteEvent(offset + start + event.start,
-                                                event.length, event.note,
-                                                event.velocity))
+            for event in played:
+                events.append(NoteEvent(offset + event.start, event.length,
+                                        event.note, event.velocity))
         offset += steps
     return {k: sorted(v, key=lambda e: (e.start, e.note))
             for k, v in parts.items() if v}, markers
@@ -1750,22 +2229,34 @@ def from_song(song, sd=None) -> Project:
                     label = rows[drum] if 0 <= drum < len(rows) \
                         else tr("Rangée %d") % (drum + 1)
                     for note in row.notes:
+                        pct, iterance, fill = conditions.from_note(note)
                         pattern.add(label, rhythm.Step(
                             pos=float(note.pos) / per_step,
                             velocity=max(1, min(100, int(note.velocity)
                                                 * 100 // 127)),
                             length=max(1, int(round(note.length
-                                                    / per_step)))))
+                                                    / per_step))),
+                            probability=pct, iterance=iterance, fill=fill))
                 atelier.pattern = pattern
             else:
                 for row in clip.note_rows:
                     for note in row.notes:
+                        pct, iterance, fill = conditions.from_note(note)
                         atelier.events.append(NoteEvent(
                             float(note.pos) / per_step,
                             max(0.25, float(note.length) / per_step),
                             int(row.y),
-                            max(1, min(100, int(note.velocity) * 100 // 127))))
+                            max(1, min(100, int(note.velocity) * 100 // 127)),
+                            pct, iterance, fill))
                 atelier.events.sort(key=lambda e: (e.start, e.note))
+                # Ses courbes, pour l'entendre : marches et nœuds interpolés
+                # ramenés à la double-croche.
+                for param, text in (getattr(clip, "automation", None)
+                                    or {}).items():
+                    nodes = automation.sampled(automation.decode(text),
+                                               per_step, clip.length, param)
+                    if nodes:
+                        atelier.automation[param] = nodes
             track.clips.append(atelier)
             section = section_keys.get(clip.section)
             if section is None:
@@ -1979,12 +2470,23 @@ def insertion_plan(project: Project, sd, lib=None, name: str = ""):
                 rows = songwriter.events_to_rows(clip.events, length)
             if not rows:
                 continue
-            rows, length = songwriter.fold(rows, length)
+            # L'automation part avec un clip de synthé d'une piste neuve
+            # (celui d'une piste du morceau prend les réglages de son
+            # modèle) ; elle empêche le repli, comme pour un morceau neuf.
+            curves = {}
+            if track.kind == "synth" and track.existing is None:
+                ratio = target.bar / float(songwriter.BAR)
+                curves = {param: [(int(round(step * songwriter.STEP * ratio)),
+                                   value) for step, value in nodes]
+                          for param, nodes in (clip.automation or {}).items()
+                          if nodes}
+            if not curves:
+                rows, length = songwriter.fold(rows, length)
             rows, length = _rows_for(target.bar, rows, length)
             clips.append(songinsert.NewClip(
                 track=target_index, section=number, rows=rows,
                 length=length, name=label,
-                new_track=new_index.get(track.uid, -1)))
+                new_track=new_index.get(track.uid, -1), automation=curves))
             longest = max(longest, length)
         if section.existing is None and longest:
             repeats[number] = max(1, int(round(

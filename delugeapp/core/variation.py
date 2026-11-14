@@ -30,7 +30,7 @@ import logging
 import random
 
 from ..i18n import N_, untranslated
-from . import rhythm, theory
+from . import conditions, rhythm, theory
 from .accomp import STEPS_PER_BAR, NoteEvent
 
 log = logging.getLogger(__name__)
@@ -54,7 +54,13 @@ MELODIC: dict[str, str] = {
     N_("réponse"): N_("la première moitié gardée, la seconde lui répond"),
     N_("octave"): N_("des sauts d'octave, ou le registre déplacé"),
     N_("fin"): N_("la dernière mesure prépare le retour au début"),
+    N_("vivante"): N_("des notes en plus qui ne jouent qu'une fois sur "
+                      "deux, au hasard, et quelques-unes incertaines : sur "
+                      "le Deluge, la ligne change d'un tour à l'autre"),
 }
+
+#: Le roulement qui attend le bouton FILL de la machine.
+FILL_ROLL = N_("roulement FILL")
 
 #: Variations d'une batterie.
 DRUMS: dict[str, str] = {
@@ -67,6 +73,12 @@ DRUMS: dict[str, str] = {
     N_("demi-temps"): N_("caisse claire sur le troisième temps : le tempo "
                          "semble ralentir"),
     N_("montée"): N_("un roulement qui s'accélère jusqu'à la fin"),
+    N_("vivante"): N_("coups fantômes au hasard, une charley ouverte une "
+                      "fois sur deux, une relance tous les quatre tours : "
+                      "sur le Deluge, le motif change d'un tour à l'autre"),
+    FILL_ROLL: N_("un roulement qui ne joue que le bouton FILL tenu sur la "
+                  "machine ; le motif qu'il remplace se tait pendant ce "
+                  "temps"),
 }
 
 #: Pistes gardées par une batterie légère (celles de l'esquisse).
@@ -87,8 +99,13 @@ def _rng(seed, how: str, part: str) -> random.Random:
 
 
 def _copy(events) -> list[NoteEvent]:
+    """Copie des notes, leur condition sur la machine comprise."""
     return [NoteEvent(float(e.start), float(e.length), int(e.note),
-                      int(e.velocity)) for e in events or ()]
+                      int(e.velocity),
+                      int(getattr(e, "probability", 100) or 100),
+                      int(getattr(e, "iterance", 0) or 0),
+                      int(getattr(e, "fill", 0) or 0))
+            for e in events or ()]
 
 
 def _classes(events, root: int | None, scale: str) -> set[int]:
@@ -298,7 +315,7 @@ def vary_part(events, how: str, *, part: str = "Mélodie", bars: int = 0,
     worker = {
         "rythme": _vary_rhythm, "notes": _vary_notes, "plus": _vary_more,
         "moins": _vary_less, "réponse": _vary_answer,
-        "octave": _vary_octave, "fin": _vary_ending,
+        "octave": _vary_octave, "fin": _vary_ending, "vivante": _vary_alive,
     }[how]
     out = clean_part(worker(_copy(source), context), total, mono=mono)
     if out and _same(out, source):
@@ -570,6 +587,51 @@ def _vary_more(events, ctx: _Context) -> list[NoteEvent]:
     return out
 
 
+def _vary_alive(events, ctx: _Context) -> list[NoteEvent]:
+    """« Vivante » : les notes qu'ajoute « plus », mais **incertaines** —
+    elles ne jouent qu'une fois sur deux, au hasard, sur la machine — et
+    quelques notes hors des temps à 75 %. La ligne d'origine reste dessous :
+    le Deluge la varie lui-même d'un tour à l'autre (:mod:`.conditions`).
+
+    Les notes ajoutées d'un même instant (la relance d'un accord) ont la
+    même probabilité : le firmware leur tire un seul sort, l'accord joue
+    entier ou se tait."""
+    source = {(round(float(e.start), 4), int(e.note)) for e in events}
+    out = _vary_more(_copy(events), ctx)
+    added = [e for e in out
+             if (round(float(e.start), 4), int(e.note)) not in source]
+    if not added:
+        # « plus » n'a rien trouvé à ajouter : un écho d'une croche, sur la
+        # première note qui en laisse la place.
+        taken = {round(float(e.start), 4) for e in out}
+        for event in sorted(out, key=lambda e: e.start):
+            at = float(event.start) + 2.0
+            if at < ctx.bars * STEPS_PER_BAR and round(at, 4) not in taken \
+                    and event.length > 2.0:
+                event.length = 2.0
+                echo = NoteEvent(at, 1.0, int(event.note),
+                                 max(1, int(event.velocity) - 15))
+                out.append(echo)
+                added.append(echo)
+                break
+    fresh = {id(e) for e in added}
+    together: dict[float, int] = {}
+    for event in added:
+        moment = round(float(event.start), 4)
+        together[moment] = together.get(moment, 0) + 1
+    for event in added:
+        # Deux notes à 50 % au même instant font 100 % : la machine n'en
+        # jouerait qu'une. À 45 %, elles partagent un seul tirage.
+        event.probability = 45 if together[round(float(event.start),
+                                                 4)] == 2 else 50
+    for event in out:
+        if id(event) in fresh or not conditions.of(event).always:
+            continue
+        if float(event.start) % 4 and ctx.rng.random() < 0.3:
+            event.probability = 75
+    return out
+
+
 def _vary_less(events, ctx: _Context) -> list[NoteEvent]:
     """Moins de notes : on garde l'essentiel, on le tient plus longtemps."""
     part = ctx.part
@@ -711,7 +773,9 @@ def _copy_pattern(pattern: rhythm.Pattern, name: str) -> rhythm.Pattern:
         out.tracks[track] = [rhythm.Step(pos=float(rhythm.cell(s)),
                                          velocity=int(s.velocity),
                                          length=s.length,
-                                         probability=int(s.probability))
+                                         probability=int(s.probability),
+                                         iterance=int(s.iterance or 0),
+                                         fill=int(s.fill or 0))
                              for s in steps]
     return out
 
@@ -721,6 +785,89 @@ def _snare(pattern: rhythm.Pattern) -> str:
         if name in pattern.tracks:
             return name
     return "Snare"
+
+
+def _hit_at(pattern: rhythm.Pattern, track: str, position: int):
+    return next((s for s in pattern.tracks.get(track, [])
+                 if rhythm.cell(s) == int(position)), None)
+
+
+def _alive_drums(out: rhythm.Pattern, rng: random.Random, bars: int) -> None:
+    """« Vivante » : le motif ne change pas, des coups s'y ajoutent que la
+    machine ne joue pas à chaque tour (:mod:`.conditions`) — deux coups
+    fantômes de caisse claire par mesure, à 25 ou 50 % ; des charleys en
+    doubles-croches à 50 % ; une charley ouverte en fin de motif, une fois
+    sur deux ; une relance de grosse caisse, tous les quatre tours.
+
+    Seules les rangées du motif reçoivent des coups : une rangée neuve
+    risquerait de ne trouver aucun son dans le kit."""
+    snare = next((t for t in ("Snare", "Clap", "Rim") if t in out.tracks),
+                 None)
+    hats = next((t for t in ("HatC", "Shaker", "Ride") if t in out.tracks),
+                None)
+    last = (bars - 1) * STEPS_PER_BAR
+    for bar in range(bars):
+        base = bar * STEPS_PER_BAR
+        if snare is not None:
+            free = [base + p for p in (3, 5, 7, 9, 11, 13, 15)
+                    if _hit_at(out, snare, base + p) is None]
+            for position in rng.sample(free, min(2, len(free))):
+                out.add(snare, rhythm.Step(
+                    pos=float(position), velocity=rng.randint(30, 42),
+                    probability=rng.choice((25, 50))))
+        if hats is not None:
+            for position in range(base + 1, base + STEPS_PER_BAR, 2):
+                if _hit_at(out, hats, position) is None \
+                        and rng.random() < 0.5:
+                    out.add(hats, rhythm.Step(
+                        pos=float(position), velocity=rng.randint(36, 52),
+                        probability=50))
+    once_in_two = conditions.iterance(2, 2)
+    opener = "HatO" if "HatO" in out.tracks else hats
+    if opener is not None:
+        hit = _hit_at(out, opener, last + 14)
+        if hit is None:
+            out.add(opener, rhythm.Step(pos=float(last + 14), velocity=80,
+                                        iterance=once_in_two))
+        elif conditions.of(hit).always:
+            hit.iterance = once_in_two
+    if "Kick" in out.tracks:
+        for position in (last + 15, last + 11, last + 7):
+            if _hit_at(out, "Kick", position) is None:
+                out.add("Kick", rhythm.Step(
+                    pos=float(position), velocity=78,
+                    iterance=conditions.iterance(4, 4)))
+                break
+
+
+def _fill_roll(out: rhythm.Pattern, snare: str, bars: int) -> None:
+    """« Roulement FILL » : sur les deux derniers temps, un roulement de
+    doubles-croches en crescendo qui ne joue que le bouton FILL tenu ; ce
+    qui jouait là — sauf la grosse caisse — se tait pendant ce temps
+    (« sauf remplissage »). Un coup du motif à la place d'un coup du
+    roulement joue dans les deux cas : la machine ignorerait une seconde
+    note au même instant de la même rangée."""
+    last = (bars - 1) * STEPS_PER_BAR
+    start = last + 8
+    toms = [t for t in ("TomH", "TomM", "TomL") if t in out.tracks]
+    voices = toms if len(toms) >= 2 else [snare]
+    roll: dict[int, str] = {}
+    for index, position in enumerate(range(start, last + STEPS_PER_BAR)):
+        roll[position] = voices[min(len(voices) - 1,
+                                    index * len(voices) // 8)]
+    for track, steps in out.tracks.items():
+        if track == "Kick":
+            continue
+        for hit in steps:
+            cell = rhythm.cell(hit)
+            if cell >= start and roll.get(cell) != track \
+                    and conditions.of(hit).always:
+                hit.fill = conditions.NOT_FILL
+    for index, (position, track) in enumerate(sorted(roll.items())):
+        if _hit_at(out, track, position) is None:
+            out.add(track, rhythm.Step(pos=float(position),
+                                       velocity=min(100, 50 + 7 * index),
+                                       fill=conditions.FILL))
 
 
 def vary_drums(pattern: rhythm.Pattern, how: str, *, genre: str = "",
@@ -798,6 +945,10 @@ def vary_drums(pattern: rhythm.Pattern, how: str, *, genre: str = "",
                 out.add(snare, rhythm.Step(
                     pos=float(position),
                     velocity=int(40 + 60 * progress)))
+    elif how == "vivante":
+        _alive_drums(out, rng, bars)
+    elif how == FILL_ROLL:
+        _fill_roll(out, snare, bars)
     for steps in out.tracks.values():
         steps.sort(key=lambda s: float(s.pos))
     out.tracks = {t: s for t, s in out.tracks.items() if s}

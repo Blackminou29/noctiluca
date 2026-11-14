@@ -36,9 +36,10 @@ BAC_A_SABLE = Path(_tempfile.gettempdir()) / "noctiluca-tests"
 BAC_A_SABLE.mkdir(parents=True, exist_ok=True)
 _os.environ["NOCTILUCA_CONFIG"] = str(BAC_A_SABLE)
 
-from delugeapp.core import (accomp, atelier, db, dxml, genres, midiport,  # noqa: E402
-                            rhythm, scan, sdcard, songinsert, songwriter,
-                            synthgen, theory, variation, wav)
+from delugeapp.core import (accomp, atelier, conditions, db, dxml,  # noqa: E402
+                            genres, midiport, render, rhythm, scan,
+                            sdcard, songinsert, songwriter, synthgen,
+                            theory, variation, wav)
 from delugeapp.core.delugelink import DelugeLink, Transport  # noqa: E402
 from delugeapp.core.fixedpoint import to_display  # noqa: E402
 from delugeapp.core.model import (NOTE_BLOBS, Note, NoteRow, Song,  # noqa: E402
@@ -111,13 +112,25 @@ class TestNotesDuFirmware13(unittest.TestCase):
                           for n in back],
                          [(0, 96, 100, 20, 64), (384, 12, 1, 5, 90)])
 
-    def test_une_ancienne_iteration_joue_toujours(self):
-        """L'octet de condition ≥ 0x80 (itération d'avant 1.3) n'a pas de
-        place dans le champ de probabilité : la note joue toujours plutôt
-        qu'au hasard."""
-        blob = encode_notes([Note(pos=0, length=24, condition=0x86)],
-                            width=28)
-        self.assertEqual(blob[2 + 20:2 + 22], "14")
+    def test_un_octet_c1_2_garde_son_sens_en_1_3(self):
+        """L'octet de condition d'un morceau c1.2, en 28 caractères, comme
+        le relit ``NoteRow::readFromFile`` du firmware 1.3 : 0 remplissage,
+        128 sauf remplissage, 21 à 55 une itération de l'ancien menu, et le
+        bit 7 d'une probabilité (« suit la précédente ») gardé.
+
+        Corrigé le 13 novembre 2026 : ce test prenait un octet ≥ 0x80 pour
+        une itération d'avant 1.3, et le faisait jouer toujours."""
+        def champs(condition):
+            blob = encode_notes([Note(pos=0, length=24,
+                                      condition=condition)], width=28)[2:]
+            return blob[20:22], blob[22:26], blob[26:28]
+
+        self.assertEqual(champs(0x86), ("86", "0000", "00"))
+        self.assertEqual(champs(0), ("14", "0000", "02"))
+        self.assertEqual(champs(128), ("14", "0000", "01"))
+        self.assertEqual(champs(21), ("14", "0201", "00"))   # 1 sur 2
+        self.assertEqual(champs(26), ("14", "0401", "00"))   # 1 sur 4
+        self.assertEqual(champs(10), ("0A", "0000", "00"))   # 50 %
 
     def test_chaque_balise_se_lit(self):
         notes = [Note(pos=24, length=12, velocity=90)]
@@ -301,6 +314,808 @@ class TestVariantesDansLeStyle(unittest.TestCase):
                 coupure = variant.preset.sound.display("lpfFrequency")
                 self.assertTrue(low - 1 <= coupure <= max(high, 18) + 1,
                                 (genre, variant.label, coupure))
+
+
+class TestGarderEtRetoucher(unittest.TestCase):
+    """Une nouvelle graine qui garde des aspects ; une retouche qui garde
+    les retouches faites à la main (générateur, 13 novembre 2026)."""
+
+    GENRES = TestVariantesDansLeStyle.GENRES
+    _sig = TestVariantesDansLeStyle._sig
+    _diff = TestVariantesDansLeStyle._diff
+
+    GROUPES = {
+        "filtre": {"p.lpfFrequency", "p.lpfResonance", "p.hpfFrequency",
+                   "lpf", "p.sampleRateReduction", "p.bitCrush"},
+        "enveloppes": {"%s.%s" % (e, f) for e in ("env1", "env2")
+                       for f in ("attack", "decay", "sustain", "release")},
+        "timbre": {"osc1", "osc2"},
+    }
+
+    def test_un_aspect_garde_ne_bouge_pas_et_le_reste_change(self):
+        """Mesuré sur 22 genres × 10 rôles × 3 graines : l'aspect gardé n'a
+        jamais bougé, et le reste du son a changé à chaque fois."""
+        for genre in self.GENRES:
+            for role in ("bass", "lead", "pad", "pluck"):
+                base = synthgen.GenOptions(genre=genre, role=role, seed=3)
+                avant = self._sig(synthgen.generate(base))
+                for garde, champs in self.GROUPES.items():
+                    autre = synthgen.reseeded(base, 1003, keep=(garde,))
+                    apres = self._sig(synthgen.generate(autre))
+                    change = self._diff(avant, apres)
+                    self.assertFalse(change & champs, (genre, role, garde))
+                    self.assertTrue(change - champs, (genre, role, garde))
+
+    def test_une_graine_propre_suit_l_aspect_garde(self):
+        base = synthgen.rerolled(
+            synthgen.GenOptions(genre="acid", seed=5), "filtre", 77)
+        self.assertEqual(synthgen.facet_seed(base, "filtre"), 77)
+        self.assertEqual(synthgen.facet_seed(base, "timbre"), 5)
+        garde = synthgen.reseeded(base, 9, keep=("filtre", "timbre"))
+        self.assertEqual(garde.seed, 9)
+        self.assertEqual(garde.facets, {"filtre": 77, "timbre": 5})
+        # Sans rien garder, chaque aspect suit la nouvelle graine.
+        self.assertEqual(synthgen.reseeded(base, 9).facets, {})
+        self.assertEqual(base.facets, {"filtre": 77})     # intact
+        with self.assertRaises(ValueError):
+            synthgen.reseeded(base, 9, keep=("couleur",))
+
+    def test_au_hasard_rend_ses_reglages(self):
+        """« Au hasard » garde ses réglages : on peut ensuite retoucher le
+        son dans son style."""
+        for seed in range(6):
+            options = synthgen.random_options(seed=seed)
+            self.assertEqual(self._sig(synthgen.generate(options)),
+                             self._sig(synthgen.randomize(seed=seed)))
+
+    def test_une_retouche_garde_les_retouches_a_la_main(self):
+        from delugeapp.core import soundedit
+
+        base = synthgen.GenOptions(genre="techno", role="bass", seed=4)
+        genere = synthgen.generate(base).sound
+        retouche = soundedit.copy_sound(genere)
+        retouche.name = "MA BASSE"
+        soundedit.set_value(retouche, "reverbAmount",
+                            soundedit.value(genere, "reverbAmount") + 9)
+        sombre = synthgen.nudged(base, "Plus sombre")
+        obtenu = synthgen.restyled(base, sombre, retouche).sound
+        attendu = synthgen.generate(sombre).sound
+        self.assertEqual(obtenu.name, "MA BASSE")
+        self.assertEqual(soundedit.value(obtenu, "reverbAmount"),
+                         soundedit.value(attendu, "reverbAmount") + 9)
+        self.assertEqual(soundedit.value(obtenu, "lpfFrequency"),
+                         soundedit.value(attendu, "lpfFrequency"))
+        self.assertLess(soundedit.value(obtenu, "lpfFrequency"),
+                        soundedit.value(genere, "lpfFrequency") + 1)
+        # Sans retouche, c'est le son des nouveaux réglages, tel quel.
+        self.assertEqual(self._sig(synthgen.restyled(base, sombre)),
+                         self._sig(synthgen.generate(sombre)))
+
+
+# --------------------------------------------------------------------------- #
+# Les conditions des notes (13 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+class TestLesConditionsDesNotes(unittest.TestCase):
+    """Probabilité, itération, remplissage : les règles du firmware 1.3
+    (``instrument_clip.cpp``, ``iterance.h``, ``iterance_migration.cpp``)."""
+
+    def test_l_octet_c1_2_comme_le_relit_le_firmware(self):
+        sur = conditions.iterance
+        self.assertEqual(conditions.from_legacy(21), (100, sur(2, 1), 0))
+        self.assertEqual(conditions.from_legacy(24), (100, sur(3, 2), 0))
+        self.assertEqual(conditions.from_legacy(26), (100, sur(4, 1), 0))
+        self.assertEqual(conditions.from_legacy(55), (100, sur(8, 8), 0))
+        self.assertEqual(conditions.from_legacy(0), (100, 0, conditions.FILL))
+        self.assertEqual(conditions.from_legacy(128),
+                         (100, 0, conditions.NOT_FILL))
+        self.assertEqual(conditions.from_legacy(10), (50, 0, 0))
+        self.assertEqual(conditions.from_legacy(0x86), (30, 0, 0))
+        self.assertEqual(conditions.from_legacy(20), (100, 0, 0))
+        # Chaque itération de l'ancien menu fait l'aller-retour.
+        for byte in range(21, 56):
+            self.assertEqual(conditions.legacy_byte(
+                *conditions.from_legacy(byte)), byte)
+        # Une probabilité ne devient jamais 0, le remplissage d'un c1.2.
+        self.assertEqual(conditions.probability_byte(1), 1)
+        self.assertEqual(conditions.legacy_byte(2), 1)
+        # Une itération que l'ancien menu ignore : la note joue toujours.
+        self.assertEqual(conditions.legacy_byte(
+            100, (4 << 8) | 0b101), 20)
+
+    def test_l_iteration_compte_les_repetitions(self):
+        un, deux = (accomp.NoteEvent(0, 1, 60, 90, iterance=conditions
+                                     .iterance(2, s)) for s in (1, 2))
+        joue = [[e is un for e in conditions.playing([un, deux], r)]
+                for r in range(4)]
+        self.assertEqual(joue, [[True], [False], [True], [False]])
+        premiere = accomp.NoteEvent(0, 1, 60, 90, iterance=(0 << 8) | 1)
+        derniere = accomp.NoteEvent(0, 1, 62, 90, iterance=(0 << 8) | 2)
+        self.assertEqual(conditions.playing([premiere, derniere], 0),
+                         [premiere])
+        self.assertEqual(conditions.playing([premiere, derniere], 3,
+                                            ending=True), [derniere])
+
+    def test_le_remplissage_attend_le_bouton(self):
+        fill = accomp.NoteEvent(0, 1, 60, 90, fill=conditions.FILL)
+        sauf = accomp.NoteEvent(0, 1, 62, 90, fill=conditions.NOT_FILL)
+        self.assertEqual(conditions.playing([fill, sauf], 0), [sauf])
+        self.assertEqual(conditions.playing([fill, sauf], 0,
+                                            fill_held=True), [fill])
+
+    def test_le_hasard_suit_les_regles_du_firmware(self):
+        import random
+
+        rng = random.Random(4)
+        a = accomp.NoteEvent(0, 1, 60, 90, probability=25)
+        b = accomp.NoteEvent(0, 1, 64, 90, probability=25)
+        c = accomp.NoteEvent(0, 1, 67, 90, probability=30)
+        d = accomp.NoteEvent(0, 1, 72, 90, probability=70)
+        e = accomp.NoteEvent(0, 1, 60, 90, probability=50)
+        f = accomp.NoteEvent(0, 1, 64, 90, probability=50)
+        ensemble, seule, total = 0, 0, 2000
+        for _ in range(total):
+            # Même probabilité, même instant : un seul tirage.
+            joue = conditions.playing([a, b], 0, rng)
+            self.assertIn(len(joue), (0, 2))
+            ensemble += bool(joue)
+            # 30 % + 70 % : exactement une note — et 50 % + 50 % aussi
+            # (« somme à 100 % », qui passe avant le tirage partagé).
+            joue = conditions.playing([c, d], 0, rng)
+            self.assertEqual(len(joue), 1)
+            seule += joue[0] is c
+            self.assertEqual(len(conditions.playing([e, f], 0, rng)), 1)
+        self.assertAlmostEqual(ensemble / total, 0.25, delta=0.04)
+        self.assertAlmostEqual(seule / total, 0.3, delta=0.04)
+        # Sans hasard (un export MIDI), toute note incertaine joue.
+        self.assertEqual(len(conditions.playing([a, b, c], 0)), 3)
+
+    def test_une_relance_de_deux_notes_joue_entiere(self):
+        """Deux notes ajoutées au même instant, à 50 % chacune, feraient
+        100 % : la machine n'en jouerait qu'une. « vivante » les met à
+        45 %, et elles partagent un seul tirage."""
+        import random
+
+        accords = [accomp.NoteEvent(bar * 16.0, 15.5, note, 80)
+                   for bar in range(4) for note in (57, 64)]
+        out = variation.vary_part(accords, "vivante", part="Accords", bars=4,
+                                  seed=1)
+        ajoutees = [e for e in out if e.probability < 100
+                    and (e.start, e.note) not in {(a.start, a.note)
+                                                  for a in accords}]
+        self.assertTrue(ajoutees)
+        self.assertEqual({e.probability for e in ajoutees}, {45})
+        rng = random.Random(3)
+        moment = ajoutees[0].start
+        groupe = [e for e in out if e.start == moment]
+        for _ in range(200):
+            self.assertIn(len(conditions.playing(groupe, 0, rng)),
+                          (0, len(groupe)))
+
+    def test_ce_qu_il_faut_ecouter_d_un_clip(self):
+        coups = [rhythm.Step(pos=0), rhythm.Step(
+            pos=4, iterance=conditions.iterance(4, 4))]
+        self.assertEqual(conditions.cycle(coups), 4)
+        self.assertEqual(conditions.cycle([rhythm.Step(pos=0,
+                                                       probability=50)]), 2)
+        self.assertEqual(conditions.cycle([rhythm.Step(pos=0)]), 1)
+        self.assertEqual(conditions.cycle(coups, limit=2), 2)
+
+
+class TestLesConditionsDansLAtelier(CarteCase):
+    """Poser une condition, l'entendre, l'écrire, la relire."""
+
+    def _projet(self):
+        projet = atelier.new_project(atelier.Style(genre="techno", seed=3),
+                                     sd=self.sd, lib=self.lib)
+        batterie = next(t for t in projet.tracks if t.is_drums)
+        clip = batterie.clips[0]
+        return projet, batterie, clip
+
+    def test_poser_et_relire_une_condition(self):
+        projet, batterie, clip = self._projet()
+        kick = rhythm.cell(clip.pattern.tracks["Kick"][0])
+        moitie = conditions.Condition(probability=50)
+        self.assertEqual(atelier.condition_at(projet, batterie.uid, clip.key,
+                                              "Kick", kick),
+                         conditions.Condition())
+        avant = atelier.clip_conditions(clip)
+        self.assertTrue(atelier.set_hit_condition(
+            projet, batterie.uid, clip.key, "Kick", kick, moitie))
+        self.assertEqual(atelier.condition_at(projet, batterie.uid, clip.key,
+                                              "Kick", kick), moitie)
+        self.assertEqual(atelier.clip_conditions(clip), avant + 1)
+        vide = next(p for p in range(16) if all(
+            rhythm.cell(s) != p for s in clip.pattern.tracks["Kick"]))
+        self.assertFalse(atelier.set_hit_condition(
+            projet, batterie.uid, clip.key, "Kick", vide, moitie))
+        self.assertIsNone(atelier.condition_at(projet, batterie.uid,
+                                               clip.key, "Kick", vide))
+
+    def test_une_condition_s_ecrit_et_se_relit(self):
+        """Dans un morceau c1.2.1, l'octet que la machine relit ; puis
+        ``from_song`` rend la condition à l'atelier."""
+        projet, batterie, clip = self._projet()
+        coups = sorted(clip.pattern.tracks["Kick"], key=lambda s: s.pos)
+        poses = [conditions.Condition(probability=50),
+                 conditions.Condition(iterance=conditions.iterance(2, 1)),
+                 conditions.Condition(fill=conditions.FILL),
+                 conditions.Condition(fill=conditions.NOT_FILL)]
+        for coup, cond in zip(coups, poses):
+            atelier.set_hit_condition(projet, batterie.uid, clip.key, "Kick",
+                                      rhythm.cell(coup), cond)
+        spec = atelier.to_song_spec(projet, "CONDITIONS", sd=self.sd,
+                                    lib=self.lib)
+        res = songwriter.write_song(self.sd, spec, apply=True)
+        self.assertTrue(res.applied, res.error)
+        song = Song.load(self.sd.abs(res.rel))
+        octets = sorted({n.condition for c in song.clips
+                         for r in c.note_rows for n in r.notes})
+        for attendu in (10, 21, 0, 128):
+            self.assertIn(attendu, octets)
+        relu = atelier.from_song(song, self.sd)
+        lues = {conditions.of(s) for t in relu.tracks if t.is_drums
+                for c in t.clips if c.pattern is not None
+                for hits in c.pattern.tracks.values() for s in hits}
+        self.assertTrue(set(poses) <= lues, lues)
+
+    def test_les_conditions_d_un_synthe_se_relisent(self):
+        projet, _batterie, _clip = self._projet()
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        clip = basse.clips[0]
+        premiere = sorted(clip.events, key=lambda e: e.start)[0]
+        un_sur_quatre = conditions.Condition(
+            iterance=conditions.iterance(4, 1))
+        self.assertTrue(atelier.set_note_condition(
+            projet, basse.uid, clip.key, premiere.note,
+            int(premiere.start), un_sur_quatre))
+        spec = atelier.to_song_spec(projet, "SYNTHE", sd=self.sd,
+                                    lib=self.lib)
+        res = songwriter.write_song(self.sd, spec, apply=True)
+        relu = atelier.from_song(Song.load(self.sd.abs(res.rel)), self.sd)
+        lues = {conditions.of(e) for t in relu.tracks if not t.is_drums
+                for c in t.clips for e in c.events}
+        self.assertIn(un_sur_quatre, lues)
+
+    def test_une_iteration_empeche_le_repli_du_clip(self):
+        """« 1 sur 2 » compte les tours du clip : replié de quatre mesures à
+        une, il compterait quatre fois plus vite."""
+        rows = {60: [Note(pos=p * songwriter.BAR, length=24)
+                     for p in range(4)]}
+        _rows, longueur = songwriter.fold(rows, 4 * songwriter.BAR)
+        self.assertEqual(longueur, songwriter.BAR)
+        rows = {60: [Note(pos=p * songwriter.BAR, length=24,
+                          iterance=conditions.iterance(2, 1))
+                     for p in range(4)]}
+        _rows, longueur = songwriter.fold(rows, 4 * songwriter.BAR)
+        self.assertEqual(longueur, 4 * songwriter.BAR)
+
+    def test_l_ecoute_deroule_les_tours(self):
+        projet, batterie, clip = self._projet()
+        clip.bars = 1
+        clip.pattern = rhythm.Pattern(name="", steps=16)
+        clip.pattern.add("Kick", rhythm.Step(pos=0))
+        clip.pattern.add("Kick", rhythm.Step(
+            pos=8, iterance=conditions.iterance(2, 1)))
+        clip.pattern.add("HatC", rhythm.Step(pos=4, fill=conditions.FILL))
+        _parts, batterie_jouee, mesures = atelier.clip_parts(
+            projet, batterie.uid, clip.key)
+        self.assertEqual(mesures, 2)
+        self.assertEqual(sorted(rhythm.cell(s)
+                                for s in batterie_jouee.tracks["Kick"]),
+                         [0, 8, 16])
+        self.assertFalse(batterie_jouee.tracks.get("HatC"))
+
+    def test_les_variations_qui_vivent(self):
+        for genre in ("techno", "house", "dnb", "lofi"):
+            beat = rhythm.genre_beat(genre, bars=2, seed=1)
+            vive = variation.vary_drums(beat, "vivante", genre=genre, seed=2)
+            avant = {(t, rhythm.cell(s)) for t, hits in beat.tracks.items()
+                     for s in hits}
+            apres = {(t, rhythm.cell(s)) for t, hits in vive.tracks.items()
+                     for s in hits}
+            self.assertTrue(avant <= apres, genre)
+            self.assertTrue(set(vive.tracks) <= set(beat.tracks), genre)
+            self.assertTrue(any(conditions.has_condition(s)
+                                for hits in vive.tracks.values()
+                                for s in hits), genre)
+            fill = variation.vary_drums(beat, "roulement FILL", genre=genre)
+            roulement = [(t, rhythm.cell(s)) for t, hits in fill.tracks.items()
+                         for s in hits if s.fill == conditions.FILL]
+            self.assertTrue(roulement, genre)
+            self.assertTrue(all(c >= 24 for _t, c in roulement), genre)
+            # Jamais deux coups au même instant d'une rangée.
+            for hits in fill.tracks.values():
+                cases = [rhythm.cell(s) for s in hits]
+                self.assertEqual(len(cases), len(set(cases)), genre)
+            # Sous le roulement, le motif se tait — la grosse caisse non.
+            for track, hits in fill.tracks.items():
+                for s in hits:
+                    if rhythm.cell(s) >= 24 and track == "Kick":
+                        self.assertNotEqual(s.fill, conditions.NOT_FILL)
+
+    def test_le_bouton_fill_de_la_machine(self):
+        """SYNC-SCALING ne joue le remplissage qu'avec *Sync Scaling Action*
+        sur *Fill mode* (``view.cpp``) ; mesuré sur la carte de
+        l'utilisateur : il ne l'est pas."""
+        self.assertIsNone(conditions.fill_button_ready(None))
+        self.assertIsNone(conditions.fill_button_ready(self.sd))
+        reglages = self.root / "SETTINGS"
+        reglages.mkdir(exist_ok=True)
+        fichier = reglages / "CommunityFeatures.XML"
+        for valeur, attendu in (("0", False), ("1", True)):
+            fichier.write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<runtimeFeatureSettings firmwareVersion="c1.3.0">\n'
+                '\t<setting name="quantize" value="1"></setting>\n'
+                '\t<setting name="syncScalingAction" value="%s"></setting>\n'
+                '</runtimeFeatureSettings>\n' % valeur, encoding="utf-8")
+            self.assertIs(conditions.fill_button_ready(self.sd), attendu)
+
+    def test_un_clip_du_deluge_ne_prend_pas_de_condition(self):
+        projet, batterie, clip = self._projet()
+        clip.existing = 0
+        with self.assertRaises(ValueError):
+            atelier.set_hit_condition(projet, batterie.uid, clip.key, "Kick",
+                                      0, conditions.Condition(probability=50))
+
+
+# --------------------------------------------------------------------------- #
+# L'automation d'un clip (14 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+class TestLAutomation(CarteCase):
+    """Une courbe posée, entendue, écrite au format du firmware, relue."""
+
+    def _projet(self):
+        projet = atelier.new_project(atelier.Style(genre="house", seed=2),
+                                     sd=self.sd, lib=self.lib)
+        accords = next(t for t in projet.tracks if t.part == "Accords")
+        return projet, accords, accords.clips[0]
+
+    def test_les_formes_et_le_format_du_firmware(self):
+        from delugeapp.core import automation
+
+        montee = automation.shape_nodes("montée", 64, 10, 40)
+        self.assertEqual(montee[0], (0, 10))
+        self.assertEqual(montee[-1][1], 40)
+        self.assertTrue(all(a[1] < b[1] for a, b in zip(montee, montee[1:])))
+        vague = [v for _s, v in automation.shape_nodes("vague", 64, 0, 50)]
+        self.assertGreaterEqual(max(vague), 49)      # au milieu du clip
+        self.assertEqual((vague[0], vague[-1]), (0, 0))
+        with self.assertRaises(ValueError):
+            automation.shape_nodes("spirale", 16, 0, 50)
+        # Le format : valeur courante, puis valeur + position par nœud.
+        texte = automation.encode("lpfFrequency", [(0, 50), (4, 0)], 24, 384)
+        self.assertEqual(texte, "0x7FFFFFFF" "7FFFFFFF00000000"
+                                "8000000000000060")
+        courant, noeuds = automation.decode(texte)
+        self.assertEqual(courant, 0x7FFFFFFF)
+        self.assertEqual(noeuds, [(0, 0x7FFFFFFF, False),
+                                  (96, -0x80000000, False)])
+        # Un nœud de la carte, relu tel que la machine l'écrit.
+        carte = automation.decode("0x7FFFFFFFE0000000000000F07FFFFFFF00000120")
+        self.assertEqual(automation.sampled(carte, 24, 768, "lpfFrequency"),
+                         [(0, 50), (10, 19), (12, 50)])
+        # Un nœud interpolé fait glisser la valeur.
+        glisse = automation.decode("0x80000000" "8000000000000000"
+                                   "7FFFFFFF" + "%08X" % (0x80000000 | 384))
+        valeurs = [v for _s, v in automation.sampled(glisse, 24, 384,
+                                                      "lpfFrequency")]
+        self.assertGreater(len(valeurs), 10)
+        self.assertEqual(valeurs, sorted(valeurs))
+        self.assertEqual(automation.value_at([(0, 5), (8, 9)], 3), 5)
+        self.assertEqual(automation.value_at([(4, 5), (8, 9)], 1), 9)
+        self.assertEqual(automation.tile([(0, 1), (2, 3)], 4, 10, 100),
+                         [(100.0, 1), (102.0, 3), (104.0, 1), (106.0, 3),
+                          (108.0, 1)])
+
+    def test_poser_une_courbe_l_ecrire_et_la_relire(self):
+        projet, accords, clip = self._projet()
+        noeuds = atelier.set_automation(projet, accords.uid, clip.key,
+                                        "lpfFrequency", "montée", 8, 36)
+        self.assertEqual(clip.automation["lpfFrequency"], noeuds)
+        batterie = next(t for t in projet.tracks if t.is_drums)
+        with self.assertRaises(ValueError):
+            atelier.set_automation(projet, batterie.uid,
+                                   batterie.clips[0].key, "volume",
+                                   "montée", 0, 50)
+        spec = atelier.to_song_spec(projet, "COURBE", sd=self.sd,
+                                    lib=self.lib)
+        ecrit = [c for c in spec.clips if c.automation]
+        self.assertTrue(ecrit)
+        # Une courbe empêche le repli : le clip garde ses quatre mesures.
+        self.assertTrue(all(c.length == clip.bars * songwriter.BAR
+                            for c in ecrit))
+        res = songwriter.write_song(self.sd, spec, apply=True)
+        self.assertTrue(res.applied, res.error)
+        song = Song.load(self.sd.abs(res.rel))
+        lues = [c.automation["lpfFrequency"] for c in song.clips
+                if "lpfFrequency" in c.automation]
+        self.assertTrue(lues)
+        relu = atelier.from_song(song, self.sd)
+        courbes = [c.automation.get("lpfFrequency") for t in relu.tracks
+                   for c in t.clips if c.automation]
+        self.assertIn(noeuds, courbes)
+
+    def test_une_courbe_s_entend(self):
+        projet, accords, clip = self._projet()
+        parts, _d, mesures = atelier.clip_parts(projet, accords.uid, clip.key)
+        self.assertEqual(parts.automation, {})
+        atelier.set_automation(projet, accords.uid, clip.key, "volume",
+                               "montée", 0, 50)
+        parts, _d, mesures = atelier.clip_parts(projet, accords.uid, clip.key)
+        courbe = parts.automation["Accords#%d" % accords.uid]["volume"]
+        self.assertEqual(courbe[0], (0.0, -0x80000000))
+        sons = atelier.listen_sounds(projet)
+        audio = render.render_parts(dict(parts), sons, bpm=120,
+                                    normalize=False,
+                                    automation=parts.automation)
+        moitie = audio.shape[0] // 2
+        debut = float(np.sqrt((audio[:moitie // 2] ** 2).mean()))
+        fin = float(np.sqrt((audio[moitie:moitie * 2] ** 2).mean()))
+        self.assertGreater(fin, 4 * max(debut, 1e-9))
+        # Sans courbe, le rendu est celui d'avant, à l'échantillon près.
+        nu = render.render_parts(dict(parts), sons, bpm=120, normalize=False)
+        vide = render.render_parts(dict(parts), sons, bpm=120,
+                                   normalize=False, automation={})
+        self.assertTrue(np.array_equal(nu, vide))
+
+    def test_la_montee_d_une_section(self):
+        projet, accords, clip = self._projet()
+        index = max(range(len(projet.sections)),
+                    key=lambda i: projet.sections[i].bars)
+        section = projet.sections[index]
+        avant = dict(section.cells)
+        autres = {i: dict(s.cells) for i, s in enumerate(projet.sections)
+                  if i != index}
+        faits = atelier.section_rise(projet, index)
+        self.assertTrue(faits)
+        for uid, cle in faits:
+            piste = projet.track(uid)
+            neuf = piste.clip(cle)
+            self.assertEqual(section.cells[uid], cle)
+            self.assertNotEqual(avant[uid], cle)
+            self.assertEqual(neuf.bars, min(16, section.bars))
+            courbe = neuf.automation["lpfFrequency"]
+            haut = atelier.current_value(piste, "lpfFrequency")
+            self.assertEqual(courbe[-1][1], haut)
+            self.assertEqual(courbe[0][1], max(0, haut - 20))
+        self.assertEqual({i: dict(s.cells) for i, s in
+                          enumerate(projet.sections) if i != index}, autres)
+        # Dans le morceau entier, la courbe ne déborde pas de sa section.
+        parts, _d, _m = atelier.song_parts(projet)
+        uid = faits[0][0]
+        courbe = parts.automation["%s#%d" % (projet.track(uid).part, uid)][
+            "lpfFrequency"]
+        debut = sum(s.bars for s in projet.sections[:index]) * 16
+        fin = debut + section.bars * 16
+        apres = [v for s, v in courbe if s >= fin]
+        if apres:
+            self.assertEqual(apres[0], atelier._static_raw(projet.track(uid),
+                                                           "lpfFrequency"))
+
+    def test_le_cache_ne_refait_que_ce_qui_change(self):
+        """Mesuré sur son brouillon : un geste dans une boucle de huit
+        mesures s'entendait après 1,90 s ; avec le cache, 0,27 s — et le son
+        est celui d'un rendu complet, à l'échantillon près."""
+        from unittest import mock
+
+        from delugeapp.ui.pages.atelier import _render_mix
+
+        projet, accords, clip = self._projet()
+        index = atelier.fullest_section(projet)
+        parts, batterie, mesures = atelier.section_parts(projet, index)
+        sons = atelier.listen_sounds(projet)
+        kit = next(t.kit for t in projet.tracks if t.is_drums)
+        cache = {}
+        premier = _render_mix(dict(parts), sons, batterie, 120, kit, self.sd,
+                              0, parts.automation, cache)
+        self.assertIn("#batterie", cache)
+        gardes = {k: v for k, v in cache.items()}
+        # Une note de plus dans une seule partie.
+        cle = "Accords#%d" % accords.uid
+        modifiees = dict(parts)
+        e = modifiees[cle][0]
+        modifiees[cle] = modifiees[cle] + [accomp.NoteEvent(
+            e.start + 1, 1, e.note + 2, 70)]
+        with mock.patch.object(render, "render_pattern",
+                               side_effect=AssertionError("refaite")):
+            rapide = _render_mix(modifiees, sons, batterie, 120, kit,
+                                 self.sd, 0, parts.automation, cache)
+        plein = _render_mix(modifiees, sons, batterie, 120, kit, self.sd, 0,
+                            parts.automation)
+        self.assertTrue(np.array_equal(rapide, plein))
+        self.assertFalse(np.array_equal(premier, plein))
+        for nom, valeur in gardes.items():
+            if nom not in (cle, "#batterie"):
+                self.assertIs(cache[nom], valeur, nom)       # repris tel quel
+        self.assertIsNot(cache[cle], gardes[cle])
+
+    def test_doubler_double_la_courbe(self):
+        projet, accords, clip = self._projet()
+        copie = atelier.duplicate_clip(projet, accords.uid, clip.key)
+        atelier.set_automation(projet, accords.uid, copie.key, "pan",
+                               "balancement", -20, 20)
+        noeuds = list(copie.automation["pan"])
+        atelier.double_clip(projet, accords.uid, copie.key)
+        self.assertEqual(copie.automation["pan"],
+                         noeuds + [(s + clip.steps, v) for s, v in noeuds])
+
+
+# --------------------------------------------------------------------------- #
+# Un clip depuis un fichier MIDI (13 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+def _fichier_midi(chemin: Path, ppq: int = 96) -> Path:
+    """Un fichier MIDI de type 1 : une basse de deux mesures et demie, une
+    batterie General MIDI sur le canal 10 (dont une note sans rôle, 31)."""
+    from delugeapp.core import midifile
+
+    noire = ppq
+    basse = midifile.MidiTrack(name="Bass", channel=0)
+    for rang, note in enumerate((45, 45, 48, 52, 50, 45, 57, 55, 53, 52)):
+        basse.add(rang * noire, note, 100, noire // 2)
+    batterie = midifile.MidiTrack(name="Drums", channel=9)
+    for temps in range(8):
+        batterie.add(temps * noire, 36, 120, noire // 4)       # grosse caisse
+        batterie.add(temps * noire + noire // 2, 42, 64, noire // 4)
+    batterie.add(noire, 38, 110, noire // 4)
+    batterie.add(3 * noire, 31, 90, noire // 4)                 # sans rôle
+    midifile.write_midi(chemin, [basse, batterie], bpm=97, ppq=ppq)
+    return chemin
+
+
+class TestUnClipDepuisUnFichierMidi(CarteCase):
+
+    def _projet(self):
+        return atelier.new_project(atelier.Style(genre="techno", seed=3),
+                                   sd=self.sd, lib=self.lib)
+
+    def test_une_ligne_de_basse_devient_un_clip(self):
+        from delugeapp.core import midifile
+
+        data = midifile.read_midi(_fichier_midi(Path(self._tmp.name)
+                                                / "idee.mid"))
+        projet = self._projet()
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        choix = atelier.midi_choices(data, drums=False)
+        self.assertEqual([c[1] for c in choix], ["Bass", "Drums"])
+        avant = len(basse.clips)
+        clip, laissees = atelier.import_midi_clip(projet, basse.uid, data,
+                                                  choix[0][0])
+        self.assertEqual(len(basse.clips), avant + 1)
+        self.assertEqual((clip.bars, clip.note_count, laissees), (3, 10, 0))
+        self.assertEqual(clip.origin, "MIDI importé")
+        self.assertEqual([(e.start, e.note) for e in clip.events[:3]],
+                         [(0.0, 45), (4.0, 45), (8.0, 48)])
+        self.assertEqual(clip.events[0].length, 2.0)
+        self.assertEqual(clip.events[0].velocity, 100 * 100 // 127)
+
+    def test_une_batterie_general_midi_trouve_ses_rangees(self):
+        from delugeapp.core import midifile
+
+        data = midifile.read_midi(_fichier_midi(Path(self._tmp.name)
+                                                / "idee.mid", ppq=480))
+        projet = self._projet()
+        batterie = next(t for t in projet.tracks if t.is_drums)
+        choix = atelier.midi_choices(data, drums=True)
+        self.assertEqual(choix[0][1], "Drums")
+        clip, laissees = atelier.import_midi_clip(projet, batterie.uid, data,
+                                                  choix[0][0])
+        self.assertEqual(laissees, 1)                     # la note 31
+        self.assertEqual(clip.bars, 2)
+        self.assertEqual(sorted(clip.pattern.tracks),
+                         ["HatC", "Kick", "Snare"])
+        self.assertEqual(sorted(rhythm.cell(s)
+                                for s in clip.pattern.tracks["Kick"]),
+                         list(range(0, 32, 4)))
+        self.assertEqual([rhythm.cell(s)
+                          for s in clip.pattern.tracks["Snare"]], [4])
+        # Le clip s'écrit comme un autre.
+        for section in projet.sections:
+            section.cells[batterie.uid] = clip.key
+        spec = atelier.to_song_spec(projet, "IMPORT", sd=self.sd,
+                                    lib=self.lib)
+        self.assertTrue(songwriter.write_song(self.sd, spec,
+                                              apply=True).applied)
+
+    def test_rien_a_reprendre(self):
+        from delugeapp.core import midifile
+
+        vide = midifile.MidiFileData(tracks=[("Rien", [])])
+        projet = self._projet()
+        self.assertEqual(atelier.midi_choices(vide), [])
+        basse = next(t for t in projet.tracks if t.part == "Basse")
+        with self.assertRaises(ValueError):
+            atelier.import_midi_clip(projet, basse.uid, vide, 0)
+        sans_role = midifile.MidiFileData(
+            ppq=96, tracks=[("Perc", [(0, 31, 100, 24, 9)])])
+        batterie = next(t for t in projet.tracks if t.is_drums)
+        with self.assertRaises(ValueError):
+            atelier.import_midi_clip(projet, batterie.uid, sans_role, 0)
+        self.assertEqual(midifile.drum_role(36), "Kick")
+        self.assertEqual(midifile.drum_role(35), "Kick")
+        self.assertEqual(midifile.drum_role(41), "TomL")
+        self.assertEqual(midifile.drum_role(47), "TomM")
+        self.assertEqual(midifile.drum_role(31), "")
+        # 58 (« vibraslap ») n'a que le rôle fourre-tout « Other » : aucun.
+        self.assertEqual(midifile.drum_role(58), "")
+
+
+# --------------------------------------------------------------------------- #
+# Le morceau entier en audio (13 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+class TestLeMorceauEnAudio(CarteCase):
+
+    def _projet(self):
+        projet = atelier.new_project(atelier.Style(genre="house", seed=2),
+                                     sd=self.sd, lib=self.lib)
+        # Deux sections courtes : le rendu reste rapide.
+        projet.sections = projet.sections[:2]
+        for section in projet.sections:
+            section.bars = 2
+        return projet
+
+    def test_le_morceau_section_apres_section(self):
+        projet = self._projet()
+        parts, batterie, mesures = atelier.song_parts(projet)
+        self.assertEqual(mesures, 4)
+        self.assertEqual(batterie.steps, 64)
+        # Chaque section commence à sa place.
+        debut = {round(float(s.pos)) for h in batterie.tracks.values()
+                 for s in h}
+        self.assertTrue(any(p >= 32 for p in debut))
+        self.assertTrue(all(0 <= e.start < 64 for v in parts.values()
+                            for e in v))
+        seule = next(t for t in projet.tracks if t.part == "Basse")
+        parts, batterie, _m = atelier.song_parts(projet, only={seule.uid})
+        self.assertIsNone(batterie)
+        self.assertEqual(list(parts), ["Basse#%d" % seule.uid])
+
+    def test_le_melange_et_ses_pistes(self):
+        projet = self._projet()
+        sortie = Path(self._tmp.name) / "export" / "MORCEAU.wav"
+        etapes = []
+        fichiers = atelier.export_audio(projet, sortie, sd=self.sd,
+                                        stems=True, progress=etapes.append)
+        self.assertEqual(fichiers[0], sortie)
+        jouees = [t for t in projet.tracks
+                  if any(s.cells.get(t.uid) for s in projet.sections)]
+        self.assertEqual(len(fichiers), 1 + len(jouees))
+        self.assertTrue(all(f.name.startswith("MORCEAU - ")
+                            for f in fichiers[1:]))
+        self.assertTrue(etapes and etapes[-1].startswith("Écriture"))
+        melange, sr = wav.read(sortie)
+        self.assertEqual(sr, 44100)
+        self.assertEqual(wav.probe(sortie).bit_depth, 24)
+        tempo = projet.style.tempo()
+        self.assertGreaterEqual(melange.shape[0] / sr, 4 * 4 * 60.0 / tempo)
+        self.assertLessEqual(float(np.abs(melange).max()), 0.981)
+        somme = sum(wav.read(f)[0] for f in fichiers[1:])
+        self.assertLess(float(np.abs(somme - melange).max()), 1e-4)
+
+    def test_un_meme_gain_pour_toutes_les_pistes(self):
+        """Un mélange qui sature est ramené sous la pleine échelle, et
+        chaque piste du même gain : leur somme reste le mélange."""
+        from unittest import mock
+
+        projet = self._projet()
+        pistes = projet.tracks[:2]
+        fort = np.full((4410, 2), 0.8, dtype=np.float32)
+        plus_fort = np.full((4410, 2), 1.2, dtype=np.float32)
+        sortie = Path(self._tmp.name) / "FORT.wav"
+        with mock.patch.object(atelier, "render_tracks",
+                               return_value=[(pistes[0], fort),
+                                             (pistes[1], plus_fort)]):
+            fichiers = atelier.export_audio(projet, sortie, stems=True)
+        melange = wav.read(fichiers[0])[0]
+        a, b = (wav.read(f)[0] for f in fichiers[1:])
+        self.assertAlmostEqual(float(np.abs(melange).max()), 0.98, places=3)
+        gain = 0.98 / 2.0
+        self.assertAlmostEqual(float(a.max()), 0.8 * gain, places=3)
+        self.assertAlmostEqual(float(b.max()), 1.2 * gain, places=3)
+        self.assertLess(float(np.abs(a + b - melange).max()), 1e-4)
+
+    def test_rien_ne_sonne(self):
+        projet = self._projet()
+        for section in projet.sections:
+            section.cells.clear()
+        with self.assertRaises(ValueError):
+            atelier.export_audio(projet, Path(self._tmp.name) / "R.wav")
+        self.assertIsNone(atelier.export_audio(
+            self._projet(), Path(self._tmp.name) / "S.wav",
+            should_stop=lambda: True))
+
+
+# --------------------------------------------------------------------------- #
+# Les rangées d'un kit, choisies (13 novembre 2026)
+# --------------------------------------------------------------------------- #
+
+class TestLesRangeesChoisies(CarteCase):
+    """Choisir les rôles d'un kit, et l'échantillon d'une rangée."""
+
+    def setUp(self):
+        super().setUp()
+        t = np.linspace(0, 0.2, 8820, endpoint=False, dtype=np.float32)
+        for nom in ("909 Snare 2", "808 Snare", "Linn Snare"):
+            wav.write(self.root / "SAMPLES" / "DRUMS" / "Snare"
+                      / f"{nom}.wav",
+                      (0.4 * np.sin(2 * np.pi * 300 * t)).astype(np.float32),
+                      44100)
+        scan.scan_card(self.sd, self.lib, compute_hash=False)
+
+    def test_les_roles_voulus_et_leur_ordre(self):
+        from delugeapp.core import kitgen
+
+        self.assertEqual(len(kitgen.ROLES), len(set(kitgen.ROLES)))
+        self.assertEqual(kitgen.ROLES[:len(kitgen.DEFAULT_SLOTS)],
+                         kitgen.DEFAULT_SLOTS)
+        # Ceux du genre d'abord, dans son ordre ; puis les autres.
+        self.assertEqual(kitgen.ordered_slots(
+            "techno", {"Cowbell", "HatC", "Kick", "Clap"}),
+            ["Kick", "Clap", "HatC", "Cowbell"])
+        self.assertTrue({"Kick", "Snare", "Cowbell"}
+                        <= kitgen.available_roles(self.lib))
+        self.assertNotIn("Timpany", kitgen.available_roles(self.lib))
+        kit = kitgen.build_kit(self.sd, self.lib, "CHOISI", genre="techno",
+                               seed=1, slots=["Kick", "Snare", "Cowbell"])
+        self.assertEqual([kitgen.row_role(r) for r in kit.rows],
+                         ["Kick", "Snare", "Cowbell"])
+
+    def test_les_candidats_d_une_rangee(self):
+        from delugeapp.core import kitgen
+
+        kit = kitgen.build_kit(self.sd, self.lib, "CHOISI", genre="techno",
+                               seed=1, slots=["Kick", "Snare", "HatC"])
+        rang = [kitgen.row_role(r) for r in kit.rows].index("Snare")
+        actuel = kit.rows[rang].file_name
+        candidats = kitgen.row_candidates(kit, rang, self.lib, "techno")
+        self.assertTrue(candidats[0]["current"])
+        self.assertEqual(candidats[0]["rel"], actuel)
+        autres = [c for c in candidats if not c["current"]]
+        self.assertEqual(len(autres), 3)
+        # La même machine d'abord.
+        famille = kitgen.family_of(actuel)
+        self.assertEqual(autres[0]["family"], famille)
+        noms = {c["name"] for c in autres}
+        self.assertTrue({"808 Snare", "Linn Snare"} <= noms)
+        # Jamais un son d'une autre rangée du kit, ni d'un autre rôle.
+        ailleurs = {sdcard.norm_rel(r.file_name) for i, r in
+                    enumerate(kit.rows) if i != rang}
+        self.assertFalse(ailleurs & {sdcard.norm_rel(c["rel"])
+                                     for c in candidats})
+        # Deux rangées du même rôle : chacune écarte le son de l'autre.
+        import copy
+
+        kit = kitgen.build_kit(self.sd, self.lib, "DOUBLE", genre="techno",
+                               seed=1, slots=["Snare"])
+        jumelle = next(c for c in kitgen.row_candidates(kit, 0, self.lib)
+                       if not c["current"])
+        kit.rows.append(copy.deepcopy(kit.rows[0]))
+        kitgen.use_sample(kit, 1, jumelle)
+        noms = {c["rel"] for c in kitgen.row_candidates(kit, 0, self.lib)
+                if not c["current"]}
+        self.assertNotIn(jumelle["rel"], noms)
+
+    def test_poser_un_echantillon_choisi(self):
+        from delugeapp.core import kitgen
+
+        kit = kitgen.build_kit(self.sd, self.lib, "CHOISI", genre="techno",
+                               seed=1, slots=["Kick", "Snare", "HatC"])
+        rang = [kitgen.row_role(r) for r in kit.rows].index("Snare")
+        avant = [(r.name, r.file_name) for r in kit.rows]
+        candidats = kitgen.row_candidates(kit, rang, self.lib, "techno")
+        self.assertIsNone(kitgen.use_sample(kit, rang, candidats[0]))
+        linn = next(c for c in candidats if c["name"] == "Linn Snare")
+        slot = kitgen.use_sample(kit, rang, linn)
+        self.assertEqual(slot.rel, linn["rel"])
+        self.assertEqual(kit.rows[rang].file_name, linn["rel"])
+        self.assertEqual(kit.rows[rang].name, avant[rang][0])
+        self.assertEqual([(r.name, r.file_name) for i, r in
+                          enumerate(kit.rows) if i != rang],
+                         [x for i, x in enumerate(avant) if i != rang])
 
 
 # --------------------------------------------------------------------------- #
@@ -1808,6 +2623,100 @@ class TestLeLecteurEchangeEnPlace(unittest.TestCase):
             np.zeros((100, 2), np.float32), 44100))
         self.assertFalse(self.lecteur.replace_array(
             np.zeros((300, 2), np.float32), 44100))
+
+
+class TestLeLecteurEnFlux(unittest.TestCase):
+    """``Player.play_stream`` : le début d'un morceau joue pendant que la
+    suite se calcule ; arrivée au bout, la lecture attend en silence."""
+
+    setUp = TestLeLecteurEchangeEnPlace.setUp
+    _boucle = TestLeLecteurEchangeEnPlace._boucle
+
+    def _flux(self, trames, position=0):
+        self._boucle(trames, position)
+        with self.lecteur._state_lock:
+            self.lecteur._loop = False
+            self.lecteur._streaming = True
+
+    def _rendre(self):
+        with self.lecteur._state_lock:
+            self.lecteur._streaming = False
+        TestLeLecteurEchangeEnPlace._rendre(self)
+
+    def test_le_flux_attend_la_suite_en_silence(self):
+        from delugeapp.core import audio_out
+
+        self._flux(np.full((50, 2), 0.25, dtype=np.float32), position=40)
+        sortie = np.ones((30, 2), dtype=np.float32)
+        self.lecteur._callback(sortie, 30, None, None)
+        self.assertTrue(np.allclose(sortie[:10], 0.25))
+        self.assertTrue(np.allclose(sortie[10:], 0.0))
+        self.assertTrue(self.lecteur._playing, "le flux s'est arrêté")
+        self.assertTrue(self.lecteur.extend_stream(
+            np.full((40, 2), 0.5, dtype=np.float32)))
+        self.assertEqual(self.lecteur._data.shape, (90, 2))
+        sortie = np.zeros((30, 2), dtype=np.float32)
+        self.lecteur._callback(sortie, 30, None, None)
+        self.assertTrue(np.allclose(sortie, 0.5), "la suite n'a pas joué")
+        self.lecteur.end_stream()
+        if audio_out._sd is None:
+            return
+        with self.assertRaises(audio_out._sd.CallbackStop):
+            self.lecteur._callback(np.zeros((30, 2), np.float32), 30,
+                                   None, None)
+        self.assertFalse(self.lecteur._playing)
+
+    def test_sans_flux_rien_ne_s_allonge(self):
+        ancien = np.zeros((100, 2), dtype=np.float32)
+        self.assertFalse(self.lecteur.extend_stream(ancien))
+        self._boucle(ancien)
+        self.assertFalse(self.lecteur.extend_stream(ancien))
+        self.assertIs(self.lecteur._data, ancien)
+
+    def test_une_lecture_ordinaire_coupe_le_flux(self):
+        self.lecteur._backend = "none"
+        self.assertTrue(self.lecteur.play_stream(
+            np.zeros((441, 2), np.float32), 44100))
+        self.lecteur.play_array(np.zeros((441, 2), np.float32), 44100)
+        self.assertFalse(self.lecteur.extend_stream(
+            np.zeros((441, 2), np.float32)))
+
+    def test_sans_sortie_le_flux_dure_jusqu_a_sa_fin(self):
+        self.lecteur._backend = "none"
+        self.assertTrue(self.lecteur.play_stream(
+            np.zeros((441, 2), np.float32), 44100))
+        with self.lecteur._state_lock:
+            self.lecteur._start_time -= 1.0         # une seconde a passé
+        self.assertTrue(self.lecteur.is_playing, "fini avant la suite")
+        self.assertTrue(self.lecteur.extend_stream(
+            np.zeros((22050, 2), np.float32)))
+        self.assertAlmostEqual(self.lecteur._duration, 0.51, places=6)
+        self.lecteur.end_stream()
+        self.assertFalse(self.lecteur.is_playing)
+
+    def test_winsound_ne_sait_pas(self):
+        joues = []
+        self.lecteur._play_winsound_array = lambda *a: joues.append(a)
+        self.lecteur._backend = "winsound"
+        self.assertFalse(self.lecteur.play_stream(
+            np.zeros((441, 2), np.float32), 44100))
+        self.assertEqual(joues, [], "un début joué pour rien")
+        self.assertFalse(self.lecteur._playing)
+
+    def test_portaudio_refuse_le_flux_s_arrete(self):
+        """PortAudio refuse d'ouvrir : la lecture bascule sur winsound, qui
+        ne s'allonge pas — le flux est abandonné, l'appelant attendra."""
+        def bascule(arr, sr, loop):
+            self.lecteur._backend = "winsound"
+            with self.lecteur._state_lock:
+                self.lecteur._playing = True
+
+        self.lecteur._backend = "sounddevice"
+        self.lecteur._play_sounddevice = bascule
+        self.assertFalse(self.lecteur.play_stream(
+            np.zeros((441, 2), np.float32), 44100))
+        self.assertFalse(self.lecteur._playing)
+        self.assertFalse(self.lecteur._streaming)
 
 
 class TestLesBrouillonsDeLAtelier(unittest.TestCase):

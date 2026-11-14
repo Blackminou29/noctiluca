@@ -114,6 +114,9 @@ class Player:
         self._pos = 0
         self._loop = False
         self._playing = False
+        #: Une lecture en flux attend la suite au lieu de finir
+        #: (:meth:`play_stream`).
+        self._streaming = False
         self._start_time = 0.0
         self._duration = 0.0
         self._tmp_files: list[Path] = []
@@ -180,7 +183,7 @@ class Player:
                 return False
             if self._backend == "sounddevice":
                 return True
-            if self._loop:
+            if self._loop or self._streaming:
                 return True
             if self._duration <= 0:
                 self._playing = False
@@ -275,6 +278,8 @@ class Player:
     def play_array(self, data: np.ndarray, sample_rate: int,
                    loop: bool = False) -> None:
         """Joue un tableau numpy (float dans [-1, 1] ou entier)."""
+        with self._state_lock:
+            self._streaming = False
         try:
             arr = _as_frames(data)
             sr = int(sample_rate) if int(sample_rate) > 0 else DEFAULT_SR
@@ -329,6 +334,66 @@ class Player:
                 self._data = arr
                 return True
 
+    # -- lecture en flux ---------------------------------------------------
+
+    def play_stream(self, data: np.ndarray, sample_rate: int) -> bool:
+        """Commence une lecture qu'on prolongera par :meth:`extend_stream`
+        — le début d'un morceau dont la suite se calcule. Arrivée au bout
+        de ce qu'elle a, elle attend en silence la suite, jusqu'à
+        :meth:`end_stream`. Rend faux, sans rien jouer, quand la sortie ne
+        sait pas (``winsound`` joue un fichier entier) : l'appelant attend
+        alors la fin du calcul."""
+        if self._backend == "winsound":
+            return False
+        sr = int(sample_rate) if int(sample_rate) > 0 else DEFAULT_SR
+        self.play_array(data, sr)
+        if self._backend == "winsound":
+            # PortAudio a refusé et la lecture a basculé : un fichier joué
+            # par winsound ne s'allonge pas.
+            self.stop()
+            return False
+        with self._state_lock:
+            self._sr = sr
+            self._streaming = bool(self._playing)
+            return self._streaming
+
+    def extend_stream(self, data: np.ndarray) -> bool:
+        """Ajoute ``data`` au bout de la lecture en flux ; faux si aucune
+        ne tourne (arrêtée entre-temps)."""
+        try:
+            arr = _as_frames(data)
+        except Exception:
+            log.debug("extend_stream : tableau illisible", exc_info=True)
+            return False
+        with self._api_lock:
+            with self._state_lock:
+                if not self._streaming or not self._playing:
+                    return False
+                current = self._data
+                if arr.shape[0] == 0:
+                    return True
+                if current is None:
+                    # Sortie muette : seule la durée compte.
+                    self._duration += arr.shape[0] / float(self._sr)
+                    return True
+            # La copie d'un long tableau se fait hors du verrou que prend le
+            # rappel de PortAudio ; seul l'échange se fait dessous. Personne
+            # d'autre ne touche à ``_data`` : ``_api_lock`` est tenu.
+            longer = np.concatenate([current,
+                                     _fit_channels(arr, current.shape[1])])
+            with self._state_lock:
+                if self._data is not current or not self._streaming:
+                    return False
+                self._data = longer
+                self._duration = longer.shape[0] / float(self._sr)
+                return True
+
+    def end_stream(self) -> None:
+        """Plus rien ne viendra : la lecture finira au bout de ce qu'elle
+        a."""
+        with self._state_lock:
+            self._streaming = False
+
     def stop(self) -> None:
         """Arrête immédiatement la lecture et libère les ressources."""
         with self._api_lock:
@@ -342,6 +407,7 @@ class Player:
             with self._state_lock:
                 self._playing = False
                 self._loop = False
+                self._streaming = False
                 self._pos = 0
                 self._duration = 0.0
             self._purge_temp()
@@ -452,7 +518,8 @@ class Player:
                 filled += take
             if filled < frames:
                 outdata[filled:, :] = 0.0
-                done = True
+                # En flux, la suite se calcule encore : on attend en silence.
+                done = not self._streaming
             self._pos = pos
             if done:
                 self._playing = False

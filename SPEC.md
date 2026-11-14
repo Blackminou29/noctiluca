@@ -2916,15 +2916,15 @@ que la queue d'un delay sans fin (retour 25 : la machine ne l'abandonne jamais) 
 sur le clip suivant.
 
 Restent approchés : l'étirement temporel des échantillons, le glissé (en demi-tons, le
-firmware travaille en fréquence), le LFO 1 global (il repart à chaque note), le SVF (rendu
-par l'échelle 12 dB : aucun son de la carte ne s'en sert), le « tape warble » (rendu en
-chorus), la compression par son et le sidechain, la taille des fenêtres de rendu (128,
+firmware travaille en fréquence), le LFO 1 global (il repart à chaque note), la
+compression par son et le sidechain, la taille des fenêtres de rendu (128,
 le plafond du jeu direct), et l'abandon d'un delay après quelques répétitions sans son
 (`repeatsUntilAbandon`, de 4 à 110 selon le retour : sous −45 dB, inaudible). Le LFO des
 effets de modulation et la réduction d'échantillonnage gardent leur phase d'une note à
 l'autre sur la machine ; le moteur les fait partir de zéro. **Non vérifiés sur la
-machine** : l'arpégiateur, la réverbération Freeverb (morceaux sans modèle), le compresseur
-maître au travail (seulement au repos).
+machine** : la réverbération Freeverb (morceaux sans modèle), et ce que le 14 novembre 2026
+a porté d'après le code seul (§4.54) — le SVF, le « tape warble », l'arpégiateur, le
+compresseur maître au travail.
 
 **Tables.** `delugeapp/data/deluge_tables.npz` (85 tables, 271 Ko) : les formes d'onde
 « analog », les dents de scie et carrés à bande limitée, sinus et triangles anti-repliement,
@@ -3384,6 +3384,177 @@ def describe_route(route, channel) ; describe_message(status, d1, d2)
 * `AppContext.ensure_hub()` le crée au premier besoin avec ses branchements ;
   `refresh_hub_follow()` lui redit les réglages MIDI Follow de la carte ; `save_hub()` ;
   `close()` ferme le hub **avant** le lien.
+
+### 4.53 L'atelier et le générateur, plus puissants (13–14 novembre 2026)
+
+**`delugeapp/core/conditions.py`** — les conditions d'une note, comme le firmware 1.3 les
+joue (`model/clip/instrument_clip.cpp`, `model/iterance/iterance.h`,
+`model/note/note_row.cpp`, `model/iterance/iterance_migration.cpp`, lus le 13 novembre).
+
+```python
+ALWAYS = 20 ; NOT_FILL = 1 ; FILL = 2
+LEGACY_ITERANCES                  # (diviseur, pas) de l'ancien menu : 21 = 1 sur 2 … 55 = 8 sur 8
+def iterance(divisor, step) -> int           # diviseur << 8 | 1 << (pas - 1)
+def iterance_of(value) -> (diviseur, masque) # (0, 0) : aucune, ou écartée par Iterance::fromInt
+def probability_byte(pct) -> int             # 1 à 20 — jamais 0 (le remplissage d'un c1.2)
+def percent(byte) -> int
+def legacy_byte(pct, iterance, fill) -> int  # l'octet d'une note c1.2 : une condition à la fois
+def from_legacy(byte) -> (pct, iterance, fill)        # comme le relit le firmware 1.3
+def from_note(note) -> (pct, iterance, fill)          # un octet c1.2 ou les trois champs 1.3
+@dataclass(frozen=True)
+class Condition: probability=100; iterance=0; fill=0  # .always, .label()
+CHOICES                            # ce que propose l'atelier : 75/50/25 %, 1 sur 2 … 8 sur 8, FILL
+def label(...) ; def short_label(...)                 # « 1 sur 4 » ; « 1/4 », « F », « ¬F »
+def of(item) ; def has_condition(item)                # d'un NoteEvent ou d'un rhythm.Step
+def cycle(items, limit=8) -> int   # tours à écouter : ppcm des diviseurs, 2 pour du hasard
+def fill_button_ready(card) -> bool | None   # SYNC-SCALING en « Fill mode » ? (SETTINGS/
+                                   # CommunityFeatures.XML, syncScalingAction ; None sans fichier)
+def playing(items, repeat, rng=None, *, position=None, get=None, fill_held=False,
+            ending=False) -> list
+```
+
+`playing` suit l'ordre du firmware : probabilité (notes d'un même instant **du clip entier**,
+toutes rangées : même probabilité, un seul tirage ; toutes incertaines et sommant 100 %, **une
+seule** joue), puis itération (`masque >> (tour % diviseur)`, diviseur 0 : première ou dernière
+fois), puis remplissage. Sans `rng`, toute note incertaine joue (export MIDI).
+
+> **Mesuré sur la carte** (56 morceaux) : 13 portent des probabilités, 8 des itérations
+> (octets c1.2 21, 24, 26 ; champs 1.3 0x0201, 0x0301, 0x0401, 0x0002), aucun de remplissage ;
+> 4 de l'automation (18 courbes : volume 9, coupure 5, résonance 2, panoramique 2 ; d'abord
+> comptés 11, `clipInstances` pris pour une courbe — corrigé le 14 novembre).
+
+> **Correction mesurée — l'octet de condition d'un c1.2.** Dans un morceau c1.2
+> (`noteDataWithLift`), **0 n'est pas une probabilité nulle mais le remplissage**, 128 le
+> « sauf remplissage », 21 à 55 une itération, et le bit 7 d'une probabilité « suit la
+> précédente ». `songwriter` et `rhythm` tiraient `int(p / 5)` : une probabilité sous 5 %
+> devenait un coup de remplissage ; désormais `probability_byte`, jamais 0. Et un octet
+> ≥ 0x80 n'est pas « une itération d'avant 1.3 » (ce que disait un test) : en 28 caractères,
+> `encode_notes` le garde tel quel (probabilité liée) et convertit 0, 128 et 21–55 en leurs
+> trois champs.
+
+Ce qui change ailleurs :
+
+* `accomp.NoteEvent` et `rhythm.Step` gagnent `probability` (pour cent, `NoteEvent`),
+  `iterance`, `fill` ; toute copie d'un coup ou d'une note les garde (`rhythm.loop`,
+  `rhythm._copy`, `variation._copy`, `variation._copy_pattern`, `atelier.double_clip`).
+  Valeurs par défaut de classe : un brouillon d'avant les lit sans conversion.
+* `model.encode_notes` : une note qui porte itération ou remplissage les ramène, en 20 et
+  22 caractères, à l'octet c1.2 (`legacy_byte`).
+* `songwriter.events_to_rows`, `pattern_rows`, `_clean_notes`, `fold` gardent les trois
+  champs ; **`fold` ne replie pas un clip qui porte une itération** (replié de quatre mesures à
+  une, « 1 sur 2 » compterait quatre fois plus vite) ; `_repeats` compare aussi les conditions.
+* `atelier` : `set_hit_condition`, `set_note_condition`, `condition_at`, `clip_conditions`,
+  `clip_items`, `tile_clip(clip, pas, rng=None, fill=False)` (un clip bouclé, ses conditions
+  jouées tour par tour), `CONDITION_BARS = 8`. `clip_parts` déroule un clip conditionné sur
+  `cycle` tours (`mesures` en est un multiple) ; `_mixed_parts` et `arrangement_parts` passent
+  par `tile_clip` (le hasard de l'écoute, `_condition_rng`, tient au morceau, à la piste et au
+  clip : un geste ne rebat pas les cartes) ; `from_song` reprend les conditions des notes.
+* `variation` : `MELODIC["vivante"]` (les notes de « plus » à 50 % — 45 % quand deux tombent
+  au même instant, qui feraient 100 % —, des notes hors des temps à 75 %), `DRUMS["vivante"]`
+  (`_alive_drums` : coups fantômes à 25/50 %, charleys à 50 %, charley ouverte « 2 sur 2 »,
+  relance de grosse caisse « 4 sur 4 », seulement sur les rangées du motif) et
+  `DRUMS[FILL_ROLL]` (`_fill_roll` : un roulement sur les deux derniers temps qui ne joue que
+  FILL tenu, ce qui jouait là — sauf la grosse caisse — en « sauf remplissage », jamais deux
+  coups au même instant d'une rangée).
+
+**Générateur** (`synthgen`) :
+
+```python
+def random_options(seed=None, role="") -> GenOptions    # randomize() s'en sert
+def facet_seed(opts, facet) -> int | None
+def reseeded(opts, seed, keep=()) -> GenOptions          # nouvelle graine, aspects gardés
+def restyled(before, after, edited=None) -> SynthPreset  # retouches à la main reportées
+def edited_variations(opts, edited, n=8, seed=None, prepare=None) -> list[Variant]
+```
+
+`atelier.sound_variations` passe désormais par `edited_variations` (`prepare` : arpégiateur
+éteint, volume de la piste). **Mesuré** sur 22 genres × 10 rôles × 3 graines : un aspect gardé
+n'a jamais bougé sous une nouvelle graine, et le reste du son a changé à chaque fois.
+
+**Kits** (`kitgen`) : `ROLES` (les 22 rôles, ceux d'un kit par défaut d'abord),
+`ordered_slots(genre, voulus)`, `available_roles(lib)`, `row_candidates(kit, i, lib, genre,
+limit=400)` (même rôle ; la même famille d'abord, puis les familles du genre, puis les autres ;
+le son actuel en tête, `current` ; jamais un autre son du kit), `use_sample(kit, i, candidat)`.
+`reroll_row` et `use_sample` partagent `_replace_row`.
+
+**Import MIDI** : `midifile.GM_DRUM_EXTRA`, `midifile.drum_role(note)` (« Timpany » et
+« Other » laissent leur note au tom) ; `dawimport._GM_EXTRA` en est un alias.
+`atelier.midi_choices(data, drums=False)` (les pistes du canal 10 d'abord pour une batterie),
+`atelier.import_midi_clip(projet, uid, data, rang) -> (clip, laissées)` : temps du fichier en
+pas (`ppq` lu, tempo ignoré), mesures entières, `MAX_BARS` au plus, origine « MIDI importé ».
+
+**Audio** : `atelier.song_parts(projet, only=None) -> (parties, batterie, mesures)` (le
+morceau section après section, le hasard des conditions changeant d'une section à l'autre),
+`render_tracks(projet, sd=None, sr=44100, should_stop=None, progress=None)` (chaque piste,
+sans normalisation), `export_audio(projet, chemin, sd=None, stems=False, …)` (WAV 24 bits ; le
+mélange et, avec `stems`, « NOM - Piste.wav » ; **un même gain pour tous**, celui qui ramène
+le mélange sous 0,98). **Mesuré** sur une copie de son brouillon (downtempo, 72 mesures,
+2 min 56 s, quatre pistes jouées) : 11,6 à 14,5 s ; la somme des pistes redonne le mélange à
+4·10⁻⁷ près.
+
+### 4.54 Ce qui restait du relevé : automation, flux, envoi, étages du firmware (14 novembre 2026)
+
+**`delugeapp/core/automation.py`** — l'automation d'un clip (format `AutoParam` du
+firmware, lu dans le code et sur la carte : 4 morceaux, 18 courbes).
+
+```python
+AUTOMATABLE = {"lpfFrequency", "lpfResonance", "volume", "pan"}   # nom de preset -> libellé
+SHAPES ; PER_BAR
+def shape_nodes(shape, steps, low, high, key) -> [(pas, entier)]
+def encode(key, nodes, ticks_per_step, length) -> str     # "0x" + valeur + (valeur+pos) par nœud
+def decode(text) -> (courant, [(pos, valeur, interpolé)])
+def value_at(nodes, pos) ; tile(nodes, clip_steps, total_steps, offset) ; describe(key, nodes)
+def sampled(decoded, ticks_per_step, length_ticks, key) -> [(pas, entier)]
+```
+
+`AtelierClip.automation`, `set_automation`, `clear_automation`, `section_rise(projet, i,
+param="lpfFrequency", depth=20)` ; `Parts.automation` (les courbes de l'écoute) ;
+`ClipSpec.automation`, `NewClip.automation`, `Clip.automation`. **L'écoute** les suit
+(`render_parts(..., automation=, cache=)`) : coupure, résonance et panoramique note par note,
+bloc par bloc ; le volume sur le son entier. **Le cache** (`render_parts(cache=)`, empreinte
+par partie) ne refait que ce qui change : une boucle de section passe de 1,90 à 0,27 s, au
+même son.
+
+**Le morceau entier en flux** : `Player.play_stream(données, taux) -> bool`,
+`extend_stream(données) -> bool`, `end_stream()` (`audio_out`, faux sous winsound) ;
+`daw.render_mix(..., until=None, contained=True)`, `song_length(song)`,
+`render_progressively(song, sd, first=32.0, progress=, should_stop=)` (fenêtres qui
+doublent, le morceau entier dès les trois quarts, coupes entre deux blocs de 128 ;
+`AudioChunk(audio, message)`). Le calcul étant causal, les tranches sont celles du rendu
+complet à l'échantillon près. **Mesuré** (downtempo, 173 s) : premier son à 2,9 s au lieu
+de 41, total 66 s, dernière tranche prête 13 s avant d'être jouée.
+
+**L'envoi des sons compressés** : `delugeapp/core/compressed.py` (`EXTENSIONS = (".mp3",
+".flac", ".ogg")`, `available()`, `probe(path) -> CompressedInfo` avec `wav_size`,
+`to_wav(src, dst)`), par **miniaudio** (facultatif, MIT, ajouté aux paquets). Décodé à la
+fréquence, aux canaux et à la profondeur d'origine (mesuré : `decode_file` rendait tout en
+stéréo 44,1 kHz sans le dire), puis par les règles de conversion de l'envoi ; le plan compte
+la taille du WAV. `sendfiles.open_filter()`. L'autovérification du paquet a une étape
+« decodeur ».
+
+**Les étages portés d'après le firmware** (1.3, `102cf9f`), chacun contre une transcription
+entière dans les tests :
+
+* `dsp.SvfConfig`, `svf_config(mode, freq, res, morph)`, `svf_process`, `svf_response` —
+  `dsp/filter/svf.cpp`, passe-bas **et passe-haut** (le passe-haut forcé en échelle
+  jusque-là) ; coupure × **1,125** (le code ajoute un huitième ; le commentaire dit 1,25) ;
+  écart à la référence entière < 10⁻⁴ ;
+* `dsp.MasterCompressor` (lu par `daw._master_compressor` dans l'`audioCompressor` du
+  morceau et ses `songParams`), `output_stage(stéréo, compresseur=None)` —
+  `RMSFeedbackCompressor` : à rétroaction, par blocs de 128, **limiteur même à seuil nul**
+  (au-delà du volume du morceau) ; au repos, l'ancienne sortie à 10⁻⁶ près.
+  `daw.render_mix` additionne les pistes **avant** une sortie unique
+  (`render_parts(output=False)`) ;
+* le « tape warble » (`mod_fx(..., "TapeWarble", ...)`, `CONG_SEED`) —
+  `processOneModFXSample<WARBLE>` et le LFO « warbler » : retard avec rétroaction, sortie
+  mouillée seule ; écart < 2·10⁻⁵ ;
+* `delugeapp/core/arpeggio.py` — l'arpégiateur, que l'écoute ignorait :
+  `ArpSettings`, `settings_of(son)`, `expand(notes, réglages, seed=0)`, `apply(parties,
+  sons)` ; `Arpeggiator.step_repeat` (« stepRepeat »). Le cœur déterministe d'
+  `arpeggiator.cpp` ; les tirages et découpes communautaires au neutre.
+
+**Polices** : `theme.fonts_for(platform)` — Helvetica Neue et Menlo sous macOS, Segoe UI et
+Consolas sous Windows, DejaVu ailleurs.
 
 ---
 
@@ -4721,6 +4892,94 @@ l'interface — et le Deluge simulé au bout d'un vrai `DelugeLink`) ; `tests/te
 `MIDIFollow.XML` lu, colonne resserrée, page à 980 × 640 sans défilement horizontal),
 `TestLesFiguresDuManuelSuiventLesPages`. `PageCase` détourne aussi `config.HUB_PATH` et ferme
 le hub du contexte.
+
+### 5.38 L'atelier et le générateur, plus puissants (13–14 novembre 2026)
+
+**Générateur** (`ui/pages/generator.py`) :
+
+* `_generate_button` [Générer] → `_generate_new` : **une nouvelle graine à chaque clic**
+  (`synthgen.reseeded`, aspects gardés). Mesuré avant : au niveau simple, où la graine est
+  cachée, recliquer redonnait le même son. `_generate()` garde le sens « la graine affichée » :
+  la graine (`_seed`, avancé, sans dé désormais) refait son son après Entrée (`_seed_entered`).
+* `_show_options(options)` : les réglages de gauche **suivent le son affiché** (genre, rôle,
+  moteur, graine, curseurs, `_facets`), sans relancer de rendu.
+* **Retoucher** (`_build_nudges`, centre, niveau simple) : `NUDGE_PAIRS`, une colonne par curseur
+  (Brillance, Saleté, Espace, Largeur, Mouvement), deux pads sans libellé (`minus`, `plus`),
+  propriété `nudge` = la clé de `synthgen.NUDGES`, nom accessible et infobulle. `_nudge` →
+  `synthgen.nudged` puis `_restyle` (`synthgen.restyled`, retouches à la main gardées) ; en
+  butée, on le dit. Éteints pour un son qui ne vient pas du générateur (`_nudge_hint`).
+  `GrilleAdaptative` : cinq colonnes, trois sous 330 px.
+* **Garder en générant** (`KEEPABLE`, carte avancée à gauche) : huit pads cochables
+  (`_keep_buttons`), à la couleur de la page.
+* Les curseurs **retouchent le son affiché** : `valueChanged` → `_slider_timer`
+  (`SLIDER_DELAY_MS` = 250, branché sur la méthode liée `_sliders_settled`).
+* [Produire 8 variantes] : `style_variations`, ou `edited_variations` pour un son retouché ;
+  la liste montre ce que change chaque variante ; l'adopter reprend ses réglages. Un son venu
+  d'ailleurs garde les mutations. L'historique note le geste (« · Plus sombre »). Listes sans
+  barre horizontale (l'élision n'y jouait pas).
+* Onglet Kit : **Rangées** (`_kit_roles`, 22 pads cochables, `GrilleAdaptative` 6/4 colonnes
+  sous 760 px ; ceux du genre allumés au changement de genre et au premier affichage ; éteints
+  et désactivés sans échantillon dans la bibliothèque, `_mark_kit_roles`), [Celles du genre],
+  `_pick_sample_button` [Choisir l'échantillon…] (et double-clic sur une rangée). L'onglet
+  défile (à 980 × 700, les pads se chevauchaient).
+
+**`ui/rowsampledialog.py`** : `RowSampleDialog(candidats, rôle, row_name, play, color)` — filtre,
+liste (un clic joue, `play(candidat)`), [Utiliser ce son], [Écouter], [Fermer] ; `chosen()`.
+`choose_row_sample(page, kit, i, genre)` l'ouvre sur la bibliothèque de la page et joue chaque
+son par `player.play_file`.
+
+**Atelier** (`ui/pages/atelier.py`) :
+
+* Étape Clips : `_brush_tools` (avancé) — **Clic gauche** (`_brush`) : « Poser ou retirer des
+  notes », ou une condition de `conditions.CHOICES` ; `_hit_toggled`, `_note_toggled` et
+  `_note_drawn` posent alors la condition (`_condition_at`), un second clic rend « Toujours » ;
+  case vide : on le dit, aucun instantané. `_clip_info` compte les notes conditionnées.
+  `_fill_warning()` : choisir un remplissage au pinceau, ou [Varier] ▸ roulement FILL, rappelle
+  le réglage *Sync Scaling Action ▸ Fill mode* quand la carte dit qu'il manque (mesuré : sur la
+  sienne, il manque).
+* `ClipView` (`widgets/atelierviews.py`) : `_condition_shade` (assombrie selon la probabilité,
+  veilleuse pour le remplissage), `_condition_rect` (plus petite selon la probabilité : à 8 px
+  de côté, c'est ce qui se voit), `_paint_condition` (liseré d'or pointillé pour FILL, plein
+  pour « sauf FILL », cartouche « 50 », « 1/2 », « F », ou un point blanc ; `save`/`restore`
+  autour : la police du cartouche ne doit pas passer aux noms des rangées).
+* `_midi_clip_button` [Importer un clip MIDI…] (avancé) : fichier, piste du fichier
+  (`QInputDialog.getItem` s'il y en a plusieurs), instantané, message (notes laissées).
+* Étape Sons : `_pick_row_button` [Choisir l'échantillon…] (et double-clic sur une rangée),
+  instantané, rangée entendue aussitôt ; activé comme [Autre son pour la rangée].
+* Étape Deluge : `_audio_button` [Morceau en audio…] (carte avancée « Exporter ») : le mélange
+  seul, ou une piste par fichier (`_AUDIO_CHOICES`), rendu dans un fil sur une copie du projet
+  (`clone_project`), bouton éteint pendant le calcul (`_exporting`).
+
+**Tests** : `tests/test_atelier.py` — `TestGarderEtRetoucher`, `TestLesConditionsDesNotes`,
+`TestLesConditionsDansLAtelier`, `TestUnClipDepuisUnFichierMidi`, `TestLeMorceauEnAudio`,
+`TestLesRangeesChoisies`, `TestNotesDuFirmware13.test_un_octet_c1_2_garde_son_sens_en_1_3` ;
+`tests/test_ui.py`, en cliquant — `TestLeGenerateurRetoucheEtGarde`,
+`TestLesRangeesDuKitAuChoix`, `TestLesConditionsDansLaGrille`, `TestUnClipMidiDansLAtelier`,
+`TestLeMorceauEnAudio`, `TestLesRangeesDuKitSEcoutent.test_choisir_l_echantillon_d_une_rangee`.
+Sous la plateforme « offscreen », `QTest.mouseDClick` n'arrive pas à une `QListWidget`
+(vérifié) : le test émet `itemDoubleClicked`, comme le reste de la suite.
+
+### 5.39 Automation, écoute en flux, envoi des sons compressés (14 novembre 2026)
+
+* **Atelier** (mode avancé, clip de synthé) : rangée `_auto_tools` — `_auto_param`,
+  `_auto_shape`, `_auto_low`, `_auto_high`, [Poser la courbe] (`_auto_apply_button`),
+  [Retirer la courbe] (`_auto_clear_button`) ; dans la structure, [Montée du filtre]
+  (`_rise_button`, actif si un synthé joue dans la section). La vue du clip trace la courbe
+  et son résumé (`ClipView.automation_points`). `self._render_cache` est rendu à
+  `_render_mix(..., automation=, cache=)`, oublié à chaque projet. Défaire couvre tout.
+* **Morceaux** : [Écouter le morceau] joue en flux quand le lecteur sait
+  (`hasattr(player, "play_stream")`) — `_render_song_progressively`, `_stream_chunk` (le
+  premier morceau lance, les suivants s'ajoutent ; une autre lecture qui a pris le lecteur
+  fait abandonner le calcul, `_drop_render`, sans couper ce qu'elle joue), `_stream_end`
+  (la queue, puis `end_stream`) ; sans flux, tout est joué d'un coup à la fin.
+* **Envoyer au Deluge** : les deux dialogues d'ouverture prennent `sendfiles.open_filter()`
+  (MP3, FLAC, OGG en plus quand miniaudio est là).
+
+Explications (`aide.py`) et manuel (fr, en) : « L'automation d'un clip », la lecture en
+flux, les sons compressés à l'envoi. Tests, en cliquant : `TestLAutomationDansLAtelier`,
+`TestLeMorceauJoueEnSeCalculant`, `TestEnvoyerAuDelugeFenetre.test_un_flac_s_envoie_et_arrive_en_wav`,
+`TestAutoverification.test_le_decodeur_manque_aux_sources_et_manquerait_au_paquet`,
+`TestLesPolicesSelonLeSysteme`.
 
 ---
 

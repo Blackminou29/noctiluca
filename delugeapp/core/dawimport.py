@@ -796,10 +796,7 @@ def build_song(song: DawSong, choices: list[ImportChoice], *, name: str,
 
 #: Les autres notes de la batterie General MIDI, rapportées aux rôles des kits
 #: (:data:`~delugeapp.core.midifile.GM_DRUMS` n'en garde qu'une par rôle).
-_GM_EXTRA = {35: "Kick", 40: "Snare", 44: "HatC", 41: "TomL", 43: "TomL",
-             48: "TomM", 53: "Ride", 59: "Ride", 55: "Crash", 57: "Crash",
-             58: "Other", 60: "ConH", 61: "ConL", 69: "Shaker", 82: "Shaker",
-             77: "Block", 74: "Guiro"}
+_GM_EXTRA = midifile.GM_DRUM_EXTRA
 
 
 def _kit_for(sd, lib, genre: str, pitches: list[int], kit, seed: int):

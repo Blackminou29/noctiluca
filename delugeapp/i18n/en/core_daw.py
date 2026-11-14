@@ -21,6 +21,8 @@ TEXTS = {
         "playlist.",
     "Fichiers :": "Files:",
     "LISEZMOI.txt": "README.txt",
+    "Lecture — la suite du morceau se calcule…":
+        "Playing — the rest of the song is being computed…",
     "Logic Pro, Pro Tools et les autres": "Logic Pro, Pro Tools and the others",
     "MIDI %d": "MIDI %d",
     "MIDI : aucune note dans le morceau": "MIDI: no notes in the song",

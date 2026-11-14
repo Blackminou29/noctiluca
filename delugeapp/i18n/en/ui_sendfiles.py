@@ -68,4 +68,7 @@ TEXTS = {
     "Envoi incomplet": "Transfer incomplete",
     "%d fichier(s) n'ont pas pu être copiés :\n\n%s":
         "%d file(s) could not be copied:\n\n%s",
+    "Sons, presets, kits et morceaux du Deluge (%s)":
+        "Deluge sounds, presets, kits and songs (%s)",
+    "Tous les fichiers (*)": "All files (*)",
 }

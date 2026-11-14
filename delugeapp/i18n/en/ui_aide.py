@@ -148,10 +148,12 @@ TEXTS = {
         "samples used",
 
     # -- Générateur ----------------------------------------------------------
-    "Fabrique un preset complet à partir du genre, du rôle et de la graine "
-    "ci-dessous  (rien n'est encore écrit sur la carte)":
-        "Builds a complete preset from the genre, role and seed below  "
-        "(nothing is written to the card yet)",
+    "Fabrique un autre son du genre et du rôle choisis, sous une nouvelle "
+    "graine à chaque clic — sauf pour les aspects allumés dans « Garder en "
+    "générant »  (rien n'est encore écrit sur la carte)":
+        "Makes another sound of the chosen genre and role, under a new seed "
+        "at each click — except for the aspects lit in “Keep when "
+        "generating”  (nothing is written to the card yet)",
     "Tire un genre, un rôle et une graine au hasard, puis génère":
         "Picks a genre, a role and a seed at random, then generates",
     "Repart du son actuel et en change quelques réglages : de quoi explorer "
@@ -179,10 +181,12 @@ TEXTS = {
     "exactement le même son":
         "Two generations with the same seed and the same settings give "
         "exactly the same sound",
-    "Crée huit cousins du son actuel ; un clic les écoute, un double-clic en "
+    "Crée huit cousins du son actuel, dans son style : chacun change un seul "
+    "aspect ou pousse un seul curseur. Un clic les écoute, un double-clic en "
     "adopte un":
-        "Creates eight cousins of the current sound; a click plays one, a "
-        "double-click adopts it",
+        "Creates eight cousins of the current sound, in its style: each one "
+        "changes a single aspect or pushes a single slider. A click plays "
+        "one, a double-click adopts it",
     "Mélange le son courant avec celui choisi dans l'historique : les "
     "réglages se mélangent selon le dosage, les formes d'onde basculent à "
     "mi-chemin":
@@ -214,9 +218,63 @@ TEXTS = {
         "machine — without touching the rest of the kit  (nothing is written "
         "yet)",
     "Oriente le choix des sons : une grosse caisse techno ne ressemble pas à "
-    "une grosse caisse funk":
+    "une grosse caisse funk ; il rallume les rangées que le genre conseille":
         "Steers the choice of sounds: a techno kick does not sound like a "
-        "funk kick",
+        "funk kick; it lights up again the rows the genre suggests",
+    "Ouvre la liste de tous les sons de votre bibliothèque qui peuvent jouer "
+    "la rangée choisie, la même machine d'abord ; un clic en écoute un, "
+    "« Utiliser ce son » le met à la rangée  (rien n'est encore écrit)":
+        "Opens the list of all the sounds in your library that can play the "
+        "selected row, the same machine first; a click plays one, “Use this "
+        "sound” puts it on the row  (nothing is written yet)",
+    "Le réglage du son que la courbe fait bouger au cours du clip : coupure, "
+    "résonance, volume ou panoramique":
+        "The sound setting the curve moves over the clip: cutoff, resonance, "
+        "volume or pan",
+    "La forme de la courbe : montée, descente, vague, montée à chaque "
+    "mesure, balancement à chaque temps":
+        "The shape of the curve: build-up, fall, wave, a rise each bar, a "
+        "swing on each beat",
+    "La première valeur de la courbe, au cran de la machine : d'où part une "
+    "montée":
+        "The curve's first value, at the machine's step: where a rise starts",
+    "La seconde valeur de la courbe : où arrive une montée ; proposée à la "
+    "valeur du son":
+        "The curve's second value: where a rise ends; offered at the sound's "
+        "value",
+    "Pose la courbe sur le clip : le réglage suit la forme d'un bout à "
+    "l'autre du clip, et s'entend aussitôt. Une courbe du même réglage est "
+    "remplacée  (rien n'est écrit sur la carte)":
+        "Sets the curve on the clip: the setting follows the shape from one "
+        "end of the clip to the other, and you hear it at once. A curve of "
+        "the same setting is replaced  (nothing is written to the card)",
+    "Retire du clip la courbe du réglage choisi : il reprend la valeur du "
+    "son":
+        "Removes the chosen setting's curve from the clip: it goes back to "
+        "the sound's value",
+    "La montée d'un morceau d'un geste : chaque synthé de la section joue "
+    "une copie de son clip, à la durée de la section, dont la coupure "
+    "s'ouvre jusqu'à la valeur du son. Les autres sections gardent leurs "
+    "clips  (rien n'est écrit sur la carte)":
+        "A song's build-up in one gesture: each synth in the section plays a "
+        "copy of its clip, as long as the section, whose cutoff opens up to "
+        "the sound's value. The other sections keep their clips  (nothing "
+        "is written to the card)",
+    "Fait d'un fichier MIDI un clip neuf de la piste choisie — une ligne "
+    "faite dans le DAW, un rythme ; une batterie General MIDI trouve ses "
+    "rangées. On choisit la piste du fichier s'il en a plusieurs  (rien "
+    "n'est écrit sur la carte)":
+        "Turns a MIDI file into a new clip of the chosen track — a line made "
+        "in the DAW, a beat; a General MIDI drum part finds its rows. You "
+        "pick the file's track if it has several  (nothing is written to "
+        "the card)",
+    "Ouvre la liste de tous les sons de votre bibliothèque qui peuvent jouer "
+    "la rangée choisie, la même machine d'abord ; un clic en écoute un, "
+    "« Utiliser ce son » le met à la rangée  (rien n'est écrit sur la "
+    "carte)":
+        "Opens the list of all the sounds in your library that can play the "
+        "selected row, the same machine first; a click plays one, “Use this "
+        "sound” puts it on the row  (nothing is written to the card)",
     "Même graine, même kit : de quoi retrouver un assemblage qui vous "
     "plaisait":
         "Same seed, same kit: a way to get back a combination you liked",
@@ -611,11 +669,19 @@ TEXTS = {
         "machine playing, locked to its bar; recording (REC), it is written "
         "into it. Click again to stop",
     "Une variation du clip, ajoutée à la piste : rythme, notes, plus ou moins "
-    "de notes, réponse, octave, fin de phrase — pour une batterie, ornements, "
-    "remplissage, cassure, montée…":
+    "de notes, réponse, octave, fin de phrase, vivante — pour une batterie, "
+    "ornements, remplissage, cassure, montée, roulement FILL…":
         "A variation of the clip, added to the track: rhythm, notes, more or "
-        "fewer notes, answer, octave, end of phrase — for drums, ornaments, "
-        "fill, breakdown, build-up…",
+        "fewer notes, answer, octave, end of phrase, alive — for drums, "
+        "ornaments, fill, breakdown, build-up, FILL roll…",
+    "Ce que fait un clic gauche dans la grille : poser ou retirer des notes, "
+    "ou poser sur la note touchée une condition de la machine — une "
+    "probabilité, « 1 sur 2 », le remplissage du bouton FILL. Un second clic "
+    "la rend à « Toujours »  (rien n'est écrit sur la carte)":
+        "What a left click does in the grid: place or remove notes, or set "
+        "one of the machine's conditions on the note you touch — a "
+        "probability, “1 of 2”, the FILL button's fill. A second click "
+        "returns it to “Always”  (nothing is written to the card)",
     "Un clip neuf pour la piste, sur la progression du morceau":
         "A new clip for the track, on the song's progression",
     "Longueur du prochain clip, neuf ou vide":
@@ -678,9 +744,11 @@ TEXTS = {
         "sections become the project's, and the studio completes it "
         "without rewriting it. Nothing is changed",
     "Calcule le morceau entier sur l'ordinateur, sur son arrangement et "
-    "avec les sons de chaque clip, puis le joue. Rien n'est écrit":
+    "avec les sons de chaque clip, et le joue pendant que la suite se "
+    "calcule. Rien n'est écrit":
         "Computes the whole song on the computer, along its arrangement and "
-        "with each clip's sounds, then plays it. Nothing is written",
+        "with each clip's sounds, and plays it while the rest is being "
+        "computed. Nothing is written",
     "Calcule le clip choisi comme la machine le joue, sur toute sa boucle, "
     "puis le joue. Un double-clic sur un clip fait de même":
         "Computes the chosen clip the way the machine plays it, over its "
@@ -800,6 +868,14 @@ TEXTS = {
         "Writes the whole song to a .mid file, wherever you choose — off "
         "the card: one track per track, the drums on track 10, the section "
         "names as markers",
+    "Calcule le morceau entier, tel que l'ordinateur l'entend, et l'écrit en "
+    "WAV 24 bits à l'endroit que vous choisirez — le mélange, et à la "
+    "demande une piste par fichier, de même gain : glissées ensemble dans "
+    "un DAW, elles redonnent le mélange. Rien n'est écrit sur la carte":
+        "Computes the whole song, the way the computer hears it, and writes "
+        "it as a 24-bit WAV wherever you choose — the mix, and on request "
+        "one track per file, at the same gain: dropped together into a DAW, "
+        "they give back the mix. Nothing is written to the card",
     "Chaque page ne montre que l'essentiel : de quoi créer sans se perdre":
         "Each page shows only the essentials: enough to create without "
         "getting lost",

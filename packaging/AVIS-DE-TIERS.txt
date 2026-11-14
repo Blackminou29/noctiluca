@@ -20,6 +20,8 @@ licence se trouve dans le dossier « licences » qui accompagne ce fichier.
                           avec exception LLVM
   sounddevice ........... MIT — Matthias Geier
   PortAudio ............. MIT — Ross Bencina, Phil Burk
+  miniaudio ............. MIT — Irmen de Jong ; miniaudio : David Reid ;
+                          stb_vorbis : Sean Barrett
   cffi, pycparser ....... MIT, BSD 3 clauses
 
 Le moteur d'écoute de Noctiluca reprend des tables et des algorithmes du

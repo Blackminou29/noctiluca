@@ -1,8 +1,6 @@
 # Améliorations possibles — Noctiluca
 
-**Relevé du 7 novembre 2026**, sur `master` (`c28827d`, v1.0.0 publiée), complété le soir même, repris le 8 novembre, puis le 9 après les essais sur la machine, le 11 après le travail sur l'atelier, et le 13 après le hub MIDI.
-
-Les pistes faites ont été retirées. Leur détail (ce qui a été fait, mesuré et vérifié) est dans `REPRISE.md` : au §3 quinquagies pour le 7 novembre, au §3 unquinquagies pour le 8, au §3 duoquinquagies pour les essais du 9, au §3 triquinquagies pour l'atelier, au §3 quaterquinquagies pour le hub. Il ne reste ici que ce qui n'est pas fait, avec la raison. Tout ce qui reste attend la machine, ta décision, ou quelqu'un d'autre.
+**Relevé du 7 novembre 2026**, tenu à jour depuis. **Une ligne s'efface dès que la tâche est faite** ; le détail de ce qui a été fait, mesuré et vérifié est dans `REPRISE.md` (§3 quinquagies et suivants). Il ne reste ici que ce qui n'est pas fait.
 
 ---
 
@@ -10,109 +8,66 @@ Les pistes faites ont été retirées. Leur détail (ce qui a été fait, mesur�
 
 ### 1.1 Le nom de contrôleur fait de 0xFF
 
-Un contrôleur MIDI appris sur la machine est enregistré avec un nom de **32 octets 0xFF** (`<device name="ÿÿÿ…">`, dans `ATELIER AMBIENT` et `Truc 1`). L'application le tolère. Il ressemble pourtant à un défaut du firmware : un nom d'appareil jamais initialisé. Il serait à signaler sur le dépôt DelugeFirmware, après vérification dans le code de la 1.3.0. **Par toi** : c'est ton compte.
+Un contrôleur Novation branché sur le Deluge (vendorId 0x1235) est enregistré avec un nom de **32 octets 0xFF** (`ATELIER AMBIENT`, `Truc 1`). Vérifié dans le code de la 1.3.0 : le pilote USB remplit son tampon de 0xFF avant de demander le nom de l'appareil, puis le recopie sans vérifier qu'un descripteur est arrivé (`r_usb_hmidi_driver.c`). Le signalement, en anglais et prêt à poster, est dans `C:\Users\sebas\dfw\ISSUE-nom-0xFF.md`. **À poster par toi** sur le dépôt DelugeFirmware : c'est ton compte.
 
 ### 1.2 L'horloge d'un DAW sous Windows 11
 
-Mesuré le 9 novembre : le Deluge joue les notes de Live, mais ignore son horloge, son Start et son Stop. Le pilote USB MIDI 2 de Windows les envoie avec le code USB **0x5** au lieu de **0xF** ; le firmware prend tout code inférieur à 8 (hors 2 et 3) pour un morceau de SysEx et le jette (`MidiEngine::checkIncomingUsbMidi`). Microsoft a écrit le correctif (`Device.cpp` de microsoft/MIDI : « Some devices ignore it sent as CIN 0x5 »), mais il attend son drapeau de déploiement (`Feature_Servicing_MIDI2USBSystemRealTimeCin`). En attendant, c'est le Deluge qui mène ; le mode d'emploi de la page DAW et le manuel le disent.
-
-**Le correctif du firmware est fait et vérifié** (REPRISE §3 duoquinquagies) : un octet temps réel reçu sous le code 0x5 est pris comme temps réel, et ne coupe plus un SysEx en cours. Compilé sur la 1.3.0, installé sur ta machine : Live mène, le Deluge démarre, suit le tempo et s'arrête ; 3 122 pings SysEx sur 3 122 reviennent sous l'horloge.
-
-**Proposé au dépôt officiel le 9 novembre** : [#5276](https://github.com/SynthstromAudible/DelugeFirmware/pull/5276), étiqueté automatiquement « area: midi » et « type: fix ». Ses vérifications (compilation, mise en forme, tests) attendent qu'un mainteneur les autorise, comme pour tout premier contributeur. À suivre : leurs remarques, et l'étiquette « backport: release/1.3 » qu'eux seuls peuvent poser. Tant qu'il n'est pas dans une version officielle, une mise à jour officielle du firmware le retirera de ta machine.
+Le correctif du firmware (un octet temps réel reçu sous le code USB 0x5) est proposé au dépôt officiel : [#5276](https://github.com/SynthstromAudible/DelugeFirmware/pull/5276). À suivre : l'autorisation de ses vérifications par un mainteneur, leurs remarques, et l'étiquette « backport: release/1.3 » qu'eux seuls peuvent poser. Tant qu'il n'est pas dans une version officielle, une mise à jour officielle du firmware le retirera de ta machine ; en attendant, c'est le Deluge qui mène l'horloge.
 
 ---
 
 ## 2. L'écoute sur le PC : ce qui reste approché
 
-Le sidechain, le LFO 1 global et le glissé en fréquence sont portés du firmware depuis le 8 novembre ; le sidechain a été comparé à la machine le 9 (26,3 % contre 26,6 %). Restent approchés :
-
 * l'étirement des échantillons ;
-* le filtre SVF ;
-* le « tape warble » ;
-* le limiteur du compresseur maître ;
-* le balayage d'une table d'onde (on entend le cycle de la position).
+* le balayage d'une table d'onde (on entend le cycle de la position) ;
+* de l'arpégiateur, ce qui tire au sort ou découpe le pas (rythmes, longueur de séquence, « ratchets », probabilités, accords, étalements), le mode « pattern » et la vitesse libre (non synchronisée) : l'écoute joue le cœur — pas, ordres des notes et des octaves, répétitions, durée.
 
-L'arpégiateur n'a pas été vérifié sur la machine.
-
-**Pourquoi ils restent** : mesuré le 8 novembre sur ta carte, **aucun son ne s'en sert**. `timeStretchEnable` est à 0 dans les 1 205 sons à échantillon, aucun filtre n'est en SVF, aucun mod FX n'est un « warble », aucun oscillateur n'est une table d'onde, aucun arpégiateur n'est allumé. Les porter à l'aveugle n'apporterait rien d'audible chez toi, et rien ne permettrait de les vérifier.
+Mesuré le 8 novembre sur ta carte : **aucun son ne s'en sert** (`timeStretchEnable` à 0 dans les 1 205 sons à échantillon, aucune table d'onde, aucun arpégiateur allumé). Ce qui se porte se vérifie contre une transcription du code du firmware, comme les autres étages ; l'écoute sur la machine, elle, attend un son qui s'en serve.
 
 ---
 
 ## 3. Diffusion et maintenance
 
-### 3.1 Le premier passage des tests sur GitHub
+### 3.1 Les tests sur GitHub
 
-Le workflow lance la suite sur Windows, macOS et Linux. Premier passage le 9 novembre (commit de la 1.0.1), journal lu grâce à toi : quatre échecs, **corrigés** (à revoir au passage suivant sur GitHub, macOS compris) —
-
-* Linux : un nom de morceau pris ne se voyait pas s'il différait par la casse (« Essai.XML » contre « ESSAI.XML »), alors que la FAT du Deluge les confond : **vrai défaut**, aussi pour les instruments, découpes, tables d'onde et firmware — `SDCard.exists`, casse confondue ;
-* Linux : un dossier « pesait » 4 096 octets (`units.file_size` : 0 hors fichier) ;
-* Windows de GitHub : le synthé GS de Microsoft déclaré mais impossible à ouvrir (pas de service audio) — le test passe son tour **seulement là** ;
-* Windows de GitHub : l'étape des clips a dépassé le délai de garde de 2 minutes et arrêté la suite — 10 minutes sur GitHub.
-
-Second passage (`3a207e7`) : Windows et Linux verts ; macOS, un seul échec — le jeu calé sur l'horloge, test en temps réel, première note 51 ms en retard sur une machine partagée de GitHub (tolérance portée à 80 ms là seulement, 12 ms ailleurs). Troisième passage (`8609405`) : macOS et Linux verts ; Windows figé 10 minutes au même endroit que le premier « délai dépassé » — **un vrai interblocage entre un verrou de Qt et celui de Python, qui pouvait aussi figer l'application à la fin d'une analyse** ; corrigé (REPRISE §3 duoquinquagies). L'étape signale sans bloquer les paquets.
-
-Vu dans le journal macOS : « Segoe UI » n'existe pas sur Mac ; Qt cherche un remplaçant (100 à 170 ms au démarrage) et prend la police du système. Choisir la police selon le système l'éviterait — détail, pas un défaut visible.
+Au prochain passage sur GitHub (Windows, macOS, Linux) : vérifier que l'interblocage entre Qt et Python corrigé le 9 novembre ne revient pas, et que l'autovérification de chaque paquet dit « ok decodeur » — `miniaudio` (le MP3 et le FLAC à l'envoi) est une dépendance nouvelle du 14 novembre, jamais encore emballée. Journal lisible seulement par toi, connecté.
 
 ### 3.2 Le MIDI hors Windows
 
-Le MIDI ne passe que par `winmm` ([midiport.py](delugeapp/core/midiport.py)). Les paquets Mac et Linux ne parlent donc pas au Deluge branché : ni copie de travail par USB, ni écoute sur la machine. Deux voies :
-
-* `python-rtmidi` : une dépendance de plus, que le module refuse par principe, et dont le paquet pour Python 3.13 sous Linux n'est pas assuré. La construction des trois paquets pourrait casser ;
-* CoreMIDI et ALSA par `ctypes`, comme pour `winmm` : sans dépendance, mais plus long à écrire.
-
-Dans les deux cas, il faut un Mac ou un Linux avec le Deluge : les noms de ses ports sur ces systèmes ne se mesurent qu'avec la machine. Il en va de même pour le routage « MIDI To » des sets Live : l'identifiant de la sortie du Deluge (`Dev:Deluge{16D0-0CE2-0-out-0}`) n'a été mesuré que sous Windows.
+Le MIDI ne passe que par `winmm` ([midiport.py](delugeapp/core/midiport.py)). Les paquets Mac et Linux ne parlent donc pas au Deluge branché : ni copie de travail par USB, ni écoute sur la machine, ni hub. Deux voies : `python-rtmidi` (une dépendance, dont le paquet pour Python 3.13 sous Linux n'est pas assuré), ou CoreMIDI et ALSA par `ctypes`, comme pour `winmm`. Dans les deux cas, il faut un Mac ou un Linux avec le Deluge : les noms de ses ports ne se mesurent qu'avec la machine. De même pour le routage « MIDI To » des sets Live (`Dev:Deluge{16D0-0CE2-0-out-0}`, mesuré sous Windows seulement).
 
 ### 3.3 L'installateur et la signature
 
-La mise à jour par-dessus une version installée marche (essayée par toi avec la 1.0.3, le 9 novembre). Jamais essayés (REPRISE §3 octoquadragies et novoquadragies) :
-
-* la désinstallation ;
-* le refus quand l'application est ouverte ;
-* les paquets Mac et Linux chez un vrai utilisateur.
-
-Les essais demandent ta présence (fenêtre UAC). La signature évite l'avertissement SmartScreen, et la demande à la fondation SignPath vient de l'auteur. La marche à suivre est dans `packaging/LISEZMOI.md`.
+Jamais essayés : la désinstallation ; le refus quand l'application est ouverte ; les paquets Mac et Linux chez un vrai utilisateur. Les essais demandent ta présence (fenêtre UAC). La signature évite l'avertissement SmartScreen ; la demande à la fondation SignPath vient de l'auteur (`packaging/LISEZMOI.md`).
 
 ### 3.4 Plus loin
 
 * **Une troisième langue** : l'allemand ou le japonais, où la communauté du Deluge est importante. Le guide des traducteurs est écrit (`CONTRIBUTING.md`) ; il manque quelqu'un qui joue du Deluge dans cette langue.
-* **Découper les tests** : `test_core.py` dépasse 13 000 lignes et la suite complète prend près de 5 minutes. Écarté pour l'instant : le gain est faible, et l'on risque de casser les garde-fous de chaque module.
-* **Convertir le FLAC et le MP3 à l'envoi** : « Envoyer au Deluge » les écarte en conseillant de les exporter en WAV ([cardimport.py](delugeapp/core/cardimport.py)). Les convertir demanderait une dépendance (`soundfile`). À ne faire que si des utilisateurs le demandent : ton journal n'en montre aucun cas.
-* **Écouter un morceau entier plus vite** : un quart de minute de calcul pour un morceau de trois minutes, et le LFO 1 global en ajoute 40 % sur les morceaux de l'atelier. Jouer le début pendant que la suite se calcule demanderait un lecteur qui reçoit le son par morceaux.
-* **Une boucle de section qui suit plus vite** : dans l'atelier, un geste fait pendant qu'une boucle tourne s'entend après le temps d'un rendu — 0,1 à 0,4 s pour un clip seul, 1 s pour un clip avec le morceau, **1,9 s pour une section de huit mesures** (mesuré sur ton brouillon de deep house). Tout est recalculé à chaque fois. Garder le rendu de chaque piste et ne refaire que celle qui a changé ramènerait la section au délai d'un clip ; cela demande de découper `render_parts`, où les pistes partagent une réverbération, et de revérifier le mélange contre l'actuel. Pas fait : c'est toucher au moteur d'écoute vérifié contre la machine, pour un gain de confort.
-* **Choisir soi-même l'échantillon d'une rangée de kit** dans l'atelier : aujourd'hui [Autre son pour la rangée] en tire un, qu'on entend aussitôt, et Défaire le rend. Une liste des sons du même rôle demanderait un dialogue de plus. À faire si tu en sens le besoin.
+* **Découper les tests** : `test_core.py` dépasse 13 000 lignes.
 
 ---
 
 ## 4. Ce que les essais du 9 novembre ont laissé ouvert
 
-* **Le Deluge s'est figé** après l'envoi du pack (77 fichiers en 299 s, fini à 08:16:30) ; Windows a perdu l'appareil, il a fallu le redémarrer. Cause inconnue. À surveiller au prochain gros envoi : si cela se reproduit, envoyer par lots plus petits.
-* **Ensuite, plus aucune note ne passait** (ni de Live, ni de l'application), alors que les SysEx répondaient en 0,4 ms. Ni le rebranchement du câble ni la fermeture des logiciels n'y ont rien changé. Après le redémarrage du service MIDI de Windows (`Restart-Service midisrv`, en administrateur), tout est revenu, sans que l'on puisse prouver que c'est lui. Si cela se reproduit : redémarrer ce service, ou le PC, et le noter.
-* **La santé est passée de 92 à 90** (11 anomalies au lieu de 9) après les essais. Probablement les fichiers d'essai (l'export du sidechain dans `SAMPLES/RESAMPLE`, un dossier `SAMPLES/ESSAI COMPANION` resté vide dans la copie de travail) : à regarder.
+* **Le Deluge s'est figé** après l'envoi du pack (77 fichiers en 299 s) ; Windows a perdu l'appareil, il a fallu le redémarrer. Cause inconnue. À surveiller au prochain gros envoi : si cela se reproduit, envoyer par lots plus petits.
+* **Ensuite, plus aucune note ne passait**, alors que les SysEx répondaient. Après le redémarrage du service MIDI de Windows (`Restart-Service midisrv`, en administrateur), tout est revenu, sans preuve que ce soit lui. Si cela se reproduit : redémarrer ce service, ou le PC, et le noter.
 
 ---
 
-## 5. Ce qui attend encore la machine et ton accord
+## 5. Ce qui attend la machine et ton accord
 
-* **Un favori posé sur la machine**, puis retrouvé dans l'application (le sens application → machine est vérifié).
+* **Un favori posé sur la machine**, puis retrouvé dans l'application.
 * **Outils ▸ [Firmware du Deluge…]** le jour d'une nouvelle version stable : la machine s'installe-t-elle avec le `.bin` posé ?
 * **L'atelier** : charger « Calm Down 2 » complété.
-* **L'atelier, depuis le 11 novembre** (REPRISE §3 triquinquagies) : écrire un morceau dont le **volume d'une piste** a été réglé (un synthé baissé, le kit monté), et l'entendre sur la machine — le volume est écrit dans chaque clip de l'instrument (`soundParams`, `kitParams`), relu dans le fichier mais pas encore écouté sur le Deluge. De même un **clip doublé** (huit ou seize mesures) et un coup **doux** (vélocité 40) : mêmes champs que d'habitude, autres valeurs.
-* **Le hub MIDI, depuis le 13 novembre** (REPRISE §3 quaterquinquagies) — tout est éprouvé sur des ports simulés et le Deluge simulé, rien sur un vrai clavier : Windows n'en a jamais vu un sur ce PC.
+* **L'atelier** : écrire un morceau dont le **volume d'une piste** a été réglé, avec un **clip doublé** et un coup **doux** (vélocité 40), et l'entendre sur la machine.
+* **L'automation** : écrire depuis l'atelier un morceau avec [Montée du filtre] sur une section, et l'entendre s'ouvrir sur la machine (format lu dans le firmware et sur ta carte, jamais encore joué par elle depuis l'atelier).
+* **Les conditions des notes** : écrire depuis l'atelier un morceau dont la batterie porte une note à 50 %, une charley « 2 sur 2 » ([Varier] ▸ vivante) et un roulement FILL, puis l'écouter sur la machine. Pour le roulement : **régler d'abord SETTINGS ▸ COMMUNITY FEATURES ▸ Sync Scaling Action ▸ Fill mode** (sur ta carte, il est sur « Sync Scaling »).
+* **L'écoute de ce qui vient d'être porté** (14 novembre), comparée à la machine sur un même son : un **arpège** (accord tenu, modes « up » puis « upDown », deux octaves), un **filtre SVF** (passe-bas « notch » puis passe-haut « band »), un **tape warble**, et un morceau dont le **compresseur maître** a un seuil réglé. Ta carte n'en contient aucun : il faut les régler sur la machine, sauver, puis écouter le même morceau dans la page Morceaux.
+* **Le hub MIDI**, éprouvé sur des ports simulés seulement :
   * **Un clavier USB sur le Deluge** : page Hub MIDI ([[Ctrl+M]]), [Brancher sur le Deluge] ; jouer dans un clip de synthé, puis de kit (à partir de la note 36) ; la molette, la pédale ; débrancher le clavier en tenant une note — elle doit s'éteindre.
-  * **Le retard réel** par `winmm` : le moniteur (mode avancé) l'affiche ; ports simulés, 0,04 ms de médiane.
+  * **Le retard réel** par `winmm` : le moniteur (mode avancé) l'affiche.
   * **Une surface et ses boutons** : [Apprendre un bouton], le poser sur « Fréquence du filtre » ; ton Takeover est en Pickup, le bouton doit croiser la valeur avant de la prendre.
-  * **Deux surfaces sur deux pistes** : SHIFT + SELECT ▸ MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel Track 1 et 2, laisser la carte se synchroniser, puis « La piste 1 » et « La piste 2 » dans la fiche. La lecture de `<track_N>` dans `MIDIFollow.XML` vient du code du firmware : sur ta carte, aucune piste n'est encore réglée, la forme écrite par la machine reste à voir.
-  * **Avec Live** : un port en boucle (outils de Windows MIDI Services, ou loopMIDI) doit paraître dans la grille ; y brancher le clavier, le choisir comme entrée dans Live. Que Windows montre ces ports aux programmes `winmm` comme Noctiluca n'est pas vérifié.
-  * Mac et Linux : le hub y est muet, comme tout le MIDI (§3.2).
+  * **Deux surfaces sur deux pistes** : SHIFT + SELECT ▸ MIDI ▸ MIDI-Follow ▸ Channel ▸ Channel Track 1 et 2, laisser la carte se synchroniser, puis « La piste 1 » et « La piste 2 » dans la fiche.
+  * **Avec Live** : un port en boucle (outils de Windows MIDI Services, ou loopMIDI) doit paraître dans la grille ; y brancher le clavier, le choisir comme entrée dans Live.
 * **Relectures** : le manuel devant la machine (surtout la partie III), et l'anglais par quelqu'un qui joue du Deluge en anglais.
-* **Rappels** : *Display Param* est peut-être resté allumé (MIDI-Follow ▸ Display Param). Sur la carte restent, de nos essais : `SONGS/Cool1 DAW.XML` (la copie pour Live) et `SAMPLES/RESAMPLE/ESSAI SIDECHAIN/output_000.wav` (l'export du sidechain). Sur le PC, dans `Desktop\musique\Cool1 — pour le DAW` : les trois sets Live de l'essai. Sur le Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Output est sur ON, et le firmware est la 1.3.0 corrigée (« 1.3.0-dev-156500e-dirty ») ; l'officiel est rangé dans `_BACKUP/firmware-20261109-111704` de la copie de travail. `C:\Users\sebas\dfw` (≈ 2 Go : le firmware cloné et sa chaîne de compilation) sert encore si les relecteurs de #5276 demandent une retouche ; à supprimer ensuite.
-
----
-
-## Ordre proposé
-
-1. **Le hub MIDI avec un vrai clavier** (§5) : c'est ce qui fait de Noctiluca le centre de ton installation, et rien ne l'a encore éprouvé sur du matériel.
-2. **L'installateur** (3.3) : la désinstallation et le refus quand l'application est ouverte ; et les prochains passages sur GitHub (3.1), pour s'assurer que l'interblocage ne revient pas.
-3. **Les points ouverts par les essais** (§4) : la santé, puis la surveillance du prochain gros envoi.
-4. **L'horloge sous Windows** (1.2) : suivre la proposition #5276 jusqu'à son acceptation.
-5. **Le MIDI sur Mac et Linux** (3.2), quand un Mac ou un Linux sera à portée avec le Deluge.
+* **Rappels** : *Display Param* est peut-être resté allumé (MIDI-Follow ▸ Display Param). Sur la carte restent, de nos essais : `SONGS/Cool1 DAW.XML` et `SAMPLES/RESAMPLE/ESSAI SIDECHAIN/output_000.wav`. Sur le PC, dans `Desktop\musique\Cool1 — pour le DAW` : les trois sets Live de l'essai. Sur le Deluge, SETTINGS ▸ MIDI ▸ Clock ▸ Output est sur ON, et le firmware est la 1.3.0 corrigée ; l'officiel est rangé dans `_BACKUP/firmware-20261109-111704` de la copie de travail. `C:\Users\sebas\dfw` (≈ 2 Go) sert encore si les relecteurs de #5276 demandent une retouche ; à supprimer ensuite.

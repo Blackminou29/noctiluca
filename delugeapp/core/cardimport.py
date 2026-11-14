@@ -32,8 +32,10 @@ Les règles
 * **un fichier que la machine refuserait n'est pas copié tel quel** :
   converti quand c'est sans perte audible (en-tête étendu, A-law…), refusé
   sinon, avec sa raison ;
-* tout ce qui n'est pas du Deluge (MP3, documentation, fichiers de logiciels
-  de MAO) reste sur le PC, et la liste dit pourquoi.
+* un MP3, un FLAC ou un Ogg est **décodé en WAV** (:mod:`.compressed`),
+  quand le décodeur est installé ;
+* tout ce qui n'est pas du Deluge (M4A, documentation, fichiers de
+  logiciels de MAO) reste sur le PC, et la liste dit pourquoi.
 """
 
 from __future__ import annotations
@@ -48,7 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import dxml, wav
+from . import compressed, dxml, wav
 from ..i18n import N_, tr, untranslated
 from .delugefiles import MAX_PATH, cable_time
 from .sdcard import FORBIDDEN_CHARS, RESERVED_NAMES, SDCard, norm_rel
@@ -134,6 +136,8 @@ class Found:
     """Un fichier du Deluge trouvé dans ce qui a été déposé."""
 
     path: Path
+    #: Octets à poser sur la carte : pour un son compressé, ceux du WAV
+    #: qu'il deviendra.
     size: int
     kind: str
     #: Son chemin sur la carte, s'il vient d'un pack qui en a la forme.
@@ -258,6 +262,20 @@ def scan_sources(sources, progress: Callable[[str], None] | None = None,
             else:
                 scan.found.append(Found(chemin, taille, nature, pack_rel,
                                         loose_rel, refs=refs, pack=pack))
+        elif ext in compressed.EXTENSIONS and compressed.available():
+            info = compressed.probe(chemin)
+            if not info.ok:
+                # Un Opus dans un Ogg, un fichier abîmé : le détail, en
+                # anglais, est celui de la bibliothèque.
+                log.info("%s : %s", chemin, info.error)
+                scan.ignored.append((str(chemin), tr(
+                    "le décodeur ne le lit pas (Opus, ou fichier abîmé) : "
+                    "exportez-le en WAV depuis votre logiciel")))
+            else:
+                scan.found.append(Found(
+                    chemin, info.wav_size, "sample", pack_rel, loose_rel,
+                    tr("format %s") % compressed.format_name(chemin), True,
+                    pack=pack))
         elif ext in _OTHER_AUDIO:
             scan.ignored.append((str(chemin), tr("le Deluge ne lit que le WAV et "
                                     "l'AIFF : exportez-le en WAV depuis votre "
@@ -599,6 +617,9 @@ def plan_import(scan: ImportScan, card_root: Path, dest: str = "SAMPLES",
                        else tr("le Deluge le refuserait : %s")) % trouve.problem)
             if trouve.fixable and rel.lower().endswith(".aifc"):
                 rel = rel[:-5] + ".aif"
+            suffixe = Path(rel).suffix.lower()
+            if trouve.fixable and suffixe in compressed.EXTENSIONS:
+                rel = rel[:-len(suffixe)] + ".wav"
         if action != "refused":
             cle = norm_rel(rel)
             deja = existants.get(cle)
@@ -734,12 +755,20 @@ def _conversion(info: wav.AudioInfo, aiff: bool) -> dict:
 
 def _convert_new(source: Path, cible: Path) -> None:
     """Convertit vers un fichier neuf, en passant par un dossier temporaire
-    hors de la carte : rien d'inachevé n'y traîne jamais."""
-    info = wav.probe(source)
-    if not info.ok:
-        raise ValueError(tr("illisible : %s") % info.error)
-    aiff = cible.suffix.lower() in (".aif", ".aiff")
+    hors de la carte : rien d'inachevé n'y traîne jamais. Un son compressé
+    y est d'abord décodé en WAV, puis passe par les mêmes règles."""
     with tempfile.TemporaryDirectory(prefix="deluge-envoi-") as dossier:
+        if source.suffix.lower() in compressed.EXTENSIONS:
+            decode = Path(dossier) / "decode.wav"
+            try:
+                compressed.to_wav(source, decode)
+            except ValueError as exc:
+                raise ValueError(tr("décodage impossible : %s") % exc) from exc
+            source = decode
+        info = wav.probe(source)
+        if not info.ok:
+            raise ValueError(tr("illisible : %s") % info.error)
+        aiff = cible.suffix.lower() in (".aif", ".aiff")
         temporaire = Path(dossier) / ("conversion" + cible.suffix.lower())
         resultat = wav.convert(source, temporaire, **_conversion(info, aiff))
         if not resultat.ok:

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sys
 from string import Template
 
 from PyQt6.QtCore import QPointF, Qt
@@ -157,8 +158,20 @@ OLED_DIM = "#8FB6CC"
 OLED_HI = "#7FE3FF"
 OLED_EDGE = "#1B3E52"
 
-FONT_UI = "Segoe UI"
-FONT_MONO = "Consolas"
+def fonts_for(platform: str) -> tuple[str, str]:
+    """Les polices de l'interface pour un système : ``(texte, chasse fixe)``.
+
+    Une famille absente coûte cher : vu dans le journal macOS de GitHub, Qt
+    cherchait 100 à 170 ms un remplaçant à « Segoe UI » au démarrage, avant
+    de prendre la police du système. Chacun reçoit donc les siennes."""
+    if platform == "darwin":
+        return untranslated("Helvetica Neue"), "Menlo"
+    if platform.startswith("win"):
+        return "Segoe UI", "Consolas"
+    return "DejaVu Sans", "DejaVu Sans Mono"
+
+
+FONT_UI, FONT_MONO = fonts_for(sys.platform)
 FONT_UI_FALLBACK = "DejaVu Sans"
 FONT_MONO_FALLBACK = "Cascadia Mono"
 RADIUS = 9

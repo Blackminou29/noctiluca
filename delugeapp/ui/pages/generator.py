@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import random
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -45,12 +45,13 @@ from PyQt6.QtWidgets import (
 from ...core import genres as genres_mod
 from ...core.fixedpoint import to_display
 from ...i18n import N_, tr
-from ..theme import PAD
+from ..theme import GOLD, PAD, PAGE_COLORS
 from ..widgets.common import (Card, ElidedLabel, GrilleAdaptative,
                               SectionTitle, hint_in_list)
 from ..widgets.envelope import EnvelopeEditor
 from ..widgets.filtercurve import FilterCurve, SpectrumView
 from ..widgets.knob import Knob
+from ..rowsampledialog import choose_row_sample
 from ..widgets.waveform import WaveformView
 from .base import Page, avance, contexte, tool_button
 
@@ -69,6 +70,29 @@ MACROS: tuple[tuple[str, str, str], ...] = (
 
 #: Nombre de variations produites d'un coup.
 VARIATION_COUNT = 8
+
+#: Les retouches, par curseur : ``(curseur, vers le bas, vers le haut)`` —
+#: les clés de :data:`synthgen.NUDGES`. La complexité n'en a pas : une
+#: modulation de plus ou de moins n'est pas une direction qu'on entend.
+NUDGE_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("brightness", N_("Plus sombre"), N_("Plus brillant")),
+    ("dirt", N_("Plus propre"), N_("Plus sale")),
+    ("space", N_("Plus sec"), N_("Plus d'espace")),
+    ("width", N_("Plus étroit"), N_("Plus large")),
+    ("movement", N_("Plus statique"), N_("Plus de mouvement")),
+)
+
+#: Les aspects qu'on peut garder quand [Générer] tire un autre son, et leur
+#: nom court (:data:`synthgen.FACETS` en donne le détail).
+KEEPABLE: tuple[tuple[str, str], ...] = (
+    ("moteur", N_("Moteur")), ("timbre", N_("Timbre")),
+    ("filtre", N_("Filtre")), ("enveloppes", N_("Enveloppes")),
+    ("mouvement", N_("Mouvement")), ("largeur", N_("Largeur")),
+    ("espace", N_("Espace")), ("modulations", N_("Modulations")),
+)
+
+#: Délai entre le dernier geste sur un curseur et le son refait.
+SLIDER_DELAY_MS = 250
 
 
 class _ColonneDeReglages(QScrollArea):
@@ -111,7 +135,9 @@ class GeneratorPage(Page):
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, parent)
         self._preset = None
-        self._variations: list = []
+        #: Les variantes de la liste : ``(preset, réglages ou None, libellé,
+        #: retouchée)``.
+        self._variations: list[tuple] = []
         self._history: list = []
         self._audio = None
         self._macros: dict[str, QSlider] = {}
@@ -119,8 +145,21 @@ class GeneratorPage(Page):
         #: générateur qui l'a fait : l'atelier en tirera ses variantes.
         self._preset_options = None
         self._preset_edited = False
-        #: Les réglages et l'état de retouche de chaque son de l'historique.
+        #: Les réglages, l'état de retouche et le geste qui l'a fait (« Plus
+        #: sombre »…) de chaque son de l'historique.
         self._history_meta: dict[int, tuple] = {}
+        #: Les graines propres des aspects du son courant
+        #: (``GenOptions.facets``) : une variante adoptée les y laisse.
+        self._facets: dict[str, int] = {}
+        self._macro_values: dict[str, QLabel] = {}
+        self._nudge_buttons: list = []
+        self._keep_buttons: dict[str, QWidget] = {}
+        self._slider_timer = QTimer(self)
+        self._slider_timer.setSingleShot(True)
+        self._slider_timer.setInterval(SLIDER_DELAY_MS)
+        # Une minuterie se branche sur une méthode liée : par ``guard``, elle
+        # tirerait sur une page détruite.
+        self._slider_timer.timeout.connect(self._sliders_settled)
 
     # -- construction ------------------------------------------------------- #
 
@@ -139,7 +178,7 @@ class GeneratorPage(Page):
         # du kit ne disait pas ce qu'il allait générer.
         self._generate_button = contexte(
             tool_button(tr("Générer"), "wand", primary=True), "preset")
-        self._generate_button.clicked.connect(self.guard(self._generate))
+        self._generate_button.clicked.connect(self.guard(self._generate_new))
         actions.addWidget(self._generate_button)
 
         randomize = contexte(tool_button(
@@ -198,6 +237,11 @@ class GeneratorPage(Page):
                                        "kit")
         self._reroll_button.clicked.connect(self.guard(self._reroll_kit_row))
         actions.addWidget(self._reroll_button)
+        self._pick_sample_button = contexte(tool_button(
+            tr("Choisir l'échantillon…"), "list"), "kit")
+        self._pick_sample_button.clicked.connect(
+            self.guard(self._pick_kit_sample))
+        actions.addWidget(self._pick_sample_button)
         save = contexte(tool_button(tr("Enregistrer dans KITS"), "save"),
                         "kit")
         save.clicked.connect(self.guard(self._save_kit))
@@ -294,20 +338,16 @@ class GeneratorPage(Page):
         grid.addWidget(self._mode, 1, 1)
 
         grid.addWidget(avance(QLabel(tr("Graine"))), 2, 0)
-        seed_row = QHBoxLayout()
-        self._seed = QSpinBox()
+        # La graine du son courant : [Générer] en tire une autre à chaque
+        # clic ; en taper une, puis Entrée, refait exactement ce son-là.
+        self._seed = avance(QSpinBox())
         self._seed.setRange(0, 1 << 30)
         self._seed.setToolTip(
-            tr("Deux générations avec la même graine donnent exactement le "
-               "même son. Notez-la pour retrouver un preset."))
-        seed_row.addWidget(self._seed, 1)
-        dice = tool_button("", "dice", tr("Nouvelle graine au hasard"))
-        dice.setFixedWidth(34)
-        dice.clicked.connect(self.guard(self._roll_seed))
-        seed_row.addWidget(dice)
-        holder = avance(QWidget())
-        holder.setLayout(seed_row)
-        grid.addWidget(holder, 2, 1)
+            tr("La graine du son affiché. Deux générations avec la même "
+               "graine et les mêmes réglages donnent exactement le même "
+               "son : tapez-en une, puis Entrée, pour retrouver un preset."))
+        self._seed.editingFinished.connect(self.guard(self._seed_entered))
+        grid.addWidget(self._seed, 2, 1)
         # Les listes et la graine se resserrent : à 980 px, en mode avancé,
         # cette carte demandait 274 px à elle seule, et la colonne des genres
         # en perdait sa seconde rangée de pads.
@@ -319,7 +359,33 @@ class GeneratorPage(Page):
         role_card.body().addLayout(grid)
         column.addWidget(role_card)
 
-        # -- curseurs macro
+        # -- aspects gardés : [Générer] tire un autre son, sauf eux
+        keep_card = avance(Card(tr("Garder en générant")))
+        keep_hint = QLabel(tr("Les aspects allumés restent quand « Générer » "
+                              "tire un autre son."))
+        keep_hint.setProperty("role", "subtitle")
+        keep_hint.setWordWrap(True)
+        keep_card.body().addWidget(keep_hint)
+        keep_grid = QGridLayout()
+        keep_grid.setSpacing(4)
+        from ...core import synthgen
+
+        for index, (facet, label) in enumerate(KEEPABLE):
+            button = tool_button(
+                tr(label), "",
+                tr("Allumé, « Générer » tire un autre son sans toucher à "
+                   "ceci : %s") % tr(synthgen.FACETS[facet]),
+                color=PAGE_COLORS.get("Generator", GOLD))
+            button.setCheckable(True)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                 QSizePolicy.Policy.Fixed)
+            keep_grid.addWidget(button, index // 2, index % 2)
+            self._keep_buttons[facet] = button
+        keep_card.body().addLayout(keep_grid)
+        column.addWidget(keep_card)
+
+        # -- curseurs macro : ils orientent le prochain son, et retouchent
+        # le son affiché quand c'est le générateur qui l'a fait.
         macro_card = Card(tr("Réglages"))
         for key, label, tip in MACROS:
             row = QHBoxLayout()
@@ -337,9 +403,11 @@ class GeneratorPage(Page):
             value.setProperty("role", "subtitle")
             slider.valueChanged.connect(
                 lambda v, lbl=value: lbl.setText(str(v)))
+            slider.valueChanged.connect(self._slider_moved)
             row.addWidget(value)
             macro_card.body().addLayout(row)
             self._macros[key] = slider
+            self._macro_values[key] = value
         column.addWidget(macro_card)
         column.addStretch(1)
 
@@ -366,6 +434,7 @@ class GeneratorPage(Page):
         self._description.setWordWrap(True)
         head.body().addWidget(self._description)
         column.addWidget(head)
+        column.addWidget(self._build_nudges(scroll))
 
         sound = Card(tr("Le son"))
         self._wave = WaveformView()
@@ -421,6 +490,54 @@ class GeneratorPage(Page):
         scroll.setWidget(inner)
         return scroll
 
+    def _build_nudges(self, scroll) -> QWidget:
+        """Les pads « Retoucher » : le même son, un curseur poussé d'un
+        cinquième de sa course (:func:`synthgen.nudged`). Le reste du son ne
+        bouge pas ; un son retouché à la main garde ses retouches."""
+        card = Card(tr("Retoucher"))
+        self._nudge_hint = QLabel(tr(
+            "Le même son, poussé dans une direction ; le reste ne bouge "
+            "pas."))
+        self._nudge_hint.setProperty("role", "subtitle")
+        self._nudge_hint.setWordWrap(True)
+        card.body().addWidget(self._nudge_hint)
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        colonnes = []
+        for macro, down, up in NUDGE_PAIRS:
+            label = dict((k, n) for k, n, _t in MACROS)[macro]
+            host = QWidget()
+            box = QVBoxLayout(host)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(2)
+            title = QLabel(tr(label))
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title.setProperty("role", "subtitle")
+            box.addWidget(title)
+            pair = QHBoxLayout()
+            pair.setSpacing(4)
+            for key, icon in ((down, "minus"), (up, "plus")):
+                button = tool_button("", icon, tr(
+                    "%s — le même son, le reste ne bouge pas  (rien n'est "
+                    "écrit sur la carte)") % tr(key))
+                button.setAccessibleName(tr(key))
+                button.setProperty("nudge", key)
+                button.setMinimumWidth(30)
+                button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                     QSizePolicy.Policy.Fixed)
+                button.clicked.connect(
+                    self.guard(lambda _c=False, k=key: self._nudge(k)))
+                pair.addWidget(button)
+                self._nudge_buttons.append(button)
+            box.addLayout(pair)
+            colonnes.append(host)
+        card.body().addLayout(grid)
+        # Cinq curseurs côte à côte, trois quand la colonne rétrécit.
+        self._nudge_colonnes = GrilleAdaptative(
+            scroll.viewport(), grid, colonnes, 5, 3, 330)
+        self._set_nudges_enabled(False)
+        return card
+
     def _build_variations(self) -> QWidget:
         card = Card(tr("Variations"))
         body = card.body()
@@ -436,8 +553,11 @@ class GeneratorPage(Page):
 
         self._variation_list = QListWidget()
         # Les listes élident au lieu de pousser une barre de défilement
-        # horizontale sous un panneau de trois cents pixels.
+        # horizontale sous un panneau de trois cents pixels — l'élision ne
+        # joue qu'une fois la barre interdite (vu à 980 px).
         self._variation_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._variation_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         hint_in_list(self._variation_list,
                      "  " + tr("Aucune variante pour l'instant."))
         self._variation_list.currentRowChanged.connect(
@@ -454,6 +574,8 @@ class GeneratorPage(Page):
         body.addWidget(SectionTitle(tr("Historique")))
         self._history_list = QListWidget()
         self._history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._history_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         hint_in_list(self._history_list,
                      "  " + tr("Les sons générés s'empileront ici."))
         self._history_list.itemDoubleClicked.connect(
@@ -493,7 +615,8 @@ class GeneratorPage(Page):
             "l'échantillon joué jusqu'au bout et sensible à la vélocité ; "
             "volume et panoramique suivent les kits de la carte, toms en "
             "éventail. Une rangée ne vous plaît pas ? Choisissez-la, puis "
-            "« Autre son »."))
+            "« Autre son » — ou « Choisir l'échantillon… » pour l'écouter "
+            "parmi tous ceux de son rôle."))
         hint.setProperty("role", "subtitle")
         hint.setWordWrap(True)
         body.addWidget(hint)
@@ -522,14 +645,59 @@ class GeneratorPage(Page):
         grid.addWidget(self._kit_folder, 3, 1)
         body.addLayout(grid)
 
+        # Les rangées voulues : celles du genre d'abord, à retoucher. Un rôle
+        # que la bibliothèque n'a pas reste éteint.
+        roles_head = QHBoxLayout()
+        roles_head.addWidget(SectionTitle(tr("Rangées")), 1)
+        self._genre_roles_button = tool_button(
+            tr("Celles du genre"), "refresh",
+            tr("Rallume les rangées que le genre conseille, et elles "
+               "seules"))
+        self._genre_roles_button.clicked.connect(
+            self.guard(self._suggest_kit_roles))
+        roles_head.addWidget(self._genre_roles_button)
+        body.addLayout(roles_head)
+        from ...core import kitgen
+
+        roles_grid = QGridLayout()
+        roles_grid.setSpacing(4)
+        self._kit_roles: dict[str, QWidget] = {}
+        for index, role in enumerate(kitgen.ROLES):
+            pad = tool_button(tr(role), "", tr(
+                "Allumée, le kit aura une rangée « %s »") % tr(role),
+                color=PAGE_COLORS.get("Generator", GOLD))
+            pad.setCheckable(True)
+            pad.setSizePolicy(QSizePolicy.Policy.Expanding,
+                              QSizePolicy.Policy.Fixed)
+            roles_grid.addWidget(pad, index // 6, index % 6)
+            self._kit_roles[role] = pad
+        body.addLayout(roles_grid)
+        self._kit_roles_colonnes = GrilleAdaptative(
+            host, roles_grid, list(self._kit_roles.values()), 6, 4, 760)
+        self._kit_genre.currentIndexChanged.connect(
+            self.guard(lambda _i: self._suggest_kit_roles()))
+        self._suggest_kit_roles()
+
         self._kit_result = QListWidget()
+        self._kit_result.itemDoubleClicked.connect(
+            self.guard(lambda _i: self._pick_kit_sample()))
         body.addWidget(self._kit_result, 1)
         column.addWidget(card, 1)
         self._kit = None
         #: Échantillons déjà essayés, par rangée, pour « Autre son ».
         self._kit_tried: dict[int, set] = {}
         self._kit_rolls = 0
-        return host
+        # Défilant : à 980 × 700, les pads des rangées et la liste
+        # demandaient plus que la hauteur offerte, et les pads se
+        # chevauchaient (vu au rendu).
+        self._kit_result.setMinimumHeight(140)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(host)
+        return scroll
 
     # -- réglages ----------------------------------------------------------- #
 
@@ -551,6 +719,8 @@ class GeneratorPage(Page):
         self._seed.setValue(random.randrange(1 << 30))
 
     def _options(self):
+        """Les réglages affichés à gauche, avec les graines propres des
+        aspects du son courant."""
         from ...core.synthgen import GenOptions
 
         return GenOptions(
@@ -559,8 +729,49 @@ class GeneratorPage(Page):
             seed=int(self._seed.value()),
             mode=self._mode.currentData() or "",
             wavetables=self._wavetables(),
+            facets=dict(self._facets),
             **{key: slider.value() / 100.0
                for key, slider in self._macros.items()})
+
+    def _kept_facets(self) -> list[str]:
+        """Les aspects allumés dans « Garder en générant »."""
+        return [facet for facet, button in self._keep_buttons.items()
+                if button.isChecked()]
+
+    def _set_macro(self, key: str, value: float) -> None:
+        """Place un curseur sans que la page refasse le son."""
+        slider = self._macros.get(key)
+        if slider is None:
+            return
+        slider.blockSignals(True)
+        slider.setValue(int(round(float(value) * 100)))
+        slider.blockSignals(False)
+        label = self._macro_values.get(key)
+        if label is not None:
+            label.setText(str(slider.value()))
+
+    def _show_options(self, options) -> None:
+        """Les réglages de gauche reprennent ceux du son affiché : genre,
+        rôle, moteur, graine, curseurs et graines des aspects. C'est d'eux
+        que partent la retouche, les curseurs et le prochain « Générer »."""
+        if options is None:
+            return
+        if options.genre in self._genre_buttons:
+            self._pick_genre(options.genre)
+        index = self._role.findData(options.role)
+        if index >= 0:
+            self._role.setCurrentIndex(index)
+        index = self._mode.findData(options.mode or "")
+        if index >= 0:
+            self._mode.setCurrentIndex(index)
+        if options.seed is not None:
+            self._seed.blockSignals(True)
+            self._seed.setValue(int(options.seed))
+            self._seed.blockSignals(False)
+        for key in self._macros:
+            self._set_macro(key, getattr(options, key, 0.5))
+        self._facets = dict(options.facets or {})
+        self._slider_timer.stop()
 
     def _wavetables(self) -> list[str]:
         """Les tables d'onde de la carte (``SAMPLES/WAVETABLES``) : un genre
@@ -579,20 +790,124 @@ class GeneratorPage(Page):
     # -- génération --------------------------------------------------------- #
 
     def _generate(self) -> None:
+        """Le son que donnent les réglages affichés, graine comprise :
+        reproductible."""
         from ...core import synthgen
 
         options = self._options()
         self._show_preset(synthgen.generate(options), options=options)
         self.say(tr("Preset généré : %s") % self._preset.sound.name)
 
-    def _randomize(self) -> None:
+    def _generate_new(self) -> None:
+        """[Générer] : un autre son du genre et du rôle choisis, sous une
+        nouvelle graine — sauf pour les aspects allumés dans « Garder en
+        générant ».
+
+        Avant, le bouton reprenait la graine affichée : au niveau simple, où
+        la graine est cachée, recliquer redonnait le même son."""
         from ...core import synthgen
 
         seed = random.randrange(1 << 30)
-        self._seed.setValue(seed)
-        preset = synthgen.randomize(seed=seed)
-        self._show_preset(preset)
+        kept = self._kept_facets()
+        options = synthgen.reseeded(self._options(), seed, keep=kept)
+        self._show_preset(synthgen.generate(options), options=options)
+        if kept:
+            self.say(tr("Preset généré : %s — gardés : %s")
+                     % (self._preset.sound.name,
+                        ", ".join(tr(dict(KEEPABLE)[f]).lower()
+                                  for f in kept)))
+        else:
+            self.say(tr("Preset généré : %s") % self._preset.sound.name)
+
+    def _seed_entered(self) -> None:
+        """Une graine tapée, puis Entrée : le son de cette graine-là."""
+        options = self._preset_options
+        if options is not None and options.seed == int(self._seed.value()):
+            return
+        self._facets = {}
+        self._generate()
+
+    def _randomize(self) -> None:
+        from ...core import synthgen
+
+        options = synthgen.random_options(seed=random.randrange(1 << 30))
+        options.wavetables = self._wavetables()
+        preset = synthgen.generate(options)
+        self._show_preset(preset, options=options)
         self.say(tr("Son au hasard : %s") % preset.sound.name)
+
+    # -- retouches ---------------------------------------------------------- #
+
+    def _set_nudges_enabled(self, enabled: bool) -> None:
+        for button in self._nudge_buttons:
+            button.setEnabled(bool(enabled))
+        if enabled:
+            self._nudge_hint.setText(tr(
+                "Le même son, poussé dans une direction ; le reste ne bouge "
+                "pas."))
+        elif self._preset is None:
+            self._nudge_hint.setText(tr(
+                "Générez un son : ces pads le pousseront dans une direction."))
+        else:
+            self._nudge_hint.setText(tr(
+                "Ce son ne vient pas du générateur : il ne sait pas le "
+                "refaire. « Modifier le son… » le retouche à la main."))
+
+    def _restyle(self, after, note: str) -> None:
+        """Le son courant refait avec ``after`` ; ses retouches à la main
+        suivent."""
+        from ...core import synthgen
+
+        before = self._preset_options
+        edited = self._preset.sound if self._preset_edited else None
+        preset = synthgen.restyled(before, after, edited)
+        self._show_preset(preset, options=after, edited=self._preset_edited,
+                          note=note)
+
+    def _nudge(self, label: str) -> None:
+        """Un pad « Retoucher » : le curseur poussé, le reste du son
+        identique."""
+        if self._preset is None or self._preset_options is None:
+            self._set_nudges_enabled(False)
+            self.say(self._nudge_hint.text())
+            return
+        from ...core import synthgen
+
+        after = synthgen.nudged(self._preset_options, label)
+        if after is None:
+            self.say(tr("%s : le curseur est déjà en butée.") % tr(label))
+            return
+        self._restyle(after, tr(label))
+        self.say(tr("%s : %s") % (tr(label), self._preset.sound.name))
+
+    def _slider_moved(self, _value: int = 0) -> None:
+        self._slider_timer.start()
+
+    def _sliders_settled(self) -> None:
+        """Les curseurs retouchent le son affiché, quand c'est le
+        générateur qui l'a fait : même graine, même genre, seuls bougent
+        les réglages que règle le curseur."""
+        try:
+            if self._preset is None or self._preset_options is None:
+                return
+            before = self._preset_options
+            changed = [(key, label) for key, label, _t in MACROS
+                       if abs(self._macros[key].value() / 100.0
+                              - float(getattr(before, key, 0.5))) > 1e-6]
+            if not changed:
+                return
+            from dataclasses import replace
+
+            after = replace(before, facets=dict(before.facets or {}),
+                            use_samples=list(before.use_samples or []))
+            for key, _label in changed:
+                setattr(after, key, self._macros[key].value() / 100.0)
+            note = ", ".join("%s %d" % (tr(label), self._macros[key].value())
+                             for key, label in changed)
+            self._restyle(after, note)
+            self.say(tr("Retouché : %s") % note)
+        except Exception:  # noqa: BLE001 - une minuterie ne passe pas par guard
+            log.exception("retouche par les curseurs impossible")
 
     def _mutate(self) -> None:
         if self._preset is None:
@@ -615,19 +930,23 @@ class GeneratorPage(Page):
         self.say(tr("Point de départ : %s. « Muter » ou « Produire 8 "
                     "variantes » partent de lui.") % preset.sound.name)
 
-    def _show_preset(self, preset, options=None, edited: bool = False) -> None:
+    def _show_preset(self, preset, options=None, edited: bool = False,
+                     note: str = "") -> None:
         """Affiche un preset et le place dans l'historique.
 
         ``options`` : les réglages qui l'ont fait, quand c'est le générateur
-        — l'atelier en tirera des variantes dans le style ; ``edited`` : il
-        a été retouché à la main depuis.
+        — les réglages de gauche les reprennent, et retouches, curseurs et
+        variantes partent d'eux ; ``edited`` : il a été retouché à la main
+        depuis ; ``note`` : le geste qui l'a fait, montré dans l'historique.
         """
         from ...core import synthgen
 
         self._preset = preset
         self._preset_options = options
         self._preset_edited = bool(edited)
-        self._history_meta[id(preset)] = (options, bool(edited))
+        self._history_meta[id(preset)] = (options, bool(edited), note)
+        self._show_options(options)
+        self._set_nudges_enabled(options is not None)
         sound = preset.sound
         self._name.setText(sound.name)
         try:
@@ -653,7 +972,10 @@ class GeneratorPage(Page):
         del self._history[24:]
         self._history_list.clear()
         for item in self._history:
-            self._history_list.addItem(item.sound.name)
+            meta = self._history_meta.get(id(item), ())
+            geste = meta[2] if len(meta) > 2 else ""
+            self._history_list.addItem(
+                f"{item.sound.name}  · {geste}" if geste else item.sound.name)
         hint_in_list(self._history_list,
                      "  " + tr("Les sons générés s'empileront ici."))
 
@@ -755,18 +1077,39 @@ class GeneratorPage(Page):
     # -- variations --------------------------------------------------------- #
 
     def _make_variations(self) -> None:
+        """Huit variantes du son courant. Dans le style quand c'est le
+        générateur qui l'a fait : chacune tire à nouveau un seul aspect ou
+        pousse un seul curseur, sans quitter le genre ni le rôle — et garde
+        les retouches faites à la main. Un son venu d'ailleurs (la carte, un
+        fondu) n'a pas de réglages à refaire : ses variantes le mutent."""
         if self._preset is None:
             self.say(tr("Générez d'abord un son."))
             return
         from ...core import synthgen
 
-        self._variations = synthgen.variations(
-            self._preset, n=VARIATION_COUNT, amount=0.3,
-            seed=int(self._seed.value()))
+        seed = random.randrange(1 << 30)
+        options = self._preset_options
+        if options is None:
+            self._variations = [
+                (preset, None, "", False) for preset in synthgen.variations(
+                    self._preset, n=VARIATION_COUNT, amount=0.3, seed=seed)]
+        else:
+            if self._preset_edited:
+                found = synthgen.edited_variations(
+                    options, self._preset.sound, VARIATION_COUNT, seed=seed)
+            else:
+                found = synthgen.style_variations(options, VARIATION_COUNT,
+                                                  seed=seed)
+            self._variations = [(v.preset, v.options, tr(v.label),
+                                 v.retouched or self._preset_edited)
+                                for v in found]
         self._variation_list.clear()
-        for index, variant in enumerate(self._variations, 1):
-            item = QListWidgetItem(f"{index}.  {variant.sound.name}")
-            item.setToolTip(synthgen.describe(variant))
+        for index, (preset, _o, label, _r) in enumerate(self._variations, 1):
+            # Une variante dans le style garde le nom du son : c'est ce
+            # qu'elle change qui la distingue.
+            item = QListWidgetItem(f"{index}.  {label or preset.sound.name}")
+            item.setToolTip(f"{preset.sound.name} — "
+                            f"{synthgen.describe(preset)}")
             self._variation_list.addItem(item)
         hint_in_list(self._variation_list,
                      "  " + tr("Aucune variante pour l'instant."))
@@ -775,13 +1118,15 @@ class GeneratorPage(Page):
     def _preview_variation(self, row: int) -> None:
         if not 0 <= row < len(self._variations):
             return
-        self._render_async(self._variations[row])
+        self._render_async(self._variations[row][0])
 
     def _adopt_variation(self) -> None:
         row = self._variation_list.currentRow()
         if not 0 <= row < len(self._variations):
             return
-        self._show_preset(self._variations[row])
+        preset, options, label, retouched = self._variations[row]
+        self._show_preset(preset, options=options, edited=retouched,
+                          note=label)
         self.say(tr("Variante adoptée : %s") % self._preset.sound.name)
 
     def _morph(self) -> None:
@@ -809,8 +1154,9 @@ class GeneratorPage(Page):
         if not 0 <= row < len(self._history):
             return
         preset = self._history[row]
-        options, edited = self._history_meta.get(id(preset), (None, False))
-        self._show_preset(preset, options=options, edited=edited)
+        options, edited, note = self._history_meta.get(id(preset),
+                                                       (None, False, ""))
+        self._show_preset(preset, options=options, edited=edited, note=note)
 
     # -- enregistrement ----------------------------------------------------- #
 
@@ -932,17 +1278,58 @@ class GeneratorPage(Page):
 
     # -- kits --------------------------------------------------------------- #
 
+    def _suggest_kit_roles(self) -> None:
+        """Les rangées que le genre conseille, allumées, et elles seules."""
+        from ...core import kitgen
+
+        suggested = set(kitgen.suggest_slots(
+            self._kit_genre.currentData() or "techno"))
+        for role, pad in self._kit_roles.items():
+            pad.setChecked(role in suggested and pad.isEnabled())
+
+    def _mark_kit_roles(self) -> None:
+        """Éteint les rôles dont la bibliothèque n'a aucun échantillon — sans
+        index, tous restent possibles."""
+        from ...core import kitgen
+
+        available = None
+        if self.ctx.has_card:
+            try:
+                available = kitgen.available_roles(self.lib)
+            except Exception as exc:  # noqa: BLE001 - sans index, tout reste
+                log.debug("rôles de la bibliothèque illisibles : %s", exc)
+        for role, pad in self._kit_roles.items():
+            usable = not available or role in available
+            pad.setEnabled(usable)
+            if not usable:
+                pad.setChecked(False)
+            pad.setToolTip(
+                tr("Allumée, le kit aura une rangée « %s »") % tr(role)
+                if usable else
+                tr("La bibliothèque n'a aucun échantillon « %s »") % tr(role))
+
+    def _kit_slots(self) -> list[str]:
+        from ...core import kitgen
+
+        return kitgen.ordered_slots(
+            self._kit_genre.currentData() or "techno",
+            [r for r, pad in self._kit_roles.items() if pad.isChecked()])
+
     def _build_kit(self) -> None:
         card = self.card_or_warn()
         if card is None:
             return
         from ...core import kitgen
 
+        slots = self._kit_slots()
+        if not slots:
+            self.say(tr("Allumez au moins une rangée."))
+            return
         try:
             self._kit = kitgen.build_kit(
                 card, self.lib, self._kit_name.text().strip() or tr("MON KIT"),
                 genre=self._kit_genre.currentData() or "techno",
-                seed=int(self._kit_seed.value()),
+                seed=int(self._kit_seed.value()), slots=slots,
                 prefer_folder=self._kit_folder.text().strip())
         except Exception as exc:  # noqa: BLE001
             log.exception("construction du kit impossible")
@@ -1008,6 +1395,31 @@ class GeneratorPage(Page):
         if slot is None:
             self.say(tr("La bibliothèque n'a pas d'autre son pour cette "
                         "rangée."))
+            return
+        self._show_kit_rows()
+        self.say(tr("%s : %s (%s).")
+                 % (self._kit.rows[index].name,
+                    slot.rel.rsplit("/", 1)[-1], tr(slot.family)))
+
+    def _pick_kit_sample(self) -> None:
+        """L'échantillon de la rangée choisie, choisi à l'oreille parmi tous
+        ceux de son rôle (:class:`RowSampleDialog`)."""
+        if self._kit is None or not self._kit.rows:
+            self.say(tr("Construisez d'abord un kit."))
+            return
+        index = self._kit_result.currentRow()
+        if not 0 <= index < len(self._kit.rows):
+            self.say(tr("Choisissez d'abord une rangée dans la liste."))
+            return
+        from ...core import kitgen
+
+        chosen = choose_row_sample(
+            self, self._kit, index,
+            genre=self._kit_genre.currentData() or "techno")
+        if chosen is None:
+            return
+        slot = kitgen.use_sample(self._kit, index, chosen)
+        if slot is None:
             return
         self._show_kit_rows()
         self.say(tr("%s : %s (%s).")
@@ -1105,6 +1517,12 @@ class GeneratorPage(Page):
         if self._seed.value() == 0:
             self._roll_seed()
             self._kit_seed.setValue(random.randrange(1 << 20))
+        # Les rôles que la bibliothèque n'a pas s'éteignent ; au premier
+        # passage, ceux du genre s'allument.
+        first = not any(pad.isChecked() for pad in self._kit_roles.values())
+        self._mark_kit_roles()
+        if first:
+            self._suggest_kit_roles()
 
 
 def _index_written(page, paths) -> None:

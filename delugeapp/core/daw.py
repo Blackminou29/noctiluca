@@ -156,6 +156,9 @@ class DawSong:
     #: — celui de la page Morceaux : ``(piste, clip)``, ou ``None`` pour un
     #: clip sans piste reconnue.
     clip_order: list = field(default_factory=list)
+    #: Le compresseur maître et le volume du morceau
+    #: (:class:`.dsp.MasterCompressor`) ; ``None`` : ceux d'un morceau neuf.
+    compressor: object = None
 
     @property
     def length(self) -> float:
@@ -354,6 +357,31 @@ def _clip_notes(clip: Clip, per_beat: float,
     return notes
 
 
+def _master_compressor(root):
+    """Le compresseur maître du morceau et son volume : l'``audioCompressor``
+    du morceau lui-même (``songCompressor`` avant la 1.0), et le volume de
+    ses ``songParams``, qui en fixe la référence (``songVolume >> 3``)."""
+    from . import dsp, render
+
+    comp = dsp.MasterCompressor()
+    el = dxml.get_child(root, "audioCompressor")
+    if el is None:
+        el = dxml.get_child(root, "songCompressor")
+    if el is not None:
+        for champ, cle in (("attack", "attack"), ("release", "release"),
+                           ("threshold", "thresh"), ("ratio", "ratio"),
+                           ("hpf", "compHPF"), ("blend", "compBlend")):
+            valeur = dxml.get(el, cle)
+            if valeur is not None:
+                setattr(comp, champ, float(_int(valeur)))
+    params = dxml.get_child(root, "songParams")
+    brut = dxml.get(params, "volume") if params is not None else None
+    if brut is not None:
+        volume = int(134217728 * render._volume_factor(_int(brut))) >> 1
+        comp.final_volume = float(volume >> 3)
+    return comp
+
+
 def from_deluge(path: Path, name: str = "") -> DawSong:
     """Lit un morceau du Deluge (``SONGS/*.XML``) dans le modèle commun.
 
@@ -372,7 +400,8 @@ def from_deluge(path: Path, name: str = "") -> DawSong:
                   root=int(song.root_note or 0) % 12,
                   mode_notes=tuple(sorted({int(m) % 12
                                            for m in song.mode_notes}))
-                  or (0, 2, 4, 5, 7, 9, 11))
+                  or (0, 2, 4, 5, 7, 9, 11),
+                  compressor=_master_compressor(root))
 
     # Les pistes, dans l'ordre des instruments du morceau.
     holder = _first(root, ("instruments", "tracks"))
@@ -560,11 +589,12 @@ def sidechain_hits(song: DawSong) -> list[tuple[float, int]]:
 
 def _clip_audio(song: DawSong, track: DawTrack, clip: DawClip,
                 notes: list[tuple[float, DawNote]], sd, should_stop=None,
-                hits=None):
+                hits=None, raw: bool = False):
     """Le rendu de ``notes`` (début absolu, note) jouées par le son de
     ``clip``, posé au début du morceau ; ``None`` si rien ne sonne.
     ``hits`` : les coups de sidechain du morceau (:func:`sidechain_hits`) ;
-    sans eux, ceux du clip seul."""
+    sans eux, ceux du clip seul. ``raw`` : le mélange avant la sortie
+    (``render_parts(output=False)``), à additionner aux autres."""
     import numpy as np
 
     from . import render
@@ -596,7 +626,7 @@ def _clip_audio(song: DawSong, track: DawTrack, clip: DawClip,
         return None
     audio = render.render_parts(parts, sons, bpm=song.bpm, sr=44100, sd=sd,
                                 normalize=False, should_stop=should_stop,
-                                sidechain_hits=hits)
+                                sidechain_hits=hits, output=not raw)
     if audio is None:
         return None
     return np.asarray(audio, dtype=np.float64) * gain
@@ -618,15 +648,19 @@ def _mix_into(total, audio):
 
 
 def _track_audio(song: DawSong, track: DawTrack, sd, should_stop=None,
-                 hits=None):
-    """Toute une piste sur l'arrangement, chaque clip avec ses réglages."""
+                 hits=None, until: float | None = None, raw: bool = False):
+    """Toute une piste sur l'arrangement, chaque clip avec ses réglages.
+    ``until`` (en temps) : seules les notes qui commencent avant ;
+    ``raw`` : le mélange avant la sortie (:func:`_clip_audio`)."""
     total = None
     for ci, clip in enumerate(track.clips):
         if should_stop is not None and should_stop():
             break
-        total = _mix_into(total, _clip_audio(song, track, clip,
-                                             _expanded(track, ci), sd,
-                                             should_stop, hits))
+        notes = _expanded(track, ci)
+        if until is not None:
+            notes = [x for x in notes if x[0] < until]
+        total = _mix_into(total, _clip_audio(song, track, clip, notes, sd,
+                                             should_stop, hits, raw))
     return total
 
 
@@ -661,13 +695,27 @@ def render_clip(song: DawSong, track_index: int, clip_index: int, sd,
     return _contained(audio).astype(np.float32)
 
 
-def render_mix(song: DawSong, sd, progress=None, should_stop=None):
+def render_mix(song: DawSong, sd, progress=None, should_stop=None,
+               until: float | None = None, contained: bool = True):
     """Le morceau entier, toutes pistes mêlées, sur son arrangement : la
     somme des pistes de :func:`render_stems`, sans fichier écrit.
 
     :param progress: ``progress(fait, total, nom)``.
+    :param until: seules les notes qui commencent avant ce temps. Le calcul
+        de l'écoute est causal — voix, effets, réverbération, sortie —, si
+        bien que les ``until`` premiers temps de ce rendu sont **ceux du
+        rendu complet** : de quoi jouer le début pendant que la suite se
+        calcule (:func:`render_progressively`).
+    :param contained: ramener le tout sous 0 dBFS (la crête du morceau
+        entier) ; faux pour un début qu'on joue avant de connaître la fin.
+
+    Les pistes s'additionnent **avant** la sortie, qui ne passe qu'une fois
+    — le compresseur maître du morceau et sa saturation voient le mélange
+    entier, comme sur la machine, et non chaque clip à part.
     """
     import numpy as np
+
+    from . import dsp
 
     cibles = _sounding_tracks(song)
     coups = sidechain_hits(song)
@@ -678,10 +726,74 @@ def render_mix(song: DawSong, sd, progress=None, should_stop=None):
         if progress is not None:
             progress(numero, len(cibles), track.name)
         total = _mix_into(total, _track_audio(song, track, sd, should_stop,
-                                              coups))
+                                              coups, until, raw=True))
     if total is None or (should_stop is not None and should_stop()):
         return None
-    return _contained(total).astype(np.float32)
+    total = dsp.output_stage(total.T, song.compressor).T
+    return (_contained(total) if contained else total).astype(np.float32)
+
+
+def song_length(song: DawSong) -> float:
+    """La fin de la dernière note jouée, en temps."""
+    fin = 0.0
+    for track in _sounding_tracks(song):
+        for debut, note in _expanded(track):
+            fin = max(fin, debut + note.length)
+    return fin
+
+
+@dataclass
+class AudioChunk:
+    """Un morceau du son livré par :func:`render_progressively` : la suite
+    exacte du précédent. ``message`` est ce que la barre d'état en dit."""
+
+    audio: object
+    message: str
+
+
+def render_progressively(song: DawSong, sd, first: float = 32.0,
+                         progress=None, should_stop=None):
+    """Le morceau entier, rendu par fenêtres qui doublent — ``first``
+    temps, puis le double… — et **livré au fur et à mesure** :
+    ``progress(AudioChunk)`` donne chaque morceau dès qu'il est sûr,
+    la suite du précédent. Chaque fenêtre refait le calcul depuis le début
+    — dès qu'elle couvrirait les trois quarts du morceau, c'est le morceau
+    entier : le total coûte moins de deux rendus complets et demi, souvent
+    moins de deux —, mais le premier son arrive après le calcul de la
+    première seulement, et chaque fenêtre finit avant que la lecture
+    l'atteigne. Rend le reste — la queue du
+    morceau —, ou ``None`` si l'arrêt est demandé.
+
+    Le tout n'est pas ramené sous 0 dBFS (on joue le début sans connaître
+    la crête de la fin) : il est borné à ±1."""
+    import numpy as np
+
+    fin = song_length(song)
+    livre = 0
+    fenetre = max(4.0, float(first))
+    while True:
+        if should_stop is not None and should_stop():
+            return None
+        # Une fenêtre presque entière referait le morceau pour rien.
+        derniere = fenetre >= 0.75 * fin
+        audio = render_mix(song, sd, should_stop=should_stop,
+                           until=None if derniere else fenetre,
+                           contained=False)
+        if audio is None:
+            return None if (should_stop is not None and should_stop()) \
+                else np.zeros((0, 2), dtype=np.float32)
+        audio = np.clip(audio, -1.0, 1.0)
+        if derniere:
+            return audio[livre:]
+        # Le compresseur maître va par blocs de 128 : un bloc tronqué au
+        # bout d'un rendu partiel n'est pas celui du rendu complet.
+        sur = min(audio.shape[0] // 128 * 128,
+                  int(round(song.seconds(fenetre) * 44100)))
+        if sur > livre and progress is not None:
+            progress(AudioChunk(audio[livre:sur], tr(
+                "Lecture — la suite du morceau se calcule…")))
+        livre = max(livre, sur)
+        fenetre *= 2.0
 
 
 def render_stems(song: DawSong, sd, folder: Path, progress=None,

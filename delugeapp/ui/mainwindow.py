@@ -698,15 +698,13 @@ class MainWindow(QMainWindow):
         ``paths``, une fenêtre de choix s'ouvre — pour un dossier ou un
         pack entier, :meth:`send_folder_to_deluge`, ou un glisser-déposer.
         """
-        from .sendfiles import send_files
+        from .sendfiles import open_filter, send_files
 
         chemins = [p for p in (paths or []) if p]
         if not chemins:
             chemins, _filtre = QFileDialog.getOpenFileNames(
                 self, tr("Envoyer au Deluge"), self._start_folder(),
-                tr("Sons, presets, kits et morceaux du Deluge "
-                   "(*.wav *.WAV *.aif *.aiff *.xml *.XML);;"
-                   "Tous les fichiers (*)"))
+                open_filter())
         if chemins:
             send_files(self, chemins, dest or self._drop_destination())
 

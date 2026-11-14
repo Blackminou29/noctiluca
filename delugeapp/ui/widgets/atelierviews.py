@@ -218,6 +218,93 @@ def part_color(part: str) -> str:
     return PART_COLORS.get(str(part or ""), GOLD)
 
 
+def _condition_shade(shade: str, item) -> str:
+    """Une note incertaine s'éteint à proportion de sa probabilité ; une
+    note de remplissage reste en veilleuse : elle attend le bouton FILL."""
+    from ...core import conditions
+
+    cond = conditions.of(item)
+    if cond.fill == conditions.FILL:
+        return mix(PANEL_LO, shade, 0.45)
+    if cond.probability < 100:
+        return mix(PANEL_LO, shade, 0.35 + 0.65 * cond.probability / 100.0)
+    return shade
+
+
+def _condition_rect(rect: QRectF, item) -> QRectF:
+    """Une note incertaine se dessine plus petite, à proportion de sa
+    probabilité : à 8 px de côté, c'est ce qui se voit encore."""
+    from ...core import conditions
+
+    cond = conditions.of(item)
+    if cond.probability >= 100 or cond.fill:
+        return rect
+    scale = 0.55 + 0.45 * cond.probability / 100.0
+    dx = rect.width() * (1 - scale) / 2.0 if rect.width() <= rect.height() \
+        else 0.0
+    dy = rect.height() * (1 - scale) / 2.0
+    return rect.adjusted(dx, dy, -dx, -dy)
+
+
+def _paint_condition(p: QPainter, rect: QRectF, item, radius: float) -> None:
+    """La condition d'une note sur son pad : un liseré pointillé d'or pour
+    le remplissage, et son signe — « 50 », « 1/2 », « F » — dans un
+    cartouche ; un point blanc quand la case est trop petite pour écrire."""
+    from ...core import conditions
+
+    cond = conditions.of(item)
+    if cond.always:
+        return
+    p.save()
+    try:
+        _paint_condition_mark(p, rect, cond, radius)
+    finally:
+        p.restore()
+
+
+def _paint_condition_mark(p: QPainter, rect: QRectF, cond,
+                          radius: float) -> None:
+    from ...core import conditions
+
+    if cond.fill:
+        pen = QPen(QColor(GOLD), 1.3)
+        if cond.fill == conditions.FILL:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+    text = conditions.short_label(cond.probability, cond.iterance, cond.fill)
+    if rect.height() < 12 or not text:
+        size = max(2.5, min(rect.height(), rect.width()) * 0.22)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(PAD_WHITE))
+        p.drawEllipse(QPointF(rect.right() - size, rect.top() + size),
+                      size / 2.0, size / 2.0)
+        return
+    font = QFont(p.font())
+    font.setPointSizeF(max(6.0, min(8.5, rect.height() * 0.38)))
+    font.setBold(True)
+    metrics = QFontMetricsF(font)
+    width = metrics.horizontalAdvance(text) + 4
+    if width > rect.width():
+        size = max(2.5, min(rect.height(), rect.width()) * 0.22)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(PAD_WHITE))
+        p.drawEllipse(QPointF(rect.right() - size, rect.top() + size),
+                      size / 2.0, size / 2.0)
+        return
+    badge = QRectF(rect.right() - width - 1, rect.top() + 1, width,
+                   min(rect.height() - 2, metrics.height()))
+    p.setPen(Qt.PenStyle.NoPen)
+    fond = QColor(PANEL_LO)
+    fond.setAlphaF(0.78)
+    p.setBrush(fond)
+    p.drawRoundedRect(badge, 2.5, 2.5)
+    p.setFont(font)
+    p.setPen(QColor(PAD_WHITE))
+    p.drawText(badge, Qt.AlignmentFlag.AlignCenter, text)
+
+
 class ClipView(QWidget):
     """Un clip, lu comme sur la machine en vue clip.
 
@@ -269,6 +356,8 @@ class ClipView(QWidget):
         #: note la plus haute.
         self._note_range: tuple[int, int] | None = None
         self._clip_id: int | None = None
+        #: Les courbes d'automation du clip, ``{réglage: [(pas, valeur)]}``.
+        self._automation: dict = {}
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -293,6 +382,8 @@ class ClipView(QWidget):
         self._drag = None
         meme = clip is not None and id(clip) == self._clip_id
         self._clip_id = id(clip) if clip is not None else None
+        self._automation = dict(getattr(clip, "automation", None) or {}) \
+            if clip is not None else {}
         if clip is None:
             self._events, self._pattern, self._rows = [], None, []
             self._steps = 16
@@ -562,23 +653,27 @@ class ClipView(QWidget):
                        | Qt.AlignmentFlag.AlignVCenter, tr(name))
             hits = {}
             for step in self._pattern.tracks.get(name, []):
-                hits[int(round(float(step.pos)))] = int(step.velocity)
+                hits[int(round(float(step.pos)))] = step
             for col in range(self._steps):
                 rect = QRectF(grid.left() + col * cell_w
                               + (cell_w - pad) / 2.0,
                               top + (cell_h - pad) / 2.0, pad, pad)
-                velocity = hits.get(col)
-                if velocity is None:
+                hit = hits.get(col)
+                if hit is None:
                     p.setPen(Qt.PenStyle.NoPen)
                     p.setBrush(QColor(PAD_OFF if (col // 4) % 2 == 0
                                       else mix(PAD_OFF, PANEL_LO, 0.4)))
                     p.drawRoundedRect(rect, pad * 0.22, pad * 0.22)
                 else:
+                    velocity = int(hit.velocity)
                     shade = mix(PANEL_LO, self._color,
                                 0.45 + 0.55 * max(0, min(100, velocity))
                                 / 100.0)
-                    art.paint_pad(p, rect, shade, glow=0.0,
+                    shade = _condition_shade(shade, hit)
+                    shown = _condition_rect(rect, hit)
+                    art.paint_pad(p, shown, shade, glow=0.0,
                                   radius=pad * 0.22, sheen=pad >= 8)
+                    _paint_condition(p, rect, hit, pad * 0.22)
                 if self._hover == (name, col):
                     p.setPen(QPen(QColor(GOLD), 1.6))
                     p.setBrush(Qt.BrushStyle.NoBrush)
@@ -633,9 +728,12 @@ class ClipView(QWidget):
             shade = mix(PANEL_LO, self._color,
                         0.5 + 0.5 * max(0, min(100, int(event.velocity)))
                         / 100.0)
-            art.paint_pad(p, rect, shade, glow=0.0,
-                          radius=min(rect.height(), rect.width()) * 0.3,
-                          sheen=rect.height() >= 8)
+            shade = _condition_shade(shade, event)
+            radius = min(rect.height(), rect.width()) * 0.3
+            art.paint_pad(p, _condition_rect(rect, event), shade, glow=0.0,
+                          radius=radius, sheen=rect.height() >= 8)
+            _paint_condition(p, rect, event, radius)
+        self._paint_automation(p, grid, cell_w)
         if self._drag is not None:
             # La note qu'on tire : sa longueur se lit avant de la poser.
             note, start, end = self._drag
@@ -649,6 +747,62 @@ class ClipView(QWidget):
             p.setBrush(fond)
             p.drawRoundedRect(rect, 3, 3)
         self._paint_playhead(p, grid, cell_w)
+
+    def automation_points(self, param: str) -> list[QPointF]:
+        """Les sommets de la courbe tracée pour ``param`` (vide sans
+        courbe) : de quoi vérifier ce qu'on voit."""
+        return list(getattr(self, "_traces", {}).get(param, []))
+
+    def _paint_automation(self, p: QPainter, grid: QRectF,
+                          cell_w: float) -> None:
+        """Les courbes d'automation du clip, en marches blanches par-dessus
+        les notes, la valeur basse en bas de la grille ; leur nom en tête."""
+        from ...core import automation
+
+        self._traces = {}
+        if not self._automation:
+            return
+        p.save()
+        try:
+            font = QFont(p.font())
+            font.setPointSizeF(max(7.0, font.pointSizeF() * 0.85))
+            font.setBold(True)
+            p.setFont(font)
+            for rank, (param, nodes) in enumerate(sorted(
+                    self._automation.items())):
+                if not nodes:
+                    continue
+                lo, hi = automation.bounds(param)
+
+                def y_of(value):
+                    t = (float(value) - lo) / float(max(1, hi - lo))
+                    return grid.bottom() - 3 - t * (grid.height() - 6)
+
+                points = []
+                ordered = sorted(nodes)
+                for index, (step, value) in enumerate(ordered):
+                    end = ordered[index + 1][0] if index + 1 < len(ordered) \
+                        else self._steps
+                    x0 = grid.left() + float(step) * cell_w
+                    x1 = grid.left() + float(min(end, self._steps)) * cell_w
+                    if points:
+                        points.append(QPointF(x0, points[-1].y()))
+                    points += [QPointF(x0, y_of(value)),
+                               QPointF(x1, y_of(value))]
+                self._traces[param] = points
+                ink = QColor(PAD_WHITE)
+                ink.setAlphaF(0.85)
+                pen = QPen(ink, 1.8)
+                p.setPen(pen)
+                for a, b in zip(points, points[1:]):
+                    p.drawLine(a, b)
+                p.drawText(QRectF(grid.left() + 4, grid.top() + 2
+                                  + rank * 14, grid.width() - 8, 14),
+                           Qt.AlignmentFlag.AlignLeft
+                           | Qt.AlignmentFlag.AlignVCenter,
+                           automation.describe(param, nodes))
+        finally:
+            p.restore()
 
     def _paint_playhead(self, p: QPainter, grid: QRectF,
                         cell_w: float) -> None:
