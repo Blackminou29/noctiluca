@@ -10841,8 +10841,8 @@ class TestLAutomationDansLAtelier(AtelierCase):
 
         def faux_rendu(parts, sons, batterie, tempo, kit=None, sd=None,
                        mesures=0, automation=None, cache=None,
-                       should_stop=None):
-            recu.append((automation, cache))
+                       song_key=None, should_stop=None):
+            recu.append((automation, cache, song_key))
             return None
 
         with mock.patch.object(page_atelier, "_render_mix", faux_rendu):
@@ -10853,6 +10853,12 @@ class TestLAutomationDansLAtelier(AtelierCase):
         # Le cache de la page suit les écoutes : un geste ne refait que ce
         # qu'il change.
         self.assertIs(recu[-1][1], page._render_cache)
+        # La gamme du projet, pour les accords de l'arpégiateur.
+        from delugeapp.core import songwriter
+
+        style = page._project.style
+        self.assertEqual(recu[-1][2],
+                         songwriter.key_of(style.root, style.scale))
 
     def test_la_montee_du_filtre(self):
         page = self._page()

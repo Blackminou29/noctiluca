@@ -16,21 +16,13 @@ Le correctif du firmware (un octet temps réel reçu sous le code USB 0x5) est p
 
 ---
 
-## 2. L'écoute sur le PC : ce qui reste approché
+## 2. L'écoute sur le PC
 
-* l'étirement des échantillons ;
-* le balayage d'une table d'onde (on entend le cycle de la position) ;
-* de l'arpégiateur, ce qui tire au sort ou découpe le pas (rythmes, longueur de séquence, « ratchets », probabilités, accords, étalements), le mode « pattern » et la vitesse libre (non synchronisée) : l'écoute joue le cœur — pas, ordres des notes et des octaves, répétitions, durée.
-
-Mesuré le 8 novembre sur ta carte : **aucun son ne s'en sert** (`timeStretchEnable` à 0 dans les 1 205 sons à échantillon, aucune table d'onde, aucun arpégiateur allumé). Ce qui se porte se vérifie contre une transcription du code du firmware, comme les autres étages ; l'écoute sur la machine, elle, attend un son qui s'en serve.
+Plus rien d'approché à porter : le dernier, l'arpégiateur communautaire, l'est depuis le 21 novembre (REPRISE §3 novoquinquagies). Ce qui reste à entendre sur la machine est au §5.
 
 ---
 
 ## 3. Diffusion et maintenance
-
-### 3.1 Les tests sur GitHub
-
-Au prochain passage sur GitHub (Windows, macOS, Linux) : vérifier que l'interblocage entre Qt et Python corrigé le 9 novembre ne revient pas, et que les tests du hub MIDI passent hors de Windows (corrigés le 14 novembre, vérifiés ici seulement en simulant une machine sans MIDI). Journal lisible seulement par toi, connecté.
 
 ### 3.2 Le MIDI hors Windows
 
@@ -43,7 +35,6 @@ Jamais essayés : la désinstallation ; le refus quand l'application est ouverte
 ### 3.4 Plus loin
 
 * **Une troisième langue** : l'allemand ou le japonais, où la communauté du Deluge est importante. Le guide des traducteurs est écrit (`CONTRIBUTING.md`) ; il manque quelqu'un qui joue du Deluge dans cette langue.
-* **Découper les tests** : `test_core.py` dépasse 13 000 lignes.
 
 ---
 
@@ -63,6 +54,8 @@ Jamais essayés : la désinstallation ; le refus quand l'application est ouverte
 * **L'automation** : écrire depuis l'atelier un morceau avec [Montée du filtre] sur une section, et l'entendre s'ouvrir sur la machine (format lu dans le firmware et sur ta carte, jamais encore joué par elle depuis l'atelier).
 * **Les conditions des notes** : écrire depuis l'atelier un morceau dont la batterie porte une note à 50 %, une charley « 2 sur 2 » ([Varier] ▸ vivante) et un roulement FILL, puis l'écouter sur la machine. Pour le roulement : **régler d'abord SETTINGS ▸ COMMUNITY FEATURES ▸ Sync Scaling Action ▸ Fill mode** (sur ta carte, il est sur « Sync Scaling »).
 * **L'écoute de ce qui vient d'être porté** (14 novembre), comparée à la machine sur un même son : un **arpège** (accord tenu, modes « up » puis « upDown », deux octaves), un **filtre SVF** (passe-bas « notch » puis passe-haut « band »), un **tape warble**, et un morceau dont le **compresseur maître** a un seuil réglé. Ta carte n'en contient aucun : il faut les régler sur la machine, sauver, puis écouter le même morceau dans la page Morceaux.
+* **L'arpégiateur communautaire** (21 novembre), de même : un synthé arpégé avec un **rythme** (« 0-0 »), une **longueur de séquence** de 3, des **ratchets** (probabilité et nombre au maximum, en croches), une **probabilité d'accord** et la **polyphonie d'accord** au maximum dans un morceau en la mineur, puis le **verrou** (Randomizer Lock) allumé ; et un arpège **sans synchronisation**. Avec le verrou, l'application rejoue les tirages que la machine a écrits : les deux doivent coïncider note pour note. Sans lui, seuls le caractère et la densité se comparent.
+* **L'étirement** (20 novembre), de même : un synthé à échantillon (une boucle de batterie, puis une note tenue), menu de l'oscillateur ▸ **Pitch/Speed** ▸ **Independent** ; jouer la note une octave au-dessus (la boucle doit garder sa durée), puis **Speed** à +12 sur la note d'origine (deux fois plus vite, même hauteur). Sauver, et écouter le même son dans l'application. Les sauts de l'étireur se tirent au hasard sur la machine : d'une écoute à l'autre, les deux ne coïncideront pas à l'échantillon près.
 * **Le hub MIDI**, éprouvé sur des ports simulés seulement :
   * **Un clavier USB sur le Deluge** : page Hub MIDI ([[Ctrl+M]]), [Brancher sur le Deluge] ; jouer dans un clip de synthé, puis de kit (à partir de la note 36) ; la molette, la pédale ; débrancher le clavier en tenant une note — elle doit s'éteindre.
   * **Le retard réel** par `winmm` : le moniteur (mode avancé) l'affiche.

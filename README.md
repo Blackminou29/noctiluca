@@ -692,9 +692,13 @@ Deux garanties utiles :
   réverbération, vérifiés contre des transcriptions entières de son code.
   Le sidechain — la grosse caisse qui fait pomper les autres sons et la
   réverbération —, le LFO 1 global et le glissé en fréquence y sont depuis
-  le 8 novembre 2026. Restent approchés l'étirement des échantillons, le
-  SVF, le « tape warble » et le balayage d'une table d'onde, dont aucun son
-  de la carte ne se sert.
+  le 8 novembre 2026 ; le SVF, le « tape warble », l'arpégiateur et le
+  compresseur maître depuis le 14, le balayage d'une table d'onde et
+  l'étirement des échantillons depuis le 20, les fonctions communautaires
+  de l'arpégiateur (rythmes, « ratchets », accords, probabilités, verrou)
+  depuis le 21 — portés d'après le code, aucun son de la carte ne s'en
+  servant. Sans verrou, ses tirages au sort ne tombent pas comme sur la
+  machine.
 
 La même mécanique produit des kits de batterie complets, en choisissant parmi
 les échantillons de la carte ceux qui correspondent aux rôles du genre.
@@ -735,6 +739,7 @@ delugeapp/
     render.py audio_out.py            moteur d'écoute et sortie audio
     paramlaws.py         les lois des réglages du Deluge, lues dans son firmware
     dsp.py               son traitement du signal, porté (tables : data/)
+    timestretch.py       son étireur d'échantillons : deux têtes fondues
     soundedit.py         les réglages d'un son, modifiables à la main
     multisample.py       un instrument multi-échantillon depuis un dossier
     wavetable.py         des tables d'onde pour le moteur WAVETABLE
@@ -759,8 +764,14 @@ delugeapp/
     widgets/             façade (écran, pads de navigation), potentiomètre,
                          enveloppe, forme d'onde, pads, piano, baie du hub…
 tests/
-  test_core.py           798 tests du cœur
-  test_ui.py             560 tests d'interface, dont ceux du manuel
+  test_core.py           le format du Deluge, la bibliothèque, les audits
+  test_generateurs.py    genres, sons, kits, théorie, rythmes, accompagnement
+  test_ecoute.py         l'écoute sur le PC : les étages du firmware transcrits
+  test_outils_audio.py   correction, découpage, ressemblance, packs
+  test_deluge.py         MIDI, lien USB, carte synchronisée, envoi au Deluge
+  test_daw.py            le pont vers les DAW
+  aides_coeur.py         aides partagées par ces six fichiers
+  test_ui.py             tests d'interface, dont ceux du manuel
   test_i18n.py           30 tests de la traduction
   test_atelier.py        107 tests de l'atelier, des variations, de l'insertion et de l'éditeur de son
   test_hub.py            66 tests du hub MIDI

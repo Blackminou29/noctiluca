@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 14 novembre 2026 (ce qui restait du relevé, §3 sexquinquagies)
+**Dernière mise à jour :** 21 novembre 2026 (les tests découpés, la table d'onde parcourue, §3 septquinquagies ; l'étirement des échantillons, §3 octoquinquagies ; l'arpégiateur communautaire, §3 novoquinquagies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -334,6 +334,151 @@ signaux, et `Page.run()` pour les travaux longs.
 > `TypeError` au moment de sauvegarder — il était présent dans trois pages à la fois.
 
 ---
+
+## 3 novoquinquagies. L'arpégiateur communautaire (21 novembre 2026)
+
+**La demande** : « continuer » — la dernière ligne du §2 d'`ameliorations.md` (ce que
+l'arpégiateur tire au sort ou découpe, le mode « pattern », la vitesse libre), effacée ; le §2
+dit maintenant qu'il ne reste rien d'approché à porter.
+
+* **`core/arpeggio.py` réécrit** d'après `arpeggiator.cpp` (1.3) : `executeArpStep`,
+  `switchNoteOn`, `switchAnyNoteOff`, `render`, `noteOn`/`noteOff`, `calculateRandomizerAmounts`,
+  `maybeSetupNewRatchet`, `rearrangePatterntArpNotes`, et la table des 51 rythmes
+  (`arpeggiator_rhythms.h`, vérifiée motif par motif contre les noms du menu). Le rythme
+  (un pas muet n'avance pas la suite), la longueur de séquence, les probabilités de note, de
+  basse, d'échange, de glissé, d'inversion, d'accord et de « ratchet », les étalements de
+  vélocité, de durée et d'octave, le ternaire et le pointé (`syncType` 10 et 19), la vitesse
+  libre (niveau 0 : `gatePos` par passes de 128, la première note aussitôt). Synchronisé, le
+  temps est continu : les fins de note et les « ratchets » tombent à l'instant exact où
+  `gatePos` passe leur seuil.
+* **Trouvé en lisant** : l'ordre du mode « pattern » et les tirages verrouillés sont **écrits
+  dans le fichier** (`notePattern`, `locked…Array`, `lastLocked…`) — sur la carte, 5 fichiers
+  les portent. Avec le verrou, l'écoute rejoue donc les tirages de la machine, à l'identique,
+  tant que le réglage n'a pas bougé depuis (sinon le firmware les retire, et nous aussi). Le
+  « triangle » de `sampleTriangleDistribution` est une somme de deux bruits **saturée** : un
+  quart des tirages bipolaires tombe à ±127, et `getRandomWeighted2BitsAmount` sort 0, 1, 2, 3
+  à 18, 32, 32, 18 % — mon premier test supposait « surtout 0 », c'est lui qui avait tort. En
+  64ᵉ (niveau 7, la double-croche des morceaux à la résolution par défaut), un « ratchet » a
+  **au moins** quatre notes : le commentaire dit « au plus », le code écrit `std::max` ; gardé.
+* **Les réglages** : `noteProbability`… `spreadOctave` rejoignent `PARAM_KEYS` (dix noms, à la
+  suite de `rhythm`) ; `Arpeggiator` lit et réécrit `syncType`, `randomizerLock`, les tableaux
+  verrouillés (fautes du firmware comprises : `lockeReverseProbArray`…) et `notePattern`, les
+  `lastLocked…` sur 32 bits signés comme la machine. La gamme du morceau, pour les accords,
+  arrive par `render_parts(song_key=…)` — de la page Morceaux (`DawSong`) et de l'atelier
+  (`songwriter.key_of`) ; do majeur sans elle, comme un morceau neuf. Une note « inversée »
+  (`ArpNote.reversed`) se rend avec ses oscillateurs à échantillon retournés
+  (`render._reversed`), sous sa propre clé de voix.
+* **`dsp.Cong`** : le générateur `CONG` et ses usages (`getRandom255`, `getNoise`, `random`,
+  `sampleTriangleDistribution`), partagé avec l'étireur (qui avait le sien).
+* **Approché, dit dans la docstring et le manuel** : les tirages sans verrou (graine fixe), le
+  verrou relancé au début du morceau seulement (la machine le relance à chaque tour de clip),
+  un câble vers `arpRate`, la vélocité MPE, l'arpège d'un kit entier. Quand plus rien n'est
+  tenu, tout ce qui sonne s'éteint (sur la machine, une note de basse ou d'échange restée
+  allumée ne serait plus jamais éteinte : `render` ne tourne plus sans note tenue).
+* **Tests** : `TestLArpegiateurCommunautaire` (quinze) et un test de la page Morceaux dans
+  `test_daw` ; les cinq tests d'avant passent tels quels, sauf celui qui affirmait « sans
+  synchronisation, rien », remplacé. Le faux `_render_mix` de `TestLAutomationDansLAtelier`
+  recopiait l'ancienne signature : la première passe complète l'a vu (la gamme tombait dans
+  `should_stop`) ; il reçoit maintenant `song_key` et vérifie que c'est celle du projet.
+  **Vingt mutations** (rythme, pas muet, séquence, basse, accord, limites et temps des
+  « ratchets », glissé, inversion, étalement, verrou, pattern, ternaire, vitesse libre, première
+  note libre, gamme du morceau, de la page Morceaux et de l'atelier, triangle saturé, note
+  jouée par défaut) : toutes font échouer leurs tests. **En chemin** :
+  dix-neuf anciennes mutations du script visaient des classes que le découpage du 20 novembre
+  a déplacées — elles « échouaient » sur une erreur d'import, ce qui ne prouvait rien. Toutes
+  redirigées et relancées : elles échouent pour de bon.
+* **À entendre sur la machine** : ajouté au §5 d'`ameliorations.md` (rythme, séquence,
+  « ratchets », accord en la mineur, verrou, vitesse libre).
+* **1 686 tests au vert** sous les trois façons de lancer : pytest (265 s), `unittest discover
+  -s tests` (262 s, celle de GitHub) et `-t .` (347 s).
+
+## 3 octoquinquagies. L'étirement des échantillons (20 novembre 2026)
+
+**La demande** : « attaque l'étirement. » — la ligne « l'étirement des échantillons » du §2
+d'`ameliorations.md`, effacée.
+
+* **`core/timestretch.py`**, d'après `TimeStretcher` (1.3, `time_stretcher.cpp`,
+  `voice_sample.cpp`, `sample.cpp`) : le rapport de vitesse (`getSpeedParamForNoSyncing` :
+  `timeStretchEnable` compense la transposition, `timeStretchAmount` passe par
+  `timeStretchAdjustTable`) ; la percussivité (`fillPercCache` : pente lissée sur deux pôles,
+  variation au milieu de chaque pixel de 128, `getTanH<23>`, un octet), calculée au fil de la
+  lecture comme sur la machine (six échantillons par échantillon rendu) ; deux têtes fondues
+  en ligne droite ; à chaque fin de saut, bornes lues dans les tables `minHopSize…` selon
+  `quickLog`, borne basse tirée au hasard, longueur visant la zone la plus percussive, tête
+  neuve calée par trois moyennes glissantes, entre deux échantillons quand la note est
+  transposée. Chaque tête lit par `dsp.read_positions`, tiré de `read_sample` (le sinc du
+  firmware). Branché dans `render._sample_wave` : sans réglage, ou au rapport neutre, la
+  lecture d'avant au bit près. Les deux boucles (percussivité, calage) sont compilées par
+  numba et préparées au démarrage (`dsp.prepare`).
+* **Trouvé dans le code du firmware, et gardé** : `crossfadeProportional << 8` déborde 32 bits
+  quand la vitesse baisse de plus de dix demi-tons — le fondu prend alors la moitié du saut ;
+  un fondu de longueur nulle donne un incrément nul (l'ancienne tête sonne seule jusqu'au
+  saut suivant) ; la percussivité, sur 64 bits, est rangée dans 32 puis dans un octet ; une
+  division par zéro (pente lissée retombée à 0 au milieu d'un pixel) suit la libgcc (2⁶⁴ − 1).
+  Ce dernier point est une lecture de la bibliothèque, pas une mesure.
+* **Mesuré** (sinus de 220 Hz, une seconde) : une octave plus haut avec « Independent », la
+  durée reste d'une seconde, à 440 Hz ; Speed ±12, deux fois plus court ou plus long, à 220 Hz.
+  Ralenti de cinq demi-tons : rien à plus de 10 Hz de la fondamentale au-dessus de −63 dB, et
+  le niveau tient entre 0,499 et 0,501 — **sans le calage**, −15,7 dB et des creux à 0,15. Au
+  ralenti fort (une octave), quelques sauts trop courts pour que la recherche (bornée par la
+  longueur du saut, comme sur la machine) trouve la phase : des bandes latérales à ±7 Hz. Sur
+  des coups de batterie, accélérer garde chaque attaque à sa place ; ralentir en rejoue
+  parfois une 60 ms plus tard. C'est la conception de l'étireur, pas un écart de portage.
+* **Coût** : 2,5 s d'un son à huit voix d'unisson en 1,6 s, contre 0,6 s sans étirement — au
+  ralenti, les fondus sont longs (40 % du saut à −7 demi-tons) et l'ancienne tête sonne 87 %
+  du temps. Laissé tel quel : aucun son de la carte ne s'en sert.
+* **Hors du portage** : les clips audio calés sur le tempo, le saut dans la pré-marge d'une
+  boucle, les sauts différés quand trois voix en font un dans la même passe, le cache de
+  percussivité gardé d'une note à l'autre. Les tirages viennent de `CONG` à graine fixe (une
+  par voix d'unisson) : la machine tire les siens au hasard.
+* **Tests** (`TestEtirement`, onze, et l'égalité compilé/Python dans `TestEcouteCompilee`) :
+  la percussivité contre une recopie en entiers de `fillPercCache`, ligne à ligne ; les tables
+  et leurs débordements ; la recherche percussive et la longueur de saut qui en sort ; les
+  fondus linéaires ; le calage ; l'arrêt au bout du fichier et la boucle ; à l'écoute, la
+  durée et la hauteur. **Neuf mutations** (les deux réglages lus, calage, recherche, fondu,
+  arrêt, milieu du pixel, débordement, tirage) : toutes font échouer leurs tests — deux ne le
+  faisaient pas d'abord (la recherche et le fondu), d'où deux tests de plus.
+* **À entendre sur la machine** : ajouté au §5 d'`ameliorations.md`, avec le chemin des menus
+  (Pitch/Speed ▸ Independent, Speed).
+* **1 670 tests au vert** sous les trois façons de lancer : pytest (367 s), `unittest discover
+  -s tests` (356 s, celle de GitHub) et `-t .` (353 s).
+
+## 3 septquinquagies. Les tests découpés, la table d'onde parcourue (20 novembre 2026)
+
+**La demande** : « continuer » — la suite du relevé, une ligne effacée à chaque tâche faite.
+
+* **GitHub tout vert** pour `4bd587a` (trois paquets, trois suites) : le §3.1
+  d'`ameliorations.md` (l'interblocage Qt/Python, les tests du hub hors de Windows) est fait,
+  retiré.
+* **`test_core.py` découpé** (13 973 lignes, 99 classes) en six fichiers par thème —
+  `test_core` (format, bibliothèque, audits), `test_generateurs`, `test_ecoute`,
+  `test_outils_audio`, `test_deluge`, `test_daw` — plus `aides_coeur.py`, les trois aides
+  qu'ils se partagent (`_son`, `_SortieFactice`, `lire_midi`, le lecteur MIDI indépendant de
+  `TestMidiFile`, dont `TestAccompagnement` se servait). Fait par un script qui lit l'arbre
+  syntaxique (`decouper_test_core.py` du scratchpad) : chaque classe garde son texte à l'octet
+  près, commentaires de section compris ; chaque fichier reçoit son bac à sable et les seuls
+  imports dont il se sert. **819 méthodes de test avant, 819 après** ; la suite entière
+  retrouve ses 1 656 tests sous pytest, sous `unittest discover -s tests` (le mode de GitHub,
+  modules chargés à plat) et sous `-t .` (en paquet).
+* **La table d'onde parcourue** (`dsp.wavetable_oscillator`, `render._wavetable_table`), d'après
+  `WaveTable::render` (1.3) : la position est la valeur finale de `oscXWavetablePosition`,
+  câbles compris, plus 2³⁰, en rampe dans chaque bloc (`waveIndexIncrement`) ; elle tombe entre
+  deux cycles voisins, lus au même point de leur période et fondus au prorata
+  (`crossCycleStrength2`) ; la phase avance avant la lecture. Une bande par octave : les
+  harmoniques sous Nyquist pour la note, arrondies à une puissance de deux, par FFT. Approché :
+  la lecture dans un cycle (Hermite cubique, là où le firmware applique un noyau sinc à ses
+  bandes). **Trouvé en chemin** : `oscAWavetablePosition` manquait aux destinations de câbles
+  que l'écoute entend — un balayage par l'enveloppe 2 était ignoré, en silence.
+* **Mesuré** (table de huit cycles, du sinus à la dent de scie, ancien code exporté de HEAD
+  contre le nouveau) : mêmes niveaux à position fixe (0,0683 et 0,0687 au milieu, 0,0957 et
+  0,0956 au début) ; au milieu, un peu plus sombre (595 Hz de centre contre 645 : la position
+  tombe entre deux cycles, fondus, au lieu du plus proche) ; balayé par l'enveloppe 2, le centre
+  descend de 551 à 250 Hz, là où l'ancien restait à 131 Hz.
+* Cinq mutations (fondu, ordre phase-lecture, bande, câble, position modulée) : toutes font
+  échouer leurs tests.
+* **1 659 tests au vert** sous les trois façons de lancer : pytest (350 s), `unittest discover
+  -s tests` (345 s, celle de GitHub) et `-t .` (343 s). Une passe lancée pendant que je
+  modifiais le code avait vu un échec : relancée sur l'état final, verte.
 
 ## 3 sexquinquagies. Ce qui restait du relevé (14 novembre 2026)
 

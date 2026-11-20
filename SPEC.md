@@ -448,7 +448,13 @@ delugeapp/
       settings.py
     mainwindow.py
 tests/
-  test_core.py
+  test_core.py                  # format, bibliothèque, audits (§7)
+  test_generateurs.py           # découpés de test_core.py le 20 novembre 2026
+  test_ecoute.py
+  test_outils_audio.py
+  test_deluge.py
+  test_daw.py
+  aides_coeur.py                # aides partagées par ces six fichiers
   test_ui.py
   test_i18n.py                  # le catalogue suit le code (§5.26)
   test_atelier.py               # variations, atelier, compléter, jouer calé (§4.36-4.38)
@@ -2915,7 +2921,7 @@ du delay passe de −0,08 à 0,00 dB ; et les clips s'exportent l'un après l'au
 que la queue d'un delay sans fin (retour 25 : la machine ne l'abandonne jamais) déborde
 sur le clip suivant.
 
-Restent approchés : l'étirement temporel des échantillons, le glissé (en demi-tons, le
+Restent approchés : le glissé (en demi-tons, le
 firmware travaille en fréquence), le LFO 1 global (il repart à chaque note), la
 compression par son et le sidechain, la taille des fenêtres de rendu (128,
 le plafond du jeu direct), et l'abandon d'un delay après quelques répétitions sans son
@@ -2924,7 +2930,8 @@ effets de modulation et la réduction d'échantillonnage gardent leur phase d'un
 l'autre sur la machine ; le moteur les fait partir de zéro. **Non vérifiés sur la
 machine** : la réverbération Freeverb (morceaux sans modèle), et ce que le 14 novembre 2026
 a porté d'après le code seul (§4.54) — le SVF, le « tape warble », l'arpégiateur, le
-compresseur maître au travail.
+compresseur maître au travail —, la table d'onde parcourue (§4.55), l'étirement (§4.56) et
+l'arpégiateur communautaire (§4.57).
 
 **Tables.** `delugeapp/data/deluge_tables.npz` (85 tables, 271 Ko) : les formes d'onde
 « analog », les dents de scie et carrés à bande limitée, sinus et triangles anti-repliement,
@@ -3555,6 +3562,83 @@ entière dans les tests :
 
 **Polices** : `theme.fonts_for(platform)` — Helvetica Neue et Menlo sous macOS, Segoe UI et
 Consolas sous Windows, DejaVu ailleurs.
+
+### 4.55 La table d'onde parcourue (20 novembre 2026)
+
+`dsp.wavetable_oscillator(table, inc_blocks, n, phase0, amp, position) -> (onde, phase)` —
+`table` en `(cycles, taille)`, `position` de 0 à 1 par échantillon. D'après
+`WaveTable::render` (1.3) : la phase avance avant la lecture ; la position tombe entre deux
+cycles voisins (`firstCycleNumber`), fondus au prorata (`crossCycleStrength2`) ; lecture dans
+le cycle par Hermite cubique (le firmware : noyau sinc sur ses bandes). `render._wavetable_table
+(sd, osc, max_increment)` : la table dans la bande de la note (harmoniques sous Nyquist,
+puissance de deux, par FFT), seize en cache. Dans la voix, la position est
+`(_final_hybrid("oscXWavetablePosition") + 1) / 2` — la valeur finale plus 2³⁰ —, en rampe
+d'un bloc au suivant ; `oscAWavetablePosition` et `oscBWavetablePosition` sont des
+destinations de câbles entendues (`KNOWN_DESTINATIONS`).
+
+### 4.56 L'étirement des échantillons : `delugeapp/core/timestretch.py` (20 novembre 2026)
+
+```python
+UNITY = 1 << 24
+def speed_ratio(phase_increment, neutral, independent, amount) -> int   # getSpeedParamForNoSyncing
+def percussiveness(samples) -> np.ndarray      # fillPercCache : un octet (0..63) par pixel de 128
+def stretch(samples, inc_blocks, ratio_blocks, n, sample_rate, loop=False,
+            seed=dsp.CONG_SEED) -> np.ndarray   # (n,) d'un mono, (canaux, n) d'un stéréo
+def warm_up() -> None                           # appelé par dsp.prepare()
+```
+D'après `TimeStretcher` (1.3) : `timeStretchEnable` rend la vitesse indépendante de la
+hauteur (rapport `(neutre << 24) / incrément`), `timeStretchAmount` la multiplie par
+`timeStretchAdjustTable[amount + 48]`. Rapport neutre partout : la lecture ordinaire,
+inchangée. Sinon deux têtes : premier saut à 200 ± 32 échantillons ; à chaque fin de saut
+(`hopEnd`), bornes tirées des tables `minHopSize…` selon `quickLog(rapport)` (fines sur ±1
+octave, grossières au-delà), borne basse écartée au hasard (`CONG`), longueur choisie vers la
+zone la plus percussive du cache calculé (six échantillons de cache par échantillon rendu,
+jusqu'à `incrément >> 10` devant), fondu linéaire d'une part du saut plus 4 × une longueur
+fixe (le `<< 8` de la part déborde 32 bits au ralenti : le fondu prend alors la moitié du
+saut), tête neuve calée par trois moyennes glissantes de 35 échantillons (fois la hauteur),
+recherchées des deux côtés jusqu'à quatre changements de signe, et entre deux échantillons
+quand la note est transposée. Chaque tête lit par `dsp.read_positions` (le sinc de
+`read_sample`). La voix s'arrête quand la position étirée atteint la fin du fichier ou que
+les deux têtes l'ont dépassée ; en boucle, elle repart du début (`reInit`). Dans la voix
+(`render._sample_wave`), les réglages viennent de l'oscillateur ; chaque voix d'unisson a sa
+graine (`CONG_SEED + u`). Hors du portage : clips audio calés sur le tempo, saut dans la
+pré-marge d'une boucle, sauts différés entre voix, cache de percussivité gardé d'une note à
+l'autre. Coût mesuré : 1,6 s pour 2,5 s d'un son à huit voix d'unisson (0,6 s sans
+étirement) — au ralenti, l'ancienne tête sonne 87 % du temps.
+
+### 4.57 L'arpégiateur communautaire : `delugeapp/core/arpeggio.py` (21 novembre 2026)
+
+```python
+RHYTHMS: tuple[str, ...]                 # arpRhythmPatterns, sous les noms du menu (51)
+@dataclass class ArpNote(NoteEvent): reversed: bool = False
+@dataclass class ArpSettings:            # + sync_type, free_rate, rhythm, sequence_length (crans 0–50),
+    ...                                  #   chord_polyphony, ratchet_amount, *_probability, spread_*
+                                         #   (uint32), randomizer_lock, locked, last_locked, note_pattern
+def settings_of(sound) -> ArpSettings | None   # niveau 0 : vitesse libre, plus None
+def expand(events, s, seed=0, key=None, bpm=120.0) -> list[ArpNote]
+def apply(parts, sounds, bpm=120.0, key=None) -> dict
+```
+D'après `ArpeggiatorBase` (1.3) : `executeArpStep` (rythme — un pas muet n'avance pas la
+suite —, longueur de séquence, tirages, « ratchets »), `switchNoteOn` (basse : la note la plus
+grave sans octave ; échange : une note et une octave au hasard ; accord : `min(3,
+getRandomWeighted2BitsAmount(chordPolyphony))` notes de plus aux degrés +4, +2/+4, +2/+4/+6 de
+la gamme, si la note y est et que la gamme a cinq notes ; étalement d'octave), `switchAnyNoteOff`
+(glissé : la note tient jusqu'à la fin de la suivante), `render` (durée étalée, divisée par
+`2^multiplicateur` en « ratchet » ; sans synchronisation, `gatePos += (arpRate >> 13) × 128`
+par passe), `calculateRandomizerAmounts` (verrou : seize tirages, régénérés quand
+`lastLocked…` diffère du réglage). Les tirages passent par `dsp.Cong` (`random(65535)`,
+`getRandom255`, `sampleTriangleDistribution` saturé) : 0, 1, 2 et 3 sortent à 18, 32, 32 et
+18 %. Limites des « ratchets » prises telles quelles : 2 en niveau 8, **au moins** 4 en niveau
+7 (`std::max`), aucun en 9 pair. Modèle : `PARAM_KEYS` gagne `noteProbability`,
+`bassProbability`, `swapProbability`, `glideProbability`, `reverseProbability`,
+`chordProbability`, `chordPolyphony`, `spreadVelocity`, `spreadGate`, `spreadOctave` ;
+`Arpeggiator` lit et réécrit `syncType`, `randomizerLock`, `lastLocked…`, `locked…Array` (et
+les fautes `lockeReverseProbArray`…) et `notePattern`. `render.render_parts(song_key=…)` :
+la gamme, passée par la page Morceaux (`DawSong.root`, `mode_notes`) et l'atelier
+(`songwriter.key_of`) ; do majeur sans elle. Une `ArpNote` inversée se rend avec
+`render._reversed(sound)`. Approchés : tirages sans verrou, verrou relancé au début du morceau
+seulement (la machine : à chaque tour de clip), câble vers `arpRate`, vélocité MPE, arpège de
+kit.
 
 ---
 
@@ -5004,7 +5088,14 @@ flux, les sons compressés à l'envoi. Tests, en cliquant : `TestLAutomationDans
 
 ---
 
-## 7. Tests (`tests/test_core.py`)
+## 7. Tests (`tests/test_core.py` et ses voisins)
+
+Le noyau se teste en six fichiers par thème, découpés de `test_core.py` (14 000 lignes) le
+20 novembre 2026 : `test_core` (format, bibliothèque, audits), `test_generateurs`,
+`test_ecoute`, `test_outils_audio`, `test_deluge`, `test_daw`. Les trois aides qu'ils se
+partagent (`_son`, `_SortieFactice`, `lire_midi`) sont dans `tests/aides_coeur.py`, chargé par
+son nom, le dossier `tests/` ajouté au chemin : `unittest discover -s tests` charge les
+modules à plat, pytest en paquet.
 
 **Bac à sable obligatoire.** Les quatre premières lignes de chaque module de
 test posent `NOCTILUCA_CONFIG` sur un dossier temporaire, **avant tout

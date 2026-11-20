@@ -626,7 +626,8 @@ def _clip_audio(song: DawSong, track: DawTrack, clip: DawClip,
         return None
     audio = render.render_parts(parts, sons, bpm=song.bpm, sr=44100, sd=sd,
                                 normalize=False, should_stop=should_stop,
-                                sidechain_hits=hits, output=not raw)
+                                sidechain_hits=hits, output=not raw,
+                                song_key=(song.root, song.mode_notes))
     if audio is None:
         return None
     return np.asarray(audio, dtype=np.float64) * gain

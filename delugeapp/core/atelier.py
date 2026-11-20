@@ -1604,10 +1604,11 @@ def render_tracks(project: Project, sd=None, sr: int = 44100,
     stéréo au niveau de la machine, **sans** normalisation — leur somme est
     le mélange. Une piste qui ne joue dans aucune section n'y est pas.
     ``None`` si l'arrêt est demandé."""
-    from . import render
+    from . import render, songwriter
 
     tempo = project.style.tempo()
     sounds = listen_sounds(project)
+    song_key = songwriter.key_of(project.style.root, project.style.scale)
     playing = [t for t in project.tracks
                if any(s.cells.get(t.uid) for s in project.sections)]
     out = []
@@ -1628,7 +1629,8 @@ def render_tracks(project: Project, sd=None, sr: int = 44100,
             audio = render.render_parts(
                 parts, {k: v for k, v in sounds.items() if k in parts},
                 bpm=tempo, sr=sr, sd=sd, should_stop=should_stop,
-                normalize=False, automation=parts.automation)
+                normalize=False, automation=parts.automation,
+                song_key=song_key)
         if audio is not None and audio.size:
             out.append((track, audio))
     return out

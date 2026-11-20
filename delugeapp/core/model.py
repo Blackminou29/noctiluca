@@ -122,6 +122,18 @@ PARAM_KEYS: tuple[str, ...] = (
     "ratchetAmount",
     "sequenceLength",
     "rhythm",
+    # Le reste de l'arpégiateur communautaire (``updateParamsFromUnpatched
+    # ParamSet``), lu par l'écoute (:mod:`.arpeggio`).
+    "noteProbability",
+    "bassProbability",
+    "swapProbability",
+    "glideProbability",
+    "reverseProbability",
+    "chordProbability",
+    "chordPolyphony",
+    "spreadVelocity",
+    "spreadGate",
+    "spreadOctave",
     "tempo",
 )
 
@@ -732,6 +744,17 @@ class Arpeggiator:
     mpe_velocity: str = ""
     #: Chaque pas joué autant de fois (``stepRepeat``, communautaire).
     step_repeat: int = 1
+    #: ``syncType`` : 0 binaire, 10 ternaire, 19 pointé (``sync.h``).
+    sync_type: int = 0
+    #: Les tirages au sort gardés d'un tour à l'autre (``randomizerLock``),
+    #: leurs seize valeurs par réglage (``lockedNoteProbArray``…) et la
+    #: valeur du réglage quand ils ont été tirés (``lastLockedNoteProb``…).
+    randomizer_lock: bool = False
+    locked: dict = field(default_factory=dict)
+    last_locked: dict = field(default_factory=dict)
+    #: L'ordre du mode « pattern » (``notePattern``), tiré par la machine et
+    #: écrit dans le fichier ; ``None`` s'il n'y est pas.
+    note_pattern: tuple | None = None
 
     @property
     def is_on(self) -> bool:
@@ -743,6 +766,16 @@ class Arpeggiator:
     @classmethod
     def from_xml(cls, el: ET.Element, dialect: str = "attr") -> "Arpeggiator":
         """Lit un <arpeggiator>."""
+        locked, last = {}, {}
+        for key, (array_tags, last_tag) in ARP_LOCKED_TAGS.items():
+            for tag in array_tags:
+                values = _hex_bytes(_txt(el, tag, ""))
+                if values is not None:
+                    locked[key] = values
+                    break
+            raw = _txt(el, last_tag, "")
+            if raw:
+                last[key] = parse_int(raw, 0) & 0xFFFFFFFF
         return cls(
             mode=_txt(el, "mode", "off"),
             num_octaves=_int(el, "numOctaves", 2),
@@ -752,6 +785,10 @@ class Arpeggiator:
             octave_mode=_txt(el, "octaveMode", ""),
             mpe_velocity=_txt(el, "mpeVelocity", ""),
             step_repeat=_int(el, "stepRepeat", 1),
+            sync_type=_int(el, "syncType", 0),
+            randomizer_lock=bool(_int(el, "randomizerLock", 0)),
+            locked=locked, last_locked=last,
+            note_pattern=_hex_bytes(_txt(el, "notePattern", "")),
         )
 
     def to_xml(self, el: ET.Element, dialect: str = "attr") -> None:
@@ -767,6 +804,62 @@ class Arpeggiator:
                 _set(el, name, value, dialect)
         if self.step_repeat != 1:
             _set(el, "stepRepeat", self.step_repeat, dialect)
+        if self.sync_type:
+            _set(el, "syncType", self.sync_type, dialect)
+        if self.randomizer_lock:
+            _set(el, "randomizerLock", 1, dialect)
+        for key, (array_tags, last_tag) in ARP_LOCKED_TAGS.items():
+            if key in self.last_locked:
+                # Sur 32 bits signés, comme ``writeAttribute``.
+                value = int(self.last_locked[key]) & 0xFFFFFFFF
+                _set(el, last_tag, value - (1 << 32) if value >> 31 else value,
+                     dialect)
+            if key in self.locked:
+                _set(el, array_tags[0], _hex_string(self.locked[key]),
+                     dialect)
+        if self.note_pattern is not None:
+            _set(el, "notePattern", _hex_string(self.note_pattern), dialect)
+
+
+#: Les tirages gardés de l'arpégiateur (``readCommonTagsFromFile``) : leur
+#: tableau — sous ses noms, fautes de frappe du firmware comprises — et la
+#: valeur du réglage quand ils ont été tirés.
+ARP_LOCKED_TAGS = {
+    "note": (("lockedNoteProbArray",), "lastLockedNoteProb"),
+    "bass": (("lockedBassProbArray",), "lastLockedBassProb"),
+    "swap": (("lockedSwapProbArray",), "lastLockedSwapProb"),
+    "glide": (("lockedGlideProbArray",), "lastLockedGlideProb"),
+    "reverse": (("lockedReverseProbArray", "lockeReverseProbArray"),
+                "lastLockedReverseProb"),
+    "chord": (("lockedChordProbArray", "lockeChordProbArray"),
+              "lastLockedChordProb"),
+    "ratchet": (("lockedRatchetProbArray", "lockeRatchetProbArray"),
+                "lastLockedRatchetProb"),
+    "spread_velocity": (("lockedVelocitySpreadArray",),
+                        "lastLockedVelocitySpread"),
+    "spread_gate": (("lockedGateSpreadArray",), "lastLockedGateSpread"),
+    "spread_octave": (("lockedOctaveSpreadArray",), "lastLockedOctaveSpread"),
+}
+
+
+def _hex_bytes(raw: str) -> tuple | None:
+    """``readTagOrAttributeValueHexBytes`` : seize octets signés au plus,
+    deux chiffres hexadécimaux chacun ; ``None`` sans valeur lisible."""
+    text = str(raw or "").strip()
+    if text[:2] in ("0x", "0X"):
+        text = text[2:]
+    if not text or len(text) % 2:
+        return None
+    try:
+        values = bytes.fromhex(text)[:16]
+    except ValueError:
+        return None
+    return tuple(v - 256 if v >= 128 else v for v in values)
+
+
+def _hex_string(values) -> str:
+    """L'inverse de :func:`_hex_bytes`, en majuscules comme la machine."""
+    return "".join("%02X" % (int(v) & 0xFF) for v in values)
 
 
 @dataclass

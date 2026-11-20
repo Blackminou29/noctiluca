@@ -4058,10 +4058,13 @@ class AtelierPage(Page):
             kit = fige
         tempo = project.style.tempo()
         looped = bool(self._loop_on if loop is None else loop) and bars > 0
+        from ...core import songwriter
+
+        song_key = songwriter.key_of(project.style.root, project.style.scale)
         self._start_listening(
             _render_mix, parts, sounds, drums, tempo, kit,
             self.sd if self.ctx.has_card else None,
-            int(bars) if looped else 0, curves, self._render_cache,
+            int(bars) if looped else 0, curves, self._render_cache, song_key,
             title=title, heard=heard, bpm=tempo, loop=looped,
             seamless=seamless and looped)
         return looped
@@ -4499,7 +4502,7 @@ def _drum_fingerprint(drums, kit, bpm: float) -> str:
 
 def _render_mix(parts: dict, sounds: dict, drums, bpm: float, kit=None,
                 sd=None, loop_bars: int = 0, automation=None, cache=None,
-                should_stop=None):
+                song_key=None, should_stop=None):
     """Les parties et la batterie mêlées (fil séparé) ; ``None`` si l'arrêt
     est demandé en cours de rendu. ``loop_bars`` : le rendu est ramené à ce
     nombre de mesures, sa queue repliée sur le début — prêt à tourner en
@@ -4512,13 +4515,15 @@ def _render_mix(parts: dict, sounds: dict, drums, bpm: float, kit=None,
     échantillon y jouait une dent de scie.
 
     ``cache`` : celui de la page, d'une écoute à l'autre — une partie ou une
-    batterie inchangée reprend son rendu (:func:`render.render_parts`)."""
+    batterie inchangée reprend son rendu (:func:`render.render_parts`).
+    ``song_key`` : la gamme du projet, pour les accords de l'arpégiateur."""
     from ...core import render
 
     tonal = render.render_parts(parts, sounds, bpm=bpm, sr=44100, sd=sd,
                                 should_stop=should_stop,
                                 normalize=False, automation=automation,
-                                cache=cache) if parts else None
+                                cache=cache, song_key=song_key) \
+        if parts else None
     if should_stop is not None and should_stop():
         return None
     beat = None

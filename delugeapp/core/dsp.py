@@ -254,6 +254,8 @@ def prepare(should_stop=None) -> bool:
         lambda: svf_process(silence, svf_config("SVF_Notch", [2e6] * nb,
                                                 [0.0] * nb)),
         lambda: output_stage(stereo),
+        lambda: wavetable_oscillator(np.zeros((2, 64)), inc, n, 0, amp,
+                                     np.zeros(n)),
         lambda: oscillator("saw", inc, n, 0, amp, None, MASK32,
                            out=np.empty(n)),
         lambda: oscillator("square", inc, n, 0, amp, pulse),
@@ -268,12 +270,20 @@ def prepare(should_stop=None) -> bool:
         lambda: mod_fx(stereo, "chorus", 1.0, 1.0, 0.0, 0.0, 1.0),
         lambda: reverb(silence + 1.0, ReverbSettings()),
         lambda: one_pole(silence, 0.5),
+        _warm_stretch,
     )
     for step in steps:
         if should_stop is not None and should_stop():
             return False
         step()
     return compiled()
+
+
+def _warm_stretch() -> None:
+    """Les boucles de l'étireur, qui vit à part (il importe ce module)."""
+    from . import timestretch
+
+    timestretch.warm_up()
 
 
 def _result(buf) -> np.ndarray:
@@ -879,6 +889,77 @@ def oscillator(kind: str, inc_blocks, n: int, phase0: int,
 _NO_AMP = np.zeros(0)
 
 
+def wavetable_oscillator(table: np.ndarray, inc_blocks, n: int, phase0: int,
+                         amp: np.ndarray, position: np.ndarray
+                         ) -> tuple[np.ndarray, int]:
+    """Une voix d'oscillateur de table d'onde (``WaveTable::render``).
+
+    :param table: ``(cycles, taille)`` — les cycles de la table, chacun une
+        période de la note.
+    :param inc_blocks: incrément de phase de chaque bloc, sur 2³².
+    :param amp: amplitude de chaque échantillon.
+    :param position: la position dans la table de chaque échantillon, de
+        0 (premier cycle) à 1 (dernier) — la valeur finale de
+        ``oscXWavetablePosition``, en rampe dans chaque bloc
+        (``waveIndexIncrement``).
+
+    Comme le firmware : la phase avance **avant** la lecture ; la position
+    tombe entre deux cycles voisins (``firstCycleNumber``,
+    ``crossCycleStrength2``), lus au même point de leur période puis fondus
+    au prorata. Approché : la lecture dans un cycle se fait par
+    interpolation cubique, là où le firmware applique un noyau sinc fenêtré
+    à ses bandes. Rend l'onde et la phase finale."""
+    table = np.ascontiguousarray(np.atleast_2d(table), dtype=np.float64)
+    out = _out(n)
+    phase = _wavetable_loop(
+        _seq(table.ravel()), int(table.shape[1]), int(table.shape[0]),
+        _seq(np.asarray(inc_blocks, dtype=np.float64)), _seq(position),
+        _seq(amp), float(int(phase0) & MASK32), out)
+    return _result(out), int(phase)
+
+
+@_Boucle
+def _wavetable_loop(table, size, cycles, incs, position, amp, phase, out):
+    """Les échantillons de :func:`wavetable_oscillator` ; rend la phase."""
+    n = len(out)
+    transitions = cycles - 1
+    for i in range(n):
+        phase = (phase + incs[i // BLOCK]) % 4294967296.0
+        x = phase / 4294967296.0 * size
+        j = int(x)
+        f = x - j
+        if transitions > 0:
+            c = position[i] * transitions
+            c = 0.0 if c < 0.0 else c
+            k = int(c)
+            if k > transitions - 1:
+                k = transitions - 1
+            mix = c - k
+        else:
+            k = 0
+            mix = 0.0
+        value = 0.0
+        for m in range(2):
+            if m == 1 and mix == 0.0:
+                break
+            base = (k + m) * size
+            p0 = table[base + (j - 1) % size]
+            p1 = table[base + j % size]
+            p2 = table[base + (j + 1) % size]
+            p3 = table[base + (j + 2) % size]
+            # Hermite (Catmull-Rom) entre p1 et p2.
+            v = p1 + 0.5 * f * (p2 - p0 + f * (2.0 * p0 - 5.0 * p1
+                                               + 4.0 * p2 - p3
+                                               + f * (3.0 * (p1 - p2)
+                                                      + p3 - p0)))
+            if m == 0:
+                value = v
+            else:
+                value = value + (v - value) * mix
+        out[i] = value * amp[i]
+    return phase
+
+
 @_Boucle
 def _phase_loop(inc_blocks, phase, out):
     """La phase de chaque échantillon d'un oscillateur, sur 2³², après celle
@@ -1222,11 +1303,31 @@ def read_sample(data: np.ndarray, inc_blocks, n: int,
             t = np.mod(t, frames)
         out = samples[np.minimum(t, frames - 1)].T * (t < frames)
         return out[0] if mono else out
+    which = np.repeat([sample_kernel(v) for v in inc_blocks], BLOCK)[:n]
+    position = np.cumsum(inc) - SAMPLE_UNITY
+    out = read_positions(samples, position, which, loop)
+    return out[0] if mono else out
+
+
+def read_positions(samples: np.ndarray, position: np.ndarray,
+                   which: np.ndarray, loop: bool = False) -> np.ndarray:
+    """La lecture de :func:`read_sample` à des positions données — sur
+    2²⁴, une par échantillon de sortie — avec le noyau ``which`` de
+    chacune : ``(canaux, n)``. Ce que lit une tête de l'étirement
+    (:mod:`.timestretch`)."""
+    samples = np.asarray(samples)
+    if samples.ndim == 1:
+        samples = samples[:, None]
+    frames, channels = samples.shape
+    position = np.asarray(position, dtype=np.int64)
+    n = position.size
+    out = np.zeros((channels, n))
+    if frames == 0 or n == 0:
+        return out
     whole = np.clip(np.floor(samples.astype(np.float64) * 32768.0),
                     -32768.0, 32767.0)
     kernels = table("windowedSincKernel")
-    which = np.repeat([sample_kernel(v) for v in inc_blocks], BLOCK)[:n]
-    position = np.cumsum(inc) - SAMPLE_UNITY
+    which = np.asarray(which, dtype=np.int64)
     taps = np.arange(8, -8, -1)
     for a in range(0, n, _READ_CHUNK):
         b = min(n, a + _READ_CHUNK)
@@ -1250,7 +1351,7 @@ def read_sample(data: np.ndarray, inc_blocks, n: int,
                 values = values * valid
             out[c, a:b] = np.einsum("ij,ij->i", k, values)
     out /= float(1 << 30)
-    return out[0] if mono else out
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -2597,6 +2698,38 @@ def _flanger_loop(dry, times, feedback, buf, out):
 #: La graine de ``CONG`` dans ``waves.cpp``. La machine la reprend d'un
 #: compteur au démarrage : sa suite est imprévisible, celle-ci reproductible.
 CONG_SEED = 380116160
+
+
+class Cong:
+    """``CONG`` (``waves.h``), tiré pas à pas, et ce qu'en font
+    ``functions.h`` et ``functions.cpp`` (``getRandom255``, ``getNoise``,
+    ``random``, ``sampleTriangleDistribution``) — pour l'étireur et
+    l'arpégiateur, qui tirent au sort hors des boucles compilées."""
+
+    def __init__(self, seed: int = CONG_SEED):
+        self.state = int(seed) & 0xFFFFFFFF
+
+    def next(self) -> int:
+        self.state = (69069 * self.state + 1234567) & 0xFFFFFFFF
+        return self.state
+
+    def random255(self) -> int:
+        return self.next() >> 24
+
+    def noise(self) -> int:
+        v = self.next()
+        return v - (1 << 32) if v >= 1 << 31 else v
+
+    def random(self, upper: int) -> int:
+        """``random(upperLimit)`` : seize bits du haut, modulo
+        ``upper + 1``."""
+        return ((self.next() >> 16) & 0xFFFF) % (int(upper) + 1)
+
+    def triangle(self) -> int:
+        """``sampleTriangleDistribution`` : deux bruits additionnés,
+        saturés sur 32 bits."""
+        s = self.noise() + self.noise()
+        return max(-(1 << 31), min((1 << 31) - 1, s))
 
 
 def _warble(stereo: np.ndarray, rate_inc: int, amount: float, offset: float,

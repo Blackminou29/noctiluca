@@ -29,9 +29,12 @@ machine** (communautaire 1.3, commit ``102cf9f``), étage par étage, par
 
 Les signaux circulent à l'échelle des entiers du firmware (±2³¹) jusqu'à la
 sortie. Les échantillons se lisent comme sur la machine : en stéréo s'ils le
-sont, par sinus cardinal fenêtré quand ils sont transposés. Restent
-approchés : l'étirement temporel, le glissé, le LFO 1 global (il repart à
-chaque note), la compression par son et le sidechain.
+sont, par sinus cardinal fenêtré quand ils sont transposés, étirés par les
+deux têtes fondues du firmware quand leur vitesse se sépare de leur hauteur
+(:mod:`.timestretch`). Une table d'onde se parcourt avec sa position
+modulée, d'un cycle fondu au suivant, dans la bande de sa note. Restent
+approchés : le glissé, le LFO 1 global (il repart à chaque note), la
+compression par son et le sidechain.
 
 Vérifié contre un export de pistes de la machine le 23 octobre 2026 (SPEC
 §4.41) : douze sons d'essai, niveaux à 0,1 dB près.
@@ -60,6 +63,7 @@ import numpy as np
 
 from . import dsp
 from . import paramlaws as laws
+from . import timestretch
 from .fixedpoint import INT32_MIN
 from .model import Kit, Sound, SynthPreset, param_of_destination
 from .sdcard import SDCard
@@ -80,7 +84,8 @@ KNOWN_DESTINATIONS = (
     "lpfFrequency", "lpfResonance", "lpfMorph", "hpfFrequency",
     "hpfResonance", "hpfMorph", "pitch", "volume", "oscAVolume",
     "oscBVolume", "oscAPitch", "oscBPitch", "oscAPulseWidth",
-    "oscBPulseWidth", "noiseVolume", "modFXDepth", "modFXRate",
+    "oscBPulseWidth", "oscAWavetablePosition", "oscBWavetablePosition",
+    "noiseVolume", "modFXDepth", "modFXRate",
     "reverbAmount", "delayFeedback", "delayRate", "pan", "lfo1Rate",
     "lfo2Rate", "modulator1Amount", "modulator2Amount", "modulator1Pitch",
     "modulator2Pitch", "modulator1Feedback", "modulator2Feedback",
@@ -648,16 +653,23 @@ class _Fichier:
         self.reversed = 0
 
 
-def _wavetable_cycle(sd, osc, position: int):
-    """Le cycle d'une table d'onde que joue un oscillateur, bouclé :
-    ``(données, fréquence)`` pour :func:`_sample_wave`, ou ``None``.
+_WAVETABLES: OrderedDict = OrderedDict()
+_WAVETABLES_SIZE = 16
 
-    **Approché** : le firmware lit des bandes limitées et glisse d'un cycle à
-    l'autre avec la position ; ici, le cycle de la position au départ de la
-    note, sans modulation. C'est mieux que la dent de scie d'avant, et la
-    hauteur est juste : la fréquence rendue fait tenir un cycle dans une
-    période du do 3.
-    """
+
+def _wavetable_table(sd, osc, max_increment: float):
+    """La table d'onde que joue un oscillateur, ``(cycles, taille)``, dans
+    la bande de sa note ; ``None`` sans fichier.
+
+    Le firmware tient une version de la table par octave, privée des
+    harmoniques qui dépasseraient la moitié de la fréquence
+    d'échantillonnage (``WaveTable::setup``), et choisit celle de la note
+    (``bands.search(phaseIncrement)``). Ici, chaque cycle passe par une FFT
+    et garde les harmoniques sous Nyquist pour le plus grand incrément de la
+    voix, arrondies à une puissance de deux — une bande par octave.
+    **Approché** : les bandes du firmware ont leurs propres bords et leur
+    lecture par noyau sinc ; la position, le fondu d'un cycle au suivant et
+    la hauteur sont les siens."""
     from . import wavetable
 
     if sd is None or not osc.file_name:
@@ -673,22 +685,27 @@ def _wavetable_cycle(sd, osc, position: int):
     cycles = max(1, data.size // max(1, taille))
     if data.size < taille:
         taille, cycles = data.size, 1
-    part = (int(position) + 2 ** 31) / float(2 ** 32)
-    k = min(cycles - 1, max(0, int(round(part * (cycles - 1)))))
-    cycle = np.asarray(data[k * taille:(k + 1) * taille], dtype=np.float64)
-    if cycle.size < 8:
+    if taille < 8:
         return None
-    # Le cycle rééchantillonné à la période du do 3 sur 44,1 kHz, soixante-
-    # quatre fois : lu comme un échantillon enregistré à cette hauteur. Lu
-    # tel quel à 2 048 points par période, il demandait un incrément douze
-    # fois trop grand, que la lecture refusait.
-    periodes = 64
-    total = int(round(periodes * ENGINE_RATE / 261.6255653))
-    pas = periodes * cycle.size / float(total)
-    x = (np.arange(total) * pas) % cycle.size
-    boucle = np.interp(x, np.arange(cycle.size + 1),
-                       np.append(cycle, cycle[0]))
-    return np.ascontiguousarray(boucle, dtype=np.float32), ENGINE_RATE
+    nyquist = max(1, int(float(1 << 31) // max(float(max_increment), 1.0)))
+    harmoniques = min(taille // 2, 1 << int(math.floor(math.log2(nyquist))))
+    cle = (str(path), taille, cycles, harmoniques)
+    with _SAMPLE_LOCK:
+        if cle in _WAVETABLES:
+            _WAVETABLES.move_to_end(cle)
+            return _WAVETABLES[cle]
+    table = np.asarray(data[:cycles * taille], dtype=np.float64).reshape(
+        cycles, taille)
+    if harmoniques < taille // 2:
+        spectre = np.fft.rfft(table, axis=1)
+        spectre[:, harmoniques + 1:] = 0.0
+        table = np.fft.irfft(spectre, n=taille, axis=1)
+    table = np.ascontiguousarray(table)
+    with _SAMPLE_LOCK:
+        _WAVETABLES[cle] = table
+        while len(_WAVETABLES) > _WAVETABLES_SIZE:
+            _WAVETABLES.popitem(last=False)
+    return table
 
 
 def _sample_source(osc, note: int):
@@ -711,7 +728,9 @@ def _sample_source(osc, note: int):
 
 
 def _sample_wave(data: np.ndarray, increments: np.ndarray, n: int,
-                 loop: bool) -> np.ndarray:
+                 loop: bool, sample_rate: int = dsp.SR,
+                 independent: bool = False, amount: int = 0,
+                 seed: int = dsp.CONG_SEED) -> np.ndarray:
     """Lecture à vitesse variable, un incrément par bloc
     (:func:`dsp.sample_increment` réglé comme une note), comme la machine
     (:func:`dsp.read_sample`) ; muette après la fin, ou bouclée. ``(n,)``
@@ -720,7 +739,19 @@ def _sample_wave(data: np.ndarray, increments: np.ndarray, n: int,
     Mesuré sur la machine le 23 octobre 2026 (export de pistes) :
     l'interpolation linéaire d'avant laissait un écart de −19 dB sur un
     piano joué à l'octave et de −33 dB sur une caisse claire à 48 kHz ;
-    celle-ci les ramène sous −68 dB."""
+    celle-ci les ramène sous −68 dB.
+
+    Avec ``timeStretchEnable`` (``independent``) ou ``timeStretchAmount``,
+    la vitesse se sépare de la hauteur : dès qu'un bloc n'a plus le rapport
+    neutre, la note passe par l'étireur du firmware
+    (:mod:`.timestretch`)."""
+    if independent or amount:
+        neutral = (int(sample_rate) << 24) // dsp.SR
+        ratios = [timestretch.speed_ratio(v, neutral, independent, amount)
+                  for v in np.asarray(increments, dtype=np.int64)]
+        if any(r != timestretch.UNITY for r in ratios):
+            return timestretch.stretch(data, increments, ratios, n,
+                                       sample_rate, loop, seed)
     return dsp.read_sample(data, increments, n, loop)
 
 
@@ -1065,22 +1096,35 @@ def _render_voice(sound: Sound, note: int, n: int, gate: float,
                     base = dsp.sample_increment(
                         note + int(sound.transpose) + int(source.transpose),
                         file_sr)
+                    # L'étirement se règle sur l'oscillateur, pas sur la
+                    # tranche (``Source::sampleControls``) ; chaque voix
+                    # d'unisson tire ses sauts de son côté.
+                    independent = bool(getattr(osc, "time_stretch_enable", 0))
+                    amount = int(getattr(osc, "time_stretch_amount", 0) or 0)
                     for u, incs in enumerate(tuned(base, source.cents,
                                                    osc_oct[s])):
-                        add(4.0 * amp * _sample_wave(data, incs, n, loop), u)
+                        add(4.0 * amp * _sample_wave(
+                            data, incs, n, loop, file_sr, independent, amount,
+                            (dsp.CONG_SEED + u) & 0xFFFFFFFF), u)
                     continue
                 if osc.type == "wavetable":
-                    table = _wavetable_cycle(
-                        sd, osc, sound.params.get(
-                            "osc%sWavetablePosition" % letter, 0))
+                    incs = increments(osc.transpose, osc.cents, osc_oct[s])
+                    table = _wavetable_table(
+                        sd, osc, max(float(np.max(i)) for i in incs))
                     if table is not None:
-                        data, fake_sr = table
-                        base = dsp.sample_increment(
-                            note + int(sound.transpose) + int(osc.transpose),
-                            fake_sr)
-                        for u, incs in enumerate(tuned(base, osc.cents,
-                                                       osc_oct[s])):
-                            add(amp * _sample_wave(data, incs, n, True), u)
+                        # ``sourceWaveIndexLastTime + 2³⁰`` : la valeur finale
+                        # de la position, en rampe d'un bloc au suivant.
+                        place = (_final_hybrid(
+                            sound, "osc%sWavetablePosition" % letter, mod,
+                            nb) + 1.0) / 2.0
+                        place = _ramp(place, n, float(place[0]))
+                        retrig = _retrig(osc)
+                        for u in range(voices):
+                            wave, _ = dsp.wavetable_oscillator(
+                                table, incs[u], n,
+                                _start_phase("wavetable", retrig, rng), amp,
+                                place)
+                            add(wave, u)
                         continue
                 kind = osc_kind(osc)
                 if kind is None:
@@ -1644,6 +1688,19 @@ def _voice_task(sound: Sound, key: tuple, note: int, count: int,
     return task
 
 
+def _reversed(sound: Sound) -> Sound:
+    """Le son d'une note arpégée « inversée » : ses échantillons lus dans
+    l'autre sens (``SampleControls::isCurrentlyReversed``)."""
+    out = copy.copy(sound)
+    for name in ("osc1", "osc2"):
+        osc = getattr(sound, name, None)
+        if osc is not None:
+            flipped = copy.copy(osc)
+            flipped.reversed = 0 if osc.reversed else 1
+            setattr(out, name, flipped)
+    return out
+
+
 #: Les réglages automatisés qui se lisent note par note (``Voice``) ; le
 #: volume, lui, est celui du son entier, après les effets.
 _VOICE_AUTO = ("lpfFrequency", "lpfResonance", "pan")
@@ -1661,7 +1718,8 @@ def _part_fingerprint(name: str, events, sound, curves, tempo: float, n: int,
     import pickle
 
     notes = [(float(e.start), float(e.length), int(e.note),
-              int(e.velocity)) for e in events]
+              float(e.velocity), bool(getattr(e, "reversed", False)))
+             for e in events]
     payload = pickle.dumps((name, notes, sound, curves, round(float(tempo), 6),
                             int(n), round(float(tail), 6),
                             None if hits is None else tuple(hits)),
@@ -1740,7 +1798,8 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                  sidechain_hits=None,
                  automation: dict | None = None,
                  cache: dict | None = None,
-                 output: bool = True) -> np.ndarray | None:
+                 output: bool = True,
+                 song_key=None) -> np.ndarray | None:
     """Rend des parties d'accompagnement, chacune avec son son.
 
     ``automation`` : ``{partie: {nom de preset: [(pas, entier du
@@ -1791,13 +1850,15 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
     quand une piste se rend seule (:mod:`.daw`).
 
     **L'arpégiateur** d'un son transforme d'abord ses notes tenues
-    (:mod:`.arpeggio`).
+    (:mod:`.arpeggio`) ; ``song_key``, ``(tonique, notes de la gamme)`` du
+    morceau, fait ses accords. Une note arpégée « inversée » lit ses
+    échantillons à rebours.
     """
     from . import arpeggio
     from .accomp import total_steps
 
-    parts = arpeggio.apply(parts, sounds)
     tempo = float(bpm) if bpm and bpm > 0 else 120.0
+    parts = arpeggio.apply(parts, sounds, bpm=tempo, key=song_key)
     step_s = 60.0 / tempo / 4.0
     tails = {name: max(float(tail), tail_seconds(sound))
              for name, sound in (sounds or {}).items() if sound is not None}
@@ -1857,6 +1918,10 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
             phase1 = _lfo1_phase(sound, start, tempo)
             key = (int(event.note), round(held, 3), round(seconds, 2),
                    int(event.velocity) // 5, glide, phase1)
+            voice_sound = sound
+            if getattr(event, "reversed", False):
+                key = key + ("rebours",)
+                voice_sound = _reversed(sound)
             if curves:
                 # Une note automatisée ne sonne comme aucune autre : sa
                 # courbe dépend de l'instant où elle part.
@@ -1871,7 +1936,7 @@ def render_parts(parts: dict, sounds: dict, bpm: float = 120.0,
                     auto = {k: _auto_blocks(v, start, blocks, step_samples)
                             for k, v in curves.items()}
                 tasks.append(_voice_task(
-                    sound, key, int(event.note), count,
+                    voice_sound, key, int(event.note), count,
                     min(1.0, held / seconds),
                     # ``NoteEvent.velocity`` est un pourcentage : 100 % joue
                     # la vélocité 127.
