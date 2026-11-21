@@ -295,6 +295,10 @@ class MainWindow(QMainWindow):
         #: Réponse de la vérification de version, posée par son fil :
         #: ``(demandée, version ou None)`` ; relevée par :meth:`_tick`.
         self._update_answer = None
+        #: Une nouvelle version téléchargée et vérifiée
+        #: (:class:`.core.updates.Pending`) : ``main.py`` la lance une fois
+        #: la fenêtre fermée.
+        self.pending_update = None
         #: La première écoute muette a-t-elle été expliquée ?
         self._silence_told = False
         if getattr(ctx.settings, "check_updates", False):
@@ -1844,19 +1848,119 @@ class MainWindow(QMainWindow):
                 % (APP_NAME, __version__))
 
     def _announce_update(self, release) -> None:
-        from PyQt6.QtCore import QUrl
-        from PyQt6.QtGui import QDesktopServices
+        """Propose la nouvelle version : la télécharger et l'installer quand
+        ce système le permet (:func:`.core.updates.install_kind`), sinon
+        ouvrir sa page."""
+        from ..core import updates
 
         self.statusBar().showMessage(
             tr("%s %s est disponible.") % (APP_NAME, release.version), 15000)
-        answer = QMessageBox.question(
-            self, tr("Nouvelle version"),
-            tr("%s %s est disponible (vous avez la %s). Ouvrir sa page de "
-               "téléchargement ?") % (APP_NAME, release.version, __version__),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes)
-        if answer == QMessageBox.StandardButton.Yes:
-            QDesktopServices.openUrl(QUrl(release.url))
+        if self.pending_update is not None \
+                and self.pending_update.version == release.version:
+            self._offer_install(self.pending_update)
+            return
+        kind = updates.install_kind()
+        asset = updates.asset_for(release, kind)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(tr("Nouvelle version"))
+        installer = None
+        if asset is not None:
+            box.setText(tr("%s %s est disponible (vous avez la %s). La "
+                           "télécharger et l'installer ?")
+                        % (APP_NAME, release.version, __version__))
+            box.setInformativeText(
+                tr("%s Mo, vérifiés avant l'installation. Rien ne change "
+                   "tant que vous n'avez pas fermé %s.")
+                % (max(1, asset.size >> 20), APP_NAME))
+            installer = box.addButton(tr("Télécharger et installer"),
+                                      QMessageBox.ButtonRole.AcceptRole)
+            page = box.addButton(tr("Voir les nouveautés"),
+                                 QMessageBox.ButtonRole.HelpRole)
+        else:
+            box.setText(tr("%s %s est disponible (vous avez la %s). Ouvrir "
+                           "sa page de téléchargement ?")
+                        % (APP_NAME, release.version, __version__))
+            page = box.addButton(tr("Ouvrir la page"),
+                                 QMessageBox.ButtonRole.AcceptRole)
+        plus_tard = box.addButton(tr("Plus tard"),
+                                  QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(installer or page)
+        box.setEscapeButton(plus_tard)
+        box.exec()
+        choisi = box.clickedButton()
+        if installer is not None and choisi is installer:
+            self._download_update(release, asset, kind)
+        elif choisi is page:
+            self._open_url(release.url)
+
+    def _open_url(self, url: str) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _download_update(self, release, asset, kind: str) -> None:
+        """Télécharge, vérifie et prépare la version, hors de l'interface,
+        avec une barre et un bouton [Annuler]."""
+        from ..core import updates
+
+        tasks.run_task(
+            self, updates.prepare, release, asset, kind,
+            title=tr("Téléchargement de %s %s") % (APP_NAME, release.version),
+            modal=True,
+            on_result=self._guarded(self._offer_install),
+            on_error=self._guarded(
+                lambda message: self._update_failed(release, message)))
+
+    @staticmethod
+    def _guarded(fn):
+        """Un rappel de téléchargement : la fenêtre a pu se fermer entre-
+        temps (son objet Qt n'est plus)."""
+        def rappel(*args):
+            try:
+                fn(*args)
+            except RuntimeError as exc:
+                log.debug("fenêtre fermée pendant la mise à jour : %s", exc)
+        return rappel
+
+    def _offer_install(self, pending) -> None:
+        """La version est prête : l'installer maintenant (la fenêtre se
+        ferme), ou à la fermeture."""
+        self.pending_update = pending
+        self.statusBar().showMessage(
+            tr("%s %s s'installera à la fermeture.")
+            % (APP_NAME, pending.version))
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(tr("Nouvelle version"))
+        box.setText(tr("%s %s est téléchargée et vérifiée. Elle s'installe "
+                       "quand %s se ferme, puis %s se rouvre.")
+                    % (APP_NAME, pending.version, APP_NAME, APP_NAME))
+        if pending.kind == "windows":
+            box.setInformativeText(tr("Windows demandera l'autorisation "
+                                      "d'installer."))
+        maintenant = box.addButton(tr("Installer maintenant"),
+                                   QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(tr("À la fermeture"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(maintenant)
+        box.exec()
+        if box.clickedButton() is maintenant:
+            self.close()
+
+    def _update_failed(self, release, message: str) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(tr("Nouvelle version"))
+        box.setText(tr("Le téléchargement de %s %s n'a pas abouti : %s. Rien "
+                       "n'a été installé.")
+                    % (APP_NAME, release.version, message))
+        page = box.addButton(tr("Ouvrir la page"),
+                             QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(tr("Fermer"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is page:
+            self._open_url(release.url)
 
     def _show_about(self) -> None:
         QMessageBox.about(

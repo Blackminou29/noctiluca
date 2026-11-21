@@ -3159,7 +3159,7 @@ devient tirable (tirages nommés « table A/B », rien ne change sans tables). L
 `latest_release(timeout, opener) -> Release | None` (API publique des versions GitHub, rien
 d'autre envoyé que le `User-Agent`), `is_newer`, `due` (une fois par jour). Jamais appelé sans
 demande : Aide ▸ Rechercher une nouvelle version, ou `Settings.check_updates`, **faux** par
-défaut.
+défaut. Depuis la 1.1.0, l'installation automatique : §4.58.
 
 ### 4.47 Ce qui a changé dans les modules existants (7 novembre 2026)
 
@@ -3639,6 +3639,47 @@ la gamme, passée par la page Morceaux (`DawSong.root`, `mode_notes`) et l'ateli
 `render._reversed(sound)`. Approchés : tirages sans verrou, verrou relancé au début du morceau
 seulement (la machine : à chaque tour de clip), câble vers `arpRate`, vélocité MPE, arpège de
 kit.
+
+### 4.58 La mise à jour automatique : `delugeapp/core/updates.py` (21 novembre 2026)
+
+```python
+@dataclass(frozen=True) class Asset: name; url; size; sha256      # un fichier d'une version
+@dataclass(frozen=True) class Release: version; url; assets: tuple = ()
+@dataclass(frozen=True) class Pending: kind; file: Path; target: Path | None; version
+class UpdateError(Exception)
+DOWNLOADS = __repo__ + "/releases/download/"     # les seules adresses acceptées
+SUFFIXES = {"windows": "-windows-x64-setup.exe", "macos": "-macos-arm64.dmg",
+            "appimage": "-linux-x86_64.AppImage"}
+def install_kind(platform=None, frozen=None, environ=None, executable=None) -> str | None
+def asset_for(release, kind) -> Asset | None
+def download(asset, destination, progress=None, should_stop=None, opener=None) -> Path
+def prepare(release, asset, kind, progress=None, should_stop=None, ...) -> Pending
+def launch(pending, pid=None, popen=None, startfile=None) -> None
+SCRIPTS: dict[str, str]                           # macOS et AppImage : attendre, échanger, relancer
+```
+`latest_release` lit aussi les fichiers de la version : seulement ceux du dépôt, avec une
+taille et une empreinte `digest` (`sha256:…`, publiée par GitHub pour chaque fichier, relevée
+sur la 1.0.3). `install_kind` : `None` depuis les sources (`sys.frozen` faux), l'archive Linux
+(pas d'`APPIMAGE`), une application macOS déplacée par le système (`AppTranslocation`) ou un
+dossier qu'on ne peut pas réécrire — la page de la version s'ouvre alors. `download` : HTTPS
+seulement, au plus la taille annoncée, puis taille et SHA-256 vérifiées ; un fichier faux est
+effacé, un fichier déjà là et juste n'est pas retéléchargé ; `DownloadProgress` en mégaoctets.
+`prepare` : Windows, l'installateur dans `%TEMP%\noctiluca-mise-a-jour` ; AppImage, téléchargée
+à côté de celle qui tourne (`.<nom>.nouveau`, exécutable) ; macOS, `Noctiluca.app` copiée de
+l'image disque (`hdiutil attach`, `ditto`, `detach`) en `.Noctiluca-<version>.app` à côté de
+l'actuelle. `launch`, appelé par `main._install_update` une fois la fenêtre fermée et le canal
+d'instance fermé : Windows, `os.startfile(installateur, arguments="/S /RELANCER")` (UAC) ;
+macOS et Linux, un `sh -c` détaché qui attend la fin du processus, échange (l'ancienne
+application macOS n'est effacée qu'une fois la nouvelle en place, et revient sinon) et relance.
+L'installateur NSIS, sans pages : attend une minute au plus que `Noctiluca.exe` se libère
+(`AttendreFermeture`), ne recoche pas le raccourci du Bureau retiré (`GarderLeBureau`), relance
+par l'Explorateur avec `/RELANCER` (`.onInstSuccess`). Fenêtre : `_announce_update` propose
+[Télécharger et installer] / [Voir les nouveautés] / [Plus tard] (sinon [Ouvrir la page]),
+`_download_update` (tâche modale annulable), `_offer_install` ([Installer maintenant] ferme
+la fenêtre, [À la fermeture]), `_update_failed`, `pending_update`. **Jamais essayé de bout en
+bout** : ni l'installateur silencieux sur un vrai Windows (il écrirait sur l'installation de
+l'utilisateur), ni macOS (pas de Mac) ; les scripts de macOS et de Linux tournent dans les tests
+sous Linux et macOS (GitHub).
 
 ---
 

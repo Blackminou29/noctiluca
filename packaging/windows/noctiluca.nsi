@@ -19,7 +19,11 @@
 ;   * refuse d'écrire tant que Noctiluca est ouvert ;
 ;   * relance Noctiluca, s'il est demandé, **sans** les droits
 ;     d'administrateur : une fenêtre élevée ne reçoit plus les fichiers
-;     glissés depuis l'Explorateur.
+;     glissés depuis l'Explorateur ;
+;   * lancé par la mise à jour automatique de Noctiluca (« /S /RELANCER »,
+;     delugeapp/core/updates.py) : sans pages, il attend que Noctiluca soit
+;     fermé (une minute au plus), ne recrée pas un raccourci sur le Bureau
+;     qu'on avait retiré, puis rouvre Noctiluca.
 ;
 ; Ce que le désinstallateur ne fait jamais : toucher aux données de
 ; l'utilisateur (%APPDATA%\Noctiluca : réglages, index, sauvegardes de la
@@ -68,6 +72,7 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "© ${EDITEUR}"
 !include "x64.nsh"
 !include "WinVer.nsh"
 !include "FileFunc.nsh"
+!include "Sections.nsh"
 
 ; --------------------------------------------------------------------------
 ; Pages
@@ -158,6 +163,39 @@ Function .onInit
   ReadRegStr $0 HKLM "${CLE}" "InstallLocation"
   ${If} $0 != ""
     StrCpy $INSTDIR $0
+    ${If} ${Silent}
+      Call GarderLeBureau
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; La mise à jour automatique lance l'installateur puis ferme Noctiluca :
+; attendre que l'exécutable se libère, une minute au plus.
+Function AttendreFermeture
+  StrCpy $1 0
+  ${DoWhile} $1 < 120
+    ${IfNot} ${FileExists} "$INSTDIR\${EXE}"
+      Return
+    ${EndIf}
+    ClearErrors
+    FileOpen $0 "$INSTDIR\${EXE}" a
+    ${IfNot} ${Errors}
+      FileClose $0
+      Return
+    ${EndIf}
+    Sleep 500
+    IntOp $1 $1 + 1
+  ${Loop}
+  Abort
+FunctionEnd
+
+; « /RELANCER » : rouvrir Noctiluca une fois installé, même sans pages.
+Function .onInstSuccess
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/RELANCER" $R1
+  ${IfNot} ${Errors}
+    Call Lancer
   ${EndIf}
 FunctionEnd
 
@@ -179,6 +217,9 @@ FunctionEnd
 Section "$(SectionApp)" SectionApp
   SectionIn RO
   SetShellVarContext all
+  ${If} ${Silent}
+    Call AttendreFermeture
+  ${EndIf}
   SetOutPath "$INSTDIR"
 
   ; Une mise à jour : les bibliothèques de la version précédente partent
@@ -213,6 +254,16 @@ Section "$(SectionBureau)" SectionBureau
   SetShellVarContext all
   CreateShortCut "$DESKTOP\${NOM}.lnk" "$INSTDIR\${EXE}"
 SectionEnd
+
+; Sans pages, les sections cochées d'office s'installent : une mise à jour
+; ne doit pas reposer un raccourci que l'utilisateur avait retiré. Appelée
+; par .onInit ; écrite ici, après la section dont elle lit le numéro.
+Function GarderLeBureau
+  SetShellVarContext all
+  ${IfNot} ${FileExists} "$DESKTOP\${NOM}.lnk"
+    !insertmacro UnselectSection ${SectionBureau}
+  ${EndIf}
+FunctionEnd
 
 ; --------------------------------------------------------------------------
 ; Désinstallation : ce que l'installateur a posé, rien d'autre.

@@ -76,7 +76,7 @@ This manual opens from **Help ▸ Manual**, or with the [[F1]] key: it then open
 
 ## Installing {#installer}
 
-- **Windows**: run `Noctiluca-…-windows-x64-setup.exe` and follow the installer. Noctiluca joins the Start menu, and the desktop if the box is ticked. For a new version, run its installer: it replaces the old one in the same place.
+- **Windows**: run `Noctiluca-…-windows-x64-setup.exe` and follow the installer. Noctiluca joins the Start menu, and the desktop if the box is ticked. For a new version, run its installer: it replaces the old one in the same place. Since 1.1.0, Noctiluca can also do it for you ([Check for a new version](#mise-a-jour)).
 - **macOS**: open `Noctiluca-…-macos-arm64.dmg`, then drag Noctiluca into the Applications folder.
 - **Linux**: make `Noctiluca-…-linux-x86_64.AppImage` executable (right-click ▸ Properties, or `chmod +x`), then run it. Listening to sounds needs the `libportaudio2` package, available in every distribution.
 
@@ -1249,6 +1249,21 @@ Below, the **backups folder** for backups made from the Health page; when empty,
 ## Appearance and About {#reglages-apparence}
 
 **Appearance**: six colours for the front panel — gold, cyan, mint, amber, magenta, indigo. It tints the top bar, the menus and the windows opened outside the pages; each page keeps its own colour. **About**: the version, and the **configuration folder**, which [Open] shows in Explorer. The [Check once a day whether a new version exists] box, **unticked** at first, reads at start-up, at most once a day, the number of the latest version published on GitHub, and tells you if it is newer; nothing else goes out on the network. Help ▸ [Check for a new version] does the same right away.
+
+## Updating Noctiluca {#mise-a-jour}
+
+When a newer version is published, Noctiluca says so — at the daily check if the box is ticked, or through Help ▸ [Check for a new version] — and offers [Download and install], [See what's new] (its page on GitHub) or [Later].
+
+[Download and install] downloads the file for your system, with a progress bar and a [Cancel] button, then **checks** it: its size, and its SHA-256 checksum, the one GitHub publishes for every file of a release. A file that does not match is deleted, and nothing is installed. Once checked, the version waits for you to close Noctiluca: [Install now] closes it right away, [When I close it] lets you finish. Noctiluca closes as usual — your studio song is kept —, installs, then opens again.
+
+- **Windows**: the installer runs without its pages; Windows asks for permission to install. The desktop shortcut stays as you left it.
+- **macOS**: the new application takes the place of the old one, wherever you put it; the old one is only deleted once the new one is in place.
+- **Linux**: the AppImage is replaced by the new one, in the same place and under the same name.
+
+Run from the Linux archive, from its source code, or from a place it cannot rewrite (a macOS application left in Downloads, which the system moves to a read-only location), Noctiluca only offers [Open the page]: install the version by hand, as the first time.
+
+!!! retenir The first automatic update
+    It comes with 1.1.0: moving from 1.0.3 to 1.1.0 is still done by hand. The next ones install themselves.
 
 @partie deluge PAD_GREEN | The connected Deluge | The machine at the end of the USB cable: its card, its screen, its tempo
 

@@ -484,6 +484,9 @@ def _run_windows(app, args: argparse.Namespace, splash=None,
                 log.exception("fermeture du contexte en échec")
 
         if not getattr(window, "restart_requested", False):
+            # Une nouvelle version prête : elle s'installe une fois tout
+            # fermé (:func:`_install_update`).
+            args.pending_update = getattr(window, "pending_update", None)
             return code
         log.info("redémarrage de la fenêtre (langue : %s)",
                  ctx.settings.language)
@@ -565,7 +568,26 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run_windows(app, args, splash, instance)
     finally:
+        pending = getattr(args, "pending_update", None)
+        if pending is not None:
+            _install_update(pending, instance, log)
         log.info("arrêt de Noctiluca")
+
+
+def _install_update(pending, instance, log) -> None:
+    """Lance l'installation d'une nouvelle version, la fenêtre fermée :
+    l'installateur, ou le script qui remplace l'application, attend la fin
+    de ce processus, puis rouvre la nouvelle version. Le canal d'instance se
+    ferme d'abord : la nouvelle se croirait sinon déjà ouverte."""
+    from delugeapp.core import updates
+
+    if instance is not None:
+        instance.server.close()
+    try:
+        updates.launch(pending)
+        log.info("mise à jour %s lancée (%s)", pending.version, pending.kind)
+    except Exception:  # noqa: BLE001 - l'ancienne version reste en place
+        log.exception("mise à jour %s impossible à lancer", pending.version)
 
 
 if __name__ == "__main__":

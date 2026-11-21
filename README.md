@@ -744,7 +744,7 @@ delugeapp/
     multisample.py       un instrument multi-échantillon depuis un dossier
     wavetable.py         des tables d'onde pour le moteur WAVETABLE
     favourites.py        les favoris du navigateur de la machine
-    updates.py           une version plus récente ? (seulement sur demande)
+    updates.py           une version plus récente, téléchargée, vérifiée, installée
     firmware.py          préparer la carte pour un nouveau firmware (sans flasher)
   ui/
     mainwindow.py        assemblage des douze pages, le hub vivant

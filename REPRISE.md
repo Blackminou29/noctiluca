@@ -1,6 +1,6 @@
 # Point d'étape — Noctiluca
 
-**Dernière mise à jour :** 21 novembre 2026 (les tests découpés, la table d'onde parcourue, §3 septquinquagies ; l'étirement des échantillons, §3 octoquinquagies ; l'arpégiateur communautaire, §3 novoquinquagies)
+**Dernière mise à jour :** 21 novembre 2026 (les tests découpés, la table d'onde parcourue, §3 septquinquagies ; l'étirement des échantillons, §3 octoquinquagies ; l'arpégiateur communautaire, §3 novoquinquagies ; la mise à jour automatique, §3 sexagies)
 **Nom :** l'application s'appelait **Deluge Companion** jusqu'au 5 novembre 2026. Les
 paragraphes datés d'avant gardent l'ancien nom et ses chemins (`%APPDATA%/DelugeCompanion`,
 `.deluge-companion`, `DELUGE_COMPANION_CONFIG`) : c'est ce qui existait alors.
@@ -335,6 +335,44 @@ signaux, et `Page.run()` pour les travaux longs.
 
 ---
 
+## 3 sexagies. La mise à jour automatique (21 novembre 2026)
+
+**La demande** : « profiter de la sortie de la v1.1.0 pour ajouter la mise à jour automatique :
+quand le logiciel détecte une nouvelle version, il propose le téléchargement et l'installation ».
+
+* **Relevé sur l'API de GitHub** (la 1.0.3, lecture publique) : chaque fichier d'une version
+  porte son empreinte `digest` (`sha256:…`). C'est elle qui vérifie le téléchargement — rien ne
+  s'installe sans elle, ni hors de `…/releases/download/` du dépôt, ni par une redirection en
+  clair.
+* **`core/updates.py`** : `Asset`, `Pending`, `install_kind` (Windows, macOS, AppImage — rien
+  depuis les sources ni l'archive Linux ni une application macOS déplacée par le système),
+  `download` (taille et SHA-256 ; un fichier faux est effacé, un fichier juste déjà là n'est pas
+  retéléchargé), `prepare`, `launch`. La détection ne change pas : case des réglages, toujours
+  décochée par défaut, ou Aide ▸ Rechercher une nouvelle version.
+* **Le parcours** : [Télécharger et installer] (avec la taille), [Voir les nouveautés],
+  [Plus tard] ; le téléchargement dans une tâche modale annulable ; puis [Installer maintenant]
+  (la fenêtre se ferme comme à l'ordinaire, morceau de l'atelier gardé) ou [À la fermeture].
+  `main._install_update` lance l'installation une fois tout fermé, **canal d'instance fermé
+  d'abord** — sans quoi la nouvelle version, relancée, se croirait déjà ouverte.
+* **L'installateur NSIS** apprend la mise à jour sans pages (`/S /RELANCER`) : il attend une
+  minute au plus que `Noctiluca.exe` se libère, ne recrée pas un raccourci du Bureau retiré
+  (une section cochée d'office s'installerait sans pages), et rouvre Noctiluca par l'Explorateur.
+  Compilé ici avec NSIS sur une application factice : sans erreur ni avertissement. **Pas lancé**
+  : il écrirait sur l'installation réelle de l'utilisateur (registre, Program Files).
+* **macOS et Linux** : un `sh -c` détaché attend la fin du processus, échange, relance ;
+  l'ancienne application macOS n'est effacée qu'une fois la nouvelle en place et revient si
+  l'échange échoue. Essayé à la main sous le shell de Git (échange, relance, retour arrière) ; le
+  test qui les exécute pour de vrai tourne sous Linux et macOS (GitHub), il est sauté sous
+  Windows. **Jamais essayé sur un Mac.**
+* **La première mise à jour automatique sera la suivante** : une 1.0.3 ne sait qu'ouvrir la page.
+  Le manuel le dit (nouvelle partie « Mettre Noctiluca à jour », `#mise-a-jour`, fr et en).
+* Boîtes rendues en PNG en français et en anglais (lisibles). Douze mutations (empreinte, dépôt,
+  HTTPS, sources, déplacement macOS, `/S /RELANCER`, fichier déjà juste, fichier faux effacé,
+  version prête gardée, [Installer maintenant], passage à `main`, canal d'instance) : toutes
+  font échouer leurs tests.
+* **1 695 tests** sous les trois façons de lancer (pytest 273 s, `unittest discover -s tests`
+  258 s, `-t .` 260 s) : tous verts, un sauté sous Windows (les scripts de macOS et de Linux).
+
 ## 3 novoquinquagies. L'arpégiateur communautaire (21 novembre 2026)
 
 **La demande** : « continuer » — la dernière ligne du §2 d'`ameliorations.md` (ce que
@@ -398,7 +436,8 @@ du neuf : le hub MIDI, l'atelier (boucle, dessin, volume par piste, brouillons, 
 notes, automation, import MIDI, export audio), l'écoute en flux, les MP3/FLAC/Ogg à l'envoi, et
 l'écoute qui refait le SVF, le compresseur maître, le tape warble, la table d'onde, l'étirement
 et l'arpégiateur communautaire. Étiquette `v1.1.0` posée par moi, à sa demande, sur le commit
-de version ; envoi par lui. **Pas encore passé sur GitHub** : `e7fbaeb` (fichiers de tests et
+de version, puis déplacée sur celui de la mise à jour automatique (§3 sexagies), qu'il a voulue
+dans la 1.1.0 — l'étiquette n'était pas encore partie sur GitHub ; envoi par lui. **Pas encore passé sur GitHub** : `e7fbaeb` (fichiers de tests et
 module d'étirement neufs) n'y a jamais tourné sous Ubuntu ni macOS — le brouillon de
 publication ne se publie que si les trois paquets et les trois suites sont verts. Le hub MIDI
 n'a jamais vu un vrai clavier : annoncé « à l'essai » dans les notes de version. Notes de

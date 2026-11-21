@@ -2905,27 +2905,113 @@ class TestSignalerEtNouvelleVersion(MainWindowCase):
             "https://github.com/Blackminou29/noctiluca/issues/new?"))
         self.assertEqual(_APP.clipboard().text(), texte)
 
+    @staticmethod
+    def _repondre(*reponses):
+        """``QMessageBox.exec`` qui clique, boîte après boîte, le bouton au
+        texte donné ; garde le texte et les boutons de chaque boîte."""
+        reponses = list(reponses)
+        vus = []
+
+        def exec_(box):
+            vus.append((box.text() + "\n" + box.informativeText(),
+                        [b.text() for b in box.buttons()]))
+            texte = reponses.pop(0)
+            next(b for b in box.buttons() if b.text() == texte).click()
+            return 0
+        return exec_, vus
+
+    def _version(self):
+        from delugeapp.core import updates
+
+        nom = "Noctiluca-9.9.9-windows-x64-setup.exe"
+        fichier = updates.Asset(nom, updates.DOWNLOADS + "v9.9.9/" + nom,
+                                75 << 20, "ab" * 32)
+        return updates.Release("9.9.9", "https://github.com/x", (fichier,))
+
+    def _attendre(self, win, condition):
+        for _ in range(80):
+            _pump(25)
+            win._tick()
+            if condition():
+                return True
+        return False
+
     def test_la_recherche_dit_qu_une_version_est_disponible(self):
+        """Lancée depuis ses sources, l'application ne s'installe pas
+        d'elle-même : elle propose la page de la version."""
         from unittest import mock
 
         from delugeapp.core import updates
 
         win = self.window()
-        questions = []
-        self.mw.QMessageBox.question = staticmethod(
-            lambda _p, _t, texte, *a, **k: questions.append(texte)
-            or self.mw.QMessageBox.StandardButton.No)
+        exec_, vus = self._repondre("Plus tard")
         with mock.patch.object(updates, "latest_release",
-                               return_value=updates.Release(
-                                   "9.9.9", "https://github.com/x")):
+                               return_value=self._version()), \
+                mock.patch.object(self.mw.QMessageBox, "exec", exec_):
             self._action(win, "Rechercher une nouvelle version").trigger()
-            for _ in range(40):
-                _pump(25)
-                win._tick()
-                if questions:
-                    break
-        self.assertTrue(questions and "9.9.9" in questions[0], questions)
+            self.assertTrue(self._attendre(win, lambda: vus))
+        texte, boutons = vus[0]
+        self.assertIn("9.9.9", texte)
+        self.assertEqual(boutons, ["Ouvrir la page", "Plus tard"])
         self.assertTrue(self.ctx.settings.last_update_check)
+
+    def test_la_version_se_telecharge_puis_s_installe_a_la_fermeture(self):
+        from unittest import mock
+
+        from delugeapp.core import updates
+
+        win = self.window()
+        version = self._version()
+        prete = updates.Pending("windows", Path(self._tmp.name) / "setup.exe",
+                                None, "9.9.9")
+        exec_, vus = self._repondre("Télécharger et installer",
+                                    "À la fermeture")
+        with mock.patch.object(updates, "install_kind",
+                               return_value="windows"), \
+                mock.patch.object(updates, "prepare",
+                                  return_value=prete) as preparer, \
+                mock.patch.object(self.mw.QMessageBox, "exec", exec_):
+            win._announce_update(version)
+            self.assertTrue(self._attendre(win, lambda: len(vus) == 2))
+        preparer.assert_called_once()
+        self.assertEqual(preparer.call_args[0][:3],
+                         (version, version.assets[0], "windows"))
+        self.assertIn("75 Mo", vus[0][0])
+        self.assertIn("Télécharger et installer", vus[0][1])
+        self.assertIn("téléchargée et vérifiée", vus[1][0])
+        self.assertIs(win.pending_update, prete)
+        self.assertIn("à la fermeture", win.statusBar().currentMessage())
+        # La même version annoncée de nouveau : rien à retélécharger ;
+        # [Installer maintenant] ferme la fenêtre.
+        exec_, vus = self._repondre("Installer maintenant")
+        with mock.patch.object(updates, "prepare") as preparer, \
+                mock.patch.object(self.mw.QMessageBox, "exec", exec_), \
+                mock.patch.object(win, "close") as fermer:
+            win._announce_update(version)
+        preparer.assert_not_called()
+        fermer.assert_called_once()
+
+    def test_un_telechargement_qui_echoue_n_installe_rien(self):
+        from unittest import mock
+
+        from delugeapp.core import updates
+
+        win = self.window()
+        version = self._version()
+        exec_, vus = self._repondre("Télécharger et installer",
+                                    "Ouvrir la page")
+        with mock.patch.object(updates, "install_kind",
+                               return_value="windows"), \
+                mock.patch.object(updates, "prepare", side_effect=(
+                    updates.UpdateError("empreinte fausse"))), \
+                mock.patch.object(self.mw.QMessageBox, "exec", exec_), \
+                mock.patch("PyQt6.QtGui.QDesktopServices.openUrl") as web:
+            win._announce_update(version)
+            self.assertTrue(self._attendre(win, lambda: len(vus) == 2))
+        self.assertIn("empreinte fausse", vus[1][0])
+        self.assertIn("Rien n'a été installé", vus[1][0])
+        self.assertIsNone(win.pending_update)
+        self.assertEqual(web.call_args[0][0].toString(), version.url)
 
     def test_rien_ne_part_sans_la_case(self):
         from unittest import mock
@@ -3169,6 +3255,38 @@ class TestPointDEntree(unittest.TestCase):
         if self._added:
             root.setLevel(self._log_level)
         self._tmp.cleanup()
+
+    # -- la mise à jour, à la sortie ---------------------------------------- #
+
+    def test_une_version_prete_s_installe_une_fois_tout_ferme(self):
+        """Le canal d'instance se ferme d'abord (la nouvelle version se
+        croirait sinon déjà ouverte), puis l'installation se lance ; un
+        lancement impossible se journalise sans rien casser."""
+        import logging
+        from unittest import mock
+
+        from delugeapp.core import updates
+
+        prete = updates.Pending("windows", self.home / "setup.exe", None,
+                                "9.9.9")
+        ordre = []
+
+        class Canal:
+            def close(self):
+                ordre.append("canal fermé")
+
+        instance = mock.Mock(server=Canal())
+        journal = logging.getLogger("delugeapp")
+        with mock.patch.object(updates, "launch",
+                               side_effect=lambda p: ordre.append(p)), \
+                self.assertLogs("delugeapp", level="INFO"):
+            self.entry._install_update(prete, instance, journal)
+        self.assertEqual(ordre, ["canal fermé", prete])
+        with mock.patch.object(updates, "launch",
+                               side_effect=OSError("refusé")), \
+                self.assertLogs("delugeapp", level="ERROR") as vu:
+            self.entry._install_update(prete, None, journal)
+        self.assertIn("9.9.9", "\n".join(vu.output))
 
     # -- arguments ---------------------------------------------------------- #
 
@@ -8259,6 +8377,7 @@ class TestRedemarrageDansLeMemeProcessus(WidgetCase):
                 self.langue = i18n.language()
                 # La première demande un redémarrage, la seconde non.
                 self.restart_requested = not fenetres
+                self.pending_update = "version prête %d" % len(fenetres)
                 fenetres.append(self)
 
             def show(self):
@@ -8286,6 +8405,9 @@ class TestRedemarrageDansLeMemeProcessus(WidgetCase):
         self.assertTrue(all(c.ferme for c in contextes))
         # L'index ne se vide qu'au premier démarrage.
         self.assertFalse(args.reset_db)
+        # La nouvelle version prête, celle de la dernière fenêtre, passe à
+        # ``main`` qui l'installe une fois tout fermé.
+        self.assertEqual(args.pending_update, "version prête 1")
 
     def test_les_boutons_de_qt_suivent_la_langue(self):
         """« Oui / Non » en français ; en anglais, le traducteur français

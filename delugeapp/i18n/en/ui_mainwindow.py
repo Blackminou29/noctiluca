@@ -16,6 +16,31 @@ TEXTS = {
     "%s %s est disponible (vous avez la %s). Ouvrir sa page de "
     "téléchargement ?":
         "%s %s is available (you have %s). Open its download page?",
+    "%s %s est disponible (vous avez la %s). La télécharger et "
+    "l'installer ?":
+        "%s %s is available (you have %s). Download and install it?",
+    "%s Mo, vérifiés avant l'installation. Rien ne change tant que vous "
+    "n'avez pas fermé %s.":
+        "%s MB, checked before installing. Nothing changes until you close "
+        "%s.",
+    "Télécharger et installer": "Download and install",
+    "Voir les nouveautés": "See what's new",
+    "Ouvrir la page": "Open the page",
+    "Plus tard": "Later",
+    "Téléchargement de %s %s": "Downloading %s %s",
+    "%s %s s'installera à la fermeture.":
+        "%s %s will be installed when you close the app.",
+    "%s %s est téléchargée et vérifiée. Elle s'installe quand %s se ferme, "
+    "puis %s se rouvre.":
+        "%s %s is downloaded and checked. It installs when %s closes, then "
+        "%s opens again.",
+    "Windows demandera l'autorisation d'installer.":
+        "Windows will ask for permission to install.",
+    "Installer maintenant": "Install now",
+    "À la fermeture": "When I close it",
+    "Le téléchargement de %s %s n'a pas abouti : %s. Rien n'a été installé.":
+        "Downloading %s %s did not succeed: %s. Nothing was installed.",
+    "Fermer": "Close",
     "Dans l'atelier : défaire, puis refaire le dernier geste":
         "In the studio: undo, then redo the last action",
     "Emplacement de la carte — cliquez pour le changer":

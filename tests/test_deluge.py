@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -2986,6 +2988,298 @@ class TestNouvelleVersion(unittest.TestCase):
                                        last_update_check="2026-11-07T08:00"))
         self.assertTrue(relu.check_updates)
         self.assertEqual(relu.last_update_check, "2026-11-07T08:00")
+
+
+class _Reponse:
+    """Une réponse de ``urlopen`` : des octets lus par blocs."""
+
+    def __init__(self, data: bytes, url: str = "https://objects.example/x"):
+        import io
+
+        self._f = io.BytesIO(data)
+        self._url = url
+
+    def read(self, n=-1):
+        return self._f.read(n)
+
+    def geturl(self):
+        return self._url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+class TestMiseAJourAutomatique(unittest.TestCase):
+    """Télécharger, vérifier et installer une nouvelle version (1.1.0), sur
+    la forme des fichiers de la 1.0.3 relevée le 21 novembre 2026 sur l'API
+    de GitHub : chacun porte son empreinte SHA-256 (``digest``)."""
+
+    DONNEES = b"Noctiluca 9.9.9 " * 70000           # plus d'un mégaoctet
+
+    def setUp(self):
+        import hashlib
+
+        from delugeapp.core import updates
+
+        self.updates = updates
+        self.tmp = Path(tempfile.mkdtemp(prefix="noctiluca-maj-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.sha = hashlib.sha256(self.DONNEES).hexdigest()
+
+    def _fichier(self, nom, data=None, sha=None):
+        data = self.DONNEES if data is None else data
+        return self.updates.Asset(
+            nom, self.updates.DOWNLOADS + "v9.9.9/" + nom, len(data),
+            sha or self.sha)
+
+    def _ouvrir(self, data=None, url="https://objects.example/x"):
+        appels = []
+
+        def opener(requete, timeout):
+            appels.append(requete.full_url)
+            return _Reponse(self.DONNEES if data is None else data, url)
+        opener.appels = appels
+        return opener
+
+    def test_les_fichiers_d_une_version(self):
+        import json
+
+        base = "https://github.com/Blackminou29/noctiluca/releases/download/"
+        bon = "sha256:" + "ab" * 32
+        donnees = {"tag_name": "v1.0.3", "html_url": base, "assets": [
+            {"name": "Noctiluca-1.0.3-linux-x86_64.AppImage", "size": 151259640,
+             "digest": bon, "browser_download_url":
+             base + "v1.0.3/Noctiluca-1.0.3-linux-x86_64.AppImage"},
+            {"name": "Noctiluca-1.0.3-macos-arm64.dmg", "size": 90841221,
+             "digest": bon, "browser_download_url":
+             base + "v1.0.3/Noctiluca-1.0.3-macos-arm64.dmg"},
+            {"name": "Noctiluca-1.0.3-windows-x64-setup.exe",
+             "size": 70858853, "digest": bon.upper().replace("SHA", "sha"),
+             "browser_download_url":
+             base + "v1.0.3/Noctiluca-1.0.3-windows-x64-setup.exe"},
+            # Refusés : sans empreinte, ailleurs, vide, nom piégé.
+            {"name": "sans.exe", "size": 9, "browser_download_url":
+             base + "v1.0.3/sans.exe"},
+            {"name": "ailleurs.exe", "size": 9, "digest": bon,
+             "browser_download_url": "https://ailleurs.example/a.exe"},
+            {"name": "vide.exe", "size": 0, "digest": bon,
+             "browser_download_url": base + "v1.0.3/vide.exe"},
+            {"name": "../x.exe", "size": 9, "digest": bon,
+             "browser_download_url": base + "v1.0.3/x.exe"},
+            {"name": "court.exe", "size": 9, "digest": "sha256:ab",
+             "browser_download_url": base + "v1.0.3/court.exe"}]}
+        version = self.updates.latest_release(
+            opener=lambda r, timeout: _Reponse(
+                json.dumps(donnees).encode("utf-8")))
+        self.assertEqual(len(version.assets), 3)
+        self.assertEqual({a.sha256 for a in version.assets}, {"ab" * 32})
+        for genre, suffixe in (("windows", "setup.exe"), ("macos", ".dmg"),
+                               ("appimage", ".AppImage")):
+            self.assertTrue(self.updates.asset_for(version, genre)
+                            .name.endswith(suffixe), genre)
+        self.assertIsNone(self.updates.asset_for(version, None))
+
+    def test_ou_l_installation_est_possible(self):
+        kind = self.updates.install_kind
+        self.assertIsNone(kind("win32", frozen=False), "depuis les sources")
+        self.assertEqual(kind("win32", frozen=True), "windows")
+        paquet = self.tmp / "Applications" / "Noctiluca.app"
+        executable = paquet / "Contents" / "MacOS" / "Noctiluca"
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b"")
+        self.assertEqual(kind("darwin", True, {}, str(executable)), "macos")
+        self.assertEqual(self.updates.app_bundle(executable), paquet.resolve())
+        deplace = self.tmp / "AppTranslocation" / "X" / "Noctiluca.app"
+        (deplace / "Contents" / "MacOS").mkdir(parents=True)
+        self.assertIsNone(kind("darwin", True, {}, str(
+            deplace / "Contents" / "MacOS" / "Noctiluca")))
+        self.assertIsNone(kind("darwin", True, {}, str(self.tmp / "noct")))
+        image = self.tmp / "Noctiluca.AppImage"
+        image.write_bytes(b"")
+        self.assertEqual(kind("linux", True, {"APPIMAGE": str(image)}),
+                         "appimage")
+        self.assertIsNone(kind("linux", True, {}), "l'archive Linux")
+
+    def test_le_telechargement_est_verifie(self):
+        updates = self.updates
+        fichier = self._fichier("Noctiluca-9.9.9-windows-x64-setup.exe")
+        cible = self.tmp / fichier.name
+        avance = []
+        updates.download(fichier, cible, avance.append, opener=self._ouvrir())
+        self.assertEqual(cible.read_bytes(), self.DONNEES)
+        self.assertTrue(avance and avance[-1].total >= 1)
+        self.assertEqual(avance[-1].current, avance[-1].total)
+        # Déjà là et juste : pas une seconde fois.
+        refuse = self._ouvrir()
+        updates.download(fichier, cible, opener=refuse)
+        self.assertEqual(refuse.appels, [])
+        # Une empreinte fausse, un fichier trop long ou trop court, un
+        # arrêt, une adresse en clair : rien ne reste.
+        for nom, f, ouvrir, arret in (
+                ("empreinte", self._fichier("a.exe", sha="0" * 64),
+                 self._ouvrir(), None),
+                ("trop long", self._fichier("b.exe", data=b"x" * 10),
+                 self._ouvrir(), None),
+                ("trop court", self._fichier("c.exe", data=self.DONNEES + b"!"),
+                 self._ouvrir(), None),
+                ("arrêt", self._fichier("d.exe"), self._ouvrir(),
+                 lambda: True),
+                ("en clair", self._fichier("e.exe"),
+                 self._ouvrir(url="http://objects.example/x"), None)):
+            with self.subTest(nom):
+                with self.assertRaises(updates.UpdateError):
+                    updates.download(f, self.tmp / f.name, should_stop=arret,
+                                     opener=ouvrir)
+                self.assertEqual(sorted(p.name for p in self.tmp.iterdir()),
+                                 [cible.name])
+        ailleurs = updates.Asset("x.exe", "https://ailleurs.example/x.exe",
+                                 10, self.sha)
+        with self.assertRaises(updates.UpdateError):
+            updates.download(ailleurs, self.tmp / "x.exe", opener=self._ouvrir())
+
+    def test_preparer_pour_chaque_systeme(self):
+        import os
+        from unittest import mock
+
+        updates = self.updates
+        version = updates.Release("9.9.9", "https://github.com/x")
+        with mock.patch.object(updates, "download_folder",
+                               return_value=self.tmp / "telecharges"):
+            pret = updates.prepare(
+                version, self._fichier("Noctiluca-9.9.9-windows-x64-setup.exe"),
+                "windows", opener=self._ouvrir())
+        self.assertEqual((pret.kind, pret.version, pret.target),
+                         ("windows", "9.9.9", None))
+        self.assertEqual(pret.file.read_bytes(), self.DONNEES)
+
+        image = self.tmp / "Noctiluca-1.1.0-linux-x86_64.AppImage"
+        image.write_bytes(b"ancienne")
+        pret = updates.prepare(
+            version, self._fichier("Noctiluca-9.9.9-linux-x86_64.AppImage"),
+            "appimage", opener=self._ouvrir(), environ={"APPIMAGE": str(image)})
+        self.assertEqual(pret.target, image)
+        self.assertEqual(pret.file.parent, image.parent, "même disque")
+        self.assertTrue(pret.file.name.startswith("."))
+        self.assertEqual(image.read_bytes(), b"ancienne", "rien de remplacé")
+        if os.name == "posix":
+            self.assertTrue(os.access(pret.file, os.X_OK))
+
+        paquet = self.tmp / "Apps" / "Noctiluca.app"
+        (paquet / "Contents" / "MacOS").mkdir(parents=True)
+        commandes = []
+
+        def run(cmd, check=False, timeout=None):
+            commandes.append(cmd[0] + " " + cmd[1])
+            if cmd[:2] == ["hdiutil", "attach"]:
+                monte = Path(cmd[cmd.index("-mountpoint") + 1])
+                (monte / "Noctiluca.app" / "Contents").mkdir(parents=True)
+                (monte / "Noctiluca.app" / "Contents" / "neuf").write_text("9")
+            elif cmd[0] == "ditto":
+                shutil.copytree(cmd[1], cmd[2])
+            return None
+
+        with mock.patch.object(updates, "download_folder",
+                               return_value=self.tmp / "telecharges"):
+            pret = updates.prepare(
+                version, self._fichier("Noctiluca-9.9.9-macos-arm64.dmg"),
+                "macos", opener=self._ouvrir(),
+                executable=str(paquet / "Contents" / "MacOS" / "Noctiluca"),
+                run=run)
+        self.assertEqual(commandes, ["hdiutil attach", "ditto " + str(
+            Path(commandes[1].split(" ", 1)[1])), "hdiutil detach"])
+        self.assertEqual(pret.target, paquet.resolve())
+        self.assertEqual((pret.file / "Contents" / "neuf").read_text(), "9")
+        self.assertTrue(pret.file.name.startswith(".Noctiluca-9.9.9"))
+
+        def sans_application(cmd, check=False, timeout=None):
+            return None
+
+        with mock.patch.object(updates, "download_folder",
+                               return_value=self.tmp / "telecharges"), \
+                self.assertRaises(updates.UpdateError):
+            updates.prepare(
+                version, self._fichier("Noctiluca-9.9.9-macos-arm64.dmg"),
+                "macos", opener=self._ouvrir(),
+                executable=str(paquet / "Contents" / "MacOS" / "Noctiluca"),
+                run=sans_application)
+
+    def test_lancer_l_installation(self):
+        updates = self.updates
+        ouverts, lances = [], []
+        installateur = self.tmp / "setup.exe"
+        updates.launch(updates.Pending("windows", installateur, None, "9.9.9"),
+                       pid=42, startfile=lambda p, arguments: ouverts.append(
+                           (p, arguments)))
+        self.assertEqual(ouverts, [(str(installateur), "/S /RELANCER")])
+        for genre in ("appimage", "macos"):
+            updates.launch(updates.Pending(genre, self.tmp / "neuve",
+                                           self.tmp / "actuelle", "9.9.9"),
+                           pid=42, popen=lambda cmd, **k: lances.append(
+                               (cmd, k)))
+            cmd, options = lances[-1]
+            self.assertEqual(cmd[:3], ["/bin/sh", "-c",
+                                       updates.SCRIPTS[genre]])
+            self.assertEqual(cmd[4:], ["42", str(self.tmp / "neuve"),
+                                       str(self.tmp / "actuelle")])
+            self.assertTrue(options["start_new_session"])
+        with self.assertRaises(updates.UpdateError):
+            updates.launch(updates.Pending("ailleurs", self.tmp / "x", None,
+                                           "9"), pid=42)
+
+    @unittest.skipUnless(sys.platform != "win32" and Path("/bin/sh").exists(),
+                         "les scripts de macOS et de Linux")
+    def test_les_scripts_remplacent_puis_relancent(self):
+        """Pour de vrai : chaque script attend la fin du processus, échange
+        les fichiers, puis relance — ici, un témoin à la place de la
+        relance ; et l'ancienne application revient si l'échange échoue."""
+        import subprocess
+        import time
+
+        updates = self.updates
+        temoin = self.tmp / "relancee"
+        neuve = self.tmp / ".neuve.AppImage"
+        neuve.write_text("#!/bin/sh\necho neuve > '%s'\n" % temoin)
+        neuve.chmod(0o755)
+        actuelle = self.tmp / "Noctiluca.AppImage"
+        actuelle.write_text("ancienne")
+        attente = subprocess.Popen(["sleep", "0.5"])
+        updates.launch(updates.Pending("appimage", neuve, actuelle, "9"),
+                       pid=attente.pid)
+        self.assertEqual(actuelle.read_text(), "ancienne",
+                         "rien avant la fin du processus")
+        attente.wait()
+        for _ in range(100):
+            if temoin.exists():
+                break
+            time.sleep(0.05)
+        self.assertEqual(temoin.read_text().strip(), "neuve")
+        self.assertFalse(neuve.exists())
+        self.assertIn("echo neuve", actuelle.read_text())
+
+        script = updates.SCRIPTS["macos"].replace(
+            'open "$3"', 'touch "$3/relancee"')
+        paquet = self.tmp / "Noctiluca.app"
+        (paquet / "Contents").mkdir(parents=True)
+        (paquet / "Contents" / "v").write_text("1.1.0")
+        nouveau = self.tmp / ".Noctiluca-9.app"
+        (nouveau / "Contents").mkdir(parents=True)
+        (nouveau / "Contents" / "v").write_text("9")
+        fini = subprocess.Popen(["true"])
+        fini.wait()
+        subprocess.run(["/bin/sh", "-c", script, "x", str(fini.pid),
+                        str(nouveau), str(paquet)], check=True, timeout=20)
+        self.assertEqual((paquet / "Contents" / "v").read_text(), "9")
+        self.assertTrue((paquet / "relancee").exists())
+        self.assertFalse(nouveau.exists())
+        self.assertFalse(Path(str(paquet) + ".ancien").exists())
+        # La nouvelle absente : l'ancienne reste, et se rouvre.
+        subprocess.run(["/bin/sh", "-c", script, "x", str(fini.pid),
+                        str(self.tmp / "absente.app"), str(paquet)],
+                       check=True, timeout=20)
+        self.assertEqual((paquet / "Contents" / "v").read_text(), "9")
 
 
 class TestFirmwareDuDeluge(unittest.TestCase):
