@@ -392,6 +392,19 @@ dit maintenant qu'il ne reste rien d'approché à porter.
 * **1 686 tests au vert** sous les trois façons de lancer : pytest (265 s), `unittest discover
   -s tests` (262 s, celle de GitHub) et `-t .` (347 s).
 
+**La 1.1.0** (21 novembre) : à sa demande, `__version__ = "1.1.0"` — un chiffre du milieu, et
+non 1.0.4, parce que les cinq commits depuis la 1.0.3 (`0b552e7` à `e7fbaeb`) apportent surtout
+du neuf : le hub MIDI, l'atelier (boucle, dessin, volume par piste, brouillons, conditions des
+notes, automation, import MIDI, export audio), l'écoute en flux, les MP3/FLAC/Ogg à l'envoi, et
+l'écoute qui refait le SVF, le compresseur maître, le tape warble, la table d'onde, l'étirement
+et l'arpégiateur communautaire. Étiquette `v1.1.0` posée par moi, à sa demande, sur le commit
+de version ; envoi par lui. **Pas encore passé sur GitHub** : `e7fbaeb` (fichiers de tests et
+module d'étirement neufs) n'y a jamais tourné sous Ubuntu ni macOS — le brouillon de
+publication ne se publie que si les trois paquets et les trois suites sont verts. Le hub MIDI
+n'a jamais vu un vrai clavier : annoncé « à l'essai » dans les notes de version. Notes de
+version et billet Ko-fi, anglais d'abord : `build/kofi/notes-1.1.0.md` et
+`build/kofi/billet-1.1.0.txt` (hors du dépôt).
+
 ## 3 octoquinquagies. L'étirement des échantillons (20 novembre 2026)
 
 **La demande** : « attaque l'étirement. » — la ligne « l'étirement des échantillons » du §2
