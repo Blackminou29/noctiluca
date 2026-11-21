@@ -435,11 +435,18 @@ non 1.0.4, parce que les cinq commits depuis la 1.0.3 (`0b552e7` à `e7fbaeb`) a
 du neuf : le hub MIDI, l'atelier (boucle, dessin, volume par piste, brouillons, conditions des
 notes, automation, import MIDI, export audio), l'écoute en flux, les MP3/FLAC/Ogg à l'envoi, et
 l'écoute qui refait le SVF, le compresseur maître, le tape warble, la table d'onde, l'étirement
-et l'arpégiateur communautaire. Étiquette `v1.1.0` posée par moi, à sa demande, sur le commit
-de version, puis déplacée sur celui de la mise à jour automatique (§3 sexagies), qu'il a voulue
-dans la 1.1.0 — l'étiquette n'était pas encore partie sur GitHub ; envoi par lui. **Pas encore passé sur GitHub** : `e7fbaeb` (fichiers de tests et
-module d'étirement neufs) n'y a jamais tourné sous Ubuntu ni macOS — le brouillon de
-publication ne se publie que si les trois paquets et les trois suites sont verts. Le hub MIDI
+et l'arpégiateur communautaire. La version contient aussi la mise à jour automatique
+(§3 sexagies), qu'il a voulue dans la 1.1.0 : l'étiquette `v1.1.0` que j'avais posée en local
+est retirée avant tout envoi, et **c'est lui qui la pose**, sur `802757c`, puis envoie le tout
+(21 novembre, 8 h). **Passé sur GitHub le 21 novembre** : trois paquets construits, brouillon
+de publication créé, tests Windows et Ubuntu verts ; sous macOS, deux tests de minutage
+seulement en échec, le code n'y est pour rien — le clip de l'atelier parti 115 ms en retard
+(marge de 80 ms) et un coup du séquenceur 57 ms en retard (marge de 50 ms), sur une machine
+partagée. Corrigés côté tests : un quart de seconde de marge sur GitHub, en retard seulement
+pour le séquenceur (une machine chargée n'avance jamais un coup), le réglage serré restant
+sur un vrai ordinateur ; vérifié en remettant les erreurs d'origine (clip parti sans attendre
+la mesure, motif deux fois trop vite, coups dans l'ordre de la liste) : le test échoue encore
+avec la marge de GitHub. Commit sans version, à faire à sa demande. Le hub MIDI
 n'a jamais vu un vrai clavier : annoncé « à l'essai » dans les notes de version. Notes de
 version et billet Ko-fi, anglais d'abord : `build/kofi/notes-1.1.0.md` et
 `build/kofi/billet-1.1.0.txt` (hors du dépôt).

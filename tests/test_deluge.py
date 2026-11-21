@@ -413,12 +413,18 @@ class TestDelugeLink(unittest.TestCase):
 
         frappes = fausse.temps_des("on", 36)
         self.assertEqual(len(frappes), 4, "quatre coups de grosse caisse")
+        # Une machine chargée retarde un coup, jamais ne l'avance : les
+        # machines partagées de GitHub en ont retardé un de 57 ms (macOS,
+        # 21 novembre 2026). Un quart de seconde de retard y est toléré ;
+        # l'avance, non, et c'est elle que donnaient mes erreurs — un motif
+        # deux fois trop vite, ou des coups dans l'ordre de la liste.
+        retard = 0.25 if os.environ.get("GITHUB_ACTIONS") else 0.05
         for index, (vu, pas) in enumerate(zip(frappes, positions)):
             attendu = pas * duree_pas
-            self.assertAlmostEqual(
-                vu, attendu, delta=0.05,
-                msg="coup %d : %.3f s au lieu de %.3f s"
-                    % (index, vu, attendu))
+            message = ("coup %d : %.3f s au lieu de %.3f s"
+                       % (index, vu, attendu))
+            self.assertGreater(vu, attendu - 0.05, message)
+            self.assertLess(vu, attendu + retard, message)
 
     def test_chaque_note_allumee_est_eteinte(self):
         """Une note qui reste coincée se remarque très vite à l'oreille."""
