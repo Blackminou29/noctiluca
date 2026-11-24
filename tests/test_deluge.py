@@ -46,7 +46,7 @@ import sys as _sys                                           # noqa: E402
 _DOSSIER = str(Path(__file__).resolve().parent)
 if _DOSSIER not in _sys.path:
     _sys.path.insert(0, _DOSSIER)
-from aides_coeur import _SortieFactice, _son  # noqa: E402
+from aides_coeur import _SortieFactice, _son, coups_a_l_heure  # noqa: E402
 
 
 class TestMidiPort(unittest.TestCase):
@@ -413,18 +413,7 @@ class TestDelugeLink(unittest.TestCase):
 
         frappes = fausse.temps_des("on", 36)
         self.assertEqual(len(frappes), 4, "quatre coups de grosse caisse")
-        # Une machine chargée retarde un coup, jamais ne l'avance : les
-        # machines partagées de GitHub en ont retardé un de 57 ms (macOS,
-        # 21 novembre 2026). Un quart de seconde de retard y est toléré ;
-        # l'avance, non, et c'est elle que donnaient mes erreurs — un motif
-        # deux fois trop vite, ou des coups dans l'ordre de la liste.
-        retard = 0.25 if os.environ.get("GITHUB_ACTIONS") else 0.05
-        for index, (vu, pas) in enumerate(zip(frappes, positions)):
-            attendu = pas * duree_pas
-            message = ("coup %d : %.3f s au lieu de %.3f s"
-                       % (index, vu, attendu))
-            self.assertGreater(vu, attendu - 0.05, message)
-            self.assertLess(vu, attendu + retard, message)
+        coups_a_l_heure(self, frappes, [pas * duree_pas for pas in positions])
 
     def test_chaque_note_allumee_est_eteinte(self):
         """Une note qui reste coincée se remarque très vite à l'oreille."""

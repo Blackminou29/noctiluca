@@ -75,6 +75,28 @@ class _SortieFactice:
                 if e[1] == genre and (note is None or e[2] == note)]
 
 
+#: Retard toléré sur un coup joué en temps réel. Une machine chargée retarde
+#: un coup, jamais ne l'avance : les machines partagées de GitHub en ont
+#: retardé de 33 et 57 ms (macOS, 21 novembre 2026), quand un vrai
+#: ordinateur tient en quelques millisecondes. Un quart de seconde y est
+#: toléré ; l'avance, non, et c'est elle que donnaient mes erreurs de
+#: séquenceur — un motif deux fois trop vite, des coups dans l'ordre de la
+#: liste, un swing ramené au pas entier.
+RETARD_TOLERE = 0.25 if _os.environ.get("GITHUB_ACTIONS") else 0.05
+
+
+def coups_a_l_heure(test, frappes, attendus):
+    """Chaque coup à son heure, en secondes depuis la création de la sortie
+    factice : jamais plus de 50 ms d'avance, jamais plus de
+    ``RETARD_TOLERE`` de retard. Mesurés depuis cette origine et non d'un
+    coup à l'autre, un coup retardé ne fausse pas le suivant."""
+    test.assertEqual(len(frappes), len(attendus), "nombre de coups")
+    for index, (vu, attendu) in enumerate(zip(frappes, attendus)):
+        message = "coup %d : %.3f s au lieu de %.3f s" % (index, vu, attendu)
+        test.assertGreater(vu, attendu - 0.05, message)
+        test.assertLess(vu, attendu + RETARD_TOLERE, message)
+
+
 def _son(chemin, frequence=220.0, duree=0.05, profondeur=16, canaux=1,
          taux=44100):
     """Un son court, écrit par l'écrivain de l'application."""

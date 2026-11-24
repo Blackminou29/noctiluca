@@ -1740,8 +1740,13 @@ class TestJouerCaleSurLaMachine(unittest.TestCase):
             time.sleep(0.01)
         attaques = [t for kind, _n, t in lien._out.recus if kind == "on"]
         self.assertEqual(len(attaques), 2)
-        # 4 doubles-croches à 240 BPM : 250 ms.
-        self.assertAlmostEqual(attaques[1] - attaques[0], 0.25, delta=0.03)
+        # 4 doubles-croches à 240 BPM : 250 ms. Sur les machines partagées
+        # de GitHub, un coup retardé allonge ou raccourcit cet écart (33 à
+        # 124 ms de retard vus en novembre 2026) : 120 ms de marge y restent
+        # loin de l'erreur visée — le tempo ignoré, 120 BPM, doublerait
+        # l'écart.
+        ecart = 0.12 if _os.environ.get("GITHUB_ACTIONS") else 0.03
+        self.assertAlmostEqual(attaques[1] - attaques[0], 0.25, delta=ecart)
 
     def test_les_notes_d_une_batterie_suivent_ses_rangees(self):
         projet = atelier.new_project(atelier.Style(genre="techno", seed=1),

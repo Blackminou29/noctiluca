@@ -55,7 +55,8 @@ import sys as _sys                                           # noqa: E402
 _DOSSIER = str(Path(__file__).resolve().parent)
 if _DOSSIER not in _sys.path:
     _sys.path.insert(0, _DOSSIER)
-from aides_coeur import _SortieFactice, _son, lire_midi  # noqa: E402
+from aides_coeur import (_SortieFactice, _son, coups_a_l_heure,  # noqa: E402
+                         lire_midi)
 class TestFixedPoint(unittest.TestCase):
     """Conversions des paramètres en virgule fixe."""
 
@@ -3252,9 +3253,7 @@ class TestAuditOctobreSuite(unittest.TestCase):
             time.sleep(0.01)
         frappes = fausse.temps_des("on", 36)
         duree_pas = 60.0 / 240 * motif.ticks_per_step / motif.ppq
-        self.assertEqual(len(frappes), 2)
-        self.assertAlmostEqual(frappes[1] - frappes[0], 2.5 * duree_pas,
-                               delta=0.02)
+        coups_a_l_heure(self, frappes, [0.0, 2.5 * duree_pas])
 
 
 def model_osc(file_name: str, end: int = -1):

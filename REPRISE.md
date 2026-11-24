@@ -446,7 +446,19 @@ partagée. Corrigés côté tests : un quart de seconde de marge sur GitHub, en 
 pour le séquenceur (une machine chargée n'avance jamais un coup), le réglage serré restant
 sur un vrai ordinateur ; vérifié en remettant les erreurs d'origine (clip parti sans attendre
 la mesure, motif deux fois trop vite, coups dans l'ordre de la liste) : le test échoue encore
-avec la marge de GitHub. Commit sans version, à faire à sa demande. Le hub MIDI
+avec la marge de GitHub. Commités en `d49c0ae` ; la 1.1.0 publiée par lui le 21 novembre
+(paquets avec leur empreinte, relus par la mise à jour automatique : téléchargement et
+vérification réels du paquet Windows). Le passage de `d49c0ae` a fait céder un troisième test
+de minutage sous macOS : le swing joué sur la machine, mesuré d'un coup à l'autre (33 ms
+de retard, marge de 20 ms). Règle commune dans `tests/aides_coeur.py`
+(`coups_a_l_heure`, `RETARD_TOLERE`) : chaque coup mesuré depuis l'origine de la sortie
+factice, jamais plus de 50 ms d'avance, 50 ms de retard sur un vrai ordinateur, un quart
+de seconde sur GitHub — pour le séquenceur et le swing. Le clip joué au tempo donné, mesuré
+lui aussi d'un coup à l'autre, prend 120 ms de marge sur GitHub (un tempo ignoré doublerait
+l'écart de 250 ms). Les cinq erreurs d'origine remises une à une font encore échouer leur
+test en mode GitHub. Ma machine chargée (un calcul parasite par cœur, dix passages) ne
+reproduit pas ces retards : seul le journal de GitHub, lisible par lui seul, les montre.
+Le hub MIDI
 n'a jamais vu un vrai clavier : annoncé « à l'essai » dans les notes de version. Notes de
 version et billet Ko-fi, anglais d'abord : `build/kofi/notes-1.1.0.md` et
 `build/kofi/billet-1.1.0.txt` (hors du dépôt).
